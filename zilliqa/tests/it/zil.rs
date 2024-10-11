@@ -2,7 +2,9 @@ use std::{ops::DerefMut, str::FromStr};
 
 use ethabi::{ParamType, Token};
 use ethers::{
-    providers::Middleware, providers::ProviderError, types::TransactionRequest, utils::keccak256,
+    providers::{Middleware, ProviderError},
+    types::TransactionRequest,
+    utils::keccak256,
 };
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use primitive_types::{H160, H256};
@@ -10,7 +12,6 @@ use prost::Message;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-
 use zilliqa::{
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
@@ -192,7 +193,7 @@ async fn run_create_transaction_api_for_error(
     let mut signature = schnorr::sign(&txn_data, secret_key).to_bytes();
     if bad_signature {
         if let Some(x) = signature.first_mut() {
-            *x = *x + 1;
+            *x += 1;
         }
     }
     let mut request = json!({
@@ -217,14 +218,12 @@ async fn run_create_transaction_api_for_error(
         .provider()
         .request("CreateTransaction", [request])
         .await;
-    if let Err(val) = response {
-        if let ProviderError::JsonRpcClientError(rpc_error) = val {
-            if let Some(json_error) = rpc_error.as_error_response() {
-                return Some((json_error.code, json_error.message.to_string()));
-            }
+    if let Err(ProviderError::JsonRpcClientError(rpc_error)) = response {
+        if let Some(json_error) = rpc_error.as_error_response() {
+            return Some((json_error.code, json_error.message.to_string()));
         }
     }
-    return None;
+    None
 }
 
 #[zilliqa_macros::test]

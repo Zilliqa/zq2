@@ -17,7 +17,11 @@ use http::Extensions;
 use itertools::{Either, Itertools};
 use jsonrpsee::{
     core::StringError,
-    types::{error::ErrorObject, error::ErrorObjectOwned, params::ParamsSequence, Params},
+    types::{
+        error::{ErrorObject, ErrorObjectOwned},
+        params::ParamsSequence,
+        Params,
+    },
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
 use serde::Deserialize;

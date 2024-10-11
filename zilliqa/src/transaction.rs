@@ -76,17 +76,15 @@ impl ValidationOutcome {
     where
         T: FnOnce() -> Result<ValidationOutcome>,
     {
-        match self {
-            Self::Success => test(),
-            _ => Ok(*self),
+        if self.is_ok() {
+            test()
+        } else {
+            Ok(*self)
         }
     }
 
     pub fn is_ok(&self) -> bool {
-        match self {
-            Self::Success => true,
-            _ => false,
-        }
+        matches!(self, Self::Success)
     }
 
     pub fn to_msg_string(&self) -> String {
@@ -117,7 +115,7 @@ impl ValidationOutcome {
                 format!("Txn nonce ({txn_nonce}) is too low for account ({expected})")
             }
             Self::UnknownTransactionType => {
-                format!("Txn is not transfer, contract creation or contract invocation")
+                "Txn is not transfer, contract creation or contract invocation".to_string()
             }
         }
     }

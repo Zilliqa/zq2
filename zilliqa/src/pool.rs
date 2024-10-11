@@ -30,10 +30,7 @@ pub enum TxAddResult {
 
 impl TxAddResult {
     pub fn was_added(&self) -> bool {
-        match self {
-            Self::AddedToMempool => true,
-            _ => false,
-        }
+        matches!(self, Self::AddedToMempool)
     }
 }
 

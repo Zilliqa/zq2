@@ -12,7 +12,10 @@ use alloy::{
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
-use jsonrpsee::{types::ErrorObject, types::Params, RpcModule};
+use jsonrpsee::{
+    types::{ErrorObject, Params},
+    RpcModule,
+};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
@@ -171,7 +174,7 @@ fn create_transaction(
     let chain_id = transaction.version >> 16;
 
     if (chain_id as u64) != (node.chain_id.zil()) {
-        return Err(ErrorObject::owned::<String>(
+        Err(ErrorObject::owned::<String>(
             RPCErrorCode::RpcVerifyRejected as i32,
             format!(
                 "unexpected chain ID, expected: {}, got: {chain_id}",
@@ -182,7 +185,7 @@ fn create_transaction(
     }
 
     if version != 1 {
-        return Err(ErrorObject::owned::<String>(
+        Err(ErrorObject::owned::<String>(
             RPCErrorCode::RpcVerifyRejected as i32,
             format!("unexpected version, expected: 1, got: {version}"),
             None,
@@ -213,7 +216,7 @@ fn create_transaction(
     // If we don't trap this here, it will later cause the -1 in
     // transaction::get_nonce() to pan1ic.
     if transaction.nonce == 0 {
-        return Err(ErrorObject::owned::<String>(
+        Err(ErrorObject::owned::<String>(
             RPCErrorCode::RpcInvalidParameter as i32,
             "Invalid nonce (0)".to_string(),
             None,
