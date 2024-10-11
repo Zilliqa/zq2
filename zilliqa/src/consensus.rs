@@ -409,6 +409,10 @@ impl Consensus {
             minimum_time_left_for_empty_block,
         ) = self.get_consensus_timeout_params();
 
+        trace!(
+            "timeout reached create_next_block_on_timeout: {}",
+            self.create_next_block_on_timeout
+        );
         if self.create_next_block_on_timeout {
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
@@ -1071,27 +1075,33 @@ impl Consensus {
         let parent_block_hash = parent_block.hash();
         let parent_block_view = parent_block.view();
 
-        // Check for majority
-        let Some((signatures, cosigned, _, supermajority_reached)) = votes.get(&parent_block_hash)
-        else {
-            warn!("tried to finalise a proposal without any votes");
-            return Ok(None);
-        };
-        if !supermajority_reached {
-            warn!("tried to finalise a proposal without majority");
-            return Ok(None);
-        };
-
         state.set_to_root(proposal.state_root_hash().into());
 
         // Compute the majority QC. If aggQC exists then QC is already set to correct value.
         let final_qc = match proposal.agg {
-            Some(_) => proposal.header.qc,
-            None => self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view),
+            Some(_) => {
+                // TODO check for new view vote majority
+                proposal.header.qc
+            }
+            None => {
+                // Check for majority
+                let Some((signatures, cosigned, _, supermajority_reached)) =
+                    votes.get(&parent_block_hash)
+                else {
+                    warn!("tried to finalise a proposal without any votes");
+                    return Ok(None);
+                };
+                if !supermajority_reached {
+                    warn!("tried to finalise a proposal without majority");
+                    return Ok(None);
+                };
+                self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view)
+            }
         };
 
         // Retrieve the previous leader and committee - for rewards
         let committee = state.get_stakers_at_block(&parent_block)?;
+
         let proposer = self
             .leader_at_block(&parent_block, parent_block_view + 1)
             .context("missing parent block leader")?
@@ -1156,35 +1166,42 @@ impl Consensus {
         }
         info!("assemble early proposal for view {}", self.view.get_view());
 
-        // Start with highest canonical block
-        let num = self
-            .db
-            .get_highest_block_number()?
-            .context("no canonical blocks")?; // get highest canonical block number
-        let block = self
-            .get_block_by_number(num)?
-            .context("missing canonical block")?; // retrieve highest canonical block
-
-        // Generate early QC or use from aggQC if provided
-        let qc = match agg {
-            None => QuorumCertificate::new_with_identity(block.hash(), block.view()),
-            Some(ref agg) => self.get_highest_from_agg(agg)?,
+        let (qc, parent) = match agg {
+            // Create dummy QC for now if aggQC not provided
+            None => {
+                // Start with highest canonical block
+                let num = self
+                    .db
+                    .get_highest_block_number()?
+                    .context("no canonical blocks")?; // get highest canonical block number
+                let block = self
+                    .get_block_by_number(num)?
+                    .context("missing canonical block")?; // retrieve highest canonical block
+                (
+                    QuorumCertificate::new_with_identity(block.hash(), block.view()),
+                    block,
+                )
+            }
+            Some(ref agg) => {
+                let qc = self.get_highest_from_agg(agg)?;
+                let parent = self
+                    .get_block(&qc.block_hash)?
+                    .ok_or_else(|| anyhow!("missing block"))?;
+                (qc, parent)
+            }
         };
 
-        let parent = self
-            .get_block(&qc.block_hash)?
-            .ok_or_else(|| anyhow!("missing block"))?;
         info!("parent block number: {}", parent.header.number);
 
         // Ensure sane state
         let previous_state_root_hash = state.root_hash()?;
-        if previous_state_root_hash != block.state_root_hash() {
+        if previous_state_root_hash != parent.state_root_hash() {
             warn!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",
-                block.state_root_hash(),
+                parent.state_root_hash(),
                 previous_state_root_hash
             );
-            state.set_to_root(block.state_root_hash().into());
+            state.set_to_root(parent.state_root_hash().into());
         }
 
         // Internal states
@@ -1212,7 +1229,7 @@ impl Consensus {
             self.secret_key,
             executed_block_header.view,
             executed_block_header.number,
-            qc, // dummy QC for early proposal
+            qc,
             agg,
             state.root_hash()?, // late state before rewards are applied
             Hash(transactions_trie.root_hash()?.into()),
@@ -1223,11 +1240,10 @@ impl Consensus {
             executed_block_header.gas_limit,
         );
 
-        // Set early_proposal
         self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie));
-
-        // Apply ready transactions in the mempool
         self.early_proposal_apply_transactions(state)?;
+
+        state.set_to_root(previous_state_root_hash.into());
 
         Ok(())
     }
