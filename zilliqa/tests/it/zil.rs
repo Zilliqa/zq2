@@ -1,13 +1,16 @@
 use std::{ops::DerefMut, str::FromStr};
 
 use ethabi::{ParamType, Token};
-use ethers::{providers::Middleware, types::TransactionRequest, utils::keccak256};
+use ethers::{
+    providers::Middleware, providers::ProviderError, types::TransactionRequest, utils::keccak256,
+};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use primitive_types::{H160, H256};
 use prost::Message;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+
 use zilliqa::{
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
@@ -147,6 +150,83 @@ async fn send_transaction(
     )
 }
 
+// Returns a pair (code, message) if there was one.
+#[allow(clippy::too_many_arguments)]
+async fn run_create_transaction_api_for_error(
+    network: &mut Network,
+    secret_key: &schnorr::SecretKey,
+    nonce: u64,
+    to_addr: H160,
+    amount: u128,
+    gas_limit: u64,
+    code: Option<&str>,
+    data: Option<&str>,
+    chain_id: Option<u32>,
+    bad_signature: bool,
+) -> Option<(i64, String)> {
+    let wallet = network.random_wallet().await;
+    let public_key = secret_key.public_key();
+
+    // Get the gas price via the Zilliqa API.
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+
+    let use_chain_id = chain_id.unwrap_or(wallet.get_chainid().await.unwrap().as_u32() - 0x8000);
+    let version = (use_chain_id << 16) | 1u32;
+    let proto = ProtoTransactionCoreInfo {
+        version,
+        toaddr: to_addr.as_bytes().to_vec(),
+        senderpubkey: Some(public_key.to_sec1_bytes().into()),
+        amount: Some(amount.to_be_bytes().to_vec().into()),
+        gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
+        gaslimit: gas_limit,
+        oneof2: Some(Nonce::Nonce(nonce)),
+        oneof8: code.map(|c| Code::Code(c.as_bytes().to_vec())),
+        oneof9: data.map(|d| Data::Data(d.as_bytes().to_vec())),
+    };
+    let txn_data = proto.encode_to_vec();
+    let mut signature = schnorr::sign(&txn_data, secret_key).to_bytes();
+    if bad_signature {
+        if let Some(x) = signature.first_mut() {
+            *x = *x + 1;
+        }
+    }
+    let mut request = json!({
+        "version": version,
+        "nonce": nonce,
+        "toAddr": to_addr,
+        "amount": amount.to_string(),
+        "pubKey": hex::encode(public_key.to_sec1_bytes()),
+        "gasPrice": gas_price.to_string(),
+        "gasLimit": gas_limit.to_string(),
+        "signature": hex::encode(signature)
+    });
+
+    if let Some(code) = code {
+        request["code"] = code.into();
+    }
+    if let Some(data) = data {
+        request["data"] = data.into();
+    }
+
+    let response: Result<Value, ProviderError> = wallet
+        .provider()
+        .request("CreateTransaction", [request])
+        .await;
+    if let Err(val) = response {
+        if let ProviderError::JsonRpcClientError(rpc_error) = val {
+            if let Some(json_error) = rpc_error.as_error_response() {
+                return Some((json_error.code, json_error.message.to_string()));
+            }
+        }
+    }
+    return None;
+}
+
 #[zilliqa_macros::test]
 async fn create_transaction(mut network: Network) {
     let wallet = network.random_wallet().await;
@@ -183,6 +263,73 @@ async fn create_transaction(mut network: Network) {
         .await
         .unwrap();
     assert_eq!(response["balance"].as_str().unwrap(), "200000000000000");
+}
+
+#[zilliqa_macros::test]
+async fn create_transaction_errors(mut network: Network) {
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    {
+        let (code, msg) = run_create_transaction_api_for_error(
+            &mut network,
+            &secret_key,
+            0,
+            to_addr,
+            200u128 * 10u128.pow(12),
+            50_000,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(msg.to_lowercase().contains("invalid nonce"));
+        assert_eq!(code, -8)
+    }
+
+    {
+        let (code, msg) = run_create_transaction_api_for_error(
+            &mut network,
+            &secret_key,
+            1,
+            to_addr,
+            200u128 * 10u128.pow(12),
+            50_000,
+            None,
+            None,
+            Some(1),
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(msg.to_lowercase().contains("chain id"));
+        assert_eq!(code, -26)
+    }
+
+    {
+        let (code, msg) = run_create_transaction_api_for_error(
+            &mut network,
+            &secret_key,
+            1,
+            to_addr,
+            200u128 * 10u128.pow(12),
+            50_000,
+            None,
+            None,
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert!(msg.to_lowercase().contains("signature"));
+        assert_eq!(code, -26)
+    }
 }
 
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener

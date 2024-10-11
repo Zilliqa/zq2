@@ -41,6 +41,88 @@ use crate::{
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
+/// Represents a validation result.
+/// This could be Result<String>, except that we would then return
+/// Result<Result<String>>, which would be confusing.
+/// The argument is a human-readable error message which can be returned to the
+/// user to indicate the problem with the transaction.
+#[derive(Debug, Copy, Clone)]
+pub enum ValidationOutcome {
+    Success,
+    /// Transaction input size exceeds configured limit - (size, limit)
+    TransactionInputSizeExceeded(usize, usize),
+    /// Transaction initcode size exceeds configured limit - (size, limit)
+    InitCodeSizeExceeded(usize, usize),
+    /// Gas limit exceeds block gas limit - (gas_limit, block_gas_limit)
+    BlockGasLimitExceeded(EvmGas, EvmGas),
+    /// Insufficient gas for zil transaction - (given, required)
+    InsufficientGasZil(ScillaGas, ScillaGas),
+    /// Insufficient gas for EVM transaction
+    InsufficientGasEvm(EvmGas, EvmGas),
+    /// Chain id was incorrect - (received, expected)
+    IncorrectChainId(u64, u64),
+    /// Insufficient funds in account - (txn_cost, account_balance)
+    InsufficientFunds(u128, u128),
+    /// Nonce too low - arg is the nonce we were expecting - (nonce, expected_nonce)
+    NonceTooLow(u64, u64),
+    /// Unrecognised type - not invocation, creation or transfer
+    UnknownTransactionType,
+}
+
+impl ValidationOutcome {
+    // I did try this with a vector, but sadly this involves too much
+    // trait magic to be convenient.
+    pub fn and_then<T>(&self, test: T) -> Result<ValidationOutcome>
+    where
+        T: FnOnce() -> Result<ValidationOutcome>,
+    {
+        match self {
+            Self::Success => test(),
+            _ => Ok(*self),
+        }
+    }
+
+    pub fn is_ok(&self) -> bool {
+        match self {
+            Self::Success => true,
+            _ => false,
+        }
+    }
+
+    pub fn to_msg_string(&self) -> String {
+        match self {
+            Self::Success => "Txn accepted".to_string(),
+            Self::TransactionInputSizeExceeded(size, limit) => {
+                format!("Transaction input size ({size}) exceeds limit ({limit})")
+            }
+            Self::InitCodeSizeExceeded(size, limit) => {
+                format!("Init code size ({size}) exceeds limit ({limit})")
+            }
+            Self::BlockGasLimitExceeded(gas, limit) => {
+                format!("Txn gas limit ({gas}) exceeeds block gas limit ({limit})")
+            }
+            Self::InsufficientGasZil(gas, limit) => {
+                format!("Insufficient Zilliqa txn gas supplied ({gas}) - required ({limit})")
+            }
+            Self::InsufficientGasEvm(gas, limit) => {
+                format!("Insufficient EVM txn gas supplied ({gas}) - required ({limit})")
+            }
+            Self::IncorrectChainId(got, wanted) => {
+                format!("Txn has chain id {got}, expected chain {wanted}")
+            }
+            Self::InsufficientFunds(txn_cost, bal) => {
+                format!("Insufficient funds - txn cost {txn_cost} but account balance {bal}")
+            }
+            Self::NonceTooLow(txn_nonce, expected) => {
+                format!("Txn nonce ({txn_nonce}) is too low for account ({expected})")
+            }
+            Self::UnknownTransactionType => {
+                format!("Txn is not transfer, contract creation or contract invocation")
+            }
+        }
+    }
+}
+
 /// A [Transaction] plus its signature. The underlying transaction can be obtained with
 /// [`SignedTransaction::into_transaction()`]. The transaction's signer and hash can be obtained by converting this to a
 /// [VerifiedTransaction] with [`SignedTransaction::verify()`].
@@ -368,51 +450,65 @@ impl SignedTransaction {
         account: &Account,
         block_gas_limit: EvmGas,
         eth_chain_id: u64,
-    ) -> Result<bool> {
-        self.validate_input_size()?;
-        self.validate_gas_limit(block_gas_limit)?;
-        self.validate_chain_id(eth_chain_id)?;
-        self.validate_sender_account(account)
+    ) -> Result<ValidationOutcome> {
+        let result = ValidationOutcome::Success
+            .and_then(|| self.validate_input_size())?
+            .and_then(|| self.validate_gas_limit(block_gas_limit))?
+            .and_then(|| self.validate_chain_id(eth_chain_id))?
+            .and_then(|| self.validate_sender_account(account))?;
+        Ok(result)
     }
 
-    fn validate_input_size(&self) -> Result<bool> {
+    fn validate_input_size(&self) -> Result<ValidationOutcome> {
         if let SignedTransaction::Zilliqa { tx, .. } = self {
             if tx.code.len() > ZIL_MAX_CODE_SIZE {
                 warn!(
                     "Zil transaction input size: {} exceeds limit: {ZIL_MAX_CODE_SIZE}",
                     tx.code.len()
                 );
-                return Ok(false);
+                return Ok(ValidationOutcome::TransactionInputSizeExceeded(
+                    tx.code.len(),
+                    ZIL_MAX_CODE_SIZE,
+                ));
             }
-            return Ok(true);
+            return Ok(ValidationOutcome::Success);
         };
 
         let (input_size, tx_kind) = match self {
             SignedTransaction::Legacy { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip2930 { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip1559 { tx, .. } => (tx.input.len(), tx.to),
-            _ => return Ok(true),
+            _ => return Ok(ValidationOutcome::Success),
         };
 
         if input_size > EVM_MAX_TX_INPUT_SIZE {
             warn!(
                 "Evm transaction input size: {input_size} exceeds limit: {EVM_MAX_TX_INPUT_SIZE}"
             );
-            return Ok(false);
+            return Ok(ValidationOutcome::TransactionInputSizeExceeded(
+                input_size,
+                EVM_MAX_TX_INPUT_SIZE,
+            ));
         }
 
         if tx_kind == TxKind::Create && input_size > EVM_MAX_INIT_CODE_SIZE {
             warn!("Evm transaction initcode size: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}");
-            return Ok(false);
+            return Ok(ValidationOutcome::InitCodeSizeExceeded(
+                input_size,
+                EVM_MAX_INIT_CODE_SIZE,
+            ));
         }
 
-        Ok(true)
+        Ok(ValidationOutcome::Success)
     }
 
-    fn validate_gas_limit(&self, block_gas_limit: EvmGas) -> Result<bool> {
+    fn validate_gas_limit(&self, block_gas_limit: EvmGas) -> Result<ValidationOutcome> {
         if self.gas_limit() > block_gas_limit {
             warn!("Transaction gas limit exceeds block gas limit!");
-            return Ok(false);
+            return Ok(ValidationOutcome::BlockGasLimitExceeded(
+                self.gas_limit(),
+                block_gas_limit,
+            ));
         }
 
         // The following logic is taken from ZQ1
@@ -432,29 +528,37 @@ impl SignedTransaction {
                 else if !tx.to_addr.is_zero() && tx.data.is_empty() && tx.code.is_empty() {
                     ScillaGas(ZIL_NORMAL_TXN_GAS.try_into()?)
                 } else {
-                    warn!("Given transaction is none of: contract invocation, contract creation, transfer");
-                    return Ok(false);
+                    warn!(
+                        "transaction is none of: contract invocation, contract creation, transfer"
+                    );
+                    return Ok(ValidationOutcome::UnknownTransactionType);
                 }
             };
 
             if tx.gas_limit < required_gas {
                 warn!("Insufficient gas give for zil transaction, given: {}, required: {required_gas}!", tx.gas_limit);
-                return Ok(false);
+                return Ok(ValidationOutcome::InsufficientGasZil(
+                    tx.gas_limit,
+                    required_gas,
+                ));
             }
-            return Ok(true);
+            return Ok(ValidationOutcome::Success);
         }
 
         let gas_limit = self.gas_limit();
 
         if gas_limit < EVM_MIN_GAS_UNITS {
             warn!("Insufficient gas give for evm transaction, given: {gas_limit}, required: {EVM_MIN_GAS_UNITS}!");
-            return Ok(false);
+            return Ok(ValidationOutcome::InsufficientGasEvm(
+                gas_limit,
+                EVM_MIN_GAS_UNITS,
+            ));
         }
 
-        Ok(true)
+        Ok(ValidationOutcome::Success)
     }
 
-    fn validate_chain_id(&self, eth_chain_id: u64) -> Result<bool> {
+    fn validate_chain_id(&self, eth_chain_id: u64) -> Result<ValidationOutcome> {
         let node_chain_id = match &self {
             SignedTransaction::Zilliqa { .. } => eth_chain_id - 0x8000,
             _ => eth_chain_id,
@@ -466,27 +570,33 @@ impl SignedTransaction {
                     "Chain_id provided in transaction: {} is different than node chain_id: {}",
                     txn_chain_id, node_chain_id
                 );
-                return Ok(false);
+                return Ok(ValidationOutcome::IncorrectChainId(
+                    txn_chain_id,
+                    node_chain_id,
+                ));
             }
         }
-        Ok(true)
+        Ok(ValidationOutcome::Success)
     }
 
-    fn validate_sender_account(&self, account: &Account) -> Result<bool> {
+    fn validate_sender_account(&self, account: &Account) -> Result<ValidationOutcome> {
         let txn_cost = self.maximum_cost()?;
         if txn_cost > account.balance {
-            warn!("Insufficient funds!");
-            return Ok(false);
+            warn!("Insufficient funds");
+            return Ok(ValidationOutcome::InsufficientFunds(
+                txn_cost,
+                account.balance,
+            ));
         }
 
         let Some(nonce) = self.nonce() else {
-            return Ok(true);
+            return Ok(ValidationOutcome::Success);
         };
         if nonce < account.nonce {
             warn!("Nonce is too low");
-            return Ok(false);
+            return Ok(ValidationOutcome::NonceTooLow(nonce, account.nonce));
         }
-        Ok(true)
+        Ok(ValidationOutcome::Success)
     }
 }
 

@@ -12,7 +12,7 @@ use alloy::{
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
-use jsonrpsee::{types::Params, RpcModule};
+use jsonrpsee::{types::ErrorObject, types::Params, RpcModule};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
@@ -32,11 +32,15 @@ use crate::{
     crypto::Hash,
     exec::zil_contract_address,
     node::Node,
+    pool::TxAddResult,
     schnorr,
     scilla::split_storage_key,
     state::Code,
     time::SystemTime,
-    transaction::{ScillaGas, SignedTransaction, TxZilliqa, ZilAmount, EVM_GAS_PER_SCILLA_GAS},
+    transaction::{
+        ScillaGas, SignedTransaction, TxZilliqa, ValidationOutcome, ZilAmount,
+        EVM_GAS_PER_SCILLA_GAS,
+    },
 };
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
@@ -153,34 +157,67 @@ fn create_transaction(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<CreateTransactionResponse> {
-    let transaction: TransactionParams = params.one()?;
+    let transaction: TransactionParams = params.one().map_err(|_| {
+        ErrorObject::owned::<String>(
+            RPCErrorCode::RpcParseError as i32,
+            "Cannot parse transaction parameters".to_string(),
+            None,
+        )
+    })?;
+
     let mut node = node.lock().unwrap();
 
     let version = transaction.version & 0xffff;
     let chain_id = transaction.version >> 16;
 
     if (chain_id as u64) != (node.chain_id.zil()) {
-        return Err(anyhow!(
-            "unexpected chain ID, expected: {}, got: {chain_id}",
-            node.chain_id.zil()
-        ));
+        return Err(ErrorObject::owned::<String>(
+            RPCErrorCode::RpcVerifyRejected as i32,
+            format!(
+                "unexpected chain ID, expected: {}, got: {chain_id}",
+                node.chain_id.zil()
+            ),
+            None,
+        ))?;
     }
 
     if version != 1 {
-        return Err(anyhow!("unexpected version, expected: 1, got: {version}"));
+        return Err(ErrorObject::owned::<String>(
+            RPCErrorCode::RpcVerifyRejected as i32,
+            format!("unexpected version, expected: 1, got: {version}"),
+            None,
+        ))?;
     }
 
-    let key = hex::decode(transaction.pub_key)?;
+    let key = hex::decode(transaction.pub_key).map_err(|_|
+                // This is apparently what ZQ1 does.
+                ErrorObject::owned::<String>(RPCErrorCode::RpcVerifyRejected as i32,
+                                   "Cannot parse public key".to_string(),
+                                   None))?;
 
-    let key = schnorr::PublicKey::from_sec1_bytes(&key)?;
-    let sig = schnorr::Signature::from_str(&transaction.signature)?;
+    let key = schnorr::PublicKey::from_sec1_bytes(&key).map_err(|_|
+                 // This is apparently what ZQ1 does.
+                 ErrorObject::owned::<String>(RPCErrorCode::RpcVerifyRejected as i32,
+                                              "Invalid public key".to_string(),
+                                              None))?;
+    let sig = schnorr::Signature::from_str(&transaction.signature).map_err(|err| {
+        ErrorObject::owned::<String>(
+            RPCErrorCode::RpcVerifyRejected as i32,
+            format!("Cannot extract signature - {}", err),
+            None,
+        )
+    })?;
 
     // TODO: Perform some initial validation of the transaction
 
     // If we don't trap this here, it will later cause the -1 in
-    // transaction::get_nonce() to panic.
+    // transaction::get_nonce() to pan1ic.
     if transaction.nonce == 0 {
-        return Err(anyhow!("Invalid nonce (0)"));
+        return Err(ErrorObject::owned::<String>(
+            RPCErrorCode::RpcInvalidParameter as i32,
+            "Invalid nonce (0)".to_string(),
+            None,
+        ))?;
     }
 
     let transaction = SignedTransaction::Zilliqa {
@@ -198,11 +235,44 @@ fn create_transaction(
         sig,
     };
 
-    let transaction_hash = node.create_transaction(transaction.clone())?;
+    let (transaction_hash, result) = node.create_transaction(transaction.clone())?;
+    let info = match result {
+        TxAddResult::AddedToMempool => Ok("Txn processed".to_string()),
+        TxAddResult::Duplicate(_) => Ok("Txn already present".to_string()),
+        TxAddResult::SameNonceButLowerGasPrice => {
+            // Ideally it would be nice to return an error here, but we would break compatibility if we did.
+            Ok("Another transaction exists with the same nonce but a higher gas price".to_string())
+        }
+        TxAddResult::CannotVerifySignature => Err(ErrorObject::owned::<String>(
+            RPCErrorCode::RpcVerifyRejected as i32,
+            "Cannot verify signature".to_string(),
+            None,
+        )),
+        TxAddResult::ValidationFailed(reason) => {
+            let code = match &reason {
+                ValidationOutcome::InsufficientGasZil(_, _)
+                | ValidationOutcome::InsufficientGasEvm(_, _)
+                | ValidationOutcome::NonceTooLow(_, _)
+                | ValidationOutcome::InsufficientFunds(_, _)
+                | ValidationOutcome::BlockGasLimitExceeded(_, _) => {
+                    RPCErrorCode::RpcInvalidParameter
+                }
+                _ => RPCErrorCode::RpcVerifyRejected,
+            };
+            Err(ErrorObject::owned::<String>(
+                code as i32,
+                reason.to_msg_string(),
+                None,
+            ))
+        }
+        TxAddResult::NonceTooLow(got, expected) => {
+            Ok(format!("Nonce ({got}) lower than current ({expected})"))
+        }
+    }?;
 
     let response = CreateTransactionResponse {
         contract_address: None,
-        info: "Txn processed".to_string(),
+        info,
         tran_id: transaction_hash.0.into(),
     };
 
@@ -238,7 +308,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
         .unwrap()
         .get_transaction_by_hash(hash)?
         .ok_or_else(|| {
-            jsonrpsee::types::ErrorObject::owned(
+            ErrorObject::owned(
                 RPCErrorCode::RpcDatabaseError as i32,
                 "Txn Hash not Present".to_string(),
                 jsonrpc_error_data.clone(),
