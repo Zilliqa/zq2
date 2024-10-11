@@ -78,7 +78,7 @@ start() {
         MOUNT_OPTION=""
     fi
     DOCKER_COMMAND="docker run -td \
-    -p 3333:3333 \
+    -p 3333:3333/udp \
     -p 4201:4201 \
     --net=host \
     --name zilliqa-${ZQ_VERSION} \

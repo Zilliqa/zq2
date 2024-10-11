@@ -11,18 +11,15 @@ use anyhow::{anyhow, Result};
 use cfg_if::cfg_if;
 use libp2p::{
     autonat,
-    core::upgrade,
-    dns,
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
     kad::{self, store::MemoryStore},
     mdns,
     multiaddr::{Multiaddr, Protocol},
-    noise,
     request_response::{self, OutboundFailure, ProtocolSupport},
-    swarm::{self, dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
-    tcp, yamux, PeerId, StreamProtocol, Swarm, Transport,
+    swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
+    PeerId, StreamProtocol, Swarm,
 };
 use tokio::{
     select,
@@ -101,51 +98,45 @@ impl P2pNode {
         let peer_id = PeerId::from(key_pair.public());
         info!(%peer_id);
 
-        let transport = tcp::tokio::Transport::new(tcp::Config::default())
-            .upgrade(upgrade::Version::V1)
-            .authenticate(noise::Config::new(&key_pair)?)
-            .multiplex(yamux::Config::default())
-            .boxed();
-        let transport = dns::tokio::Transport::system(transport)?.boxed();
-
-        let behaviour = Behaviour {
-            request_response: request_response::cbor::Behaviour::new(
-                iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
-                Default::default(),
-            ),
-            gossipsub: gossipsub::Behaviour::new(
-                MessageAuthenticity::Signed(key_pair.clone()),
-                gossipsub::ConfigBuilder::default()
-                    .max_transmit_size(524288)
-                    .build()
+        let swarm = libp2p::SwarmBuilder::with_existing_identity(key_pair)
+            .with_tokio()
+            .with_quic()
+            .with_dns()?
+            .with_behaviour(|key_pair| {
+                Ok(Behaviour {
+                    request_response: request_response::cbor::Behaviour::new(
+                        iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
+                        Default::default(),
+                    ),
+                    gossipsub: gossipsub::Behaviour::new(
+                        MessageAuthenticity::Signed(key_pair.clone()),
+                        gossipsub::ConfigBuilder::default()
+                            .max_transmit_size(524288)
+                            .build()
+                            .map_err(|e| anyhow!(e))?,
+                    )
                     .map_err(|e| anyhow!(e))?,
-            )
-            .map_err(|e| anyhow!(e))?,
-            mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
-            autonat: autonat::Behaviour::new(
-                peer_id,
-                autonat::Config {
-                    // Config changes to speed up autonat initialization. Set back to default if too aggressive.
-                    retry_interval: Duration::from_secs(10),
-                    refresh_interval: Duration::from_secs(30),
-                    boot_delay: Duration::from_secs(5),
-                    throttle_server_period: Duration::ZERO,
-                    ..Default::default()
-                },
-            ),
-            identify: identify::Behaviour::new(identify::Config::new(
-                "/ipfs/id/1.0.0".to_owned(),
-                key_pair.public(),
-            )),
-            kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
-        };
-
-        let swarm = Swarm::new(
-            transport,
-            behaviour,
-            peer_id,
-            swarm::Config::with_tokio_executor(),
-        );
+                    mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
+                    autonat: autonat::Behaviour::new(
+                        peer_id,
+                        autonat::Config {
+                            // Config changes to speed up autonat initialization.
+                            // Set back to default if too aggressive.
+                            retry_interval: Duration::from_secs(10),
+                            refresh_interval: Duration::from_secs(30),
+                            boot_delay: Duration::from_secs(5),
+                            throttle_server_period: Duration::ZERO,
+                            ..Default::default()
+                        },
+                    ),
+                    identify: identify::Behaviour::new(identify::Config::new(
+                        "/ipfs/id/1.0.0".to_owned(),
+                        key_pair.public(),
+                    )),
+                    kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
+                })
+            })?
+            .build();
 
         Ok(Self {
             shard_nodes: HashMap::new(),
@@ -223,10 +214,12 @@ impl P2pNode {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        let mut addr: Multiaddr = "/ip4/0.0.0.0".parse().unwrap();
-        addr.push(Protocol::Tcp(self.config.p2p_port));
-
-        self.swarm.listen_on(addr)?;
+        self.swarm.listen_on(
+            Multiaddr::empty()
+                .with(Protocol::Ip4(std::net::Ipv4Addr::UNSPECIFIED))
+                .with(Protocol::Udp(self.config.p2p_port))
+                .with(Protocol::QuicV1),
+        )?;
 
         if let Some(bootstrap_address) = &self.config.bootstrap_address {
             self.swarm
@@ -242,6 +235,7 @@ impl P2pNode {
         if let Some((peer, address)) = &self.config.bootstrap_address {
             self.swarm.dial(
                 DialOpts::peer_id(*peer)
+                    .override_role() // hole-punch
                     .addresses(vec![address.clone()])
                     .build(),
             )?;
@@ -263,7 +257,7 @@ impl P2pNode {
                     debug!(?event, "swarm event");
                     match event {
                         SwarmEvent::NewListenAddr { address, .. } => {
-                            info!(%address, "started listening");
+                            info!(%address, "P2P swarm listening on");
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                             for (peer_id, addr) in list {
