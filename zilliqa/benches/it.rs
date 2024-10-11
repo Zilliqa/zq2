@@ -106,6 +106,7 @@ pub fn process_blocks(c: &mut Criterion) {
             view,
             view,
             qc,
+            None,
             state.root_hash().unwrap(),
             empty_root_hash,
             empty_root_hash,

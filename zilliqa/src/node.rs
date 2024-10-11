@@ -231,10 +231,10 @@ impl Node {
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
             ExternalMessage::NewView(m) => {
-                if let Some(block) = self.consensus.new_view(*m)? {
+                if let Some((block, transactions)) = self.consensus.new_view(*m)? {
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, vec![]),
+                            Proposal::from_parts(block, transactions),
                         ))?;
                 }
                 // Acknowledge this new view.

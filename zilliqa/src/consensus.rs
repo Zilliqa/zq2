@@ -425,7 +425,7 @@ impl Consensus {
                 || (time_since_last_view_change + minimum_time_left_for_empty_block
                     >= exponential_backoff_timeout)
             {
-                if let Ok(Some((block, transactions))) = self.propose_new_block() {
+                if let Ok(Some((block, transactions))) = self.propose_new_block(None, None) {
                     self.create_next_block_on_timeout = false;
                     return Ok(Some((
                         None,
@@ -1036,7 +1036,7 @@ impl Consensus {
                 // We propose new block immediately if there's something in mempool or it's the first view
                 // Otherwise the block will be proposed on timeout
                 if self.view.get_view() == 1 {
-                    return self.propose_new_block();
+                    return self.propose_new_block(None, None);
                 }
 
                 // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
@@ -1049,7 +1049,7 @@ impl Consensus {
                 if time_since_last_view_change + minimum_time_left_for_empty_block
                     >= exponential_backoff_timeout
                 {
-                    return self.propose_new_block();
+                    return self.propose_new_block(None, None);
                 }
 
                 // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
@@ -1072,20 +1072,22 @@ impl Consensus {
 
         // Either way assemble early proposal now
         let mut state = self.state.clone();
-        self.assemble_early_block_at(&mut state)?;
+        self.assemble_early_block_at(&mut state, None)?;
         self.state = state;
 
         Ok(None)
     }
 
     /// Finalise the early Proposal.
-    /// This should only run after majority QC is available.
+    /// This should only run after majority QC or aggQC are available.
     /// It applies the rewards and produces the final Proposal.
     fn finish_early_proposal_at(
         &self,
         state: &mut State,
         votes: &BTreeMap<Hash, BlockVotes>,
         proposal: Block,
+        qc: Option<QuorumCertificate>,
+        agg: Option<AggregateQc>,
     ) -> Result<Option<Block>> {
         // Retrieve parent block data
         let parent_block = self
@@ -1105,10 +1107,10 @@ impl Consensus {
             return Ok(None);
         };
 
-        state.set_to_root(proposal.state_root_hash().into());
-
-        // Compute the majority QC
-        let qc = self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view);
+        // Compute the majority QC if not passed in
+        let final_qc = qc.unwrap_or_else(|| {
+            self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view)
+        });
 
         // Retrieve the previous leader and committee - for rewards
         let committee = state.get_stakers_at_block(&parent_block)?;
@@ -1125,7 +1127,7 @@ impl Consensus {
             &committee,
             proposer, // Last leader
             parent_block_view + 1,
-            &qc.cosigned, // QC cosigners
+            &final_qc.cosigned, // QC cosigners
         )?;
 
         // ZIP-9: Sink gas to zero account
@@ -1143,7 +1145,8 @@ impl Consensus {
             proposal.header.view,
             proposal.header.number,
             // majority QC
-            qc,
+            final_qc,
+            agg,
             // post-reward updated state
             state.root_hash()?,
             proposal.header.transactions_root_hash,
@@ -1161,9 +1164,12 @@ impl Consensus {
     }
 
     /// Assembles the Proposal block early.
-    /// This is performed before the majority QC is available.
-    /// It does all the needed work but with a dummy QC.
-    fn assemble_early_block_at(&mut self, state: &mut State) -> Result<()> {
+    /// This can be performed before the majority QC is available. If QC not specified it does all the needed work but with a dummy QC.
+    fn assemble_early_block_at(
+        &mut self,
+        state: &mut State,
+        qc: Option<QuorumCertificate>,
+    ) -> Result<()> {
         if self.early_proposal.is_some() {
             return Ok(());
         }
@@ -1179,7 +1185,8 @@ impl Consensus {
             .context("missing canonical block")?; // retrieve highest canonical block
 
         // Generate early QC
-        let early_qc = QuorumCertificate::new_with_identity(block.hash(), block.view());
+        let early_qc =
+            qc.unwrap_or_else(|| QuorumCertificate::new_with_identity(block.hash(), block.view()));
         let parent = self
             .get_block(&early_qc.block_hash)?
             .context("missing parent block")?;
@@ -1220,7 +1227,8 @@ impl Consensus {
             self.secret_key,
             executed_block_header.view,
             executed_block_header.number,
-            early_qc,           // dummy QC for early proposal
+            early_qc, // dummy QC for early proposal
+            None,
             state.root_hash()?, // late state before rewards are applied
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
@@ -1468,7 +1476,8 @@ impl Consensus {
             self.secret_key,
             executed_block_header.view,
             executed_block_header.number,
-            early_qc,           // dummy QC for early proposal
+            early_qc, // dummy QC for early proposal
+            None,
             state.root_hash()?, // late state before rewards are applied
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
@@ -1484,12 +1493,16 @@ impl Consensus {
 
     /// Produces the Proposal block.
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
-    fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn propose_new_block(
+        &mut self,
+        qc: Option<QuorumCertificate>,
+        agg: Option<AggregateQc>,
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let mut state = self.state.clone();
 
         if self.early_proposal.is_none() {
             trace!("missing early proposal {}", self.view.get_view());
-            self.assemble_early_block_at(&mut state)?;
+            self.assemble_early_block_at(&mut state, qc)?;
         }
         let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
@@ -1509,7 +1522,7 @@ impl Consensus {
 
         // finalise the proposal
         let Some(final_block) =
-            self.finish_early_proposal_at(&mut state, &self.votes, pending_block)?
+            self.finish_early_proposal_at(&mut state, &self.votes, pending_block, qc, agg)?
         else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
@@ -1599,7 +1612,10 @@ impl Consensus {
         Ok(committee)
     }
 
-    pub fn new_view(&mut self, new_view: NewView) -> Result<Option<Block>> {
+    pub fn new_view(
+        &mut self,
+        new_view: NewView,
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         trace!("Received new view for height: {:?}", new_view.view);
 
         // The leader for this view should be chosen according to the parent of the highest QC
@@ -1680,7 +1696,7 @@ impl Consensus {
                     self.view.set_view(new_view.view);
                 }
 
-                // if we are already in the round in which the vote counts and have reached supermajority
+                // if we are already in the round in which the vote counts and have reached supermajority we can propose a block
                 if new_view.view == self.view.get_view() {
                     // todo: the aggregate qc is an aggregated signature on the qcs, view and validator index which can be batch verified
                     let agg =
@@ -1691,36 +1707,14 @@ impl Consensus {
                         .get_block(&parent_hash)?
                         .ok_or_else(|| anyhow!("missing block"))?;
 
-                    let previous_state_root_hash = self.state.root_hash()?;
-
-                    if previous_state_root_hash != parent.state_root_hash() {
-                        warn!("when proposing, state root hash mismatch, expected: {:?}, actual: {:?}", parent.state_root_hash(), previous_state_root_hash);
-                        self.state.set_to_root(parent.state_root_hash().into());
-                    }
-
-                    self.apply_rewards(&committee, &parent, new_view.view, &high_qc.cosigned)?;
-
-                    let mut empty_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-                    let empty_root_hash = Hash(empty_trie.root_hash()?.into());
-                    // why does this have no txn?
-                    let proposal = Block::from_agg(
-                        self.secret_key,
-                        self.view.get_view(),
-                        parent.header.number + 1,
-                        high_qc,
-                        agg,
-                        self.state.root_hash()?,
-                        empty_root_hash,
-                        empty_root_hash,
-                        SystemTime::max(SystemTime::now(), parent.timestamp()),
+                    trace!(
+                        view = self.view.get_view(),
+                        height = parent.header.number + 1,
+                        "######### creating proposal block from new view"
                     );
 
-                    self.state.set_to_root(previous_state_root_hash.into());
-
-                    trace!(proposal_hash = ?proposal.hash(), view = self.view.get_view(), height = proposal.header.number, "######### creating proposal block from new view");
-
                     // as a future improvement, process the proposal before broadcasting it
-                    return Ok(Some(proposal));
+                    return self.propose_new_block(Some(high_qc), Some(agg));
                     // we don't want to keep the collected votes if we proposed a new block
                     // we should remove the collected votes if we couldn't reach supermajority within the view
                 }

@@ -521,6 +521,7 @@ impl Block {
         view: u64,
         number: u64,
         qc: QuorumCertificate,
+        agg: Option<AggregateQc>,
         state_root_hash: Hash,
         transactions_root_hash: Hash,
         receipts_root_hash: Hash,
@@ -533,7 +534,7 @@ impl Block {
             view,
             number,
             qc,
-            None,
+            agg,
             state_root_hash,
             transactions_root_hash,
             receipts_root_hash,
@@ -541,34 +542,6 @@ impl Block {
             timestamp,
             gas_used,
             gas_limit,
-            Either::Left(secret_key),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_agg(
-        secret_key: SecretKey,
-        view: u64,
-        number: u64,
-        qc: QuorumCertificate,
-        agg: AggregateQc,
-        state_root_hash: Hash,
-        transactions_root_hash: Hash,
-        receipts_root_hash: Hash,
-        timestamp: SystemTime,
-    ) -> Block {
-        Self::new(
-            view,
-            number,
-            qc,
-            Some(agg),
-            state_root_hash,
-            transactions_root_hash,
-            receipts_root_hash,
-            vec![],
-            timestamp,
-            EvmGas(0),
-            EvmGas(0),
             Either::Left(secret_key),
         )
     }
