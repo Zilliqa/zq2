@@ -144,7 +144,6 @@ contract Deposit {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
         require(signature.length == 96);
-        require(signerAddress != address(0));
 
         require(_stakerKeys.length < _maximumStakers, "too many stakers");
 
@@ -204,6 +203,7 @@ contract Deposit {
         bytes calldata blsPubKey,
         bytes calldata peerId,
         address rewardAddress,
+        address signerAddress,
         uint256 amount
     ) public {
         require(msg.sender == address(0));
@@ -218,6 +218,7 @@ contract Deposit {
         _stakersMap[blsPubKey].balance = amount;
         totalStake += amount;
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
+        _stakersMap[blsPubKey].signerAddress = signerAddress;
         _stakersMap[blsPubKey].peerId = peerId;
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
