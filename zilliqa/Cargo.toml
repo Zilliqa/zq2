@@ -26,7 +26,7 @@ anyhow = { version = "1.0.89", features = ["backtrace"] }
 vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.3.6", default-features = false, features = [
+alloy = { version = "0.4.2", default-features = false, features = [
   "consensus",
   "eips",
   "k256",

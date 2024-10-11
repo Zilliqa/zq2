@@ -21,7 +21,7 @@ test_contract_bytecode = []
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.3.6", default-features = false, features = [
+alloy = { version = "0.4.2", default-features = false, features = [
   "contract",
   "dyn-abi",
   "json-abi",
