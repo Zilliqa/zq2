@@ -355,9 +355,12 @@ impl DatabaseRef for &State {
         Ok(U256::from_be_bytes(result.0))
     }
 
-    fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
-        // TODO
-        Ok(B256::ZERO)
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        Ok(self
+            .block_store
+            .get_block_by_number(number)?
+            .map(|block| B256::new(block.hash().0))
+            .unwrap_or_default())
     }
 }
 

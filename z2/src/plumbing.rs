@@ -139,14 +139,14 @@ pub async fn run_deployer_new(
 
 pub async fn run_deployer_install(
     config_file: &str,
-    only_selected_nodes: bool,
+    node_selection: bool,
     max_parallel: Option<usize>,
 ) -> Result<()> {
     println!("🦆 Installing {config_file} .. ");
     deployer::install_or_upgrade(
         config_file,
         false,
-        only_selected_nodes,
+        node_selection,
         max_parallel.unwrap_or(50),
     )
     .await?;
@@ -155,17 +155,12 @@ pub async fn run_deployer_install(
 
 pub async fn run_deployer_upgrade(
     config_file: &str,
-    only_selected_nodes: bool,
+    node_selection: bool,
     max_parallel: Option<usize>,
 ) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
-    deployer::install_or_upgrade(
-        config_file,
-        true,
-        only_selected_nodes,
-        max_parallel.unwrap_or(1),
-    )
-    .await?;
+    deployer::install_or_upgrade(config_file, true, node_selection, max_parallel.unwrap_or(1))
+        .await?;
     Ok(())
 }
 
@@ -177,16 +172,16 @@ pub async fn run_deployer_get_config_file(config_file: &str, role: NodeRole) -> 
 
 pub async fn run_deployer_get_deposit_commands(
     config_file: &str,
-    only_selected_nodes: bool,
+    node_selection: bool,
 ) -> Result<()> {
     println!("🦆 Getting node deposit commands for {config_file} .. ");
-    deployer::get_deposit_commands(config_file, only_selected_nodes).await?;
+    deployer::get_deposit_commands(config_file, node_selection).await?;
     Ok(())
 }
 
-pub async fn run_deployer_deposit(config_file: &str, only_selected_nodes: bool) -> Result<()> {
+pub async fn run_deployer_deposit(config_file: &str, node_selection: bool) -> Result<()> {
     println!("🦆 Running deposit for {config_file} .. ");
-    deployer::run_deposit(config_file, only_selected_nodes).await?;
+    deployer::run_deposit(config_file, node_selection).await?;
     Ok(())
 }
 
@@ -214,6 +209,12 @@ pub async fn run_deployer_restore(
 ) -> Result<()> {
     println!("🦆 Restoring process for {config_file} .. ");
     deployer::run_restore(config_file, filename, max_parallel.unwrap_or(50)).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_reset(config_file: &str, node_selection: bool) -> Result<()> {
+    println!("🦆 Running reset for {config_file} .. ");
+    deployer::run_reset(config_file, node_selection).await?;
     Ok(())
 }
 

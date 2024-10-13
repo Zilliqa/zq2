@@ -475,6 +475,15 @@ impl ChainNode {
             return Err(anyhow!("Error removing previous installation files"));
         }
 
+        if self.role == NodeRole::Checkpoint {
+            let cmd = "sudo rm -f /tmp/checkpoint_cron_job.sh";
+            let output = self.machine.run(cmd, true).await?;
+            if !output.success {
+                println!("{:?}", output.stderr);
+                return Err(anyhow!("Error removing previous checkpoint cronjob"));
+            }
+        }
+
         println!("Removed previous installation files");
 
         Ok(())
@@ -681,6 +690,25 @@ impl ChainNode {
             "✔".green(),
             self.name()
         ));
+
+        Ok(())
+    }
+
+    pub async fn reset(&self, multi_progress: &MultiProgress) -> Result<()> {
+        let machine = &self.machine;
+        let progress_bar = multi_progress.add(cliclack::progress_bar(2));
+
+        progress_bar.start(format!("{}: Stopping the service", self.name()));
+        machine
+            .run("sudo systemctl stop zilliqa.service", false)
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.start(format!("{}: Deleting the data folder", self.name()));
+        machine.run("sudo rm -rf /data", false).await?;
+        progress_bar.inc(1);
+
+        progress_bar.stop(format!("{} {}: Reset completed", "✔".green(), self.name()));
 
         Ok(())
     }

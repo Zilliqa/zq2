@@ -613,6 +613,14 @@ impl Db {
         Ok(())
     }
 
+    pub fn mark_block_as_canonical(&self, hash: Hash) -> Result<()> {
+        self.block_store.lock().unwrap().execute(
+            "UPDATE blocks SET is_canonical = TRUE WHERE block_hash = ?1",
+            [hash],
+        )?;
+        Ok(())
+    }
+
     pub fn mark_block_as_non_canonical(&self, hash: Hash) -> Result<()> {
         self.block_store.lock().unwrap().execute(
             "UPDATE blocks SET is_canonical = FALSE WHERE block_hash = ?1",
