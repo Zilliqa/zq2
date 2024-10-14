@@ -1,14 +1,11 @@
-use std::{
-    collections::HashSet,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use alloy::{
     eips::BlockNumberOrTag,
     primitives::B256,
     rpc::types::trace::{
         geth::{GethDebugTracingOptions, TraceResult},
-        parity::{TraceResults, TraceType},
+        parity::TraceResults,
     },
 };
 use anyhow::Result;
@@ -30,7 +27,7 @@ fn replay_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<TraceRe
     let mut params = params.sequence();
     let txn_hash: B256 = params.next()?;
     let txn_hash: Hash = txn_hash.into();
-    let trace_types: HashSet<TraceType> = params.next()?;
+    let trace_types = params.next()?;
 
     let trace = node
         .lock()

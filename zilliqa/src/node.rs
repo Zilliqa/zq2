@@ -18,7 +18,7 @@ use alloy::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::Inspector;
+use revm::{primitives::map::FxBuildHasher, Inspector};
 use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
     TransactionContext,
@@ -455,7 +455,7 @@ impl Node {
     pub fn trace_evm_transaction(
         &self,
         txn_hash: Hash,
-        trace_types: &HashSet<TraceType>,
+        trace_types: &HashSet<TraceType, FxBuildHasher>,
     ) -> Result<TraceResults> {
         let txn = self
             .get_transaction_by_hash(txn_hash)?
@@ -638,6 +638,9 @@ impl Node {
                         result: trace.into(),
                         tx_hash: Some(txn_hash.0.into()),
                     }))
+                }
+                GethDebugBuiltInTracerType::FlatCallTracer => {
+                    Err(anyhow!("`flatCallTracer` is not implemented"))
                 }
                 GethDebugBuiltInTracerType::FourByteTracer => {
                     let mut inspector = FourByteInspector::default();
