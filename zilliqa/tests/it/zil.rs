@@ -670,7 +670,14 @@ async fn scilla_precompiles(mut network: Network) {
     assert_eq!(scilla_log["_eventname"], "Inserted");
     assert_eq!(scilla_log["params"][0]["type"], "ByStr20");
     assert_eq!(scilla_log["params"][0]["vname"], "a");
-    assert_eq!(scilla_log["params"][0]["value"], format!("{key:?}"));
+    assert_eq!(
+        scilla_log["params"][0]["value"]
+            .as_str()
+            .unwrap()
+            .parse::<H160>()
+            .unwrap(),
+        key
+    );
     assert_eq!(scilla_log["params"][1]["type"], "Uint128");
     assert_eq!(scilla_log["params"][1]["vname"], "b");
     assert_eq!(scilla_log["params"][1]["value"], "5");

@@ -33,10 +33,11 @@ use crate::{
         EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_CONTRACT_CREATE_GAS,
         ZIL_CONTRACT_INVOKE_GAS, ZIL_MAX_CODE_SIZE, ZIL_NORMAL_TXN_GAS,
     },
-    crypto,
-    crypto::Hash,
+    crypto::{self, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     schnorr,
+    scilla::ParamValue,
+    serde_util::vec_param_value,
     state::Account,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
@@ -983,29 +984,29 @@ pub struct ScillaLog {
     pub address: Address,
     #[serde(rename = "_eventname")]
     pub event_name: String,
-    pub params: Vec<ScillaParam>,
+    #[serde(with = "vec_param_value")]
+    pub params: Vec<ParamValue>,
 }
 
 impl ScillaLog {
     pub fn into_evm(self) -> EvmLog {
-        /// A version of [ScillaLog] which lets us serialise the `address` manually. We need to serialize it without
-        /// the checksum.
-        #[derive(Serialize)]
-        struct ScillaLogNoChecksum {
+        /// A version of [ScillaLog] which lets us serialise the `address` manually, so we can exclude the checksum, and doesn't encode the `params` values as strings.
+        #[derive(Clone, Serialize, Debug)]
+        pub struct ScillaLogRaw {
             address: String,
             #[serde(rename = "_eventname")]
             event_name: String,
-            params: Vec<ScillaParam>,
+            params: Vec<ParamValue>,
         }
 
         let address = self.address;
-        let log = ScillaLogNoChecksum {
+        let log = ScillaLogRaw {
             address: format!("{address:?}"),
             event_name: self.event_name,
             params: self.params,
         };
 
-        // Unwrap is safe because [ScillaLogNoChecksum::Serialize] is infallible.
+        // Unwrap is safe because [ScillaLogRaw::Serialize] is infallible.
         let data = serde_json::to_string(&log).unwrap().abi_encode();
         EvmLog {
             address,
@@ -1064,25 +1065,6 @@ impl Log {
                 .with(log.topics.iter().map(|topic| topic.to_vec()).concat())
                 .finalize(),
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScillaParam {
-    #[serde(rename = "type")]
-    pub ty: String,
-    pub value: String,
-    #[serde(rename = "vname")]
-    pub name: String,
-}
-
-impl ScillaParam {
-    pub fn compute_hash(&self) -> Hash {
-        Hash::builder()
-            .with(self.ty.as_bytes())
-            .with(self.value.as_bytes())
-            .with(self.name.as_bytes())
-            .finalize()
     }
 }
 
