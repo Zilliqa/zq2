@@ -1181,13 +1181,12 @@ impl Consensus {
 
         // Ensure sane state
         let previous_state_root_hash = state.root_hash()?;
-        if previous_state_root_hash != parent.state_root_hash() {
+        let parent_state_root_hash = parent.state_root_hash();
+        if previous_state_root_hash != parent_state_root_hash {
             warn!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",
-                parent.state_root_hash(),
-                previous_state_root_hash
+                parent_state_root_hash, previous_state_root_hash
             );
-            state.set_to_root(parent.state_root_hash().into());
         }
 
         // Internal states
@@ -1217,7 +1216,7 @@ impl Consensus {
             executed_block_header.number,
             qc,
             agg,
-            state.root_hash()?, // late state before rewards are applied
+            parent_state_root_hash, // late state before transactions or rewards are applied
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             vec![],
@@ -1227,26 +1226,27 @@ impl Consensus {
         );
 
         self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie));
-        self.early_proposal_apply_transactions(state)?;
-
-        state.set_to_root(previous_state_root_hash.into());
+        self.early_proposal_apply_transactions()?;
 
         Ok(())
     }
 
     /// Updates self.early_proposal data (proposal, applied_transactions, transactions_trie, receipts_trie) to include any transactions in the mempool
-    /// Warning: This fn will mutate State
-    fn early_proposal_apply_transactions(&mut self, state: &mut State) -> Result<()> {
+    fn early_proposal_apply_transactions(&mut self) -> Result<()> {
         if self.early_proposal.is_none() {
             error!("could not apply transactions to early_proposal because it does not exist");
             return Ok(());
         }
 
+        let mut state = self.state.clone();
+        let previous_state_root_hash = state.root_hash()?;
+
         let proposal = self.early_proposal.as_ref().unwrap().0.clone();
 
-        // Internal states
+        // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
-        let mut updated_root_hash = state.root_hash()?;
+        // Internal states
+        let mut updated_root_hash: Hash = state.root_hash()?;
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
@@ -1269,7 +1269,7 @@ impl Consensus {
 
             // Apply specific txn
             let result = Self::apply_transaction_at(
-                state,
+                &mut state,
                 self.db.clone(),
                 tx.clone(),
                 proposal.header,
@@ -1342,6 +1342,10 @@ impl Consensus {
             proposal.transactions = applied_transaction_hashes;
             proposal.header.gas_used = proposal.header.gas_limit - gas_left;
         }
+
+        // Restore the state to previous
+        state.set_to_root(previous_state_root_hash.into());
+        self.state = state;
 
         // as a future improvement, process the proposal before broadcasting it
         Ok(())
@@ -1559,14 +1563,7 @@ impl Consensus {
         if let TxAddResult::AddedToMempool = &inserted {
             if self.create_next_block_on_timeout && self.early_proposal.is_some() {
                 info!("add transaction to early proposal {}", self.view.get_view());
-                let mut state = self.state.clone();
-                let previous_state_root_hash = state.root_hash()?;
-
-                self.early_proposal_apply_transactions(&mut state)?;
-
-                // Restore the state to previous
-                state.set_to_root(previous_state_root_hash.into());
-                self.state = state;
+                self.early_proposal_apply_transactions()?;
             }
         }
         Ok(inserted)
