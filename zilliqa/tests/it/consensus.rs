@@ -291,6 +291,12 @@ async fn launch_shard(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn dynamic_cross_shard_link_creation(mut network: Network) {
+    // Run for this many ticks before expecting a new network to confirm a txn.
+    const STABILISATION_TICKS: usize = 400;
+    // Run for this many ticks to ensure that 6 (or so) blocks have gone by
+    // (this is the comms overhead from a shard to the main network)
+    const COMMUNICATION_TICKS: usize = 800;
+
     let main_wallet = network.genesis_wallet().await;
 
     let initial_value = 99u64;
@@ -322,10 +328,16 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .await
         .unwrap();
     let hash = tx.tx_hash();
-    let link_receipt = network.run_until_receipt(&main_wallet, hash, 200).await;
+    let link_receipt = network
+        .run_until_receipt(&main_wallet, hash, STABILISATION_TICKS)
+        .await;
     assert!(link_receipt.status.unwrap() == 1.into());
     network
-        .run_until_block(&main_wallet, link_receipt.block_number.unwrap() + 6, 300)
+        .run_until_block(
+            &main_wallet,
+            link_receipt.block_number.unwrap() + 6,
+            STABILISATION_TICKS,
+        )
         .await; // Finalize
     network.children.get_mut(&shard_2_id).unwrap().tick().await; // handle all the LaunchLink messages
     network.children.get_mut(&shard_2_id).unwrap().tick().await; // ...and forward them back to parent
@@ -367,7 +379,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .children
         .get_mut(&shard_2_id)
         .unwrap()
-        .run_until_receipt(&shard_2_wallet, xfer_hash, 200)
+        .run_until_receipt(&shard_2_wallet, xfer_hash, STABILISATION_TICKS)
         .await;
 
     // Then send the actual cross-shard tx (from shard 1)
@@ -402,7 +414,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .children
         .get_mut(&shard_1_id)
         .unwrap()
-        .run_until_receipt(&shard_1_wallet, hash, 200)
+        .run_until_receipt(&shard_1_wallet, hash, STABILISATION_TICKS)
         .await;
 
     // Finalize the block on shard 1
@@ -410,7 +422,11 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
         .children
         .get_mut(&shard_1_id)
         .unwrap()
-        .run_until_block(&shard_1_wallet, receipt.block_number.unwrap() + 6, 300)
+        .run_until_block(
+            &shard_1_wallet,
+            receipt.block_number.unwrap() + 6,
+            STABILISATION_TICKS,
+        )
         .await;
 
     let getter = contract.function("getUint256").unwrap();
@@ -448,7 +464,7 @@ async fn dynamic_cross_shard_link_creation(mut network: Network) {
                         .as_slice(),
                 ) == U256::from(custom_value)
             },
-            800,
+            COMMUNICATION_TICKS,
         )
         .await
         .unwrap();
