@@ -75,6 +75,32 @@ async fn deposit_stake(
     hash
 }
 
+async fn current_epoch(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    block: Option<u64>,
+) -> u64 {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .data(contracts::deposit::CURRENT_EPOCH.encode_input(&[]).unwrap());
+    let response = wallet
+        .call(&tx.into(), block.map(|b| b.into()))
+        .await
+        .unwrap();
+    let epoch = contracts::deposit::CURRENT_EPOCH
+        .decode_output(&response)
+        .unwrap()
+        .remove(0)
+        .into_uint()
+        .unwrap()
+        .as_u64();
+    let current_block = block.unwrap_or(wallet.get_block_number().await.unwrap().as_u64());
+
+    // Sanity check that epochs are calculated correctly (assuming `blocks_per_epoch = 2`).
+    assert_eq!(epoch, current_block / 2);
+
+    epoch
+}
+
 async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: u128) -> H256 {
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT.into_array()))
@@ -82,13 +108,15 @@ async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: 
             contracts::deposit::UNSTAKE
                 .encode_input(&[Token::Uint(amount.into())])
                 .unwrap(),
-        );
+        )
+        .gas(10000000); // TODO: Why needed?
     let hash = control_wallet
         .send_transaction(tx, None)
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(control_wallet, hash, 50).await;
+    let receipt = network.run_until_receipt(control_wallet, hash, 100).await;
+    assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
 
@@ -118,30 +146,6 @@ async fn get_stakers(
         .to(H160(contract_addr::DEPOSIT.into_array()))
         .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
     let stakers = wallet.call(&tx.into(), None).await.unwrap();
-    let stakers = contracts::deposit::GET_STAKERS
-        .decode_output(&stakers)
-        .unwrap()[0]
-        .clone()
-        .into_array()
-        .unwrap();
-
-    stakers
-        .into_iter()
-        .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
-        .collect()
-}
-
-async fn get_stakers_at(
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-    block_number: u64,
-) -> Vec<NodePublicKey> {
-    let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
-        .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
-    let stakers = wallet
-        .call(&tx.into(), Some(block_number.into()))
-        .await
-        .unwrap();
     let stakers = contracts::deposit::GET_STAKERS
         .decode_output(&stakers)
         .unwrap()[0]
@@ -202,7 +206,7 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     check_miner_got_reward(&wallet, 1).await;
 }
 
-#[zilliqa_macros::test(blocks_per_epoch = 3)]
+#[zilliqa_macros::test(blocks_per_epoch = 2)]
 async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -220,8 +224,6 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert_eq!(stakers.len(), 4);
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
 
-    let pop = new_validator_key.pop_prove();
-
     let deposit_hash = deposit_stake(
         &mut network,
         &wallet,
@@ -229,7 +231,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         new_validator_key.to_libp2p_keypair().public().to_peer_id(),
         32 * 10u128.pow(18),
         reward_address,
-        pop,
+        new_validator_key.pop_prove(),
     )
     .await;
 
@@ -239,56 +241,33 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         .unwrap()
         .unwrap()
         .block_number
+        .unwrap()
+        .as_u64();
+
+    // The new validator should become part of the committee exactly two epochs after the one in which the deposit was
+    // made.
+    let deposit_epoch = current_epoch(&wallet, Some(deposit_block)).await;
+    network
+        .run_until_async(
+            || async {
+                let should_be_in_committee =
+                    current_epoch(&wallet, None).await == deposit_epoch + 2;
+
+                let stakers = get_stakers(&wallet).await;
+                if !should_be_in_committee {
+                    assert_eq!(stakers.len(), 4);
+                    assert!(!stakers.contains(&new_validator_key.node_public_key()));
+                    false // Keep running
+                } else {
+                    assert_eq!(stakers.len(), 5);
+                    assert!(stakers.contains(&new_validator_key.node_public_key()));
+                    true
+                }
+            },
+            200,
+        )
+        .await
         .unwrap();
-
-    // At least one full epoch (3 blocks) should be guaranteed before changes take place
-    network
-        .run_until_block(&wallet, deposit_block + 3, 200)
-        .await;
-
-    info!("deposit block: {deposit_block}");
-
-    for n in 0..=(deposit_block.as_u64() + 3) {
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT.into_array()))
-            .data(contracts::deposit::CURRENT_EPOCH.encode_input(&[]).unwrap());
-        let epoch = wallet.call(&tx.into(), Some(n.into())).await.unwrap();
-        let epoch = contracts::deposit::CURRENT_EPOCH
-            .decode_output(&epoch)
-            .unwrap();
-
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT.into_array()))
-            .data(
-                contracts::deposit::INTERNAL_COMMITTEE
-                    .encode_input(&[])
-                    .unwrap(),
-            );
-        let committee = wallet.call(&tx.into(), Some(n.into())).await.unwrap();
-        let committee = contracts::deposit::INTERNAL_COMMITTEE
-            .decode_output(&committee)
-            .unwrap();
-
-        let stakers = get_stakers_at(&wallet, n).await;
-        info!(
-            "{n}: stakers: {}, epoch: {epoch:?}, committee: {committee:?}",
-            stakers.len()
-        );
-    }
-
-    let stakers = get_stakers(&wallet).await;
-    assert_eq!(stakers.len(), 4);
-    assert!(!stakers.contains(&new_validator_key.node_public_key()));
-
-    // At most two epoch boundaries (= two full epochs, + 1 block for the first block of the 3rd)
-    // before the deposit is guaranteed to have been processed
-    network
-        .run_until_block(&wallet, deposit_block + 7, 200)
-        .await;
-
-    let stakers = get_stakers(&wallet).await;
-    assert_eq!(stakers.len(), 5);
-    assert!(stakers.contains(&new_validator_key.node_public_key()));
 
     // Check the new validator eventually gets to be a block proposer.
     network
@@ -384,14 +363,14 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     );
 }
 
-#[zilliqa_macros::test(blocks_per_epoch = 3)]
-async fn validators_can_leave(mut network: Network) {
-    let genesis_wallet = network.genesis_wallet().await;
+#[zilliqa_macros::test(blocks_per_epoch = 2)]
+async fn validators_can_unstake(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
 
     // randomise the current epoch state and current leader
     let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
     network
-        .run_until_block(&genesis_wallet, blocks_to_prerun.into(), 100)
+        .run_until_block(&wallet, blocks_to_prerun.into(), 100)
         .await;
 
     let validator_idx = network.random_index();
@@ -402,42 +381,67 @@ async fn validators_can_leave(mut network: Network) {
     let validator_control_wallet = network
         .wallet_from_key(network.get_node_raw(validator_idx).onchain_key.clone())
         .await;
-    fund_wallet(&mut network, &genesis_wallet, &validator_control_wallet).await;
+    fund_wallet(&mut network, &wallet, &validator_control_wallet).await;
 
-    let stakers = get_stakers(&genesis_wallet).await;
+    let stakers = get_stakers(&wallet).await;
     assert_eq!(stakers.len(), 4);
     assert!(stakers.contains(&validator_blskey));
 
     // unstake validator's entire stake
-    let stake = get_stake(&genesis_wallet, &validator_blskey).await;
+    let stake = get_stake(&wallet, &validator_blskey).await;
     let unstake_hash = unstake_amount(&mut network, &validator_control_wallet, stake).await;
-    let unstake_block = genesis_wallet
+    let unstake_block = wallet
         .get_transaction_receipt(unstake_hash)
         .await
         .unwrap()
         .unwrap()
         .block_number
+        .unwrap()
+        .as_u64();
+
+    // The validator should leave the committee exactly two epochs after the one in which the deposit was made.
+    let unstake_epoch = current_epoch(&wallet, Some(unstake_block)).await;
+    network
+        .run_until_async(
+            || async {
+                let should_be_in_committee =
+                    current_epoch(&wallet, None).await != unstake_epoch + 2;
+
+                let stakers = get_stakers(&wallet).await;
+                if should_be_in_committee {
+                    assert_eq!(stakers.len(), 4);
+                    assert!(stakers.contains(&validator_blskey));
+                    false // Keep running
+                } else {
+                    assert_eq!(stakers.len(), 3);
+                    assert!(!stakers.contains(&validator_blskey));
+                    true
+                }
+            },
+            200,
+        )
+        .await
         .unwrap();
-
-    // unstaking should happen after exactly two epoch boundaries
-    // more than 3 blocks should always be required (with blocks_per_epoch = 3):
-    network
-        .run_until_block(&genesis_wallet, unstake_block + 3, 200)
-        .await;
-    let stakers = get_stakers(&genesis_wallet).await;
-    assert_eq!(stakers.len(), 4);
-    assert!(stakers.contains(&validator_blskey));
-
-    // At most 2*3+1 = 7 blocks required to get two epoch boundaries
-    network
-        .run_until_block(&genesis_wallet, unstake_block + 7, 200)
-        .await;
-    let stakers = get_stakers(&genesis_wallet).await;
-    assert_eq!(stakers.len(), 3);
-    assert!(!stakers.contains(&validator_blskey));
 
     // ensure network still runs well
     network
-        .run_until_block(&genesis_wallet, unstake_block + 15, 500)
-        .await;
+        .run_until_async(
+            || async {
+                let stakers = get_stakers(&wallet).await;
+                assert_eq!(stakers.len(), 3);
+                assert!(!stakers.contains(&validator_blskey));
+                wallet.get_block_number().await.unwrap().as_u64() >= unstake_block + 15
+            },
+            1000,
+        )
+        .await
+        .unwrap();
 }
+
+// TODO: Tests for:
+// * partial unstaking staying above the minimum
+// * partial unstaking under the minimum (should fail)
+// * increase stake
+// * updating staker details (reward address)
+// * disallow access to callers other than the controlAddress
+// * withdraw stake after 2 weeks

@@ -34,6 +34,8 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("getRewardAddress").unwrap().clone());
     pub static GET_PEER_ID: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getPeerId").unwrap().clone());
+    pub static GET_STAKERS_MAP: Lazy<Function> = 
+        Lazy::new(|| CONTRACT.abi.function("getStakersMap").unwrap().clone());
     pub static GET_STAKERS: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
     pub static TOTAL_STAKE: Lazy<Function> =
