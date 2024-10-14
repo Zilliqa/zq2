@@ -39,7 +39,7 @@ use crate::{
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
-    pool::TxPoolContent,
+    pool::{TxAddResult, TxPoolContent},
     state::State,
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
@@ -371,17 +371,18 @@ impl Node {
         Ok(false)
     }
 
-    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
+    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
         let hash = txn.calculate_hash();
 
         info!(?hash, "seen new txn {:?}", txn);
 
-        if self.consensus.handle_new_transaction(txn.clone())? {
+        let result = self.consensus.handle_new_transaction(txn.clone())?;
+        if let TxAddResult::AddedToMempool = &result {
             self.message_sender
                 .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
         }
 
-        Ok(hash)
+        Ok((hash, result))
     }
 
     pub fn number(&self) -> u64 {

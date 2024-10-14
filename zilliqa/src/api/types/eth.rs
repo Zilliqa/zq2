@@ -48,6 +48,24 @@ impl QuorumCertificate {
     }
 }
 
+#[derive(Clone)]
+pub enum ErrorCode {
+    ParseError = -32700,
+    InvalidRequest = -32600,
+    MethodNotFound = -32601,
+    InvalidParams = -32602,
+    InternalError = -32603,
+    // missing or invalid parameters, apparently.
+    InvalidInput = -32000,
+    ResourceNotFound = -32001,
+    ResourceUnavailable = -32002,
+    // Transaction creation failed.
+    TransactionRejected = -32003,
+    MethodNotSupported = -32004,
+    LimitExceeded = -32005,
+    JSONRPCVersionNotSupported = -32006,
+}
+
 #[derive(Clone, Serialize)]
 pub struct AggregateQc {
     #[serde(serialize_with = "hex")]
