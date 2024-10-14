@@ -18,8 +18,8 @@ use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
-        ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
+        map::FxBuildHasher, AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason,
+        HandlerCfg, Output, ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
 };
@@ -30,7 +30,7 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{
     contracts,
-    crypto::{Hash, NodePublicKey, NodePublicKeyRaw},
+    crypto::{Hash, NodePublicKey},
     db::TrieStorage,
     eth_helpers::extract_revert_msg,
     inspector::{self, ScillaInspector},
@@ -355,9 +355,12 @@ impl DatabaseRef for &State {
         Ok(U256::from_be_bytes(result.0))
     }
 
-    fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
-        // TODO
-        Ok(B256::ZERO)
+    fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        Ok(self
+            .block_store
+            .get_block_by_number(number)?
+            .map(|block| B256::new(block.hash().0))
+            .unwrap_or_default())
     }
 }
 
@@ -662,7 +665,7 @@ impl State {
     /// Applies a state delta from an EVM execution to the state.
     pub fn apply_delta_evm(
         &mut self,
-        state: &HashMap<Address, revm::primitives::Account>,
+        state: &HashMap<Address, revm::primitives::Account, FxBuildHasher>,
     ) -> Result<()> {
         for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
@@ -706,11 +709,7 @@ impl State {
         Ok(())
     }
 
-    pub fn leader(&self, view: u64) -> Result<NodePublicKey> {
-        self.leader_raw(view).and_then(|leader| leader.try_into())
-    }
-
-    pub fn leader_raw(&self, view: u64) -> Result<NodePublicKeyRaw> {
+    pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
         let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
 
         let leader = self.call_contract(
@@ -718,37 +717,28 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            BlockHeader::default(),
+            current_block,
         )?;
 
-        Ok(NodePublicKeyRaw::from_bytes(
+        NodePublicKey::from_bytes(
             &contracts::deposit::LEADER_AT_VIEW
                 .decode_output(&leader)
                 .unwrap()[0]
                 .clone()
                 .into_bytes()
                 .unwrap(),
-        ))
+        )
     }
 
     pub fn get_stakers_at_block(&self, block: &Block) -> Result<Vec<NodePublicKey>> {
-        self.get_stakers_at_block_raw(block)
-            .and_then(|result| result.into_iter().map(|k| k.try_into()).collect())
-    }
-
-    pub fn get_stakers_at_block_raw(&self, block: &Block) -> Result<Vec<NodePublicKeyRaw>> {
         let block_root_hash = block.state_root_hash();
 
         let state = self.at_root(block_root_hash.into());
-        state.get_stakers_raw()
+
+        state.get_stakers()
     }
 
     pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
-        self.get_stakers_raw()
-            .and_then(|result| result.into_iter().map(|k| k.try_into()).collect())
-    }
-
-    pub fn get_stakers_raw(&self) -> Result<Vec<NodePublicKeyRaw>> {
         let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
         let stakers = self.call_contract(
@@ -768,14 +758,10 @@ impl State {
             .into_array()
             .unwrap();
 
-        Ok(stakers
+        stakers
             .into_iter()
-            .map(|k| NodePublicKeyRaw::from_bytes(&k.into_bytes().unwrap()))
-            .collect())
-    }
-
-    pub fn get_stake(&self, public_key: NodePublicKey) -> Result<Option<NonZeroU128>> {
-        self.get_stake_raw(public_key.into())
+            .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()))
+            .collect()
     }
 
     pub fn committee(&self) -> Result<()> {
@@ -794,7 +780,7 @@ impl State {
         Ok(())
     }
 
-    pub fn get_stake_raw(&self, public_key: NodePublicKeyRaw) -> Result<Option<NonZeroU128>> {
+    pub fn get_stake(&self, public_key: NodePublicKey) -> Result<Option<NonZeroU128>> {
         let data =
             contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
@@ -814,10 +800,6 @@ impl State {
     }
 
     pub fn get_reward_address(&self, public_key: NodePublicKey) -> Result<Option<Address>> {
-        self.get_reward_address_raw(public_key.into())
-    }
-
-    pub fn get_reward_address_raw(&self, public_key: NodePublicKeyRaw) -> Result<Option<Address>> {
         let data = contracts::deposit::GET_REWARD_ADDRESS
             .encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
@@ -841,10 +823,6 @@ impl State {
     }
 
     pub fn get_peer_id(&self, public_key: NodePublicKey) -> Result<Option<PeerId>> {
-        self.get_peer_id_raw(public_key.into())
-    }
-
-    pub fn get_peer_id_raw(&self, public_key: NodePublicKeyRaw) -> Result<Option<PeerId>> {
         let data =
             contracts::deposit::GET_PEER_ID.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 

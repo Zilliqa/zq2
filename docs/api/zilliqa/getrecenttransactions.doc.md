@@ -9,6 +9,7 @@ transactions,recent,get
 # Description
 
 Returns the most recent **100** transactions that are validated by the Zilliqa network.
+At most the last **100** blocks area searched for transactions.
 
 # Curl
 
@@ -100,7 +101,3 @@ func GetRecentTransactions() {
 | `jsonrpc` | string | Required | `"2.0"`                   |
 | `method`  | string | Required | `"GetRecentTransactions"` |
 | `params`  | string | Required | Empty string `""`         |
-
-
-
-

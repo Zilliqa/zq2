@@ -37,7 +37,8 @@ pub async fn new(
 pub async fn install_or_upgrade(
     config_file: &str,
     is_upgrade: bool,
-    only_selected_nodes: bool,
+    node_selection: bool,
+    max_parallel: usize,
 ) -> Result<()> {
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
@@ -48,7 +49,7 @@ pub async fn install_or_upgrade(
         .map(|n| n.name().clone())
         .collect::<Vec<_>>();
 
-    let selected_machines = if !only_selected_nodes {
+    let selected_machines = if !node_selection {
         node_names
     } else {
         let mut multi_select = cliclack::multiselect(format!(
@@ -79,16 +80,19 @@ pub async fn install_or_upgrade(
             && selected_machines.clone().contains(&node.name())
     });
 
-    let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade).await;
-    let _ = execute_install_or_upgrade(chain_nodes, is_upgrade).await;
-    let _ = execute_install_or_upgrade(apps_nodes, is_upgrade).await;
+    let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade, max_parallel).await;
+    let _ = execute_install_or_upgrade(chain_nodes, is_upgrade, max_parallel).await;
+    let _ = execute_install_or_upgrade(apps_nodes, is_upgrade, max_parallel).await;
 
     Ok(())
 }
 
-async fn execute_install_or_upgrade(nodes: Vec<ChainNode>, is_upgrade: bool) -> Result<()> {
-    let permits = if is_upgrade { 1 } else { 50 };
-    let semaphore = Arc::new(Semaphore::new(permits)); // Limit to 50 concurrent tasks
+async fn execute_install_or_upgrade(
+    nodes: Vec<ChainNode>,
+    is_upgrade: bool,
+    max_parallel: usize,
+) -> Result<()> {
+    let semaphore = Arc::new(Semaphore::new(max_parallel));
     let mut futures = vec![];
 
     for node in nodes {
@@ -163,7 +167,7 @@ pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
     Ok(())
 }
 
-pub async fn get_deposit_commands(config_file: &str, only_selected_nodes: bool) -> Result<()> {
+pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
     let mut futures = vec![];
 
@@ -178,7 +182,7 @@ pub async fn get_deposit_commands(config_file: &str, only_selected_nodes: bool) 
         .map(|n| n.name().clone())
         .collect::<Vec<_>>();
 
-    let selected_machines = if !only_selected_nodes {
+    let selected_machines = if !node_selection {
         validator_names
     } else {
         let mut multi_select = cliclack::multiselect("Select nodes");
@@ -243,7 +247,7 @@ pub async fn get_node_deposit_commands(node: &ChainNode) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_deposit(config_file: &str, only_selected_nodes: bool) -> Result<()> {
+pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> {
     let config = fs::read_to_string(config_file).await?;
     let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
     let chain = ChainInstance::new(config.clone()).await?;
@@ -255,7 +259,7 @@ pub async fn run_deposit(config_file: &str, only_selected_nodes: bool) -> Result
         .map(|n| n.name().clone())
         .collect::<Vec<_>>();
 
-    let selected_machines = if !only_selected_nodes {
+    let selected_machines = if !node_selection {
         validator_names
     } else {
         let mut multi_select = cliclack::multiselect("Select nodes");
@@ -324,7 +328,12 @@ pub async fn run_deposit(config_file: &str, only_selected_nodes: bool) -> Result
     Ok(())
 }
 
-pub async fn run_rpc_call(method: &str, params: &Option<String>, config_file: &str) -> Result<()> {
+pub async fn run_rpc_call(
+    method: &str,
+    params: &Option<String>,
+    config_file: &str,
+    timeout: usize,
+) -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
     let mut futures = vec![];
 
@@ -354,9 +363,13 @@ pub async fn run_rpc_call(method: &str, params: &Option<String>, config_file: &s
         let current_params = params.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
-            let result =
-                run_node_rpc_call(&current_method, &current_params, &machine.external_address)
-                    .await;
+            let result = run_node_rpc_call(
+                &current_method,
+                &current_params,
+                &machine.external_address,
+                timeout,
+            )
+            .await;
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -388,6 +401,7 @@ async fn run_node_rpc_call(
     method: &str,
     params: &Option<String>,
     endpoint: &str,
+    timeout: usize,
 ) -> Result<String> {
     let body = format!(
         "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
@@ -396,6 +410,8 @@ async fn run_node_rpc_call(
     );
 
     let args = &[
+        "--max-time",
+        &timeout.to_string(),
         "-X",
         "POST",
         "-H",
@@ -420,4 +436,156 @@ async fn run_node_rpc_call(
     }
 
     Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+}
+
+pub async fn run_backup(config_file: &str, filename: &str) -> Result<()> {
+    let config = fs::read_to_string(config_file).await?;
+    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let chain = ChainInstance::new(config).await?;
+    let chain_nodes = chain.nodes().await?;
+    let node_names = chain_nodes
+        .iter()
+        .filter(|n| n.role != NodeRole::Apps)
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let source_node = {
+        let mut select = cliclack::select("Select source node");
+
+        for name in &node_names {
+            select = select.item(name.clone(), name, "");
+        }
+
+        let selection = select.interact()?;
+        let mut nodes = chain_nodes.clone();
+        nodes.retain(|n| n.name() == selection);
+        nodes.first().unwrap().clone()
+    };
+
+    source_node.backup_to(filename).await
+}
+
+pub async fn run_restore(config_file: &str, filename: &str, max_parallel: usize) -> Result<()> {
+    let config = fs::read_to_string(config_file).await?;
+    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let chain = ChainInstance::new(config).await?;
+    let chain_nodes = chain.nodes().await?;
+    let node_names = chain_nodes
+        .iter()
+        .filter(|n| n.role != NodeRole::Apps)
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let target_nodes = {
+        let mut select = cliclack::multiselect("Select target nodes");
+
+        for name in &node_names {
+            select = select.item(name.clone(), name, "");
+        }
+
+        let selection = select.interact()?;
+        let mut nodes = chain_nodes.clone();
+        nodes.retain(|n| selection.contains(&n.name()));
+        nodes
+    };
+
+    let semaphore = Arc::new(Semaphore::new(max_parallel));
+    let mut futures = vec![];
+
+    let multi_progress = cliclack::multi_progress("Restoring the nodes data dir".yellow());
+
+    for node in target_nodes {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let file = filename.to_owned();
+        let mp = multi_progress.to_owned();
+        let future = task::spawn(async move {
+            let result = node.restore_from(&file, &mp).await;
+            drop(permit); // Release the permit when the task is done
+            (node, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    multi_progress.stop();
+
+    let mut failures = vec![];
+
+    for result in results {
+        if let (node, Err(err)) = result? {
+            println!("Node {} failed with error: {}", node.name(), err);
+            failures.push(node.name());
+        }
+    }
+
+    for failure in failures {
+        log::error!("FAILURE: {}", failure);
+    }
+
+    Ok(())
+}
+
+pub async fn run_reset(config_file: &str, node_selection: bool) -> Result<()> {
+    let config = fs::read_to_string(config_file).await?;
+    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let chain = ChainInstance::new(config).await?;
+    let mut chain_nodes = chain.nodes().await?;
+    chain_nodes.retain(|node| node.role != NodeRole::Apps);
+
+    let node_names = chain_nodes
+        .iter()
+        .filter(|n| n.role != NodeRole::Apps)
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let target_nodes = if node_selection {
+        let mut select = cliclack::multiselect("Select target nodes");
+
+        for name in &node_names {
+            select = select.item(name.clone(), name, "");
+        }
+
+        let selection = select.interact()?;
+        let mut nodes = chain_nodes.clone();
+        nodes.retain(|n| selection.contains(&n.name()));
+        nodes
+    } else {
+        chain_nodes
+    };
+
+    let semaphore = Arc::new(Semaphore::new(50));
+    let mut futures = vec![];
+
+    let multi_progress = cliclack::multi_progress("Resetting the nodes".yellow());
+
+    for node in target_nodes {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let mp = multi_progress.to_owned();
+        let future = task::spawn(async move {
+            let result = node.reset(&mp).await;
+            drop(permit); // Release the permit when the task is done
+            (node, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    multi_progress.stop();
+
+    let mut failures = vec![];
+
+    for result in results {
+        if let (node, Err(err)) = result? {
+            println!("Node {} failed with error: {}", node.name(), err);
+            failures.push(node.name());
+        }
+    }
+
+    for failure in failures {
+        log::error!("FAILURE: {}", failure);
+    }
+
+    Ok(())
 }

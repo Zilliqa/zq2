@@ -248,37 +248,11 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
 
     info!("deposit block: {deposit_block}");
 
-    for n in 0..=(deposit_block.as_u64() + 3) {
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT.into_array()))
-            .data(contracts::deposit::CURRENT_EPOCH.encode_input(&[]).unwrap());
-        let epoch = wallet.call(&tx.into(), Some(n.into())).await.unwrap();
-        let epoch = contracts::deposit::CURRENT_EPOCH
-            .decode_output(&epoch)
-            .unwrap();
-
-        let tx = TransactionRequest::new()
-            .to(H160(contract_addr::DEPOSIT.into_array()))
-            .data(
-                contracts::deposit::INTERNAL_COMMITTEE
-                    .encode_input(&[])
-                    .unwrap(),
-            );
-        let committee = wallet.call(&tx.into(), Some(n.into())).await.unwrap();
-        let committee = contracts::deposit::INTERNAL_COMMITTEE
-            .decode_output(&committee)
-            .unwrap();
-
-        let stakers = get_stakers_at(&wallet, n).await;
-        info!(
-            "{n}: stakers: {}, epoch: {epoch:?}, committee: {committee:?}",
-            stakers.len()
-        );
-    }
-
     let stakers = get_stakers(&wallet).await;
     assert_eq!(stakers.len(), 4);
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
+
+    // TODO FOR TOMORROW: CHANGE EPOCH LENGTH TO 2, ASSERT THAT THE FIRST BLOCK IN A NEW EPOCH IS THE ONE WHERE THE COMMITTEE CHANGES
 
     // At most two epoch boundaries (= two full epochs, + 1 block for the first block of the 3rd)
     // before the deposit is guaranteed to have been processed

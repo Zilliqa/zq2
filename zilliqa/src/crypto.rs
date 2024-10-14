@@ -182,33 +182,6 @@ impl<'de> Deserialize<'de> for NodePublicKey {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct NodePublicKeyRaw(Vec<u8>);
-
-impl NodePublicKeyRaw {
-    pub fn from_bytes(bytes: &[u8]) -> NodePublicKeyRaw {
-        Self(bytes.to_vec())
-    }
-
-    pub fn as_bytes(&self) -> Vec<u8> {
-        self.0.clone()
-    }
-}
-
-impl From<NodePublicKey> for NodePublicKeyRaw {
-    fn from(value: NodePublicKey) -> Self {
-        Self::from_bytes(&value.as_bytes())
-    }
-}
-
-impl TryFrom<NodePublicKeyRaw> for NodePublicKey {
-    type Error = anyhow::Error;
-
-    fn try_from(raw: NodePublicKeyRaw) -> std::result::Result<Self, Self::Error> {
-        NodePublicKey::from_bytes(&raw.0)
-    }
-}
-
 /// The set of public keys that are accepted for signing and validating transactions, each
 /// corresponding to a variant of `TransactionSignature`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

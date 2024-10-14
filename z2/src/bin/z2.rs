@@ -76,9 +76,9 @@ enum DeployerCommands {
     /// Generate the deployer config file
     New(DeployerNewArgs),
     /// Install the network defined in the deployer config file
-    Install(DeployerActionsArgs),
+    Install(DeployerInstallArgs),
     /// Update the network defined in the deployer config file
-    Upgrade(DeployerActionsArgs),
+    Upgrade(DeployerUpgradeArgs),
     /// Generate in output the validator config file to join the network
     GetConfigFile(DeployerConfigArgs),
     /// Generate in output the commands to deposit stake amount to all the validators
@@ -87,6 +87,12 @@ enum DeployerCommands {
     Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
+    /// Backup locally a node data dir
+    Backup(DeployerBackupArgs),
+    /// Restore a node data dir from a local backup
+    Restore(DeployerRestoreArgs),
+    /// Reset a network stopping all the nodes and cleaning the /data folder
+    Reset(DeployerActionsArgs),
 }
 
 #[derive(Args, Debug)]
@@ -115,6 +121,30 @@ pub struct DeployerConfigArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct DeployerInstallArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// Define the number of nodes to process in parallel. Default: 50
+    #[clap(long)]
+    max_parallel: Option<usize>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerUpgradeArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// Define the number of nodes to process in parallel. Default: 1
+    #[clap(long)]
+    max_parallel: Option<usize>,
+}
+
+#[derive(Args, Debug)]
 pub struct DeployerActionsArgs {
     /// The network deployer config file
     config_file: Option<String>,
@@ -125,6 +155,9 @@ pub struct DeployerActionsArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerRpcArgs {
+    /// Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
+    #[clap(long)]
+    timeout: Option<usize>,
     /// Method to run
     #[clap(long, short, about)]
     method: String,
@@ -133,6 +166,27 @@ pub struct DeployerRpcArgs {
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerBackupArgs {
+    /// The path of the backup file
+    #[clap(long, short)]
+    file: String,
+    /// The network deployer config file
+    config_file: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerRestoreArgs {
+    /// The path of the backup file
+    #[clap(long, short)]
+    file: String,
+    /// Define the number of nodes to process in parallel. Default: 50
+    #[clap(long)]
+    max_parallel: Option<usize>,
+    /// The network deployer config file
+    config_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -450,6 +504,7 @@ async fn main() -> Result<()> {
 
     env_logger::Builder::new()
         .filter_level(cli.verbose.log_level_filter())
+        .format_target(false)
         .init();
 
     match &cli.command {
@@ -587,7 +642,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_install(&config_file, arg.select)
+                plumbing::run_deployer_install(&config_file, arg.select, arg.max_parallel)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer install command: {}", err)
@@ -600,7 +655,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_upgrade(&config_file, arg.select)
+                plumbing::run_deployer_upgrade(&config_file, arg.select, arg.max_parallel)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
@@ -651,10 +706,52 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             DeployerCommands::Rpc(ref args) => {
-                plumbing::run_rpc_call(&args.method, &args.params, &args.config_file)
+                plumbing::run_rpc_call(
+                    &args.method,
+                    &args.params,
+                    &args.config_file,
+                    &args.timeout,
+                )
+                .await
+                .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
+                Ok(())
+            }
+            DeployerCommands::Backup(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_backup(&config_file, &arg.file)
                     .await
                     .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer rpc command: {}", err)
+                        anyhow::anyhow!("Failed to run deployer backup command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Restore(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_restore(&config_file, &arg.file, arg.max_parallel)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer restore command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Reset(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_reset(&config_file, arg.select)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer reset command: {}", err)
                     })?;
                 Ok(())
             }
