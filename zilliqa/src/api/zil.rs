@@ -91,6 +91,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetTxnBodiesForTxBlockEx", get_txn_bodies_for_tx_block_ex),
             ("GetNumDSBlocks", get_num_ds_blocks),
             ("GetRecentTransactions", get_recent_transactions),
+            ("GetNumTransactions", get_num_transactions),
         ],
     )
 }
@@ -1032,4 +1033,10 @@ fn get_recent_transactions(
         number: txns.len() as u64,
         txn_hashes: txns,
     })
+}
+
+fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let num_transactions = node.consensus.block_store.get_num_transactions()?;
+    Ok(num_transactions.to_string())
 }
