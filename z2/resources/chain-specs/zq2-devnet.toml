@@ -1,5 +1,5 @@
 p2p_port = 3333
-bootstrap_address = [ "12D3KooWJNUNgs1UM9mw1Pfskxk4o3VWz37cpneSHZsUecGGZgkb", "/ip4/35.198.245.220/tcp/3333" ]
+bootstrap_address = [ "12D3KooWJNUNgs1UM9mw1Pfskxk4o3VWz37cpneSHZsUecGGZgkb", "/ip4/35.198.245.220/udp/3333/quic-v1" ]
 
 [[nodes]]
 eth_chain_id = 33469

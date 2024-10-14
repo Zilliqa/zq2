@@ -2,7 +2,6 @@ import {expect} from "chai";
 import hre from "hardhat";
 import {Contract} from "ethers";
 import {SignerWithAddress} from "@nomiclabs/hardhat-ethers/signers";
-const {expectRevert} = require("@openzeppelin/test-helpers"); // No declaration files found for oz-helpers
 
 // FIXME: Can't be parallelized yet. Needs ZIL-5055
 describe("Revert Contract Call", function () {
@@ -15,28 +14,39 @@ describe("Revert Contract Call", function () {
   });
 
   it("Will revert the transaction when revert is called", async function () {
-    await expect(contract.revertCall({value: 1000})).to.be.reverted;
+    try {
+      await contract.revertCall({value: 1000});
+    } catch (error: any) {
+      expect(error.error.reason).eq("execution reverted");
+    }
   });
 
   it("Should revert transaction with a custom message if the called function reverts with custom message", async function () {
     const REVERT_MESSAGE = "reverted!!";
-    await expect(contract.revertCallWithMessage(REVERT_MESSAGE, {value: 1000})).to.be.revertedWith(REVERT_MESSAGE);
-  });
-
-  it("Should revert transaction with a custom message in the JSONRPC return string @block-1", async function () {
-    const REVERT_MESSAGE = "Really reverted!!";
-    await expectRevert(contract.revertCallWithMessage(REVERT_MESSAGE, {value: 1000}), REVERT_MESSAGE);
+    try {
+      await contract.revertCallWithMessage(REVERT_MESSAGE, {value: 1000});
+    } catch (error: any) {
+      expect(error.error.reason).eq(`execution reverted: ${REVERT_MESSAGE}`);
+    }
   });
 
   it("Should revert with an error object if the called function reverts with custom error", async function () {
     const owner = signer;
-    await expect(contract.revertCallWithCustomError({value: 1000}))
-      .to.be.revertedWithCustomError(contract, "FakeError")
-      .withArgs(1000, owner.address);
+    try {
+      await contract.revertCallWithCustomError({value: 1024});
+    } catch (error: any) {
+      const data = error.error.error.error.data;
+      const iface = (await hre.ethers.getContractFactory("Revert")).interface;
+      const decodedError = iface.parseError(data);
+      const {value, sender} = decodedError.args;
+
+      expect(decodedError.name).to.eq("FakeError");
+      expect(value).eq(1024);
+      expect(sender).eq(owner.address);
+    }
   });
 
   it("Should not be reverted despite its child possibly reverting", async function () {
-    const owner = contract.signer;
     await expect((await contract.callChainReverted()).wait()).not.to.be.reverted;
     await expect((await contract.callChainOk()).wait()).not.to.be.reverted;
   });

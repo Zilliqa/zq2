@@ -3,11 +3,9 @@ use std::collections::HashMap;
 use alloy::{
     consensus::TxEip1559,
     primitives::{Address, B256, U128, U256, U64},
+    rpc::types::TransactionInput,
 };
-use serde::{
-    de::{self, Unexpected},
-    Deserialize, Deserializer, Serialize,
-};
+use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use super::{bool_as_int, hex, option_hex, vec_hex};
@@ -422,18 +420,8 @@ pub struct CallParams {
     pub gas_price: Option<U128>,
     #[serde(default)]
     pub value: U128,
-    #[serde(default, deserialize_with = "deserialize_data")]
-    pub data: Vec<u8>,
-}
-
-fn deserialize_data<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
-    let s = String::deserialize(deserializer)?;
-
-    let s = s.strip_prefix("0x").ok_or_else(|| {
-        de::Error::invalid_value(Unexpected::Str(&s), &"a string prefixed with \"0x\"")
-    })?;
-
-    hex::decode(s).map_err(de::Error::custom)
+    #[serde(default, flatten)]
+    pub data: TransactionInput,
 }
 
 #[derive(Clone, Serialize)]

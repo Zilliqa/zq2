@@ -23,7 +23,7 @@ library Deque {
     ) internal view returns (uint256) {
         uint256 physical = deque.head + idx;
         // Wrap the physical index in case it is out-of-bounds of the buffer.
-        if (deque.values.length >= physical) {
+        if (physical >= deque.values.length) {
             return deque.values.length - physical;
         } else {
             return physical;
@@ -55,9 +55,13 @@ library Deque {
         if (deque.len == deque.values.length) {
             deque.values.push();
         }
+        require(deque.head == 0, "foobar1");
+        require(deque.len == 0, "foobar2");
 
         uint256 idx = physicalIdx(deque, deque.len);
+        require(idx != 1, "foobar3");
         deque.len += 1;
+
 
         return deque.values[idx];
     }
@@ -84,6 +88,10 @@ library Deque {
     function back(
         Withdrawals storage deque
     ) internal view returns (Withdrawal storage) {
+        if (deque.len == 0) {
+            revert("queue is empty");
+        }
+
         return get(deque, deque.len - 1);
     }
 
@@ -93,6 +101,10 @@ library Deque {
     function front(
         Withdrawals storage deque
     ) internal view returns (Withdrawal storage) {
+        if (deque.len == 0) {
+            revert("queue is empty");
+        }
+
         return get(deque, 0);
     }
 }
@@ -125,10 +137,6 @@ contract Deposit {
     // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
     // is stored at index (currentEpoch() % 3).
     Committee[3] _committee;
-
-    function internalCommittee() public view returns (Committee[3] memory) {
-        return _committee;
-    }
 
     // All stakers. Keys into this map are stored by the `Committee`.
     mapping(bytes => Staker) _stakersMap;
@@ -277,7 +285,6 @@ contract Deposit {
             // Note the early exit condition if `latestComputedEpoch + 3` which ensures this loop will not run more
             // than twice. This is acceptable because we only store 3 committees at a time, so once we have updated two
             // of them to the latest computed committee, there is no more work to do.
-            // i in (1..=2) {1, 2}
             for (
                 uint64 i = latestComputedEpoch + 1;
                 i <= currentEpoch() + 2 && i < latestComputedEpoch + 3;
@@ -396,13 +403,10 @@ contract Deposit {
             (currentEpoch() + 2) % 3
         ];
 
-        if (
-            futureCommittee.balances[uint(staker.keyIndex)] - amount <
-            minimumStake
-        ) {
-            // Remove the staker from the future committee, because their staked amount has gone under the minimum
-            // stake. Note that we unstake their full balance, which might be more than the `amount` they passed in.
-            amount = futureCommittee.balances[uint(staker.keyIndex)];
+        require(futureCommittee.balances[uint(staker.keyIndex)] >= amount, "amount is greater than staked balance");
+
+        if (futureCommittee.balances[uint(staker.keyIndex)] - amount == 0) {
+            // Remove the staker from the future committee, because their staked amount has gone to zero stake.
             futureCommittee.totalStake -= amount;
 
             // Delete this staker. We need to delete it in 3 places:
@@ -432,8 +436,11 @@ contract Deposit {
             // We can finally delete the origin staker from `_stakersMap` too.
             delete _stakersMap[stakerKey];
         } else {
+            require(futureCommittee.balances[uint(staker.keyIndex)] - amount >= minimumStake, "unstaking this amount would take the validator below the minimum stake");        
+            
+            // Partial unstake. The staker stays in the committee, but with a reduced stake.
             futureCommittee.totalStake -= amount;
-            futureCommittee.balances[uint(staker.keyIndex)] -= amount;
+            futureCommittee.balances[uint(staker.keyIndex)] -= amount;                
         }
 
         // Enqueue the withdrawal for this staker.
@@ -442,7 +449,7 @@ contract Deposit {
         // We know `withdrawals` is sorted by `startedAt`. We also know `block.timestamp` is monotonically
         // non-decreasing. Therefore if there is an existing entry with a `startedAt = block.timestamp`, it must be
         // at the end of the queue.
-        if (withdrawals.back().startedAt == block.timestamp) {
+        if (withdrawals.length() != 0 && withdrawals.back().startedAt == block.timestamp) {
             // They have already made a withdrawal at this time, so grab a reference to the existing one.
             currentWithdrawal = withdrawals.back();
         } else {

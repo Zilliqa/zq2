@@ -78,6 +78,12 @@ impl ChainInstance {
 
         let machines = instances
             .iter()
+            .filter(|i| {
+                i.get("status")
+                    .and_then(|status| status.as_str())
+                    .map(|status_str| status_str == "RUNNING")
+                    .unwrap_or(false) // Exclude instances without a valid status or those not in RUNNING state
+            })
             .map(|i| {
                 let name = i
                     .get("name")

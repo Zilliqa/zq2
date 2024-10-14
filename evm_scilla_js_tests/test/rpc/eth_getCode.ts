@@ -1,5 +1,6 @@
 import {assert} from "chai";
 import hre from "hardhat";
+import {ethers} from "hardhat";
 import logDebug from "../../helpers/DebugHelper";
 import sendJsonRpcRequest from "../../helpers/JsonRpcHelper";
 
@@ -12,6 +13,13 @@ describe(`Calling ${METHOD} #parallel`, function () {
       assert.equal(status, 200, "has status code");
       assert.property(result, "error");
       assert.equal(result.error.code, -32602);
+    });
+  });
+
+  it("should return 0x for EOAs @block-1", async function () {
+    const [signer] = await ethers.getSigners();
+    await sendJsonRpcRequest(METHOD, 1, [signer.address, "latest"], (result, status) => {
+      assert.equal(result.result.toLowerCase(), "0x",);
     });
   });
 
