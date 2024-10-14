@@ -27,7 +27,7 @@ async-trait = "0.1.83"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
-clap = {version = "4.5.18", features = ["derive"]}
+clap = {version = "4.5.20", features = ["derive"]}
 clap-verbosity-flag = "2.2.2"
 cliclack = "0.3.5"
 colored = "2.1.0"
@@ -37,7 +37,7 @@ eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
 ethabi = "18.0.0"
 ethereum = "0.15.0"
 ethers = {version="2.0.14", features = ["ws"]}
-futures = "0.3.30"
+futures = "0.3.31"
 git2 = "0.18.3"
 hex = "0.4.3"
 home = "0.5.9"
@@ -48,13 +48,13 @@ k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = {version = "0.54.0", features = ["identify"]}
 log = "0.4.22"
-octocrab = "0.40.0"
+octocrab = "0.41.0"
 primitive-types = "0.12.2"
 prost = "0.13.3"
 rand = "0.8.5"
 rand_core = "0.6.4"
 regex = "1.11.0"
-reqwest = {version = "0.12.3", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
+reqwest = {version = "0.12.8", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
 revm = {version = "14.0.3", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 serde = {version = "1.0.210", features = ["derive"]}

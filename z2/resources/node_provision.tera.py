@@ -107,7 +107,7 @@ ZQ2_IMAGE="{{ docker_image }}"
 
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
-    docker run -td -p 3333:3333 -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
+    docker run -td -p 3333:3333/udp -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
     --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
     -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
@@ -282,7 +282,6 @@ metrics:
       - agent.googleapis.com/network/*
       - agent.googleapis.com/swap/*
       - agent.googleapis.com/pagefile/*
-      - agent.googleapis.com/processes/*
   service:
     log_level: info
     pipelines:

@@ -1,7 +1,7 @@
 otlp_collector_endpoint = "http://otel-collector:4317"
 bootstrap_address = [
     "12D3KooWPXw2dXBRH1bT4vcNos9f6W2KoFTiarqptBuTzxaXg7zu",
-    "/ip4/198.51.100.103/tcp/5643",
+    "/ip4/198.51.100.103/udp/5643/quic-v1",
 ]
 p2p_port = 5643
 
