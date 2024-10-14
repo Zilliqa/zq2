@@ -500,10 +500,6 @@ impl Network {
             })
             .collect();
 
-        for nodes in &mut self.nodes {
-            nodes.inner.lock().unwrap().db.flush_state();
-        }
-
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
             Vec<_>,
             Vec<_>,
