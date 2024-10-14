@@ -27,7 +27,7 @@ use crate::{
         MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
-    pool::{TransactionPool, TxPoolContent},
+    pool::{TransactionPool, TxAddResult, TxPoolContent},
     state::State,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -1526,19 +1526,25 @@ impl Consensus {
         Ok(Some((final_block, broadcasted_transactions)))
     }
 
-    /// Insert transaction and add to early_proposal if possible. Return true if transaction was new.
-    pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<bool> {
-        let inserted = self.new_transaction(txn.verify()?)?;
-        if inserted && self.create_next_block_on_timeout && self.early_proposal.is_some() {
-            info!("add transaction to early proposal {}", self.view.get_view());
-            let mut state = self.state.clone();
-            let previous_state_root_hash = state.root_hash()?;
+    /// Insert transaction and add to early_proposal if possible.
+    pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<TxAddResult> {
+        let verified = if let Ok(val) = txn.verify() {
+            val
+        } else {
+            return Ok(TxAddResult::CannotVerifySignature);
+        };
+        let inserted = self.new_transaction(verified)?;
+        if let TxAddResult::AddedToMempool = &inserted {
+            if self.create_next_block_on_timeout && self.early_proposal.is_some() {
+                info!("add transaction to early proposal {}", self.view.get_view());
+                let mut state = self.state.clone();
+                let previous_state_root_hash = state.root_hash()?;
 
-            self.apply_transactions_to_block_at(&mut state)?;
-
-            // Restore the state to previous
-            state.set_to_root(previous_state_root_hash.into());
-            self.state = state;
+                self.apply_transactions_to_block_at(&mut state)?;
+                // Restore the state to previous
+                state.set_to_root(previous_state_root_hash.into());
+                self.state = state;
+            }
         }
         Ok(inserted)
     }
@@ -1735,34 +1741,37 @@ impl Consensus {
         Ok(None)
     }
 
-    /// Returns true if the transaction was new.
-    pub fn new_transaction(&mut self, txn: VerifiedTransaction) -> Result<bool> {
+    /// Returns (flag, outcome).
+    /// flag is true if the transaction was newly added to the pool - ie. if it validated correctly and has not been seen before.
+    pub fn new_transaction(&mut self, txn: VerifiedTransaction) -> Result<TxAddResult> {
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
-            return Ok(false);
+            return Ok(TxAddResult::Duplicate(txn.hash));
         }
 
         let account = self.state.get_account(txn.signer)?;
         let eth_chain_id = self.config.eth_chain_id;
 
-        if !txn.tx.validate(
+        let validation_result = txn.tx.validate(
             &account,
             self.config.consensus.eth_block_gas_limit,
             eth_chain_id,
-        )? {
+        )?;
+        if !validation_result.is_ok() {
             debug!(
-                "Unable to validate txn with hash: {:?}, from: {:?}, nonce: {:?}",
+                "Unable to validate txn with hash: {:?}, from: {:?}, nonce: {:?} : {:?}",
                 txn.hash,
                 txn.signer,
-                txn.tx.nonce()
+                txn.tx.nonce(),
+                validation_result,
             );
-            return Ok(false);
+            return Ok(TxAddResult::ValidationFailed(validation_result));
         }
 
         let txn_hash = txn.hash;
 
-        let new = self.transaction_pool.insert_transaction(txn, account.nonce);
-        if new {
+        let insert_result = self.transaction_pool.insert_transaction(txn, account.nonce);
+        if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
             // Avoid cloning the transaction aren't any subscriptions to send it to.
@@ -1776,8 +1785,7 @@ impl Consensus {
                 let _ = self.new_transactions.send(txn);
             }
         }
-
-        Ok(new)
+        Ok(insert_result)
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {

@@ -8,8 +8,31 @@ use tracing::debug;
 
 use crate::{
     crypto::Hash,
-    transaction::{SignedTransaction, VerifiedTransaction},
+    transaction::{SignedTransaction, ValidationOutcome, VerifiedTransaction},
 };
+
+/// The result of trying to add a transaction to the mempool. The argument is
+/// a human-readable string to be returned to the user.
+pub enum TxAddResult {
+    /// Transaction was successfully added to the mempool
+    AddedToMempool,
+    /// Transaction was a duplicate
+    Duplicate(Hash),
+    /// Bad signature
+    CannotVerifySignature,
+    /// Transaction failed to validate
+    ValidationFailed(ValidationOutcome),
+    /// Nonce was too low at the point we tried to actually add the txn to the pool - (got, expected)
+    NonceTooLow(u64, u64),
+    /// This txn has same nonce, lower gas price as one already in the mempool
+    SameNonceButLowerGasPrice,
+}
+
+impl TxAddResult {
+    pub fn was_added(&self) -> bool {
+        matches!(self, Self::AddedToMempool)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum TxIndex {
@@ -233,11 +256,18 @@ impl TransactionPool {
         account_nonce
     }
 
-    pub fn insert_transaction(&mut self, txn: VerifiedTransaction, account_nonce: u64) -> bool {
+    /// Returns a pair (did_we_add_it, message).
+    /// If we return false, it's safe to say that txn validation failed.
+    pub fn insert_transaction(
+        &mut self,
+        txn: VerifiedTransaction,
+        account_nonce: u64,
+    ) -> TxAddResult {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             debug!("Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
             // This transaction is permanently invalid, so there is nothing to do.
-            return false;
+            // unwrap() is safe because we checked above that it was some().
+            return TxAddResult::NonceTooLow(txn.tx.nonce().unwrap(), account_nonce);
         }
 
         if let Some(existing_txn) = self.transactions.get(&txn.mempool_index()) {
@@ -250,7 +280,7 @@ impl TransactionPool {
             // one.
             if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
                 debug!("Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}", txn.hash, txn.signer, txn.tx.nonce(), txn.tx.gas_price_per_evm_gas());
-                return false;
+                return TxAddResult::SameNonceButLowerGasPrice;
             }
             // Remove the existing transaction from `hash_to_index` if we're about to replace it.
             self.hash_to_index.remove(&existing_txn.hash);
@@ -268,7 +298,7 @@ impl TransactionPool {
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
         self.transactions.insert(txn.mempool_index(), txn);
-        true
+        TxAddResult::AddedToMempool
     }
 
     /// Insert a transaction which the caller guarantees is ready to be mined. Breaking this guarantee will cause

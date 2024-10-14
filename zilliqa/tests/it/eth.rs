@@ -4,8 +4,8 @@ use alloy::primitives::{hex, Address};
 use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
-    core::types::Signature,
-    providers::{Middleware, Provider},
+    core::types::{Bytes, Signature},
+    providers::{Middleware, MiddlewareError, Provider},
     types::{
         transaction::{
             eip2718::TypedTransaction,
@@ -20,7 +20,7 @@ use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::Serialize;
 
-use crate::{deploy_contract, LocalRpcClient, Network};
+use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
@@ -1305,4 +1305,56 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
             .parse()
             .unwrap()
     );
+}
+
+#[zilliqa_macros::test]
+async fn test_send_transaction_errors(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    async fn send_transaction_get_error(wallet: &Wallet, tx: TransactionRequest) -> (i64, String) {
+        let result = wallet.send_transaction(tx, None).await;
+        assert!(result.is_err());
+        let val = result.unwrap_err();
+        let err = val.as_error_response().unwrap();
+        (err.code, err.message.to_string())
+    }
+    async fn send_raw_transaction_get_error(wallet: &Wallet, tx: Bytes) -> (i64, String) {
+        let result = wallet.send_raw_transaction(tx).await;
+        assert!(result.is_err());
+        let val = result.unwrap_err();
+        let err = val.as_error_response().unwrap();
+        (err.code, err.message.to_string())
+    }
+    let gas_price = 100000000000u128;
+    let gas = 100000u128;
+
+    // Give the signer some funds.
+    let tx = TransactionRequest::pay(wallet.address(), 2 * gas_price * gas);
+    send_transaction(&mut network, tx.into()).await;
+
+    // Deliberately set too low a gas fee
+    {
+        let tx = TransactionRequest::pay(H160::random(), 10).gas(1);
+        let (code, msg) = send_transaction_get_error(&wallet, tx).await;
+        assert_eq!(code, -32602);
+        assert!(msg.to_lowercase().contains("gas"));
+    }
+    {
+        let tx = TransactionRequest::pay(H160::random(), gas_price * gas)
+            .gas_price(gas_price)
+            .gas(gas);
+        let sig = wallet.signer().sign_hash(tx.sighash()).unwrap();
+        let mut signed = tx.rlp_signed(&sig).iter().cloned().collect::<Vec<u8>>();
+        // Corrupt the transaction data.
+        signed[1] += 2;
+        let (code, _) = send_raw_transaction_get_error(&wallet, signed.into()).await;
+        assert_eq!(code, -32603);
+    }
+    // it would be nice to test bad signatures, but generating one without
+    // causing other spurious errors appears to be hard.
+    {
+        let tx = TransactionRequest::pay(H160::random(), 200 * gas_price * gas).nonce(547);
+        let (code, msg) = send_transaction_get_error(&wallet, tx).await;
+        assert_eq!(code, -32603);
+        assert!(msg.to_lowercase().contains("funds"));
+    }
 }
