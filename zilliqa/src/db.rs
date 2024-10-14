@@ -775,6 +775,15 @@ impl Db {
             .execute("DELETE FROM receipts WHERE block_hash = ?1", [block_hash])?;
         Ok(())
     }
+
+    pub fn get_total_transaction_count(&self) -> Result<usize> {
+        let count: usize =
+            self.db
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))?;
+        Ok(count)
+    }
 }
 
 pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
