@@ -1050,7 +1050,7 @@ impl Consensus {
 
         // Either way assemble early proposal now if it doesnt already exist
         let mut state = self.state.clone();
-        self.assemble_early_block_at(&mut state)?;
+        self.early_proposal_assemble_at(&mut state)?;
         self.state = state;
 
         Ok(None)
@@ -1059,7 +1059,7 @@ impl Consensus {
     /// Finalise the early Proposal.
     /// This should only run after majority QC or aggQC are available.
     /// It applies the rewards and produces the final Proposal.
-    fn finish_early_proposal_at(
+    fn early_proposal_finish_at(
         &self,
         state: &mut State,
         votes: &BTreeMap<Hash, BlockVotes>,
@@ -1143,7 +1143,7 @@ impl Consensus {
     /// Assembles the Proposal block early.
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
-    fn assemble_early_block_at(&mut self, state: &mut State) -> Result<()> {
+    fn early_proposal_assemble_at(&mut self, state: &mut State) -> Result<()> {
         if self.early_proposal.is_some()
             && self.early_proposal.as_ref().unwrap().0.view() == self.view()
         {
@@ -1217,14 +1217,14 @@ impl Consensus {
         self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie));
 
         // Apply ready transactions in the mempool
-        self.apply_transactions_to_block_at(state)?;
+        self.early_proposal_apply_transactions(state)?;
 
         Ok(())
     }
 
     /// Updates self.early_proposal data (proposal, applied_transactions, transactions_trie, receipts_trie) to include any transactions in the mempool
     /// Note that this fn will mutate State
-    fn apply_transactions_to_block_at(&mut self, state: &mut State) -> Result<()> {
+    fn early_proposal_apply_transactions(&mut self, state: &mut State) -> Result<()> {
         if self.early_proposal.is_none() {
             error!("could not apply transactions to early_proposal because it does not exist");
             return Ok(());
@@ -1339,10 +1339,10 @@ impl Consensus {
         Ok(())
     }
 
-    fn add_agg_qc_to_early_block(&mut self, agg: &AggregateQc) -> Result<()> {
+    fn early_proposal_add_agg_qc(&mut self, agg: &AggregateQc) -> Result<()> {
         // We expect early_proposal to exist already but try create incase it doesn't
         let mut state = self.state.clone();
-        self.assemble_early_block_at(&mut state)?;
+        self.early_proposal_assemble_at(&mut state)?;
         self.state = state;
 
         let qc = self.get_highest_from_agg(agg)?;
@@ -1371,7 +1371,7 @@ impl Consensus {
 
         // We expect early_proposal to exist already but try create incase it doesn't
         let mut state = self.state.clone();
-        self.assemble_early_block_at(&mut state)?;
+        self.early_proposal_assemble_at(&mut state)?;
         self.state = state;
 
         // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
@@ -1520,7 +1520,7 @@ impl Consensus {
         let mut state = self.state.clone();
 
         // We expect early_proposal to exist already but try create incase it doesn't
-        self.assemble_early_block_at(&mut state)?;
+        self.early_proposal_assemble_at(&mut state)?;
         let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
         // intershard transactions are not meant to be broadcast
@@ -1539,7 +1539,7 @@ impl Consensus {
 
         // finalise the proposal
         let Some(final_block) =
-            self.finish_early_proposal_at(&mut state, &self.votes, pending_block)?
+            self.early_proposal_finish_at(&mut state, &self.votes, pending_block)?
         else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
@@ -1570,11 +1570,11 @@ impl Consensus {
                 let mut state = self.state.clone();
                 let previous_state_root_hash = state.root_hash()?;
 
-                self.apply_transactions_to_block_at(&mut state)?;
-                // Restore the state to previous
-                state.set_to_root(previous_state_root_hash.into());
-                self.state = state;
-            }
+            self.early_proposal_apply_transactions(&mut state)?;
+
+            // Restore the state to previous
+            state.set_to_root(previous_state_root_hash.into());
+            self.state = state;
         }
         Ok(inserted)
     }
@@ -1725,7 +1725,7 @@ impl Consensus {
                     );
 
                     // We now have a valid aggQC so add to early_block
-                    self.add_agg_qc_to_early_block(&agg)?;
+                    self.early_proposal_add_agg_qc(&agg)?;
 
                     // as a future improvement, process the proposal before broadcasting it
                     return self.ready_for_block_proposal();
@@ -1749,7 +1749,7 @@ impl Consensus {
 
         // Either way assemble early proposal now if it doesnt already exist
         let mut state = self.state.clone();
-        self.assemble_early_block_at(&mut state)?;
+        self.early_proposal_assemble_at(&mut state)?;
         self.state = state;
 
         Ok(None)
