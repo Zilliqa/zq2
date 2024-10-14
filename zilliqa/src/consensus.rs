@@ -1141,7 +1141,7 @@ impl Consensus {
             proposal.header.transactions_root_hash,
             proposal.header.receipts_root_hash,
             proposal.transactions,
-            proposal.header.timestamp,
+            SystemTime::max(SystemTime::now(), parent_block.timestamp()),
             proposal.header.gas_used,
             proposal.header.gas_limit,
         );
@@ -1212,7 +1212,7 @@ impl Consensus {
         let executed_block_header = BlockHeader {
             view: self.view(),
             number: parent.header.number + 1,
-            timestamp: SystemTime::max(SystemTime::now(), parent.header.timestamp),
+            timestamp: parent.header.timestamp, // will be overridden by `finish_early_proposal_at`
             gas_limit: self.config.consensus.eth_block_gas_limit,
             ..BlockHeader::default()
         };
