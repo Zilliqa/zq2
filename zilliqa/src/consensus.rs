@@ -1019,6 +1019,10 @@ impl Consensus {
                     return self.propose_new_block();
                 }
 
+                let mut state = self.state.clone();
+                self.early_proposal_assemble_at(&mut state, None)?;
+                self.state = state;
+
                 return self.ready_for_block_proposal();
             }
         } else {
@@ -1359,11 +1363,6 @@ impl Consensus {
             return self.propose_new_block();
         }
 
-        // We expect early_proposal to exist already but try create incase it doesn't
-        let mut state = self.state.clone();
-        self.early_proposal_assemble_at(&mut state, None)?;
-        self.state = state;
-
         // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
         // the last view change. At this point we should be ready to produce a new block.
         self.create_next_block_on_timeout = true;
@@ -1563,11 +1562,12 @@ impl Consensus {
                 let mut state = self.state.clone();
                 let previous_state_root_hash = state.root_hash()?;
 
-            self.early_proposal_apply_transactions(&mut state)?;
+                self.early_proposal_apply_transactions(&mut state)?;
 
-            // Restore the state to previous
-            state.set_to_root(previous_state_root_hash.into());
-            self.state = state;
+                // Restore the state to previous
+                state.set_to_root(previous_state_root_hash.into());
+                self.state = state;
+            }
         }
         Ok(inserted)
     }
