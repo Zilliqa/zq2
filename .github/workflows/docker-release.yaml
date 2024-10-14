@@ -1,6 +1,7 @@
 name: "ZQ2 image release"
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - 'release/**'
@@ -60,7 +61,7 @@ jobs:
       permissions:
         id-token: write
         contents: write
-      if: ${{ github.ref_name == 'main' }} || ${{ github.ref_name == 'dl-retry' }}
+      if: ${{ github.ref_name == 'main' }} || ${{ github.event_name == 'workflow_dispatch' }}
       runs-on: [ self-hosted, gcp]
       env:
         GCP_REGISTRY_DOMAIN: asia-docker.pkg.dev

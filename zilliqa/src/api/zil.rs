@@ -7,11 +7,13 @@ use std::{
 };
 
 use alloy::{
+    consensus::SignableTransaction,
     eips::BlockId,
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 
@@ -19,8 +21,9 @@ use super::{
     to_hex::ToHex,
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
-        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, SWInfo, ShardingStructure,
-        SmartContract, TXBlockRateResult, TxBlockListing, TxBlockListingResult,
+        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, RecentTransactionsResponse,
+        SWInfo, ShardingStructure, SmartContract, TXBlockRateResult, TransactionBody,
+        TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
         TxnsForTxBlockExResponse,
     },
 };
@@ -28,6 +31,7 @@ use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
     crypto::Hash,
     exec::zil_contract_address,
+    message::Block,
     node::Node,
     schnorr,
     scilla::split_storage_key,
@@ -76,6 +80,10 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "GetTransactionsForTxBlockEx",
                 get_transactions_for_tx_block_ex
             ),
+            ("GetTxnBodiesForTxBlock", get_txn_bodies_for_tx_block),
+            ("GetTxnBodiesForTxBlockEx", get_txn_bodies_for_tx_block_ex),
+            ("GetNumDSBlocks", get_num_ds_blocks),
+            ("GetRecentTransactions", get_recent_transactions),
         ],
     )
 }
@@ -170,6 +178,12 @@ fn create_transaction(
     let sig = schnorr::Signature::from_str(&transaction.signature)?;
 
     // TODO: Perform some initial validation of the transaction
+
+    // If we don't trap this here, it will later cause the -1 in
+    // transaction::get_nonce() to panic.
+    if transaction.nonce == 0 {
+        return Err(anyhow!("Invalid nonce (0)"));
+    }
 
     let transaction = SignedTransaction::Zilliqa {
         tx: TxZilliqa {
@@ -612,8 +626,7 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     let num_tx_blocks = node.get_chain_tip();
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     let max_pages = num_ds_blocks / 10;
-    let page_requested: String = params.one()?;
-    let page_requested: u64 = page_requested.parse()?;
+    let page_requested: u64 = params.one()?;
 
     let base_blocknum = page_requested * 10;
     let end_blocknum = num_ds_blocks.min(base_blocknum + 10);
@@ -765,5 +778,184 @@ fn get_transactions_for_tx_block_ex(
             .into_iter()
             .map(|h| B256::from(h).to_hex_no_prefix())
             .collect(),
+    })
+}
+
+fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<TransactionBody>> {
+    let mut transactions = Vec::with_capacity(block.transactions.len());
+    for hash in &block.transactions {
+        let tx = node
+            .get_transaction_by_hash(*hash)?
+            .ok_or(anyhow!("Transaction hash missing"))?;
+        let nonce = tx.tx.nonce().unwrap_or_default();
+        let amount = tx.tx.zil_amount();
+        let gas_price = tx.tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.tx.gas_limit_scilla();
+        let receipt = node
+            .get_transaction_receipt(*hash)?
+            .ok_or(anyhow!("Transaction receipt missing"))?;
+        let (version, to_addr, sender_pub_key, signature, _code, _data) = match tx.tx {
+            SignedTransaction::Zilliqa { tx, sig, key } => (
+                ((tx.chain_id as u32) << 16) | 1,
+                tx.to_addr,
+                key.to_encoded_point(true).as_bytes().to_hex(),
+                <[u8; 64]>::from(sig.to_bytes()).to_hex(),
+                (!tx.code.is_empty()).then_some(tx.code),
+                (!tx.data.is_empty()).then_some(tx.data),
+            ),
+            SignedTransaction::Legacy { tx, sig } => (
+                ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip2930 { tx, sig } => (
+                ((tx.chain_id as u32) << 16) | 3,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip1559 { tx, sig } => (
+                ((tx.chain_id as u32) << 16) | 4,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Intershard { tx, .. } => (
+                ((tx.chain_id as u32) << 16) | 20,
+                tx.to_addr.unwrap_or_default(),
+                String::new(),
+                String::new(),
+                tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
+                tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
+            ),
+        };
+        let body = TransactionBody {
+            id: tx.hash.to_string(),
+            amount: amount.to_string(),
+            gas_limit: gas_limit.to_string(),
+            gas_price: gas_price.to_string(),
+            nonce: nonce.to_string(),
+            receipt,
+            sender_pub_key,
+            signature,
+            to_addr: to_addr.to_string(),
+            version: version.to_string(),
+        };
+        transactions.push(body);
+    }
+    Ok(transactions)
+}
+
+fn get_txn_bodies_for_tx_block(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Vec<TransactionBody>> {
+    let params: Vec<String> = params.parse()?;
+    let block_number: u64 = params[0].parse()?;
+
+    let node = node.lock().expect("Failed to acquire lock on node");
+    let block = node
+        .get_block(block_number)?
+        .ok_or_else(|| anyhow!("Block not found"))?;
+
+    extract_transaction_bodies(&block, &node)
+}
+
+fn get_txn_bodies_for_tx_block_ex(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TxnBodiesForTxBlockExResponse> {
+    let params: Vec<String> = params.parse()?;
+    let block_number: u64 = params[0].parse()?;
+    let page_number: usize = params[1].parse()?;
+
+    let node = node.lock().expect("Failed to acquire lock on node");
+    let block = node
+        .get_block(block_number)?
+        .ok_or_else(|| anyhow!("Block not found"))?;
+
+    let total_transactions = block.transactions.len();
+    let num_pages = (total_transactions / TRANSACTIONS_PER_PAGE)
+        + (if total_transactions % TRANSACTIONS_PER_PAGE != 0 {
+            1
+        } else {
+            0
+        });
+
+    // Ensure page is within bounds
+    if page_number >= num_pages {
+        return Ok(TxnBodiesForTxBlockExResponse {
+            curr_page: page_number as u64,
+            num_pages: num_pages as u64,
+            transactions: vec![],
+        });
+    }
+
+    let start = std::cmp::min(page_number * TRANSACTIONS_PER_PAGE, total_transactions);
+    let end = std::cmp::min(start + TRANSACTIONS_PER_PAGE, total_transactions);
+
+    let transactions = extract_transaction_bodies(&block, &node)?
+        .into_iter()
+        .skip(start)
+        .take(end - start)
+        .collect();
+
+    Ok(TxnBodiesForTxBlockExResponse {
+        curr_page: page_number as u64,
+        num_pages: num_pages as u64,
+        transactions,
+    })
+}
+
+fn get_num_ds_blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let num_tx_blocks = node.get_chain_tip();
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    Ok(num_ds_blocks.to_string())
+}
+
+fn get_recent_transactions(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<RecentTransactionsResponse> {
+    let node = node.lock().unwrap();
+    let mut block_number = node.get_chain_tip();
+    let mut txns = Vec::new();
+    let mut blocks_searched = 0;
+    while block_number > 0 && txns.len() < 100 && blocks_searched < 100 {
+        let block = match node
+            .consensus
+            .block_store
+            .get_block_by_number(block_number)?
+        {
+            Some(block) => block,
+            None => continue,
+        };
+        for txn in block.transactions {
+            txns.push(txn.to_string());
+            if txns.len() >= 100 {
+                break;
+            }
+        }
+        block_number -= 1;
+        blocks_searched += 1;
+    }
+
+    Ok(RecentTransactionsResponse {
+        number: txns.len() as u64,
+        txn_hashes: txns,
     })
 }
