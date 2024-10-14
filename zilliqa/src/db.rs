@@ -987,6 +987,7 @@ mod tests {
             1,
             1,
             qc2,
+            None,
             state_hash.into(),
             EMPTY_ROOT_HASH.into(),
             EMPTY_ROOT_HASH.into(),
