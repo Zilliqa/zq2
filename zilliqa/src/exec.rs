@@ -420,9 +420,7 @@ impl State {
                 self.apply_delta_evm(&state)?;
                 Ok(addr)
             }
-            ExecutionResult::Success { .. } => {
-                Err(anyhow!("deployment did not create a transaction"))
-            }
+            ExecutionResult::Success { .. } => Err(anyhow!("deployment did not create a contract")),
             ExecutionResult::Revert { .. } => Err(anyhow!("deployment reverted")),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("deployment halted: {reason:?}")),
         }
@@ -764,6 +762,22 @@ impl State {
             .into_iter()
             .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()))
             .collect()
+    }
+
+    pub fn committee(&self) -> Result<()> {
+        let data = contracts::deposit::COMMITTEE.encode_input(&[])?;
+
+        let committee = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            BlockHeader::default(),
+        )?;
+        let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
+        info!("committee: {committee:?}");
+
+        Ok(())
     }
 
     pub fn get_stake(&self, public_key: NodePublicKey) -> Result<Option<NonZeroU128>> {

@@ -6,7 +6,6 @@ use std::{
 use alloy::primitives::{address, Address};
 use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
-use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use tokio::fs;
@@ -22,8 +21,8 @@ use zilliqa::{
         local_address_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default, scilla_lib_dir_default,
         state_rpc_limit_default, total_native_token_supply_default, Amount, ConsensusConfig,
+        GenesisDeposit,
     },
-    crypto::NodePublicKey,
     transaction::EvmGas,
 };
 
@@ -275,7 +274,7 @@ impl Setup {
 
     pub async fn generate_config(&self) -> Result<()> {
         // The genesis deposits.
-        let mut genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)> = Vec::new();
+        let mut genesis_deposits: Vec<GenesisDeposit> = Vec::new();
         for (node, desc) in self.config.shape.nodes.iter() {
             if desc.is_validator {
                 let data = self
@@ -285,12 +284,13 @@ impl Setup {
                     .ok_or(anyhow!("no node data for {node}"))?;
                 // Better have a genesis deposit.
                 let secret_key = SecretKey::from_hex(&data.secret_key)?;
-                genesis_deposits.push((
-                    secret_key.node_public_key(),
-                    secret_key.to_libp2p_keypair().public().to_peer_id(),
-                    GENESIS_DEPOSIT.into(),
-                    data.address,
-                ))
+                genesis_deposits.push(GenesisDeposit {
+                    public_key: secret_key.node_public_key(),
+                    peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
+                    stake: GENESIS_DEPOSIT.into(),
+                    reward_address: data.address,
+                    control_address: data.address,
+                });
             }
         }
 
