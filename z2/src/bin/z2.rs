@@ -488,6 +488,10 @@ fn hash_from_hex(in_str: &str) -> Result<Hash> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
+
     // Work out the base directory
     let base_dir = match env::var("ZQ2_BASE") {
         Ok(val) => {
