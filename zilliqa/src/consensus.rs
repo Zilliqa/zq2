@@ -713,32 +713,9 @@ impl Consensus {
         Ok(None)
     }
 
+    /// Apply the rewards at the tail-end of the Proposal.
     /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
     /// rewards are calculated, please change the comments in the configuration structure there.
-    /// TODOtomos use or remove
-    pub fn apply_rewards(
-        &mut self,
-        committee: &[NodePublicKey],
-        parent_block: &Block,
-        view: u64,
-        cosigned: &BitSlice,
-    ) -> Result<()> {
-        let proposer = self.leader_at_block(parent_block, view).unwrap();
-        let config = &self.config.consensus;
-        self.state
-            .set_to_root(parent_block.state_root_hash().into());
-        Self::apply_rewards_late_at(
-            parent_block.state_root_hash(),
-            &mut self.state,
-            config,
-            committee,
-            proposer.public_key,
-            view,
-            cosigned,
-        )
-    }
-
-    /// Apply the rewards at the tail-end of the Proposal.
     fn apply_rewards_late_at(
         parent_state_hash: Hash,
         at_state: &mut State,
@@ -1073,15 +1050,14 @@ impl Consensus {
             .get_block(&proposal.parent_hash())?
             .context("missing parent block")?;
         let parent_block_hash = parent_block.hash();
-        let parent_block_view = parent_block.view();
 
         state.set_to_root(proposal.state_root_hash().into());
 
         // Compute the majority QC. If aggQC exists then QC is already set to correct value.
-        let final_qc = match proposal.agg {
+        let (final_qc, committee) = match proposal.agg {
             Some(_) => {
-                // TODO check for new view vote majority
-                proposal.header.qc
+                let committee: Vec<_> = self.committee_for_hash(proposal.header.qc.block_hash)?;
+                (proposal.header.qc, committee)
             }
             None => {
                 // Check for majority
@@ -1095,18 +1071,24 @@ impl Consensus {
                     warn!("tried to finalise a proposal without majority");
                     return Ok(None);
                 };
-                self.qc_from_bits(parent_block_hash, signatures, *cosigned, parent_block_view)
+                // Retrieve the previous leader and committee - for rewards
+                let committee = state.get_stakers_at_block(&parent_block)?;
+                (
+                    self.qc_from_bits(
+                        parent_block_hash,
+                        signatures,
+                        *cosigned,
+                        parent_block.view(),
+                    ),
+                    committee,
+                )
             }
         };
 
-        // Retrieve the previous leader and committee - for rewards
-        let committee = state.get_stakers_at_block(&parent_block)?;
-
         let proposer = self
-            .leader_at_block(&parent_block, parent_block_view + 1)
+            .leader_at_block(&parent_block, proposal.view())
             .context("missing parent block leader")?
             .public_key;
-
         // Apply the rewards when exiting the round
         Self::apply_rewards_late_at(
             parent_block.state_root_hash(),
@@ -1114,7 +1096,7 @@ impl Consensus {
             &self.config.consensus,
             &committee,
             proposer, // Last leader
-            parent_block_view + 1,
+            proposal.view(),
             &final_qc.cosigned, // QC cosigners
         )?;
 
@@ -1249,7 +1231,7 @@ impl Consensus {
     }
 
     /// Updates self.early_proposal data (proposal, applied_transactions, transactions_trie, receipts_trie) to include any transactions in the mempool
-    /// Note that this fn will mutate State
+    /// Warning: This fn will mutate State
     fn early_proposal_apply_transactions(&mut self, state: &mut State) -> Result<()> {
         if self.early_proposal.is_none() {
             error!("could not apply transactions to early_proposal because it does not exist");
