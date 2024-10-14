@@ -69,7 +69,7 @@ def health():
     current_time = int(time())
     print (f"block {block_number} latest {latest_block_number}")
 
-    if block_number > latest_block_number:
+    if block_number != latest_block_number:
         latest_block_number = block_number
         latest_block_number_obtained_at = current_time
 
