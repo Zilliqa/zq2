@@ -319,10 +319,7 @@ impl Network {
                 empty_block_timeout: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
                 scilla_stdlib_dir: scilla_stdlib_dir.clone(),
-                scilla_ext_libs_path: ScillaExtLibsPath {
-                    zq2: ScillaExtLibsPathInZq2("scilla_ext_libs".to_string()),
-                    scilla: ScillaExtLibsPathInScilla("/scilla_ext_libs".to_string()),
-                },
+                scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 local_address: "host.docker.internal".to_owned(),
                 rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
