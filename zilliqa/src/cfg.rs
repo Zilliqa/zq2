@@ -2,6 +2,7 @@ use std::{ops::Deref, str::FromStr, time::Duration};
 
 use alloy::primitives::Address;
 use libp2p::{Multiaddr, PeerId};
+use rand::{distributions::Alphanumeric, Rng};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
@@ -189,6 +190,35 @@ impl<'de> Deserialize<'de> for Amount {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ScillaExtLibsPathInZq2(pub String);
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ScillaExtLibsPathInScilla(pub String);
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ScillaExtLibsPath {
+    /// Where are the external libraries stored in zq2 servers' filesystem
+    pub zq2: ScillaExtLibsPathInZq2,
+    /// Where are the external libraries stored in scilla servers' filesystem
+    pub scilla: ScillaExtLibsPathInScilla,
+}
+
+impl ScillaExtLibsPath {
+    pub fn generate_random_subdirs(&self) -> (ScillaExtLibsPathInZq2, ScillaExtLibsPathInScilla) {
+        let sub_directory: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(10)
+            .map(char::from)
+            .collect();
+
+        (
+            ScillaExtLibsPathInZq2(format!("{}/{}", self.zq2.0, sub_directory)),
+            ScillaExtLibsPathInScilla(format!("{}/{}", self.scilla.0, sub_directory)),
+        )
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ConsensusConfig {
     /// If main, deploy a shard registry contract.
@@ -218,8 +248,11 @@ pub struct ConsensusConfig {
     #[serde(default = "scilla_address_default")]
     pub scilla_address: String,
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
-    #[serde(default = "scilla_lib_dir_default")]
-    pub scilla_lib_dir: String,
+    #[serde(default = "scilla_stdlib_dir_default")]
+    pub scilla_stdlib_dir: String,
+    /// Where are the external libraries are stored on zq2 and scilla server's filesystem so that scilla server can find them?
+    #[serde(default = "scilla_ext_libs_path_default")]
+    pub scilla_ext_libs_path: ScillaExtLibsPath,
     /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
     /// Scilla process in Docker and this process on the host, you probably want to pass
     /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
@@ -264,8 +297,16 @@ pub fn scilla_address_default() -> String {
     String::from("http://localhost:3000")
 }
 
-pub fn scilla_lib_dir_default() -> String {
+// This path is as viewed from Scilla, not zq2.
+pub fn scilla_stdlib_dir_default() -> String {
     String::from("/scilla/0/_build/default/src/stdlib/")
+}
+
+pub fn scilla_ext_libs_path_default() -> ScillaExtLibsPath {
+    ScillaExtLibsPath {
+        zq2: ScillaExtLibsPathInZq2(String::from("/tmp")),
+        scilla: ScillaExtLibsPathInScilla(String::from("/scilla_ext_libs")),
+    }
 }
 
 pub fn local_address_default() -> String {

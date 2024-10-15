@@ -23,6 +23,7 @@ use scilla_parser::{
 };
 
 use crate::{
+    cfg::scilla_ext_libs_path_default,
     exec::{scilla_call, PendingState, ScillaError, SCILLA_INVOKE_RUNNER},
     inspector::ScillaInspector,
     state::Code,
@@ -462,6 +463,7 @@ fn scilla_call_precompile(
         ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
         serde_json::to_string(&message).unwrap(),
         inspector,
+        &scilla_ext_libs_path_default(),
     ) else {
         return fatal("scilla call failed");
     };
