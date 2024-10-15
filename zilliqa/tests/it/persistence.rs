@@ -20,7 +20,14 @@ use zilliqa::{
     transaction::EvmGas,
 };
 
-use crate::{deploy_contract, ConsensusConfig, Network, NewNodeOptions, NodeConfig, TestNode};
+use crate::{
+    deploy_contract,
+    zil::{
+        deploy_scilla_contract, scilla_test_contract_code, scilla_test_contract_data,
+        zilliqa_account,
+    },
+    ConsensusConfig, Network, NewNodeOptions, NodeConfig, TestNode,
+};
 
 #[zilliqa_macros::test]
 async fn block_and_tx_data_persistence(mut network: Network) {
@@ -181,6 +188,7 @@ async fn checkpoints_test(mut network: Network) {
     let new_val = 3281u64;
 
     // set some storage items with transactions
+    // Evm
     let function = abi.function("set").unwrap();
     let mut address_buf = [0u8; 20];
     network.rng.lock().unwrap().fill(&mut address_buf);
@@ -198,6 +206,12 @@ async fn checkpoints_test(mut network: Network) {
         .unwrap()
         .tx_hash();
     network.run_until_receipt(&wallet, update_tx_hash, 50).await;
+    // Scilla
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let scilla_contract_address =
+        deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
 
     // Run until block 9 so that we can insert a tx in block 10 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
     network.run_until_block(&wallet, 9.into(), 200).await;
@@ -266,6 +280,7 @@ async fn checkpoints_test(mut network: Network) {
     assert_eq!(block.author, block_from_checkpoint.author);
 
     // Check storage
+    // Evm
     let storage_getter = abi.function("pos1").unwrap();
     let check_storage_tx = TransactionRequest::new().to(contract_address).data(
         storage_getter
@@ -278,6 +293,15 @@ async fn checkpoints_test(mut network: Network) {
         .unwrap();
     let val = storage_getter.decode_output(&storage).unwrap();
     assert_eq!(val[0], Token::Uint(new_val.into()));
+    // Scilla
+    let state: serde_json::Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetSmartContractState", [scilla_contract_address])
+        .await
+        .unwrap();
+    assert_eq!(state["welcome_msg"], "default");
 
     // check the new node catches up and keeps up with block production
     network
