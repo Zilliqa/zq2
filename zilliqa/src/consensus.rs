@@ -641,9 +641,7 @@ impl Consensus {
             }
             let stakers: Vec<_> = self.state.get_stakers()?;
 
-            // Only tell the block store where this block came from if it wasn't from ourselves.
-            let from = (self.peer_id() != from).then_some(from);
-            self.execute_block_with_fastfwd(from, &block, transactions, &stakers)?;
+            self.execute_block(Some(from), &block, transactions, &stakers)?;
 
             if self.view.get_view() != proposal_view + 1 {
                 self.view.set_view(proposal_view + 1);
@@ -2625,27 +2623,6 @@ impl Consensus {
         transactions: Vec<SignedTransaction>,
         committee: &[NodePublicKey],
     ) -> Result<()> {
-        self.execute_block_raw(false, from, block, transactions, committee)
-    }
-
-    fn execute_block_with_fastfwd(
-        &mut self,
-        from: Option<PeerId>,
-        block: &Block,
-        transactions: Vec<SignedTransaction>,
-        committee: &[NodePublicKey],
-    ) -> Result<()> {
-        self.execute_block_raw(true, from, block, transactions, committee)
-    }
-
-    fn execute_block_raw(
-        &mut self,
-        fastfwd: bool,
-        from: Option<PeerId>,
-        block: &Block,
-        transactions: Vec<SignedTransaction>,
-        committee: &[NodePublicKey],
-    ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
 
         let parent = self
@@ -2683,7 +2660,7 @@ impl Consensus {
 
         let mut block_receipts: Vec<(TransactionReceipt, usize)> = Vec::new();
 
-        if from.is_none() && fastfwd {
+        if from.is_some_and(|peer_id| peer_id == self.peer_id()) {
             info!("Fast-forward self-proposal");
             // recover previous receipts from cache
             for (tx_index, txn) in verified_txns.into_iter().enumerate() {
@@ -2693,6 +2670,7 @@ impl Consensus {
                         .expect("receipt must be inserted during proposal assembly"),
                     tx_index,
                 ));
+                // TODO: Apply 'touched-address' from cache
             }
             // fast-forward state
             self.state.set_to_root(block.state_root_hash().into());
@@ -2816,6 +2794,8 @@ impl Consensus {
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
         if !self.db.contains_block(&block.hash())? {
+            // Only tell the block store where this block came from if it wasn't from ourselves.
+            let from = from.filter(|peer_id| *peer_id != self.peer_id());
             // If we were the proposer we would've already processed the block, hence the check
             self.add_block(from, block.clone())?;
         }
