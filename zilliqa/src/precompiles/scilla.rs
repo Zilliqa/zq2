@@ -217,14 +217,33 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
         let address = Address::detokenize(decoder.decode().unwrap());
         let field = String::detokenize(decoder.decode().unwrap());
 
-        let Ok(account) = context.db.load_account(address) else {
-            return fatal("state access failed");
+        let account = match context.db.load_account(address) {
+            Ok(account) => account,
+            Err(e) => {
+                tracing::error!(?e, "state access failed");
+                return fatal("state access failed");
+            }
         };
-        let Code::Scilla { ref types, .. } = account.account.code else {
+        let Code::Scilla {
+            ref types,
+            ref init_data,
+            ..
+        } = account.account.code
+        else {
             return err(format!("{address} is not a scilla contract"));
         };
-        let Some((ty, _)) = types.get(&field) else {
-            return err(format!("variable {field} does not exist in contract"));
+
+        let (ty, init_data_value) = match (
+            init_data.iter().find(|p| p.name == field),
+            types.get(&field),
+        ) {
+            // Note that if a field exists in both the `init_data` and mutable fields, we ignore the `init_data` and
+            // read from the field. This behaviour matches the semantics of Scilla and specification in ZIP-21.
+            (_, Some((ty, _))) => (ty, None),
+            (Some(v), None) => (&v.ty, Some(v.value.clone())),
+            (None, None) => {
+                return err(format!("variable {field} does not exist in contract"));
+            }
         };
 
         let mut errors = vec![];
@@ -241,45 +260,64 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
             return err("failed to read indices");
         };
 
-        macro_rules! decoder {
+        macro_rules! encoder {
             ($ty:ty) => {{
-                let Ok(value) = context.db.load_storage(address, &field, &indices) else {
-                    return fatal("failed to read value");
-                };
-                let Some(value) = value else {
-                    return err("no such value");
-                };
-                let Ok(value) = serde_json::from_slice::<String>(&value) else {
-                    return fatal("failed to parse raw value");
-                };
-                let Ok(value) = value.parse::<$ty>() else {
-                    return fatal("failed to parse value");
-                };
-                value.abi_encode()
+                if let Some(value) = init_data_value {
+                    let Ok(value) = serde_json::from_value::<String>(value) else {
+                        return fatal("failed to parse raw value");
+                    };
+                    let Ok(value) = value.parse::<$ty>() else {
+                        return fatal("failed to parse value");
+                    };
+                    value.abi_encode()
+                } else {
+                    let Ok(value) = context.db.load_storage(address, &field, &indices) else {
+                        return fatal("failed to read value");
+                    };
+                    if let Some(value) = value {
+                        let Ok(value) = serde_json::from_slice::<String>(&value) else {
+                            return fatal("failed to parse raw value");
+                        };
+                        let Ok(value) = value.parse::<$ty>() else {
+                            return fatal("failed to parse value");
+                        };
+                        value.abi_encode()
+                    } else {
+                        vec![]
+                    }
+                }
             }};
         }
 
         let value = match ty {
-            ScillaType::ByStr20 => decoder!(Address),
-            ScillaType::Int32 => decoder!(i32),
-            ScillaType::Int64 => decoder!(i64),
-            ScillaType::Int128 => decoder!(i128),
-            ScillaType::Int256 => decoder!(I256),
-            ScillaType::Uint32 => decoder!(u32),
-            ScillaType::Uint64 => decoder!(u64),
-            ScillaType::Uint128 => decoder!(u128),
-            ScillaType::Uint256 => decoder!(U256),
+            ScillaType::ByStr20 => encoder!(Address),
+            ScillaType::Int32 => encoder!(i32),
+            ScillaType::Int64 => encoder!(i64),
+            ScillaType::Int128 => encoder!(i128),
+            ScillaType::Int256 => encoder!(I256),
+            ScillaType::Uint32 => encoder!(u32),
+            ScillaType::Uint64 => encoder!(u64),
+            ScillaType::Uint128 => encoder!(u128),
+            ScillaType::Uint256 => encoder!(U256),
             ScillaType::String => {
-                let Ok(value) = context.db.load_storage(address, &field, &indices) else {
-                    return fatal("failed to read value");
-                };
-                let Some(value) = value else {
-                    return err("no such value");
-                };
-                let Ok(value) = serde_json::from_slice::<String>(value) else {
-                    return fatal("failed to parse raw value");
-                };
-                value.abi_encode()
+                if let Some(value) = init_data_value {
+                    let Ok(value) = serde_json::from_value::<String>(value) else {
+                        return fatal("failed to parse raw value");
+                    };
+                    value.abi_encode()
+                } else {
+                    let Ok(value) = context.db.load_storage(address, &field, &indices) else {
+                        return fatal("failed to read value");
+                    };
+                    if let Some(value) = value {
+                        let Ok(value) = serde_json::from_slice::<String>(value) else {
+                            return fatal("failed to parse raw value");
+                        };
+                        value.abi_encode()
+                    } else {
+                        vec![]
+                    }
+                }
             }
             ScillaType::Map(_, _) => unreachable!("map will not be returned from `get_indices`"),
         };
@@ -363,8 +401,12 @@ fn scilla_call_precompile(
         return err("call mode should be either 0 or 1");
     };
 
-    let Ok(account) = evmctx.db.pre_state.get_account(address) else {
-        return fatal("state access failed");
+    let account = match evmctx.db.pre_state.get_account(address) {
+        Ok(account) => account,
+        Err(e) => {
+            tracing::error!(?e, "state access failed");
+            return fatal("state access failed");
+        }
     };
     let Code::Scilla { transitions, .. } = account.code else {
         return err(format!("{address} is not a scilla contract"));
@@ -426,7 +468,7 @@ fn scilla_call_precompile(
     ) else {
         return fatal("scilla call failed");
     };
-    if !result.success {
+    if !&result.success {
         if result
             .errors
             .values()

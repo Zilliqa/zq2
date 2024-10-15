@@ -17,7 +17,11 @@ use http::Extensions;
 use itertools::{Either, Itertools};
 use jsonrpsee::{
     core::StringError,
-    types::{error::ErrorObjectOwned, params::ParamsSequence, Params},
+    types::{
+        error::{ErrorObject, ErrorObjectOwned},
+        params::ParamsSequence,
+        Params,
+    },
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
 use serde::Deserialize;
@@ -25,12 +29,13 @@ use tracing::*;
 
 use super::{
     to_hex::ToHex,
-    types::eth::{self, CallParams, HashOrTransaction, OneOrMany},
+    types::eth::{self, CallParams, ErrorCode, HashOrTransaction, OneOrMany},
 };
 use crate::{
     crypto::Hash,
     message::Block,
     node::Node,
+    pool::TxAddResult,
     state::Code,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction},
@@ -697,7 +702,28 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
     let transaction = hex::decode(transaction)?;
     let transaction = parse_transaction(&transaction)?;
 
-    let transaction_hash = B256::from(node.lock().unwrap().create_transaction(transaction)?);
+    let (hash, result) = node.lock().unwrap().create_transaction(transaction)?;
+    match result {
+        TxAddResult::AddedToMempool
+        | TxAddResult::Duplicate(_)
+        | TxAddResult::SameNonceButLowerGasPrice => Ok(()),
+        TxAddResult::CannotVerifySignature => Err(ErrorObject::owned::<String>(
+            ErrorCode::TransactionRejected as i32,
+            "Cannot verify signature".to_string(),
+            None,
+        )),
+        TxAddResult::ValidationFailed(reason) => Err(ErrorObject::owned::<String>(
+            ErrorCode::InvalidParams as i32,
+            reason.to_msg_string(),
+            None,
+        )),
+        TxAddResult::NonceTooLow(got, expected) => Err(ErrorObject::owned::<String>(
+            ErrorCode::InvalidParams as i32,
+            format!("Nonce ({got}) lower than current ({expected})"),
+            None,
+        )),
+    }?;
+    let transaction_hash = B256::from(hash);
 
     Ok(transaction_hash.to_hex())
 }
@@ -723,7 +749,7 @@ fn parse_legacy_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
 
     let nonce = u64::decode(&mut bytes)?;
     let gas_price = u128::decode(&mut bytes)?;
-    let gas_limit = u128::decode(&mut bytes)?;
+    let gas_limit = u64::decode(&mut bytes)?;
     let to = TxKind::decode(&mut bytes)?;
     let value = U256::decode(&mut bytes)?;
     let input = Bytes::decode(&mut bytes)?;
@@ -752,7 +778,7 @@ fn parse_eip2930_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
     let chain_id = u64::decode(&mut bytes)?;
     let nonce = u64::decode(&mut bytes)?;
     let gas_price = u128::decode(&mut bytes)?;
-    let gas_limit = u128::decode(&mut bytes)?;
+    let gas_limit = u64::decode(&mut bytes)?;
     let to = TxKind::decode(&mut bytes)?;
     let value = U256::decode(&mut bytes)?;
     let input = Bytes::decode(&mut bytes)?;
@@ -784,7 +810,7 @@ fn parse_eip1559_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
     let nonce = u64::decode(&mut bytes)?;
     let max_priority_fee_per_gas = u128::decode(&mut bytes)?;
     let max_fee_per_gas = u128::decode(&mut bytes)?;
-    let gas_limit = u128::decode(&mut bytes)?;
+    let gas_limit = u64::decode(&mut bytes)?;
     let to = TxKind::decode(&mut bytes)?;
     let value = U256::decode(&mut bytes)?;
     let input = Bytes::decode(&mut bytes)?;

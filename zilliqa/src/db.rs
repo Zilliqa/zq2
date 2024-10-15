@@ -11,13 +11,13 @@ use std::{
 use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie, Trie};
+use itertools::Itertools;
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
     Connection, OptionalExtension, Row, ToSql,
 };
 use serde::{Deserialize, Serialize};
-use sled::{transaction::TransactionError, Batch, Tree};
 use tracing::warn;
 
 use crate::{
@@ -174,14 +174,11 @@ enum BlockFilter {
     Height(u64),
 }
 
-const STATE_TRIE_TREE: &[u8] = b"state_trie";
-
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
 
 #[derive(Debug)]
 pub struct Db {
-    state_root: sled::Db,
-    block_store: Mutex<Connection>,
+    db: Arc<Mutex<Connection>>,
     path: Option<Box<Path>>,
 }
 
@@ -190,20 +187,16 @@ impl Db {
     where
         P: AsRef<Path>,
     {
-        let (db, mut connection, path) = match data_dir {
+        let (mut connection, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
+                fs::create_dir_all(&path)?;
                 (
-                    sled::open(path.join("state"))?,
-                    Connection::open(path.join("blockdata.db"))?,
+                    Connection::open(path.join("db.sqlite3"))?,
                     Some(path.into_boxed_path()),
                 )
             }
-            None => (
-                sled::Config::new().temporary(true).open()?,
-                Connection::open_in_memory()?,
-                None,
-            ),
+            None => (Connection::open_in_memory()?, None),
         };
 
         connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
@@ -211,8 +204,7 @@ impl Db {
         Self::ensure_schema(&connection)?;
 
         Ok(Db {
-            state_root: db,
-            block_store: Mutex::new(connection),
+            db: Arc::new(Mutex::new(connection)),
             path,
         })
     }
@@ -258,6 +250,7 @@ impl Db {
                 latest_finalized_view INTEGER,
                 high_qc BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
+            CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL);
             ",
         )?;
         Ok(())
@@ -338,7 +331,7 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
         }
 
-        if !trie_storage.db.is_empty() || self.get_highest_block_number()?.is_some() {
+        if state_trie.iter().next().is_some() || self.get_highest_block_number()?.is_some() {
             // If checkpointed block already exists then assume checkpoint load already complete. Return None
             if self.get_block_by_hash(block.hash())?.is_some() {
                 return Ok(None);
@@ -409,18 +402,14 @@ impl Db {
         Ok(Some((block, transactions, parent)))
     }
 
-    pub fn flush_state(&self) {
-        while self.state_root.flush().unwrap() > 0 {}
-    }
-
     pub fn state_trie(&self) -> Result<TrieStorage> {
-        Ok(TrieStorage::new(
-            self.state_root.open_tree(STATE_TRIE_TREE)?,
-        ))
+        Ok(TrieStorage {
+            db: self.db.clone(),
+        })
     }
 
     pub fn with_sqlite_tx(&self, operations: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
-        let mut sqlite_tx = self.block_store.lock().unwrap();
+        let mut sqlite_tx = self.db.lock().unwrap();
         let sqlite_tx = sqlite_tx.transaction()?;
         operations(&sqlite_tx)?;
         Ok(sqlite_tx.commit()?)
@@ -428,7 +417,7 @@ impl Db {
 
     pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
         Ok(self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .query_row_and_then(
@@ -451,12 +440,12 @@ impl Db {
     }
 
     pub fn set_latest_finalized_view(&self, view: u64) -> Result<()> {
-        self.set_latest_finalized_view_with_db_tx(&self.block_store.lock().unwrap(), view)
+        self.set_latest_finalized_view_with_db_tx(&self.db.lock().unwrap(), view)
     }
 
     pub fn get_latest_finalized_view(&self) -> Result<Option<u64>> {
         Ok(self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .query_row("SELECT latest_finalized_view FROM tip_info", (), |row| {
@@ -467,7 +456,7 @@ impl Db {
 
     pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
         Ok(self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .query_row_and_then(
@@ -491,12 +480,12 @@ impl Db {
     }
 
     pub fn set_high_qc(&self, high_qc: QuorumCertificate) -> Result<()> {
-        self.set_high_qc_with_db_tx(&self.block_store.lock().unwrap(), high_qc)
+        self.set_high_qc_with_db_tx(&self.db.lock().unwrap(), high_qc)
     }
 
     pub fn get_high_qc(&self) -> Result<Option<QuorumCertificate>> {
         Ok(self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .query_row("SELECT high_qc FROM tip_info", (), |row| row.get(0))
@@ -504,7 +493,7 @@ impl Db {
     }
 
     pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
+        self.db.lock().unwrap().execute(
             "INSERT INTO touched_address_index (address, tx_hash) VALUES (?1, ?2)",
             (AddressSqlable(address), txn_hash),
         )?;
@@ -515,7 +504,7 @@ impl Db {
         // TODO: this is only ever used in one API, so keep an eye on performance - in case e.g.
         // the index table might need to be denormalised to simplify this lookup
         Ok(self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT tx_hash FROM touched_address_index JOIN receipts USING (tx_hash) JOIN blocks USING (block_hash) WHERE address = ?1 ORDER BY blocks.height, receipts.tx_index")?
@@ -525,7 +514,7 @@ impl Db {
 
     pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<SignedTransaction>> {
         Ok(self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .query_row(
@@ -538,7 +527,7 @@ impl Db {
 
     pub fn contains_transaction(&self, hash: &Hash) -> Result<bool> {
         Ok(self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .query_row(
@@ -566,12 +555,12 @@ impl Db {
     /// Insert a transaction whose hash was precalculated, to save a call to calculate_hash() if it
     /// is already known
     pub fn insert_transaction(&self, hash: &Hash, tx: &SignedTransaction) -> Result<()> {
-        self.insert_transaction_with_db_tx(&self.block_store.lock().unwrap(), hash, tx)
+        self.insert_transaction_with_db_tx(&self.db.lock().unwrap(), hash, tx)
     }
 
     pub fn remove_transactions_executed_in_block(&self, block_hash: &Hash) -> Result<()> {
         // foreign key triggers will take care of receipts and touched_address_index
-        self.block_store.lock().unwrap().execute(
+        self.db.lock().unwrap().execute(
             "DELETE FROM transactions WHERE tx_hash IN (SELECT tx_hash FROM receipts WHERE block_hash = ?1)",
             [block_hash],
         )?;
@@ -580,7 +569,7 @@ impl Db {
 
     pub fn get_block_hash_reverse_index(&self, tx_hash: &Hash) -> Result<Option<Hash>> {
         Ok(self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .query_row(
@@ -614,7 +603,7 @@ impl Db {
     }
 
     pub fn mark_block_as_canonical(&self, hash: Hash) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
+        self.db.lock().unwrap().execute(
             "UPDATE blocks SET is_canonical = TRUE WHERE block_hash = ?1",
             [hash],
         )?;
@@ -622,7 +611,7 @@ impl Db {
     }
 
     pub fn mark_block_as_non_canonical(&self, hash: Hash) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
+        self.db.lock().unwrap().execute(
             "UPDATE blocks SET is_canonical = FALSE WHERE block_hash = ?1",
             [hash],
         )?;
@@ -630,11 +619,11 @@ impl Db {
     }
 
     pub fn insert_block(&self, block: &Block) -> Result<()> {
-        self.insert_block_with_db_tx(&self.block_store.lock().unwrap(), block)
+        self.insert_block_with_db_tx(&self.db.lock().unwrap(), block)
     }
 
     pub fn remove_block(&self, block: &Block) -> Result<()> {
-        self.block_store.lock().unwrap().execute(
+        self.db.lock().unwrap().execute(
             "DELETE FROM blocks WHERE block_hash = ?1",
             [block.header.hash],
         )?;
@@ -663,7 +652,7 @@ impl Db {
         }
         macro_rules! query_block {
             ($cond: tt, $key: tt) => {
-                self.block_store.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
+                self.db.lock().unwrap().query_row(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond), [$key], make_block).optional()?
             };
         }
         Ok(match filter {
@@ -684,7 +673,7 @@ impl Db {
             return Ok(None);
         };
         let transaction_hashes = self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
@@ -708,7 +697,7 @@ impl Db {
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
         Ok(self
-            .block_store
+            .db
             .lock()
             .unwrap()
             .query_row(
@@ -765,26 +754,35 @@ impl Db {
     }
 
     pub fn insert_transaction_receipt(&self, receipt: TransactionReceipt) -> Result<()> {
-        self.insert_transaction_receipt_with_db_tx(&self.block_store.lock().unwrap(), receipt)
+        self.insert_transaction_receipt_with_db_tx(&self.db.lock().unwrap(), receipt)
     }
 
     pub fn get_transaction_receipt(&self, txn_hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().query_row("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
+        Ok(self.db.lock().unwrap().query_row("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1", [txn_hash], Self::make_receipt).optional()?)
     }
 
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: &Hash,
     ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self.block_store.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+        Ok(self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn remove_transaction_receipts_in_block(&self, block_hash: &Hash) -> Result<()> {
-        self.block_store
+        self.db
             .lock()
             .unwrap()
             .execute("DELETE FROM receipts WHERE block_hash = ?1", [block_hash])?;
         Ok(())
+    }
+
+    pub fn get_total_transaction_count(&self) -> Result<usize> {
+        let count: usize =
+            self.db
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))?;
+        Ok(count)
     }
 }
 
@@ -865,49 +863,56 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     Ok(())
 }
 
-/// An implementor of [eth_trie::DB] which uses a [sled::Tree] to persist data.
+/// An implementor of [eth_trie::DB] which uses a [Connection] to persist data.
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
-    db: Tree,
-}
-
-impl TrieStorage {
-    pub fn new(db: Tree) -> Self {
-        Self { db }
-    }
+    db: Arc<Mutex<Connection>>,
 }
 
 impl eth_trie::DB for TrieStorage {
-    type Error = sled::Error;
+    type Error = rusqlite::Error;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        Ok(self.db.get(key)?.map(|ivec| ivec.to_vec()))
+        let value = self
+            .db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT value FROM state_trie WHERE key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value)
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        self.db.insert(key, value)?;
+        self.db.lock().unwrap().execute(
+            "INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)",
+            (key, value),
+        )?;
         Ok(())
     }
 
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
-        let mut batch = Batch::default();
+        if keys.is_empty() {
+            return Ok(());
+        }
+
         assert_eq!(keys.len(), values.len());
-        for (key, value) in keys.into_iter().zip(values) {
-            batch.insert(key, value);
-        }
-        if let Err(e) = self.db.transaction(|db| {
-            db.apply_batch(&batch)?;
-            Ok(())
-        }) {
-            match e {
-                TransactionError::Abort(()) => {
-                    unreachable!("we don't call `abort` during this transaction")
-                }
-                TransactionError::Storage(e) => {
-                    return Err(e);
-                }
-            }
-        }
+        // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
+        // parameters for each key. Note that parameters are one-indexed.
+        #[allow(unstable_name_collisions)]
+        let params_stmt: String = (0..keys.len())
+            .map(|i| format!("(?{}, ?{})", i * 2 + 1, i * 2 + 2))
+            .intersperse(",".to_owned())
+            .collect();
+        let query = format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
+        let params = keys.into_iter().zip(values).flat_map(|(k, v)| [k, v]);
+        self.db
+            .lock()
+            .unwrap()
+            .execute(&query, rusqlite::params_from_iter(params))?;
         Ok(())
     }
 
@@ -920,18 +925,10 @@ impl eth_trie::DB for TrieStorage {
         // we keep old state to function as an archive node, therefore no-op
         Ok(())
     }
-
-    /// eth-trie.rs provides a way to cache reads and writes and periodically flush them.
-    /// We delegate this to Sled and implement flush() as a no-op.
-    fn flush(&self) -> Result<(), Self::Error> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Deref;
-
     use alloy::consensus::EMPTY_ROOT_HASH;
     use rand::{
         distributions::{Distribution, Uniform},
@@ -945,20 +942,17 @@ mod tests {
 
     #[test]
     fn checkpoint_export_import() {
-        let test_db = sled::Config::new().temporary(true).open().unwrap();
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
         let db = Db::new(Some(base_path), 0).unwrap();
 
-        let trie_db = Arc::new(TrieStorage::new(test_db.deref().to_owned()));
-
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let distribution = Uniform::new(1, 50);
-        let mut root_trie = EthTrie::new(trie_db.clone());
+        let mut root_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
         for _ in 0..100 {
             let account_address: [u8; 20] = rng.gen();
-            let mut account_trie = EthTrie::new(trie_db.clone());
+            let mut account_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
             let mut key = Vec::<u8>::with_capacity(50);
             let mut value = Vec::<u8>::with_capacity(50);
             for _ in 0..distribution.sample(&mut rng) {
@@ -993,6 +987,7 @@ mod tests {
             1,
             1,
             qc2,
+            None,
             state_hash.into(),
             EMPTY_ROOT_HASH.into(),
             EMPTY_ROOT_HASH.into(),
@@ -1011,7 +1006,7 @@ mod tests {
             &checkpoint_block,
             &checkpoint_transactions,
             &checkpoint_parent,
-            trie_db.deref().clone(),
+            db.state_trie().unwrap(),
             SHARD_ID,
             &checkpoint_path,
         )

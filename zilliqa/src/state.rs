@@ -25,7 +25,8 @@ use crate::{
     inspector,
     message::{BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
-    scilla::{Scilla, Transition},
+    scilla::{ParamValue, Scilla, Transition},
+    serde_util::vec_param_value,
     transaction::EvmGas,
 };
 
@@ -413,7 +414,8 @@ pub enum Code {
     Evm(#[serde(with = "serde_bytes")] Vec<u8>),
     Scilla {
         code: String,
-        init_data: String,
+        #[serde(with = "vec_param_value")]
+        init_data: Vec<ParamValue>,
         types: BTreeMap<String, (String, u8)>,
         transitions: Vec<Transition>,
     },
@@ -444,7 +446,7 @@ impl Code {
         }
     }
 
-    pub fn scilla_code_and_init_data(self) -> Option<(String, String)> {
+    pub fn scilla_code_and_init_data(self) -> Option<(String, Vec<ParamValue>)> {
         match self {
             Code::Scilla {
                 code, init_data, ..

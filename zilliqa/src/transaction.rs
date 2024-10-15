@@ -33,13 +33,94 @@ use crate::{
         EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_CONTRACT_CREATE_GAS,
         ZIL_CONTRACT_INVOKE_GAS, ZIL_MAX_CODE_SIZE, ZIL_NORMAL_TXN_GAS,
     },
-    crypto,
-    crypto::Hash,
+    crypto::{self, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     schnorr,
+    scilla::ParamValue,
+    serde_util::vec_param_value,
     state::Account,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
+
+/// Represents a validation result.
+/// This could be Result<String>, except that we would then return
+/// Result<Result<String>>, which would be confusing.
+/// The argument is a human-readable error message which can be returned to the
+/// user to indicate the problem with the transaction.
+#[derive(Debug, Copy, Clone)]
+pub enum ValidationOutcome {
+    Success,
+    /// Transaction input size exceeds configured limit - (size, limit)
+    TransactionInputSizeExceeded(usize, usize),
+    /// Transaction initcode size exceeds configured limit - (size, limit)
+    InitCodeSizeExceeded(usize, usize),
+    /// Gas limit exceeds block gas limit - (gas_limit, block_gas_limit)
+    BlockGasLimitExceeded(EvmGas, EvmGas),
+    /// Insufficient gas for zil transaction - (given, required)
+    InsufficientGasZil(ScillaGas, ScillaGas),
+    /// Insufficient gas for EVM transaction
+    InsufficientGasEvm(EvmGas, EvmGas),
+    /// Chain id was incorrect - (received, expected)
+    IncorrectChainId(u64, u64),
+    /// Insufficient funds in account - (txn_cost, account_balance)
+    InsufficientFunds(u128, u128),
+    /// Nonce too low - arg is the nonce we were expecting - (nonce, expected_nonce)
+    NonceTooLow(u64, u64),
+    /// Unrecognised type - not invocation, creation or transfer
+    UnknownTransactionType,
+}
+
+impl ValidationOutcome {
+    // I did try this with a vector, but sadly this involves too much
+    // trait magic to be convenient.
+    pub fn and_then<T>(&self, test: T) -> Result<ValidationOutcome>
+    where
+        T: FnOnce() -> Result<ValidationOutcome>,
+    {
+        if self.is_ok() {
+            test()
+        } else {
+            Ok(*self)
+        }
+    }
+
+    pub fn is_ok(&self) -> bool {
+        matches!(self, Self::Success)
+    }
+
+    pub fn to_msg_string(&self) -> String {
+        match self {
+            Self::Success => "Txn accepted".to_string(),
+            Self::TransactionInputSizeExceeded(size, limit) => {
+                format!("Transaction input size ({size}) exceeds limit ({limit})")
+            }
+            Self::InitCodeSizeExceeded(size, limit) => {
+                format!("Init code size ({size}) exceeds limit ({limit})")
+            }
+            Self::BlockGasLimitExceeded(gas, limit) => {
+                format!("Txn gas limit ({gas}) exceeeds block gas limit ({limit})")
+            }
+            Self::InsufficientGasZil(gas, limit) => {
+                format!("Insufficient Zilliqa txn gas supplied ({gas}) - required ({limit})")
+            }
+            Self::InsufficientGasEvm(gas, limit) => {
+                format!("Insufficient EVM txn gas supplied ({gas}) - required ({limit})")
+            }
+            Self::IncorrectChainId(got, wanted) => {
+                format!("Txn has chain id {got}, expected chain {wanted}")
+            }
+            Self::InsufficientFunds(txn_cost, bal) => {
+                format!("Insufficient funds - txn cost {txn_cost} but account balance {bal}")
+            }
+            Self::NonceTooLow(txn_nonce, expected) => {
+                format!("Txn nonce ({txn_nonce}) is too low for account ({expected})")
+            }
+            Self::UnknownTransactionType => {
+                "Txn is not transfer, contract creation or contract invocation".to_string()
+            }
+        }
+    }
+}
 
 /// A [Transaction] plus its signature. The underlying transaction can be obtained with
 /// [`SignedTransaction::into_transaction()`]. The transaction's signer and hash can be obtained by converting this to a
@@ -237,9 +318,9 @@ impl SignedTransaction {
 
     pub fn gas_limit(&self) -> EvmGas {
         match self {
-            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit as u64),
-            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit as u64),
-            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit as u64),
+            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit),
+            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit),
+            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit),
             SignedTransaction::Zilliqa { tx, .. } => tx.gas_limit.into(),
             SignedTransaction::Intershard { tx, .. } => tx.gas_limit,
         }
@@ -247,9 +328,9 @@ impl SignedTransaction {
 
     pub fn gas_limit_scilla(&self) -> ScillaGas {
         match self {
-            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit as u64).into(),
-            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit as u64).into(),
-            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit as u64).into(),
+            SignedTransaction::Legacy { tx, .. } => EvmGas(tx.gas_limit).into(),
+            SignedTransaction::Eip2930 { tx, .. } => EvmGas(tx.gas_limit).into(),
+            SignedTransaction::Eip1559 { tx, .. } => EvmGas(tx.gas_limit).into(),
             SignedTransaction::Zilliqa { tx, .. } => tx.gas_limit,
             SignedTransaction::Intershard { tx, .. } => tx.gas_limit.into(),
         }
@@ -268,13 +349,13 @@ impl SignedTransaction {
     fn maximum_cost(&self) -> Result<u128> {
         match self {
             SignedTransaction::Legacy { tx, .. } => {
-                Ok(tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?)
+                Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)
             }
             SignedTransaction::Eip2930 { tx, .. } => {
-                Ok(tx.gas_limit * tx.gas_price + u128::try_from(tx.value)?)
+                Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)
             }
             SignedTransaction::Eip1559 { tx, .. } => {
-                Ok(tx.gas_limit * tx.max_fee_per_gas + u128::try_from(tx.value)?)
+                Ok(tx.gas_limit as u128 * tx.max_fee_per_gas + u128::try_from(tx.value)?)
             }
             SignedTransaction::Zilliqa { tx, .. } => {
                 Ok(total_scilla_gas_price(tx.gas_limit, tx.gas_price).0)
@@ -368,51 +449,65 @@ impl SignedTransaction {
         account: &Account,
         block_gas_limit: EvmGas,
         eth_chain_id: u64,
-    ) -> Result<bool> {
-        self.validate_input_size()?;
-        self.validate_gas_limit(block_gas_limit)?;
-        self.validate_chain_id(eth_chain_id)?;
-        self.validate_sender_account(account)
+    ) -> Result<ValidationOutcome> {
+        let result = ValidationOutcome::Success
+            .and_then(|| self.validate_input_size())?
+            .and_then(|| self.validate_gas_limit(block_gas_limit))?
+            .and_then(|| self.validate_chain_id(eth_chain_id))?
+            .and_then(|| self.validate_sender_account(account))?;
+        Ok(result)
     }
 
-    fn validate_input_size(&self) -> Result<bool> {
+    fn validate_input_size(&self) -> Result<ValidationOutcome> {
         if let SignedTransaction::Zilliqa { tx, .. } = self {
             if tx.code.len() > ZIL_MAX_CODE_SIZE {
                 warn!(
                     "Zil transaction input size: {} exceeds limit: {ZIL_MAX_CODE_SIZE}",
                     tx.code.len()
                 );
-                return Ok(false);
+                return Ok(ValidationOutcome::TransactionInputSizeExceeded(
+                    tx.code.len(),
+                    ZIL_MAX_CODE_SIZE,
+                ));
             }
-            return Ok(true);
+            return Ok(ValidationOutcome::Success);
         };
 
         let (input_size, tx_kind) = match self {
             SignedTransaction::Legacy { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip2930 { tx, .. } => (tx.input.len(), tx.to),
             SignedTransaction::Eip1559 { tx, .. } => (tx.input.len(), tx.to),
-            _ => return Ok(true),
+            _ => return Ok(ValidationOutcome::Success),
         };
 
         if input_size > EVM_MAX_TX_INPUT_SIZE {
             warn!(
                 "Evm transaction input size: {input_size} exceeds limit: {EVM_MAX_TX_INPUT_SIZE}"
             );
-            return Ok(false);
+            return Ok(ValidationOutcome::TransactionInputSizeExceeded(
+                input_size,
+                EVM_MAX_TX_INPUT_SIZE,
+            ));
         }
 
         if tx_kind == TxKind::Create && input_size > EVM_MAX_INIT_CODE_SIZE {
             warn!("Evm transaction initcode size: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}");
-            return Ok(false);
+            return Ok(ValidationOutcome::InitCodeSizeExceeded(
+                input_size,
+                EVM_MAX_INIT_CODE_SIZE,
+            ));
         }
 
-        Ok(true)
+        Ok(ValidationOutcome::Success)
     }
 
-    fn validate_gas_limit(&self, block_gas_limit: EvmGas) -> Result<bool> {
+    fn validate_gas_limit(&self, block_gas_limit: EvmGas) -> Result<ValidationOutcome> {
         if self.gas_limit() > block_gas_limit {
             warn!("Transaction gas limit exceeds block gas limit!");
-            return Ok(false);
+            return Ok(ValidationOutcome::BlockGasLimitExceeded(
+                self.gas_limit(),
+                block_gas_limit,
+            ));
         }
 
         // The following logic is taken from ZQ1
@@ -432,29 +527,37 @@ impl SignedTransaction {
                 else if !tx.to_addr.is_zero() && tx.data.is_empty() && tx.code.is_empty() {
                     ScillaGas(ZIL_NORMAL_TXN_GAS.try_into()?)
                 } else {
-                    warn!("Given transaction is none of: contract invocation, contract creation, transfer");
-                    return Ok(false);
+                    warn!(
+                        "transaction is none of: contract invocation, contract creation, transfer"
+                    );
+                    return Ok(ValidationOutcome::UnknownTransactionType);
                 }
             };
 
             if tx.gas_limit < required_gas {
                 warn!("Insufficient gas give for zil transaction, given: {}, required: {required_gas}!", tx.gas_limit);
-                return Ok(false);
+                return Ok(ValidationOutcome::InsufficientGasZil(
+                    tx.gas_limit,
+                    required_gas,
+                ));
             }
-            return Ok(true);
+            return Ok(ValidationOutcome::Success);
         }
 
         let gas_limit = self.gas_limit();
 
         if gas_limit < EVM_MIN_GAS_UNITS {
             warn!("Insufficient gas give for evm transaction, given: {gas_limit}, required: {EVM_MIN_GAS_UNITS}!");
-            return Ok(false);
+            return Ok(ValidationOutcome::InsufficientGasEvm(
+                gas_limit,
+                EVM_MIN_GAS_UNITS,
+            ));
         }
 
-        Ok(true)
+        Ok(ValidationOutcome::Success)
     }
 
-    fn validate_chain_id(&self, eth_chain_id: u64) -> Result<bool> {
+    fn validate_chain_id(&self, eth_chain_id: u64) -> Result<ValidationOutcome> {
         let node_chain_id = match &self {
             SignedTransaction::Zilliqa { .. } => eth_chain_id - 0x8000,
             _ => eth_chain_id,
@@ -466,27 +569,33 @@ impl SignedTransaction {
                     "Chain_id provided in transaction: {} is different than node chain_id: {}",
                     txn_chain_id, node_chain_id
                 );
-                return Ok(false);
+                return Ok(ValidationOutcome::IncorrectChainId(
+                    txn_chain_id,
+                    node_chain_id,
+                ));
             }
         }
-        Ok(true)
+        Ok(ValidationOutcome::Success)
     }
 
-    fn validate_sender_account(&self, account: &Account) -> Result<bool> {
+    fn validate_sender_account(&self, account: &Account) -> Result<ValidationOutcome> {
         let txn_cost = self.maximum_cost()?;
         if txn_cost > account.balance {
-            warn!("Insufficient funds!");
-            return Ok(false);
+            warn!("Insufficient funds");
+            return Ok(ValidationOutcome::InsufficientFunds(
+                txn_cost,
+                account.balance,
+            ));
         }
 
         let Some(nonce) = self.nonce() else {
-            return Ok(true);
+            return Ok(ValidationOutcome::Success);
         };
         if nonce < account.nonce {
             warn!("Nonce is too low");
-            return Ok(false);
+            return Ok(ValidationOutcome::NonceTooLow(nonce, account.nonce));
         }
-        Ok(true)
+        Ok(ValidationOutcome::Success)
     }
 }
 
@@ -548,9 +657,9 @@ impl Transaction {
 
     pub fn gas_limit(&self) -> EvmGas {
         match self {
-            Transaction::Legacy(TxLegacy { gas_limit, .. }) => EvmGas(*gas_limit as u64),
-            Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => EvmGas(*gas_limit as u64),
-            Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => EvmGas(*gas_limit as u64),
+            Transaction::Legacy(TxLegacy { gas_limit, .. }) => EvmGas(*gas_limit),
+            Transaction::Eip2930(TxEip2930 { gas_limit, .. }) => EvmGas(*gas_limit),
+            Transaction::Eip1559(TxEip1559 { gas_limit, .. }) => EvmGas(*gas_limit),
             Transaction::Zilliqa(TxZilliqa { gas_limit, .. }) => (*gas_limit).into(),
             Transaction::Intershard(TxIntershard { gas_limit, .. }) => *gas_limit,
         }
@@ -875,29 +984,29 @@ pub struct ScillaLog {
     pub address: Address,
     #[serde(rename = "_eventname")]
     pub event_name: String,
-    pub params: Vec<ScillaParam>,
+    #[serde(with = "vec_param_value")]
+    pub params: Vec<ParamValue>,
 }
 
 impl ScillaLog {
     pub fn into_evm(self) -> EvmLog {
-        /// A version of [ScillaLog] which lets us serialise the `address` manually. We need to serialize it without
-        /// the checksum.
-        #[derive(Serialize)]
-        struct ScillaLogNoChecksum {
+        /// A version of [ScillaLog] which lets us serialise the `address` manually, so we can exclude the checksum, and doesn't encode the `params` values as strings.
+        #[derive(Clone, Serialize, Debug)]
+        pub struct ScillaLogRaw {
             address: String,
             #[serde(rename = "_eventname")]
             event_name: String,
-            params: Vec<ScillaParam>,
+            params: Vec<ParamValue>,
         }
 
         let address = self.address;
-        let log = ScillaLogNoChecksum {
+        let log = ScillaLogRaw {
             address: format!("{address:?}"),
             event_name: self.event_name,
             params: self.params,
         };
 
-        // Unwrap is safe because [ScillaLogNoChecksum::Serialize] is infallible.
+        // Unwrap is safe because [ScillaLogRaw::Serialize] is infallible.
         let data = serde_json::to_string(&log).unwrap().abi_encode();
         EvmLog {
             address,
@@ -956,25 +1065,6 @@ impl Log {
                 .with(log.topics.iter().map(|topic| topic.to_vec()).concat())
                 .finalize(),
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ScillaParam {
-    #[serde(rename = "type")]
-    pub ty: String,
-    pub value: String,
-    #[serde(rename = "vname")]
-    pub name: String,
-}
-
-impl ScillaParam {
-    pub fn compute_hash(&self) -> Hash {
-        Hash::builder()
-            .with(self.ty.as_bytes())
-            .with(self.value.as_bytes())
-            .with(self.name.as_bytes())
-            .finalize()
     }
 }
 

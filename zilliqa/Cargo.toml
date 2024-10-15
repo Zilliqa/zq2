@@ -26,7 +26,7 @@ anyhow = { version = "1.0.89", features = ["backtrace"] }
 vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.3.6", default-features = false, features = ["consensus", "eips", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "0.4.2", default-features = false, features = ["consensus", "eips", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 anyhow = { version = "1.0.89", features = ["backtrace"] }
 async-trait = "0.1.83"
 base64 = "0.22.1"
@@ -47,7 +47,7 @@ jsonrpsee = { version = "0.24.3", features = ["jsonrpsee-http-client", "server"]
 k256 = {version = "0.13.4", features = ["serde", "pem"] }
 libp2p = { version = "0.54.0", features = ["cbor", "dns", "gossipsub", "macros", "tokio", "noise", "mdns", "request-response", "kad", "identify", "serde", "yamux", "autonat", "quic"] }
 lru = "0.12"
-once_cell = "1.20.1"
+once_cell = "1.20.2"
 opentelemetry = { version = "0.26.0", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.24.1", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.17.0", features = ["metrics"] }
@@ -57,7 +57,7 @@ rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_core = "0.6.4"
 revm = { version = "14.0.3", features = ["optional_no_base_fee"] }
-revm-inspectors = { version = "0.7.2", features = ["js-tracer"] }
+revm-inspectors = { version = "0.8.1", features = ["js-tracer"] }
 rusqlite = { version = "0.32.1", features = ["bundled", "trace"] }
 serde = { version = "1.0.210", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
@@ -82,7 +82,7 @@ bech32 = "0.11.0"
 cfg-if = "1.0.0"
 
 [dev-dependencies]
-alloy = { version = "0.3.6", default-features = false, features = ["rand"] }
+alloy = { version = "0.4.2", default-features = false, features = ["rand"] }
 async-trait = "0.1.83"
 criterion = "0.5.1"
 ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }

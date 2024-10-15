@@ -42,8 +42,8 @@ use zilliqa::{
     message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
     schnorr,
-    scilla::storage_key,
-    state::{contract_addr, Account, Code, ContractInit, State},
+    scilla::{storage_key, ParamValue},
+    state::{contract_addr, Account, Code, State},
     time::SystemTime,
     transaction::{
         EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
@@ -202,7 +202,7 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
     Ok(Code::Scilla {
         code: String::from_utf8(code)
             .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?,
-        init_data,
+        init_data: serde_json::from_str(&init_data)?,
         types: BTreeMap::default(),
         transitions: vec![],
     })
@@ -472,6 +472,7 @@ pub async fn convert_persistence(
             block.block_num,
             block.block_num,
             qc,
+            None,
             state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
@@ -556,6 +557,7 @@ fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -
         parent_block.header.view + 1,
         parent_block.header.number + 1,
         qc,
+        None,
         parent_block.header.state_root_hash,
         parent_block.transactions_root_hash(),
         parent_block.header.receipts_root_hash,
@@ -738,7 +740,7 @@ fn infer_eth_signature(
                     chain_id: Some(chain_id.into()),
                     nonce: transaction.nonce - 1,
                     gas_price: transaction.gas_price,
-                    gas_limit: transaction.gas_limit as u128,
+                    gas_limit: transaction.gas_limit,
                     to: if transaction.to_addr.is_zero() {
                         TxKind::Create
                     } else {
@@ -754,7 +756,7 @@ fn infer_eth_signature(
                     chain_id: chain_id.into(),
                     nonce: transaction.nonce - 1,
                     gas_price: transaction.gas_price,
-                    gas_limit: transaction.gas_limit as u128,
+                    gas_limit: transaction.gas_limit,
                     to: if transaction.to_addr.is_zero() {
                         TxKind::Create
                     } else {
@@ -770,7 +772,7 @@ fn infer_eth_signature(
                 tx: TxEip1559 {
                     chain_id: chain_id.into(),
                     nonce: transaction.nonce - 1,
-                    gas_limit: transaction.gas_limit as u128,
+                    gas_limit: transaction.gas_limit,
                     to: if transaction.to_addr.is_zero() {
                         TxKind::Create
                     } else {

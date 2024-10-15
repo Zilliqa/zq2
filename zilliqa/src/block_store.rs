@@ -318,4 +318,9 @@ impl BlockStore {
             .entry(peer)
             .or_insert_with(|| PeerInfo::new(capacity))
     }
+
+    pub fn get_num_transactions(&self) -> Result<usize> {
+        let count = self.db.get_total_transaction_count()?;
+        Ok(count)
+    }
 }

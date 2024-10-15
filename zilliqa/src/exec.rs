@@ -38,14 +38,12 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
-    scilla::{self, split_storage_key, storage_key, Scilla},
-    state::{
-        contract_addr, Account, Code, ContractInit, ExternalLibrary, ScillaTypedVariable, State,
-    },
+    scilla::{self, split_storage_key, storage_key, ParamValue, Scilla},
+    state::{contract_addr, Account, Code, ContractInit, ExternalLibrary, State},
     time::SystemTime,
     transaction::{
-        total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, ScillaParam,
-        Transaction, TxZilliqa, VerifiedTransaction, ZilAmount,
+        total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, Transaction, TxZilliqa,
+        VerifiedTransaction, ZilAmount,
     },
 };
 
@@ -193,7 +191,7 @@ impl ScillaTransition {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ScillaResult {
     /// Whether the transaction succeeded and the resulting state changes were persisted.
     pub success: bool,
@@ -1369,18 +1367,18 @@ fn scilla_create(
     // than this.
     let contract_address = zil_contract_address(from_addr, txn.nonce - 1);
 
-    let mut init_data: Vec<ScillaTypedVariable> = serde_json::from_str(&txn.data)?;
+    let mut init_data: Vec<ParamValue> = serde_json::from_str(&txn.data)?;
 
     init_data.extend([
         ScillaTypedVariable {
             vname: "_creation_block".to_string(),
             value: Value::String(current_block.number.to_string()),
-            r#type: "BNum".to_string(),
+            ty: "BNum".to_string(),
         },
         ScillaTypedVariable {
             vname: "_this_address".to_string(),
             value: Value::String(format!("{contract_address:#x}")),
-            r#type: "ByStr20".to_string(),
+            ty: "ByStr20".to_string(),
         },
     ]);
 
@@ -1456,7 +1454,7 @@ fn scilla_create(
     account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
-        init_data: serde_json::to_string(&init_data)?,
+        init_data: init_data.clone(),
         types,
         transitions,
     };
@@ -1616,7 +1614,14 @@ pub fn scilla_call(
             gas = g;
 
             let code = code.clone();
+            let init_data: Vec<_> = init_data
+                .clone()
+                .into_iter()
+                .map(ParamValue::from)
+                .collect();
+
             let contract_init = ContractInit::new(serde_json::from_str(init_data)?)?;
+
             let contract_balance = contract.account.balance;
 
             // We need to store external libraries used in the current contract. Scilla needs to import them to run the transition.
@@ -1714,22 +1719,7 @@ pub fn scilla_call(
                 let log = ScillaLog {
                     address: to_addr,
                     event_name: event.event_name,
-                    params: event
-                        .params
-                        .into_iter()
-                        .map(|p| {
-                            Ok(ScillaParam {
-                                ty: p.ty,
-                                // If the value is a JSON string, don't double encode it.
-                                value: if let Value::String(v) = p.value {
-                                    v
-                                } else {
-                                    serde_json::to_string(&p.value)?
-                                },
-                                name: p.name,
-                            })
-                        })
-                        .collect::<Result<_>>()?,
+                    params: event.params,
                 };
                 logs.push(log);
             }

@@ -36,6 +36,7 @@ use tracing::trace;
 
 use crate::{
     cfg::ScillaExtLibsPathInScilla,
+    crypto::Hash,
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
@@ -555,13 +556,23 @@ pub struct ScillaEvent {
     pub params: Vec<ParamValue>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ParamValue {
     #[serde(rename = "vname")]
     pub name: String,
     pub value: Value,
     #[serde(rename = "type")]
     pub ty: String,
+}
+
+impl ParamValue {
+    pub fn compute_hash(&self) -> Hash {
+        Hash::builder()
+            .with(self.ty.as_bytes())
+            .with(self.value.to_string().as_bytes())
+            .with(self.name.as_bytes())
+            .finalize()
+    }
 }
 
 #[derive(Debug, Deserialize)]

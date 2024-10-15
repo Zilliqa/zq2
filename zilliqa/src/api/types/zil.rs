@@ -17,11 +17,11 @@ use crate::{
     exec::{ScillaError, ScillaException},
     message::Block,
     schnorr,
+    scilla::ParamValue,
     serde_util::num_as_str,
     time::SystemTime,
     transaction::{
-        self, ScillaGas, ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction,
-        ZilAmount,
+        self, ScillaGas, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
     },
 };
 
@@ -162,6 +162,14 @@ struct TransitionMessage {
 }
 
 #[derive(Clone, Serialize, Debug)]
+pub struct EventLog {
+    pub address: Address,
+    #[serde(rename = "_eventname")]
+    pub event_name: String,
+    pub params: Vec<ParamValue>,
+}
+
+#[derive(Clone, Serialize, Debug)]
 struct GetTxResponseReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     accepted: Option<bool>,
@@ -172,7 +180,7 @@ struct GetTxResponseReceipt {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     transitions: Vec<Transition>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    event_logs: Vec<ScillaLog>,
+    event_logs: Vec<EventLog>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     errors: BTreeMap<u64, Vec<u64>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -273,6 +281,11 @@ impl GetTxResponse {
                     .logs
                     .into_iter()
                     .filter_map(|log| log.into_scilla())
+                    .map(|log| EventLog {
+                        address: log.address,
+                        event_name: log.event_name,
+                        params: log.params.into_iter().map(ParamValue::from).collect(),
+                    })
                     .collect(),
                 success: receipt.success,
                 accepted: receipt.accepted,

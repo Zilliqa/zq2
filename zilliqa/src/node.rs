@@ -18,7 +18,7 @@ use alloy::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::Inspector;
+use revm::{primitives::map::FxBuildHasher, Inspector};
 use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
     TransactionContext,
@@ -39,7 +39,7 @@ use crate::{
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
-    pool::TxPoolContent,
+    pool::{TxAddResult, TxPoolContent},
     state::State,
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
@@ -231,10 +231,10 @@ impl Node {
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
             ExternalMessage::NewView(m) => {
-                if let Some(block) = self.consensus.new_view(*m)? {
+                if let Some((block, transactions)) = self.consensus.new_view(*m)? {
                     self.message_sender
                         .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, vec![]),
+                            Proposal::from_parts(block, transactions),
                         ))?;
                 }
                 // Acknowledge this new view.
@@ -371,17 +371,18 @@ impl Node {
         Ok(false)
     }
 
-    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<Hash> {
+    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
         let hash = txn.calculate_hash();
 
         info!(?hash, "seen new txn {:?}", txn);
 
-        if self.consensus.handle_new_transaction(txn.clone())? {
+        let result = self.consensus.handle_new_transaction(txn.clone())?;
+        if let TxAddResult::AddedToMempool = &result {
             self.message_sender
                 .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
         }
 
-        Ok(hash)
+        Ok((hash, result))
     }
 
     pub fn number(&self) -> u64 {
@@ -454,7 +455,7 @@ impl Node {
     pub fn trace_evm_transaction(
         &self,
         txn_hash: Hash,
-        trace_types: &HashSet<TraceType>,
+        trace_types: &HashSet<TraceType, FxBuildHasher>,
     ) -> Result<TraceResults> {
         let txn = self
             .get_transaction_by_hash(txn_hash)?
@@ -637,6 +638,9 @@ impl Node {
                         result: trace.into(),
                         tx_hash: Some(txn_hash.0.into()),
                     }))
+                }
+                GethDebugBuiltInTracerType::FlatCallTracer => {
+                    Err(anyhow!("`flatCallTracer` is not implemented"))
                 }
                 GethDebugBuiltInTracerType::FourByteTracer => {
                     let mut inspector = FourByteInspector::default();
