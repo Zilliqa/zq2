@@ -3,7 +3,7 @@ import {ScillaContract} from "hardhat-scilla-plugin";
 import {parallelizer} from "../../helpers";
 import hre from "hardhat";
 
-xdescribe("Scilla contract deployment with error", () => {
+describe("Scilla contract deployment with error", () => {
   before(async function () {
     if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
       this.skip();
@@ -18,11 +18,11 @@ xdescribe("Scilla contract deployment with error", () => {
   });
 
   // Disabled in q4-working-branch
-  xit("should return error if the provided init version is invalid", async () => {
+  it("should return error if the provided init version is invalid", async () => {
     let contractPath = hre.scillaContracts["SetGet"].path;
     const init = [{vname: "_scilla_version", type: "Uint32", value: "1"}];
 
-    let [tx, contract] = await hre.deployScillaFile(contractPath, init);
+    let [tx, contract] = await hre.deployScillaFile(contractPath, init, false);
     expect(contract.address).to.be.undefined;
     expect(tx.getReceipt()).not.to.be.undefined;
     expect(tx.getReceipt()!.exceptions).not.to.be.undefined;
@@ -33,7 +33,7 @@ xdescribe("Scilla contract deployment with error", () => {
     let contractPath = hre.scillaContracts["ImmutableString"].path;
     const init = [{vname: "_scilla_version", type: "Uint32", value: "0"}];
 
-    let [tx, contract] = await hre.deployScillaFile(contractPath, init);
+    let [tx, contract] = await hre.deployScillaFile(contractPath, init, false);
     expect(contract.address).to.be.undefined;
     expect(tx.getReceipt()).not.to.be.undefined;
     expect(tx.getReceipt()!.exceptions).not.to.be.undefined;
@@ -47,7 +47,7 @@ xdescribe("Scilla contract deployment with error", () => {
       {vname: "immutable_string", type: "Uint32", value: "3"}
     ];
 
-    let [tx, contract] = await hre.deployScillaFile(contractPath, init);
+    let [tx, contract] = await hre.deployScillaFile(contractPath, init, false);
     expect(contract.address).to.be.undefined;
     expect(tx.getReceipt()).not.to.be.undefined;
     expect(tx.getReceipt()!.exceptions).not.to.be.undefined;

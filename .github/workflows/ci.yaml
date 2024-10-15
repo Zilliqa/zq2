@@ -68,6 +68,8 @@ jobs:
         options: --init --add-host host.docker.internal:host-gateway --entrypoint "/scilla/0/bin/scilla-server-http"
         ports:
           - 3000:3000
+        volumes:
+          - /tmp:/scilla_ext_libs
 
     runs-on: ubuntu-latest
     steps:
