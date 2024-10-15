@@ -30,10 +30,18 @@ alloy = { version = "0.4.2", default-features = false, features = [
   "consensus",
   "eips",
   "k256",
+  "network",
+  "providers",
+  "provider-ws",
+  "pubsub",
+  "rlp",
   "rpc-types",
   "rpc-types-trace",
   "serde",
-  "sol-types"] }
+  "signers",
+  "signer-local",
+  "sol-types",
+  "transports"] }
 anyhow = { version = "1.0.89", features = ["backtrace"] }
 async-trait = "0.1.83"
 base64 = "0.22.1"
