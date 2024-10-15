@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -27,11 +27,27 @@ use crate::{
         cfg::Config,
         client::ChainClient,
         contracts,
+        event::RelayedEvent,
         message::{Dispatch, InboundBridgeMessage, OutboundBridgeMessage},
     },
 };
 
 type ChainID = U256;
+
+#[derive(Debug)]
+pub struct StateInfo {
+    pub relayed_events: Vec<RelayedEvent>,
+    pub pending_relayed_events: HashSet<RelayedEvent>,
+}
+
+impl StateInfo {
+    pub fn new() -> Self {
+        Self {
+            relayed_events: vec![],
+            pending_relayed_events: HashSet::new(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct ValidatorNode {
@@ -43,8 +59,8 @@ pub struct ValidatorNode {
     bridge_inbound_message_receiver: UnboundedReceiverStream<ExternalMessage>,
     config: Config,
     signer: PrivateKeySigner,
-    chain_clients: HashMap<ChainID, ChainClient>,
     consensus: Arc<Mutex<Consensus>>,
+    state_info: Arc<Mutex<StateInfo>>,
 }
 
 impl ValidatorNode {
@@ -54,6 +70,7 @@ impl ValidatorNode {
         shard_id: u64,
         bridge_outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
         consensus: Arc<Mutex<Consensus>>,
+        state_info: Arc<Mutex<StateInfo>>,
     ) -> Result<Self> {
         let (bridge_inbound_message_sender, bridge_inbound_message_receiver) =
             mpsc::unbounded_channel::<ExternalMessage>();
@@ -67,8 +84,8 @@ impl ValidatorNode {
             bridge_inbound_message_receiver,
             config: config.clone(),
             signer: signer.clone(),
-            chain_clients: HashMap::<ChainID, ChainClient>::new(),
             consensus,
+            state_info,
         })
     }
 
@@ -82,7 +99,6 @@ impl ValidatorNode {
             .into_iter()
             .map(|chain_client| (chain_client.chain_id, chain_client))
             .collect();
-        self.chain_clients = chain_clients;
 
         let (bridge_message_sender, bridge_message_receiver) =
             mpsc::unbounded_channel::<OutboundBridgeMessage>();
@@ -94,11 +110,12 @@ impl ValidatorNode {
             ChainID,
             UnboundedSender<InboundBridgeMessage>,
         > = HashMap::new();
-        for (chain_id, chain_client) in &self.chain_clients {
+        for (chain_id, chain_client) in &chain_clients {
             let mut bridge_node = BridgeNode::new(
                 chain_client.clone(),
                 bridge_message_sender.clone(),
                 self.consensus.clone(),
+                self.state_info.clone(),
             )
             .await?;
 
@@ -114,6 +131,7 @@ impl ValidatorNode {
             });
         }
 
+        let bridge_outbound_message_sender = self.bridge_outbound_message_sender.clone();
         loop {
             select! {
                Some(message) = self.bridge_inbound_message_receiver.next() => {
@@ -134,7 +152,7 @@ impl ValidatorNode {
                     match message {
                         OutboundBridgeMessage::Dispatch(dispatch) => {
                             // Send relay event to target chain
-                            self.dispatch_message(dispatch).await?;
+                            Self::dispatch_message(dispatch, &chain_clients, self.config.max_dispatch_attempts).await?;
                         },
                         OutboundBridgeMessage::Dispatched(dispatched) => {
                             // Forward message to another chain_node
@@ -144,7 +162,7 @@ impl ValidatorNode {
                         },
                         OutboundBridgeMessage::Relay(relay) => {
                             // Forward message to broadcast
-                            self.bridge_outbound_message_sender.send((None, self.shard_id ,ExternalMessage::BridgeEcho(relay)))?;
+                            bridge_outbound_message_sender.send((None, self.shard_id ,ExternalMessage::BridgeEcho(relay)))?;
                         },
                     }
                 }
@@ -165,12 +183,16 @@ impl ValidatorNode {
         }
     }
 
-    async fn dispatch_message(&self, dispatch: Dispatch) -> Result<()> {
+    async fn dispatch_message(
+        dispatch: Dispatch,
+        chain_clients: &HashMap<ChainID, ChainClient>,
+        max_dispatch_attempts: u8,
+    ) -> Result<()> {
         let Dispatch {
             event, signatures, ..
         } = dispatch;
 
-        let chain_client = match self.chain_clients.get(&event.target_chain_id) {
+        let chain_client = match chain_clients.get(&event.target_chain_id) {
             Some(chain_client) => chain_client,
             None => {
                 warn!("Ignoring {event:?} due to an unknown target chain ID");
@@ -204,7 +226,7 @@ impl ValidatorNode {
             call_builder
         };
 
-        for i in 1..self.config.max_dispatch_attempts {
+        for i in 1..max_dispatch_attempts {
             info!("Dispatch attempt {:?}", i);
 
             let call_builder = if chain_client.estimate_gas {

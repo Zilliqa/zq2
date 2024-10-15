@@ -9,7 +9,7 @@ use alloy::{
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, Hash, PartialEq)]
 pub struct RelayedEvent {
     pub source_chain_id: U256,
     pub target_chain_id: U256,
