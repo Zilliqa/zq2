@@ -1019,9 +1019,7 @@ impl Consensus {
                     return self.propose_new_block();
                 }
 
-                let mut state = self.state.clone();
-                self.early_proposal_assemble_at(&mut state, None)?;
-                self.state = state;
+                self.early_proposal_assemble_at(None)?;
 
                 return self.ready_for_block_proposal();
             }
@@ -1033,9 +1031,7 @@ impl Consensus {
         }
 
         // Either way assemble early proposal now if it doesnt already exist
-        let mut state = self.state.clone();
-        self.early_proposal_assemble_at(&mut state, None)?;
-        self.state = state;
+        self.early_proposal_assemble_at(None)?;
 
         Ok(None)
     }
@@ -1043,18 +1039,15 @@ impl Consensus {
     /// Finalise the early Proposal.
     /// This should only run after majority QC or aggQC are available.
     /// It applies the rewards and produces the final Proposal.
-    fn early_proposal_finish_at(
-        &self,
-        state: &mut State,
-        votes: &BTreeMap<Hash, BlockVotes>,
-        proposal: Block,
-    ) -> Result<Option<Block>> {
+    fn early_proposal_finish_at(&mut self, proposal: Block) -> Result<Option<Block>> {
         // Retrieve parent block data
         let parent_block = self
             .get_block(&proposal.parent_hash())?
             .context("missing parent block")?;
         let parent_block_hash = parent_block.hash();
 
+        let mut state = self.state.clone();
+        let previous_state_root_hash = state.root_hash()?;
         state.set_to_root(proposal.state_root_hash().into());
 
         // Compute the majority QC. If aggQC exists then QC is already set to correct value.
@@ -1066,7 +1059,7 @@ impl Consensus {
             None => {
                 // Check for majority
                 let Some((signatures, cosigned, _, supermajority_reached)) =
-                    votes.get(&parent_block_hash)
+                    self.votes.get(&parent_block_hash)
                 else {
                     warn!("tried to finalise a proposal without any votes");
                     return Ok(None);
@@ -1096,7 +1089,7 @@ impl Consensus {
         // Apply the rewards when exiting the round
         Self::apply_rewards_late_at(
             parent_block.state_root_hash(),
-            state,
+            &mut state,
             &self.config.consensus,
             &committee,
             proposer, // Last leader
@@ -1131,7 +1124,9 @@ impl Consensus {
             proposal.header.gas_limit,
         );
 
-        state.set_to_root(parent_block.state_root_hash().into());
+        // Restore the state to previous
+        state.set_to_root(previous_state_root_hash.into());
+        self.state = state;
 
         // Return the final proposal
         Ok(Some(proposal))
@@ -1140,11 +1135,7 @@ impl Consensus {
     /// Assembles the Proposal block early.
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
-    fn early_proposal_assemble_at(
-        &mut self,
-        state: &mut State,
-        agg: Option<AggregateQc>,
-    ) -> Result<()> {
+    fn early_proposal_assemble_at(&mut self, agg: Option<AggregateQc>) -> Result<()> {
         if self.early_proposal.is_some()
             && self.early_proposal.as_ref().unwrap().0.view() == self.view()
         {
@@ -1180,14 +1171,12 @@ impl Consensus {
         info!("parent block number: {}", parent.header.number);
 
         // Ensure sane state
-        let previous_state_root_hash = state.root_hash()?;
-        if previous_state_root_hash != parent.state_root_hash() {
+        if self.state.root_hash()? != parent.state_root_hash() {
             warn!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",
                 parent.state_root_hash(),
-                previous_state_root_hash
+                self.state.root_hash()?
             );
-            state.set_to_root(parent.state_root_hash().into());
         }
 
         // Internal states
@@ -1217,7 +1206,7 @@ impl Consensus {
             executed_block_header.number,
             qc,
             agg,
-            state.root_hash()?, // late state before rewards are applied
+            parent.state_root_hash(), // late state before transactions or rewards are applied
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             vec![],
@@ -1227,26 +1216,27 @@ impl Consensus {
         );
 
         self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie));
-        self.early_proposal_apply_transactions(state)?;
-
-        state.set_to_root(previous_state_root_hash.into());
+        self.early_proposal_apply_transactions()?;
 
         Ok(())
     }
 
     /// Updates self.early_proposal data (proposal, applied_transactions, transactions_trie, receipts_trie) to include any transactions in the mempool
-    /// Warning: This fn will mutate State
-    fn early_proposal_apply_transactions(&mut self, state: &mut State) -> Result<()> {
+    fn early_proposal_apply_transactions(&mut self) -> Result<()> {
         if self.early_proposal.is_none() {
             error!("could not apply transactions to early_proposal because it does not exist");
             return Ok(());
         }
 
+        let mut state = self.state.clone();
+        let previous_state_root_hash = state.root_hash()?;
+
         let proposal = self.early_proposal.as_ref().unwrap().0.clone();
 
-        // Internal states
+        // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
-        let mut updated_root_hash = state.root_hash()?;
+        // Internal states
+        let mut updated_root_hash: Hash = state.root_hash()?;
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
@@ -1269,7 +1259,7 @@ impl Consensus {
 
             // Apply specific txn
             let result = Self::apply_transaction_at(
-                state,
+                &mut state,
                 self.db.clone(),
                 tx.clone(),
                 proposal.header,
@@ -1342,6 +1332,10 @@ impl Consensus {
             proposal.transactions = applied_transaction_hashes;
             proposal.header.gas_used = proposal.header.gas_limit - gas_left;
         }
+
+        // Restore the state to previous
+        state.set_to_root(previous_state_root_hash.into());
+        self.state = state;
 
         // as a future improvement, process the proposal before broadcasting it
         Ok(())
@@ -1509,10 +1503,8 @@ impl Consensus {
     /// Produces the Proposal block.
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        let mut state = self.state.clone();
-
         // We expect early_proposal to exist already but try create incase it doesn't
-        self.early_proposal_assemble_at(&mut state, None)?;
+        self.early_proposal_assemble_at(None)?;
         let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
         // intershard transactions are not meant to be broadcast
@@ -1525,14 +1517,12 @@ impl Consensus {
         // have to re-execute it ourselves (in order to vote on it) and thus will
         // need those transactions again
         for tx in opaque_transactions {
-            let account_nonce = state.get_account(tx.signer)?.nonce;
+            let account_nonce = self.state.get_account(tx.signer)?.nonce;
             self.transaction_pool.insert_transaction(tx, account_nonce);
         }
 
         // finalise the proposal
-        let Some(final_block) =
-            self.early_proposal_finish_at(&mut state, &self.votes, pending_block)?
-        else {
+        let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
             while let Some(txn) = broadcasted_transactions.pop() {
@@ -1542,8 +1532,6 @@ impl Consensus {
         };
 
         trace!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, "######### proposing block");
-
-        self.state = state;
 
         Ok(Some((final_block, broadcasted_transactions)))
     }
@@ -1559,14 +1547,7 @@ impl Consensus {
         if let TxAddResult::AddedToMempool = &inserted {
             if self.create_next_block_on_timeout && self.early_proposal.is_some() {
                 info!("add transaction to early proposal {}", self.view.get_view());
-                let mut state = self.state.clone();
-                let previous_state_root_hash = state.root_hash()?;
-
-                self.early_proposal_apply_transactions(&mut state)?;
-
-                // Restore the state to previous
-                state.set_to_root(previous_state_root_hash.into());
-                self.state = state;
+                self.early_proposal_apply_transactions()?;
             }
         }
         Ok(inserted)
@@ -1718,9 +1699,7 @@ impl Consensus {
                     );
 
                     // We now have a valid aggQC so can create early_block with it
-                    let mut state = self.state.clone();
-                    self.early_proposal_assemble_at(&mut state, Some(agg))?;
-                    self.state = state;
+                    self.early_proposal_assemble_at(Some(agg))?;
 
                     // as a future improvement, process the proposal before broadcasting it
                     return self.ready_for_block_proposal();
