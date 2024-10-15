@@ -112,23 +112,15 @@ impl P2pNode {
                         MessageAuthenticity::Signed(key_pair.clone()),
                         gossipsub::ConfigBuilder::default()
                             .max_transmit_size(524288)
+                            // Increase the duplicate cache time to reduce the likelihood of delayed messages being
+                            // mistakenly re-propagated and flooding the network.
+                            .duplicate_cache_time(Duration::from_secs(300))
                             .build()
                             .map_err(|e| anyhow!(e))?,
                     )
                     .map_err(|e| anyhow!(e))?,
                     mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
-                    autonat: autonat::Behaviour::new(
-                        peer_id,
-                        autonat::Config {
-                            // Config changes to speed up autonat initialization.
-                            // Set back to default if too aggressive.
-                            retry_interval: Duration::from_secs(10),
-                            refresh_interval: Duration::from_secs(30),
-                            boot_delay: Duration::from_secs(5),
-                            throttle_server_period: Duration::ZERO,
-                            ..Default::default()
-                        },
-                    ),
+                    autonat: autonat::Behaviour::new(peer_id, Default::default()),
                     identify: identify::Behaviour::new(identify::Config::new(
                         "/ipfs/id/1.0.0".to_owned(),
                         key_pair.public(),
