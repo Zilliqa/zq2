@@ -346,7 +346,7 @@ impl SignedTransaction {
         }
     }
 
-    fn maximum_cost(&self) -> Result<u128> {
+    pub(crate) fn maximum_cost(&self) -> Result<u128> {
         match self {
             SignedTransaction::Legacy { tx, .. } => {
                 Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)

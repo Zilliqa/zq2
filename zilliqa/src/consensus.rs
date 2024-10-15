@@ -831,31 +831,7 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
-        let mut gas_left = self.config.consensus.eth_block_gas_limit;
-        std::iter::from_fn(|| self.transaction_pool.best_transaction())
-            .filter(|txn| {
-                let account_nonce = self.state.must_get_account(txn.signer).nonce;
-                // Ignore this transaction if it is no longer valid.
-                // Transactions are (or will be) valid iff their nonce is greater than the account
-                // nonce OR if they have no nonce
-                txn.tx
-                    .nonce()
-                    .map(|tx_nonce| tx_nonce >= account_nonce)
-                    .unwrap_or(true)
-            })
-            .take_while(|txn| {
-                if let Some(g) = gas_left.checked_sub(txn.tx.gas_limit()) {
-                    gas_left = g;
-                    true
-                } else {
-                    false
-                }
-            })
-            .collect()
-    }
-
-    pub fn txpool_content(&self) -> TxPoolContent {
+   pub fn txpool_content(&self) -> TxPoolContent {
         let mut content = self.transaction_pool.preview_content();
         // Ignore txns having too low nonces
         content.pending.retain(|txn| {
@@ -1251,7 +1227,7 @@ impl Consensus {
         let mut tx_index_in_block = proposal.transactions.len();
 
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = self.transaction_pool.best_transaction() {
+        while let Some(tx) = self.transaction_pool.best_transaction()? {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (
                 time_since_last_view_change,
@@ -1262,8 +1238,7 @@ impl Consensus {
             if time_since_last_view_change + minimum_time_left_for_empty_block
                 >= exponential_backoff_timeout
             {
-                // don't have time, reinsert txn.
-                self.transaction_pool.insert_ready_transaction(tx);
+                // don't have time
                 break;
             }
 
@@ -1291,11 +1266,12 @@ impl Consensus {
                     nonce = tx.tx.nonce(),
                     "gas limit reached, returning last transaction to pool",
                 );
-                self.transaction_pool.insert_ready_transaction(tx);
                 state.set_to_root(updated_root_hash.into());
                 break;
             };
 
+            // Clone itself before invalidating the reference
+            let tx = tx.clone();
             // Do necessary work to assemble the transaction
             self.transaction_pool.mark_executed(&tx);
 
@@ -1426,7 +1402,7 @@ impl Consensus {
         };
 
         // Retrieve a list of pending transactions
-        let pending = self.transaction_pool.pending_hashes();
+        let pending = self.transaction_pool.pending_hashes()?;
 
         for hash in pending.into_iter() {
             // First - check for time
