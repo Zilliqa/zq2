@@ -829,7 +829,7 @@ impl Node {
 
     /// Returns a stream of pairs of (receipt, index of transaction in block)
     pub fn subscribe_to_receipts(&self) -> broadcast::Receiver<(TransactionReceipt, usize)> {
-        self.consensus.receipts.subscribe()
+        self.consensus.new_receipts.subscribe()
     }
 
     pub fn subscribe_to_new_transactions(&self) -> broadcast::Receiver<VerifiedTransaction> {
