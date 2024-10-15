@@ -784,6 +784,17 @@ impl Db {
                 .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))?;
         Ok(count)
     }
+
+    pub fn get_unique_transaction_count_since(&self, start_height: u64) -> Result<usize> {
+        let count: usize = self.db.lock().unwrap().query_row(
+            "SELECT COUNT(DISTINCT receipts.tx_hash) FROM receipts
+             JOIN blocks ON receipts.block_hash = blocks.block_hash
+             WHERE blocks.height >= ?1",
+            [start_height],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
 }
 
 pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(

@@ -323,4 +323,9 @@ impl BlockStore {
         let count = self.db.get_total_transaction_count()?;
         Ok(count)
     }
+
+    pub fn get_num_transactions_since_block_height(&self, start: u64) -> Result<usize> {
+        let count = self.db.get_unique_transaction_count_since(start)?;
+        Ok(count)
+    }
 }
