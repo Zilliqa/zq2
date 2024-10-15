@@ -13,7 +13,6 @@ use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha3::{Digest, Keccak256};
 
 use crate::{
@@ -326,13 +325,6 @@ impl Default for Account {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ScillaTypedVariable {
-    pub vname: String,
-    pub value: Value,
-    pub r#type: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalLibrary {
     pub name: String,
@@ -340,16 +332,16 @@ pub struct ExternalLibrary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractInit(Vec<ScillaTypedVariable>);
+pub struct ContractInit(Vec<ParamValue>);
 
 impl ContractInit {
-    pub fn new(init: Vec<ScillaTypedVariable>) -> Result<Self> {
-        Ok(Self(init))
+    pub fn new(init: Vec<ParamValue>) -> Self {
+        Self(init)
     }
 
     pub fn scilla_version(&self) -> Result<String> {
         for entry in &self.0 {
-            if entry.vname == "_scilla_version" {
+            if entry.name == "_scilla_version" {
                 return Ok(entry.value.to_string());
             }
         }
@@ -358,7 +350,7 @@ impl ContractInit {
 
     pub fn is_library(&self) -> Result<bool> {
         for entry in &self.0 {
-            if entry.vname == "_library" {
+            if entry.name == "_library" {
                 return Ok(entry.value["constructor"]
                     .as_str()
                     .map_or(false, |value| value == "True"));
@@ -370,7 +362,7 @@ impl ContractInit {
     pub fn external_libraries(&self) -> Result<Vec<ExternalLibrary>> {
         let mut external_libraries = Vec::new();
         for entry in &self.0 {
-            if entry.vname == "_extlibs" {
+            if entry.name == "_extlibs" {
                 if let Some(ext_libs) = entry.value.as_array() {
                     for ext_lib in ext_libs {
                         if let Some(lib) = ext_lib["arguments"].as_array() {
@@ -397,7 +389,7 @@ impl ContractInit {
         Ok(external_libraries)
     }
 
-    pub fn into_inner(self) -> Vec<ScillaTypedVariable> {
+    pub fn into_inner(self) -> Vec<ParamValue> {
         self.0
     }
 }

@@ -511,10 +511,9 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
     let account = node.get_state(&block)?.get_account(address)?;
 
-    let Some((_, contract_init)) = account.code.scilla_code_and_init_data() else {
+    let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address not contract address"));
     };
-    let init_data = init_data.into_iter().map(ParamValue::from).collect();
 
     Ok(init_data)
 }

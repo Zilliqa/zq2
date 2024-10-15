@@ -1327,7 +1327,7 @@ fn store_external_libraries(
             Code::Scilla {
                 code, init_data, ..
             } => {
-                let contract_init = ContractInit::new(serde_json::from_str(init_data)?)?;
+                let contract_init = ContractInit::new(init_data.clone());
                 if !contract_init.is_library()? {
                     return Err(anyhow!(
                         "Impossible to load a non-library contract as a Scilla library."
@@ -1370,13 +1370,13 @@ fn scilla_create(
     let mut init_data: Vec<ParamValue> = serde_json::from_str(&txn.data)?;
 
     init_data.extend([
-        ScillaTypedVariable {
-            vname: "_creation_block".to_string(),
+        ParamValue {
+            name: "_creation_block".to_string(),
             value: Value::String(current_block.number.to_string()),
             ty: "BNum".to_string(),
         },
-        ScillaTypedVariable {
-            vname: "_this_address".to_string(),
+        ParamValue {
+            name: "_this_address".to_string(),
             value: Value::String(format!("{contract_address:#x}")),
             ty: "ByStr20".to_string(),
         },
@@ -1401,13 +1401,13 @@ fn scilla_create(
         ));
     };
 
-    let init_data = ContractInit::new(init_data)?;
+    let contract_init = ContractInit::new(init_data.clone());
 
     // We need to store external libraries used in the current contract. Scilla checker needs to import them to check the contract.
     let (ext_libs_dir_in_zq2, ext_libs_dir_in_scilla) = store_external_libraries(
         &state.pre_state,
         scilla_ext_libs_path,
-        init_data.external_libraries()?,
+        contract_init.external_libraries()?,
     )?;
 
     let _cleanup_ext_libs_guard = scopeguard::guard((), |_| {
@@ -1416,7 +1416,7 @@ fn scilla_create(
     });
 
     let check_output =
-        match scilla.check_contract(&txn.code, gas, &init_data, &ext_libs_dir_in_scilla)? {
+        match scilla.check_contract(&txn.code, gas, &contract_init, &ext_libs_dir_in_scilla)? {
             Ok(o) => o,
             Err(e) => {
                 warn!(?e, "transaction failed");
@@ -1454,7 +1454,7 @@ fn scilla_create(
     account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
-        init_data: init_data.clone(),
+        init_data,
         types,
         transitions,
     };
@@ -1482,7 +1482,7 @@ fn scilla_create(
         &txn.code,
         gas,
         txn.amount,
-        &init_data,
+        &contract_init,
         &ext_libs_dir_in_scilla,
     )?;
     let create_output = match create_output {
@@ -1620,7 +1620,7 @@ pub fn scilla_call(
                 .map(ParamValue::from)
                 .collect();
 
-            let contract_init = ContractInit::new(serde_json::from_str(init_data)?)?;
+            let contract_init = ContractInit::new(init_data);
 
             let contract_balance = contract.account.balance;
 
