@@ -301,7 +301,7 @@ impl Scilla {
         gas_limit: ScillaGas,
         init: &ContractInit,
         ext_libs_dir: &ScillaExtLibsPathInScilla,
-    ) -> Result<Result<CheckOutput, CheckError>> {
+    ) -> Result<Result<CheckOutput, ErrorResponse>> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
             .init(init.to_string())
             .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
@@ -335,7 +335,7 @@ impl Scilla {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum OutputOrError {
-            Err(CheckError),
+            Err(ErrorResponse),
             Output(CheckOutput),
         }
 
@@ -523,11 +523,6 @@ pub struct Param {
 pub struct CreateOutput {
     #[serde(with = "num_as_str")]
     pub gas_remaining: ScillaGas,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CheckError {
-    pub errors: Vec<Error>,
 }
 
 #[derive(Debug, Deserialize)]

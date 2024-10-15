@@ -463,7 +463,6 @@ fn scilla_call_precompile(
         ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
         serde_json::to_string(&message).unwrap(),
         inspector,
-        // TODO: Do we need to store external libraries here too?
         &scilla_ext_libs_path_default(),
     ) else {
         return fatal("scilla call failed");

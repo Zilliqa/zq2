@@ -1420,6 +1420,7 @@ fn scilla_create(
             Ok(o) => o,
             Err(e) => {
                 warn!(?e, "transaction failed");
+                let gas = gas.min(e.gas_remaining);
                 return Ok((
                     ScillaResult {
                         success: false,
