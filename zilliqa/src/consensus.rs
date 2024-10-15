@@ -156,6 +156,8 @@ pub struct Consensus {
     state: State,
     /// The persistence database
     db: Arc<Db>,
+    /// Receipts cache
+    receipts_cache: BTreeMap<Hash, TransactionReceipt>,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
@@ -163,7 +165,7 @@ pub struct Consensus {
     /// Flag indicating that block creation should be postponed at least until empty_block_timeout is reached
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
-    pub receipts: broadcast::Sender<(TransactionReceipt, usize)>,
+    pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
 }
@@ -352,11 +354,12 @@ impl Consensus {
             finalized_view: start_view.saturating_sub(1),
             state,
             db,
+            receipts_cache: BTreeMap::new(),
             transaction_pool: Default::default(),
             early_proposal: None,
             create_next_block_on_timeout: false,
             new_blocks: broadcast::Sender::new(4),
-            receipts: broadcast::Sender::new(128),
+            new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
         };
@@ -662,7 +665,7 @@ impl Consensus {
 
             // Only tell the block store where this block came from if it wasn't from ourselves.
             let from = (self.peer_id() != from).then_some(from);
-            self.execute_block(from, &block, transactions, &stakers)?;
+            self.execute_block_with_fastfwd(from, &block, transactions, &stakers)?;
 
             if self.view.get_view() != proposal_view + 1 {
                 self.view.set_view(proposal_view + 1);
@@ -1328,6 +1331,9 @@ impl Consensus {
                 let receipt_hash = receipt.compute_hash();
                 debug!("During assembly in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.view.get_view(), tx.hash, receipt, receipt_hash);
                 receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+                // Forwarding cache
+                self.receipts_cache.insert(tx.hash, receipt);
 
                 tx_index_in_block += 1;
                 updated_root_hash = state.root_hash()?;
@@ -2708,6 +2714,27 @@ impl Consensus {
         transactions: Vec<SignedTransaction>,
         committee: &[NodePublicKey],
     ) -> Result<()> {
+        self.execute_block_raw(false, from, block, transactions, committee)
+    }
+
+    fn execute_block_with_fastfwd(
+        &mut self,
+        from: Option<PeerId>,
+        block: &Block,
+        transactions: Vec<SignedTransaction>,
+        committee: &[NodePublicKey],
+    ) -> Result<()> {
+        self.execute_block_raw(true, from, block, transactions, committee)
+    }
+
+    fn execute_block_raw(
+        &mut self,
+        fastfwd: bool,
+        from: Option<PeerId>,
+        block: &Block,
+        transactions: Vec<SignedTransaction>,
+        committee: &[NodePublicKey],
+    ) -> Result<()> {
         debug!("Executing block: {:?}", block.header.hash);
 
         let parent = self
@@ -2743,118 +2770,134 @@ impl Consensus {
             verified_txns.push(txn);
         }
 
-        let mut block_receipts = Vec::new();
-        let mut cumulative_gas_used = EvmGas(0);
-        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut block_receipts: Vec<(TransactionReceipt, usize)> = Vec::new();
 
-        let transaction_hashes = verified_txns
-            .iter()
-            .map(|tx| format!("{:?}", tx.hash))
-            .join(",");
+        if from.is_none() && fastfwd {
+            info!("Fast-forward self-proposal");
+            // recover previous receipts from cache
+            for (tx_index, txn) in verified_txns.into_iter().enumerate() {
+                block_receipts.push((
+                    self.receipts_cache
+                        .remove(&txn.hash)
+                        .expect("receipt must be inserted during proposal assembly"),
+                    tx_index,
+                ));
+            }
+            // fast-forward state
+            self.state.set_to_root(block.state_root_hash().into());
+        } else {
+            let mut cumulative_gas_used = EvmGas(0);
+            let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+            let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
 
-        for (tx_index, txn) in verified_txns.into_iter().enumerate() {
-            self.new_transaction(txn.clone())?;
-            let tx_hash = txn.hash;
-            let mut inspector = TouchedAddressInspector::default();
-            let result = self
-                .apply_transaction(txn.clone(), block.header, &mut inspector)?
-                .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.transaction_pool.mark_executed(&txn);
-            for address in inspector.touched {
-                self.db.add_touched_address(address, tx_hash)?;
+            let transaction_hashes = verified_txns
+                .iter()
+                .map(|tx| format!("{:?}", tx.hash))
+                .join(",");
+
+            for (tx_index, txn) in verified_txns.into_iter().enumerate() {
+                self.new_transaction(txn.clone())?;
+                let tx_hash = txn.hash;
+                let mut inspector = TouchedAddressInspector::default();
+                let result = self
+                    .apply_transaction(txn.clone(), block.header, &mut inspector)?
+                    .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
+                self.transaction_pool.mark_executed(&txn);
+                for address in inspector.touched {
+                    self.db.add_touched_address(address, tx_hash)?;
+                }
+
+                let gas_used = result.gas_used();
+                cumulative_gas_used += gas_used;
+
+                if cumulative_gas_used > block.gas_limit() {
+                    warn!("Cumulative gas used by executing transactions exceeded block limit!");
+                    return Ok(());
+                }
+
+                let receipt =
+                    Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
+
+                let receipt_hash = receipt.compute_hash();
+
+                debug!("During execution in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.view.get_view(), tx_hash, receipt, receipt_hash);
+                receipts_trie
+                    .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
+                    .unwrap();
+
+                transactions_trie
+                    .insert(tx_hash.as_bytes(), tx_hash.as_bytes())
+                    .unwrap();
+
+                info!(?receipt, "applied transaction {:?}", receipt);
+                block_receipts.push((receipt, tx_index));
             }
 
-            let gas_used = result.gas_used();
-            cumulative_gas_used += gas_used;
-
-            if cumulative_gas_used > block.gas_limit() {
-                warn!("Cumulative gas used by executing transactions exceeded block limit!");
+            if cumulative_gas_used != block.gas_used() {
+                warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
                 return Ok(());
             }
 
-            let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
+            let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
+            if block.header.receipts_root_hash != receipts_root_hash {
+                warn!(
+                        "Block number: {}, Receipt root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
+                        block.number(), block.header.receipts_root_hash, receipts_root_hash, transaction_hashes
+                    );
+                return Ok(());
+            }
 
-            let receipt_hash = receipt.compute_hash();
+            let transactions_root_hash: Hash = transactions_trie.root_hash()?.into();
+            if block.header.transactions_root_hash != transactions_root_hash {
+                warn!(
+                        "Block number: {}, Transactions root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
+                        block.number(), block.header.transactions_root_hash, transactions_root_hash, transaction_hashes
+                    );
+                return Ok(());
+            }
 
-            debug!("During execution in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.view.get_view(), tx_hash, receipt, receipt_hash);
-            receipts_trie
-                .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
-                .unwrap();
+            // Apply rewards after executing transactions but with the committee members from the previous block
+            let proposer = self.leader_at_block(&parent, block.view()).unwrap();
+            Self::apply_rewards_late_at(
+                parent.state_root_hash(),
+                &mut self.state,
+                &self.config.consensus,
+                committee,
+                proposer.public_key,
+                block.view(),
+                &block.header.qc.cosigned,
+            )?;
 
-            transactions_trie
-                .insert(tx_hash.as_bytes(), tx_hash.as_bytes())
-                .unwrap();
+            // ZIP-9: Sink gas to zero account
+            self.state.mutate_account(Address::ZERO, |a| {
+                a.balance = a
+                    .balance
+                    .checked_add(block.gas_used().0 as u128)
+                    .ok_or(anyhow!("Overflow occured in zero account balance"))?;
+                Ok(())
+            })?;
 
-            info!(?receipt, "applied transaction {:?}", receipt);
-            block_receipts.push((receipt, tx_index));
+            if self.state.root_hash()? != block.state_root_hash() {
+                warn!(
+                        "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
+                        self.state.root_hash()?,
+                        block.state_root_hash(),
+                        block,
+                    );
+                return Err(anyhow!(
+                    "state root hash mismatch, expected: {:?}, actual: {:?}",
+                    block.state_root_hash(),
+                    self.state.root_hash()
+                ));
+            }
         }
 
-        if cumulative_gas_used != block.gas_used() {
-            warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
-            return Ok(());
-        }
-
-        let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
-        if block.header.receipts_root_hash != receipts_root_hash {
-            warn!(
-                "Block number: {}, Receipt root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                block.number(), block.header.receipts_root_hash, receipts_root_hash, transaction_hashes
-            );
-            return Ok(());
-        }
-
-        let transactions_root_hash: Hash = transactions_trie.root_hash()?.into();
-        if block.header.transactions_root_hash != transactions_root_hash {
-            warn!(
-                "Block number: {}, Transactions root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                block.number(), block.header.transactions_root_hash, transactions_root_hash, transaction_hashes
-            );
-            return Ok(());
-        }
-
-        // Apply rewards after executing transactions but with the committee members from the previous block
-        let proposer = self.leader_at_block(&parent, block.view()).unwrap();
-        let config = &self.config.consensus;
-        Self::apply_rewards_late_at(
-            parent.state_root_hash(),
-            &mut self.state,
-            config,
-            committee,
-            proposer.public_key,
-            block.view(),
-            &block.header.qc.cosigned,
-        )?;
-
-        // ZIP-9: Sink gas to zero account
-        self.state.mutate_account(Address::ZERO, |a| {
-            a.balance = a
-                .balance
-                .checked_add(block.gas_used().0 as u128)
-                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
-            Ok(())
-        })?;
-
-        if self.state.root_hash()? != block.state_root_hash() {
-            warn!(
-                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}, txn_hashes: {}",
-                self.state.root_hash()?,
-                block.state_root_hash(),
-                block,
-                transaction_hashes
-            );
-            return Err(anyhow!(
-                "state root hash mismatch, expected: {:?}, actual: {:?}",
-                block.state_root_hash(),
-                self.state.root_hash()
-            ));
-        }
-
+        // Broadcast receipts
         for (receipt, tx_index) in &mut block_receipts {
             receipt.block_hash = block.hash();
             // Avoid cloning the receipt if there are no subscriptions to send it to.
-            if self.receipts.receiver_count() != 0 {
-                let _ = self.receipts.send((receipt.clone(), *tx_index));
+            if self.new_receipts.receiver_count() != 0 {
+                let _ = self.new_receipts.send((receipt.clone(), *tx_index));
             }
         }
 
