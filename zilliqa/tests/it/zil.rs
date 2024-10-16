@@ -207,7 +207,7 @@ async fn run_create_transaction_api_for_error(
     network: &mut Network,
     secret_key: &schnorr::SecretKey,
     nonce: u64,
-    to_addr: H160,
+    to_addr: ToAddr,
     amount: u128,
     gas_limit: u64,
     code: Option<&str>,
@@ -228,9 +228,22 @@ async fn run_create_transaction_api_for_error(
 
     let use_chain_id = chain_id.unwrap_or(wallet.get_chainid().await.unwrap().as_u32() - 0x8000);
     let version = (use_chain_id << 16) | 1u32;
+    let (to_addr_val, to_addr_string) = match to_addr {
+        ToAddr::Address(v) => {
+            let vec = v.as_bytes().to_vec();
+            (
+                vec.clone(),
+                Address::from_slice(vec.as_slice()).to_checksum(None),
+            )
+        }
+        ToAddr::StringVal(v) => (
+            H160::from_str(&v).unwrap().as_bytes().to_vec(),
+            v.to_string(),
+        ),
+    };
     let proto = ProtoTransactionCoreInfo {
         version,
-        toaddr: to_addr.as_bytes().to_vec(),
+        toaddr: to_addr_val,
         senderpubkey: Some(public_key.to_sec1_bytes().into()),
         amount: Some(amount.to_be_bytes().to_vec().into()),
         gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
@@ -249,7 +262,7 @@ async fn run_create_transaction_api_for_error(
     let mut request = json!({
         "version": version,
         "nonce": nonce,
-        "toAddr": to_addr,
+        "toAddr": to_addr_string,
         "amount": amount.to_string(),
         "pubKey": hex::encode(public_key.to_sec1_bytes()),
         "gasPrice": gas_price.to_string(),
@@ -395,7 +408,7 @@ async fn create_transaction_errors(mut network: Network) {
             &mut network,
             &secret_key,
             0,
-            to_addr,
+            ToAddr::Address(to_addr),
             200u128 * 10u128.pow(12),
             50_000,
             None,
@@ -415,7 +428,7 @@ async fn create_transaction_errors(mut network: Network) {
             &mut network,
             &secret_key,
             1,
-            to_addr,
+            ToAddr::Address(to_addr),
             200u128 * 10u128.pow(12),
             50_000,
             None,
@@ -435,7 +448,7 @@ async fn create_transaction_errors(mut network: Network) {
             &mut network,
             &secret_key,
             1,
-            to_addr,
+            ToAddr::Address(to_addr),
             200u128 * 10u128.pow(12),
             50_000,
             None,
@@ -1556,7 +1569,7 @@ async fn get_num_transactions_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1575,7 +1588,7 @@ async fn get_num_transactions_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
