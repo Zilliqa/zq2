@@ -163,7 +163,7 @@ contract Deposit {
     }
 
     // temporary function to test liquid staking
-    function increaseDeposit(bytes calldata blsPubKey) public payable {
+    function tempIncreaseDeposit(bytes calldata blsPubKey) public payable {
         Staker storage staker = _stakersMap[blsPubKey];
         require(staker.keyIndex != 0, "unknown staker");
         require(staker.rewardAddress == msg.sender, "invalid sender");
