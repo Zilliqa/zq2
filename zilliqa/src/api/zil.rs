@@ -255,11 +255,17 @@ fn create_transaction(
         ))?;
     }
 
-    let key = hex::decode(transaction.pub_key).map_err(|_|
+    let pre_key = hex::decode(transaction.pub_key).map_err(|_|
                 // This is apparently what ZQ1 does.
                 ErrorObject::owned::<String>(RPCErrorCode::RpcVerifyRejected as i32,
                                    "Cannot parse public key".to_string(),
                                    None))?;
+
+    let key = schnorr::PublicKey::from_sec1_bytes(&pre_key).map_err(|_|
+                 // This is apparently what ZQ1 does.
+                 ErrorObject::owned::<String>(RPCErrorCode::RpcVerifyRejected as i32,
+                                              "Invalid public key".to_string(),
+                                              None))?;
 
     // Addresses without an 0x prefix are legal.
     let corrected_addr = if transaction.to_addr.starts_with("0x") {
