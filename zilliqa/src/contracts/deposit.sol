@@ -177,10 +177,13 @@ contract Deposit {
         require(staker.keyIndex != 0, "unknown staker");
         require(staker.rewardAddress == msg.sender, "invalid sender");
         staker.balance -= amount;
-        require(staker.balance == 0 || staker.balance >= _minimumStake, "stake too low");
+        require(
+            staker.balance == 0 || staker.balance >= _minimumStake,
+            "stake too low"
+        );
         totalStake -= amount;
         (bool success, ) = msg.sender.call{value: amount}("");
-        require (success, "withdrawal failed");
+        require(success, "withdrawal failed");
     }
 
     function setStake(
@@ -230,7 +233,11 @@ contract Deposit {
         return _stakerKeys;
     }
 
-    function getStakersData() public view returns (bytes[] memory stakerKeys, Staker[] memory stakers) {
+    function getStakersData()
+        public
+        view
+        returns (bytes[] memory stakerKeys, Staker[] memory stakers)
+    {
         stakerKeys = _stakerKeys;
         stakers = new Staker[](stakerKeys.length);
         for (uint256 i = 0; i < stakerKeys.length; i++) {
