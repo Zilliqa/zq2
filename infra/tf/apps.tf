@@ -1,27 +1,15 @@
 ################################################################################
-# ZQ2 GCP Terraform main resources
+# ZQ2 GCP Terraform apps resources
 ################################################################################
-
-resource "google_compute_firewall" "allow_apps_ingress_from_iap" {
-  name    = "${var.network_name}-allow-apps-ingress-from-iap"
-  network = local.network_name
-
-  direction     = "INGRESS"
-  source_ranges = ["35.235.240.0/20"]
-
-  allow {
-    protocol = "tcp"
-    ports    = ["22"]
-  }
-}
 
 resource "google_compute_firewall" "allow_apps_external_http" {
   name    = "${var.network_name}-apps-allow-external-http"
   network = local.network_name
 
-
   direction     = "INGRESS"
   source_ranges = ["0.0.0.0/0"]
+
+  target_tags = [format("%s-%s", var.network_name, "apps")]
 
   allow {
     protocol = "tcp"
@@ -35,6 +23,8 @@ resource "google_compute_firewall" "allow_apps_external_https" {
 
   direction     = "INGRESS"
   source_ranges = ["0.0.0.0/0"]
+
+  target_tags = [format("%s-%s", var.network_name, "apps")]
 
   allow {
     protocol = "tcp"
@@ -92,12 +82,6 @@ module "apps" {
   provisioning_model    = var.provisioning_model
 
   zq_network_name = var.network_name
-}
-
-resource "google_project_service" "osconfig_apps" {
-  service = "osconfig.googleapis.com"
-
-  disable_on_destroy = false
 }
 
 resource "google_compute_managed_ssl_certificate" "apps" {

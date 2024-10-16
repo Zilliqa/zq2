@@ -137,3 +137,10 @@ variable "checkpoint_bucket_force_destroy" {
   default     = true
   nullable    = false
 }
+
+variable "persistence_bucket_force_destroy" {
+  description = "(Optional) Whether force destroying the persistence bucket deprovisioning the infrastructure."
+  type        = bool
+  default     = true
+  nullable    = false
+}

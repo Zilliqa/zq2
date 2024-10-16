@@ -36,5 +36,5 @@ find "$CHECKPOINT_DIR" -type f ! -name '*.part' -printf "%T@ %p\n" | sort -n | a
 done
 
 # Keep only the most recent 30 checkpoints in the GCS bucket
-gsutil ls -l "$GCS_BUCKET/previous/*.dat" | sort -k2 -r | tail -n +30 | xargs -I {} gsutil rm {}
+gsutil ls -l "$GCS_BUCKET/previous/*.dat" | sort -k2 -r | tail -n +30 | awk '{print $3}' | xargs -I {} gsutil rm {}
 log_message "Cleanup completed"

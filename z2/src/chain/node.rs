@@ -506,7 +506,7 @@ impl ChainNode {
             }
         }
 
-        println!("Provisioning script run successfully");
+        println!("Provisioning script run successfully on {}", self.name().bold());
 
         Ok(())
     }

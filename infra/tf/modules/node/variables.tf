@@ -126,3 +126,10 @@ variable "external_ip" {
   type        = string
   default     = ""
 }
+
+variable "network_tags" {
+  description = "The network tags"
+  type        = list(string)
+  default     = []
+  nullable    = false
+}
