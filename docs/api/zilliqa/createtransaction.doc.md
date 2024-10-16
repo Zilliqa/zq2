@@ -64,13 +64,16 @@ Now represent `r` and `s` as big-endian 0-padded 32-byte byte arrays, and concat
 
 ## Parameter validation
 
-We validate at least the following on transaction submission:
+Zilliqa 1 validates at least the following on transaction submission:
 
- * The `toAddr` must have an ethereum or Zilliqa checksum (see the overview page for a description).
- * It's not possible to send a transfer transaction to a contract.
- * Contract creation transactions must have non-empty `code`.
- * The destination address for a contract transaction must exist and must be a contract.
- 
+ 1. The `toAddr` must have an ethereum or Zilliqa checksum (see the overview page for a description).
+ 2. It's not possible to send a transfer transaction to a contract.
+ 4. The destination address for a contract transaction must exist and must be a contract.
+
+We validate only the first of these, since it is not in general
+possible to know what the state of the blockchain will be when a
+transaction is executed.
+
 # Curl
 
 With private key `0x2`:
