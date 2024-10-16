@@ -313,5 +313,5 @@ async fn checkpoints_test(mut network: Network) {
         .get_transaction_count(wallet.address(), None)
         .await
         .unwrap();
-    assert_eq!(nonce, 3.into());
+    assert_eq!(nonce, 4.into());
 }
