@@ -1332,6 +1332,7 @@ impl Consensus {
 
                 // Forwarding cache
                 self.receipts_cache.insert(tx.hash, receipt);
+                self.transaction_pool.insert_shadow_transaction(tx.clone());
 
                 tx_index_in_block += 1;
                 updated_root_hash = state.root_hash()?;
