@@ -118,6 +118,14 @@ resource "google_compute_instance" "this" {
     }
   }
 
+  shielded_instance_config {
+    enable_secure_boot          = true
+    enable_vtpm                 = true
+    enable_integrity_monitoring = true
+  }
+
+  tags = flatten(concat(var.network_tags, [var.zq_network_name, format("%s-%s", var.zq_network_name, var.role)]))
+
   metadata = {
     "enable-guest-attributes"   = "TRUE"
     "enable-osconfig"           = "TRUE"
@@ -142,7 +150,7 @@ resource "google_dns_record_set" "this" {
 
   project      = var.dns_zone_project_id
   managed_zone = local.nodes_domain_name
-  name         = each.key != "@" ? "${each.value.name}.${var.nodes_dns_zone_name}." : "${var.nodes_dns_zone_name}."
+  name         = each.key != "@" ? "${each.value.name}.${var.zq_network_name}.${var.nodes_dns_zone_name}." : "${var.nodes_dns_zone_name}."
   type         = "A"
   ttl          = try(each.value.ttl, "60")
 

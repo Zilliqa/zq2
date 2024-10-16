@@ -2,46 +2,6 @@
 # ZQ2 GCP Terraform checkpoint resources
 ################################################################################
 
-resource "google_compute_firewall" "allow_checkpoint_ingress_from_iap" {
-  name    = "${var.network_name}-allow-checkpoint-ingress-from-iap"
-  network = local.network_name
-
-  direction     = "INGRESS"
-  source_ranges = ["35.235.240.0/20"]
-
-  allow {
-    protocol = "tcp"
-    ports    = ["22"]
-  }
-}
-
-resource "google_compute_firewall" "allow_checkpoint_p2p" {
-  name    = "${var.network_name}-allow-checkpoint-p2p"
-  network = local.network_name
-
-
-  direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
-
-  allow {
-    protocol = "tcp"
-    ports    = ["3333"]
-  }
-}
-
-resource "google_compute_firewall" "allow_checkpoint_external_jsonrpc" {
-  name    = "${var.network_name}-allow-checkpoint-external-jsonrpc"
-  network = local.network_name
-
-  direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
-
-  allow {
-    protocol = "tcp"
-    ports    = ["4201"]
-  }
-}
-
 resource "google_service_account" "checkpoint" {
   account_id = substr("${var.network_name}-checkpoint", 0, 28)
 }
@@ -69,12 +29,6 @@ resource "google_project_iam_member" "checkpoint_artifact_registry_reader" {
 resource "google_project_iam_member" "checkpoint_secret_manager_accessor" {
   project = data.google_project.checkpoint.project_id
   role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.checkpoint.email}"
-}
-
-resource "google_project_iam_member" "checkpoint_bucket_owner" {
-  project = data.google_project.checkpoint.project_id
-  role    = "roles/storage.objectAdmin"
   member  = "serviceAccount:${google_service_account.checkpoint.email}"
 }
 
