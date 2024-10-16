@@ -19,6 +19,7 @@ use jsonrpsee::{
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use super::{
     to_hex::ToHex,
@@ -46,7 +47,6 @@ use crate::{
         EVM_GAS_PER_SCILLA_GAS,
     },
 };
-use sha2::{Digest, Sha256};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
@@ -1088,8 +1088,9 @@ mod tests {
 
     #[test]
     fn test_hex_checksum() {
-        use crate::api::zil::to_zil_checksum_string;
         use alloy::primitives::{address, Address};
+
+        use crate::api::zil::to_zil_checksum_string;
 
         let cases: Vec<(Address, &str)> = vec![
             (
