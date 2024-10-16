@@ -400,7 +400,8 @@ impl Node {
         info!(?hash, "seen new txn {:?}", txn);
 
         let result = self.consensus.handle_new_transaction(txn.clone())?;
-        if let TxAddResult::AddedToMempool = &result {
+        if result.was_added() {
+            // TODO: Avoid redundant self-broadcast
             self.message_sender
                 .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
         }
