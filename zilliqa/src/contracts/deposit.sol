@@ -230,10 +230,11 @@ contract Deposit {
         return _stakerKeys;
     }
 
-    function getStakersData() public view returns (Staker[] memory stakers) {
-        stakers = new Staker[](_stakerKeys.length);
-        for (uint256 i = 0; i < _stakerKeys.length; i++) {
-            stakers[i] = _stakersMap[_stakerKeys[i]];
+    function getStakersData() public view returns (bytes[] memory stakerKeys, Staker[] memory stakers) {
+        stakerKeys = _stakerKeys;
+        stakers = new Staker[](stakerKeys.length);
+        for (uint256 i = 0; i < stakerKeys.length; i++) {
+            stakers[i] = _stakersMap[stakerKeys[i]];
         }
     }
 
