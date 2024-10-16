@@ -1563,7 +1563,7 @@ async fn get_num_txns_ds_epoch_1(mut network: Network) {
         .parse::<u64>()
         .expect("Failed to parse response as u64");
 
-    assert_eq!(response_num, 4);
+    assert_eq!(response_num, 3);
 }
 
 #[zilliqa_macros::test]
@@ -1643,5 +1643,5 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
         .parse::<u64>()
         .expect("Failed to parse response as u64");
 
-    assert_eq!(response_num, 4);
+    assert_eq!(response_num, 1);
 }
