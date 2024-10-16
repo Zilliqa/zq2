@@ -8,7 +8,7 @@ tx,count,get,number
 
 # Description
 
-Returns the number of validated transactions included in this Transaction epoch. This is represented as a `String`.
+Returns the number of validated transactions included in this Transaction epoch (i.e. the number of transactions in the current block). This is represented as a `String`.
 
 # Curl
 
@@ -78,5 +78,3 @@ func GetNumTxnsTxEpoch() {
 | `jsonrpc` | string | Required | `"2.0"`               |
 | `method`  | string | Required | `"GetNumTxnsTxEpoch"` |
 | `params`  | string | Required | Empty string `""`     |
-
-
