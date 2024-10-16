@@ -1,5 +1,10 @@
 use std::{
-    cell::RefCell, collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration,
+    cell::RefCell,
+    collections::{BTreeMap, HashMap},
+    error::Error,
+    fmt::Display,
+    sync::Arc,
+    time::Duration,
 };
 
 use alloy::primitives::{Address, U256};
@@ -157,7 +162,7 @@ pub struct Consensus {
     /// The persistence database
     db: Arc<Db>,
     /// Receipts cache
-    receipts_cache: BTreeMap<Hash, TransactionReceipt>,
+    receipts_cache: HashMap<Hash, TransactionReceipt>,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
@@ -354,7 +359,7 @@ impl Consensus {
             finalized_view: start_view.saturating_sub(1),
             state,
             db,
-            receipts_cache: BTreeMap::new(),
+            receipts_cache: HashMap::new(),
             transaction_pool: Default::default(),
             early_proposal: None,
             create_next_block_on_timeout: false,
@@ -1565,17 +1570,17 @@ impl Consensus {
 
     /// Insert transaction and add to early_proposal if possible.
     pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<TxAddResult> {
-        let verified = if let Ok(val) = txn.verify() {
-            val
-        } else {
+        let Ok(verified) = txn.verify() else {
             return Ok(TxAddResult::CannotVerifySignature);
         };
         let inserted = self.new_transaction(verified)?;
-        if let TxAddResult::AddedToMempool = &inserted {
-            if self.create_next_block_on_timeout && self.early_proposal.is_some() {
-                info!("add transaction to early proposal {}", self.view.get_view());
-                self.early_proposal_apply_transactions()?;
-            }
+        if inserted.was_added()
+            && self.create_next_block_on_timeout
+            && self.early_proposal.is_some()
+            && self.transaction_pool.has_txn_ready()
+        {
+            info!("add transaction to early proposal {}", self.view.get_view());
+            self.early_proposal_apply_transactions()?;
         }
         Ok(inserted)
     }
