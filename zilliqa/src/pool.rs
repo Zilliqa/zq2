@@ -150,6 +150,8 @@ impl TransactionPool {
                 // We loop until we find a transaction that hasn't been made invalid.
                 continue;
             };
+            // Don't forget to pop the index too
+            self.hash_to_index.remove(&transaction.hash);
 
             return Some(transaction);
         }
@@ -306,6 +308,14 @@ impl TransactionPool {
     /// transaction from `best_transaction` and have the same account state as when you made that call.
     pub fn insert_ready_transaction(&mut self, txn: VerifiedTransaction) {
         self.ready.push((&txn).into());
+        self.hash_to_index.insert(txn.hash, txn.mempool_index());
+        self.transactions.insert(txn.mempool_index(), txn);
+    }
+
+    /// The transaction is ready to be executed but is not present in the heap.
+    /// This is used to forward a transaction to [Consensus::execute_block]
+    /// These transactions may balloon unless popped during fast-forwarding.
+    pub fn insert_shadow_transaction(&mut self, txn: VerifiedTransaction) {
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
         self.transactions.insert(txn.mempool_index(), txn);
     }
