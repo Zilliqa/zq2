@@ -162,6 +162,33 @@ contract Deposit {
         _stakersMap[blsPubKey].peerId = peerId;
     }
 
+    // temporary function to test liquid staking
+    function tempIncreaseDeposit(bytes calldata blsPubKey) public payable {
+        Staker storage staker = _stakersMap[blsPubKey];
+        require(staker.keyIndex != 0, "unknown staker");
+        require(staker.rewardAddress == msg.sender, "invalid sender");
+        staker.balance += msg.value;
+        totalStake += msg.value;
+    }
+
+    // temporary function to test liquid staking
+    function tempDecreaseDeposit(
+        bytes calldata blsPubKey,
+        uint256 amount
+    ) public {
+        Staker storage staker = _stakersMap[blsPubKey];
+        require(staker.keyIndex != 0, "unknown staker");
+        require(staker.rewardAddress == msg.sender, "invalid sender");
+        staker.balance -= amount;
+        require(
+            staker.balance == 0 || staker.balance >= _minimumStake,
+            "stake too low"
+        );
+        totalStake -= amount;
+        (bool success, ) = msg.sender.call{value: amount}("");
+        require(success, "withdrawal failed");
+    }
+
     function setStake(
         bytes calldata blsPubKey,
         bytes calldata peerId,
@@ -207,6 +234,18 @@ contract Deposit {
 
     function getStakers() public view returns (bytes[] memory) {
         return _stakerKeys;
+    }
+
+    function getStakersData()
+        public
+        view
+        returns (bytes[] memory stakerKeys, Staker[] memory stakers)
+    {
+        stakerKeys = _stakerKeys;
+        stakers = new Staker[](stakerKeys.length);
+        for (uint256 i = 0; i < stakerKeys.length; i++) {
+            stakers[i] = _stakersMap[stakerKeys[i]];
+        }
     }
 
     function getPeerId(
