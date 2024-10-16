@@ -470,7 +470,7 @@ impl Db {
 
     pub fn get_highest_block_hashes(&self, how_many: usize) -> Result<Vec<Hash>> {
         Ok(self
-            .block_store
+            .db
             .lock()
            .unwrap()
            .prepare_cached(
@@ -831,7 +831,7 @@ impl Db {
         // And now you have the set of ranges you can advertise that you can serve. You could get the same result by SELECT height FROM blocks, putting the results in
         // a RangeMap and then iterating the resulting ranges - this query just makes the database do the work (and returns the associated views, since block requests
         // are made by view).
-        Ok(self.block_store.lock().unwrap()
+        Ok(self.db.lock().unwrap()
             .prepare_cached("SELECT MIN(vlb), MAX(vub), MIN(height),MAX(height),height-rank AS island FROM ( SELECT height,vlb,vub,ROW_NUMBER() OVER (ORDER BY height) AS rank FROM
  (SELECT height,MIN(view) as vlb, MAX(view) as vub from blocks GROUP BY height ) )  GROUP BY island ORDER BY MIN(height) ASC")?
            .query_map([], Self::make_view_range)?.collect::<Result<Vec<_>,_>>()?)
