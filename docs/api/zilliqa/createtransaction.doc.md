@@ -62,6 +62,15 @@ s = k - (r * privateKey)
 
 Now represent `r` and `s` as big-endian 0-padded 32-byte byte arrays, and concatenate them - `r . s` - to form an EC-Schnorr signature for the transaction, encode it in hex with no leading `0x`, and put it in the `signature` field eg. `9fe2d73db6cc4635c54dfdeb6c6965ed14a172ac5ba4dc77f9bdfe230394d62b47c8c5702cb757b460b2fc407090ed2c1d6732855ac891fea46ca3e86ab6ec4a`.
 
+## Parameter validation
+
+We validate at least the following on transaction submission:
+
+ * The `toAddr` must have an ethereum or Zilliqa checksum (see the overview page for a description).
+ * It's not possible to send a transfer transaction to a contract.
+ * Contract creation transactions must have non-empty `code`.
+ * The destination address for a contract transaction must exist and must be a contract.
+ 
 # Curl
 
 With private key `0x2`:

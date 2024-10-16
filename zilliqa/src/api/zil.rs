@@ -118,6 +118,59 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     )
 }
 
+/// Take an Address and produce a checksummed hex representation of it.
+/// No initial 0x will be added.
+fn to_zil_checksum_string(address: &Address) -> Result<String> {
+    const UPPER_CHARS: [char; 6] = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const LOWER_CHARS: [char; 16] = [
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+    ];
+    let bytes = address.into_array();
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    println!("digest {:02x}", digest);
+    let mut result = String::new();
+    // You could do this with iterators, but it's horrid.
+    for (idx, byte) in bytes.iter().enumerate() {
+        for nibble in 0..2 {
+            let shift = (1 - nibble) << 2;
+            let val = (byte >> shift) & 0xf;
+            println!("idx = {idx} nibble = {nibble} byte = {byte} shift = {shift} val = {val}");
+            // Should this be uppercase?
+            let bit_num = 6 * ((idx << 1) + nibble);
+            println!(
+                "bit_num = {bit_num} byte = {0} mask = {1}",
+                bit_num >> 3,
+                (1 << (7 - (bit_num & 7)))
+            );
+            let bit = digest[bit_num >> 3] & (1 << (7 - (bit_num & 7)));
+            println!("digest bit = {bit}");
+            if bit != 0 && val > 9 {
+                result.push(UPPER_CHARS[usize::from(val - 10)])
+            } else {
+                result.push(LOWER_CHARS[usize::from(val)])
+            }
+        }
+    }
+    Ok(result)
+}
+
+// // A checksummed hex address.
+// #[derive(Deserialize)]
+// #[serde(transparent)]
+// struct ChecksummedHexAddress {
+//     #[serde(deserialize_with = "deserialize_checksummed_address")]
+//     inner: Address,
+// }
+
+// fn deserialize_checksummed_address<'de, D>(deserializer: D) -> Result<Address, D::Error>
+// where
+//     D: Deserializer<'de>
+// {
+
+// }
+
 #[derive(Deserialize)]
 #[serde(transparent)]
 struct ZilAddress {
@@ -1212,4 +1265,48 @@ fn getstateproof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 // GetTransactionStatus
 fn gettransactionstatus(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("API gettransactionstatus is not implemented yet");
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_hex_checksum() {
+        use crate::api::zil::to_zil_checksum_string;
+        use alloy::primitives::{address, Address};
+
+        let cases: Vec<(Address, &str)> = vec![
+            (
+                address!("0000000000000000000000000000000000000002"),
+                "0000000000000000000000000000000000000002",
+            ),
+            (
+                address!("1234567890123456789012345678901234567890"),
+                "1234567890123456789012345678901234567890",
+            ),
+            (
+                address!("12a45b789d1f345c789def456789012be3467890"),
+                "12a45b789D1F345c789dEf456789012bE3467890",
+            ),
+            (
+                address!("f61477d7919478e5affe1fbd9a0cdceee9fde42d"),
+                "f61477D7919478e5AfFe1fbd9A0CDCeee9fdE42d",
+            ),
+            (
+                address!("4d76f701e16d7d481de292499718db36450d6a18"),
+                "4d76f701E16D7d481dE292499718db36450d6A18",
+            ),
+            (
+                address!("6e1757590ce532ff0f0e100139e36b7ee8049ce1"),
+                "6e1757590ce532Ff0F0e100139e36b7eE8049ce1",
+            ),
+        ];
+        for (address, good) in cases.iter() {
+            println!("XXX = {:02x} ", address);
+            let summed = to_zil_checksum_string(address).unwrap();
+            println!("Sum = {}", &summed);
+            assert_eq!(&summed, good)
+        }
+        println!("test_hex_checksum()");
+    }
 }
