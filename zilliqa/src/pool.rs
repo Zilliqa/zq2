@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
 };
 
 use alloy::primitives::Address;
@@ -72,7 +72,7 @@ impl MempoolIndex for VerifiedTransaction {
     }
 }
 
-type GasCollection = BTreeMap<u128, BTreeSet<Hash>>;
+type GasCollection = BTreeMap<u128, BTreeSet<TxIndex>>;
 
 /// A pool that manages uncommitted transactions.
 ///
@@ -82,15 +82,11 @@ pub struct TransactionPool {
     /// All transactions in the pool. These transactions are all valid, or might become
     /// valid at some point in the future.
     transactions: BTreeMap<TxIndex, VerifiedTransaction>,
-    /// Indices into `transactions`, sorted by gas price. This contains indices of transactions which are immediately
-    /// executable, because they have a nonce equal to the account's nonce or are nonceless.
-    /// It may also contain stale (invalidated) transactions, which are evicted lazily.
-    ready: BinaryHeap<ReadyItem>,
     /// A map of transaction hash to index into `transactions`.
     /// Used for querying transactions from the pool by their hash.
     hash_to_index: BTreeMap<Hash, TxIndex>,
-
     /// Keeps transactions sorted by gas_price, each gas_price index can contain more than one txn
+    /// These are candidates to be included in the next block
     gas_index: GasCollection,
 }
 
@@ -145,24 +141,15 @@ impl TransactionPool {
     ///
     /// If the returned transaction is executed, the caller must call [TransactionPool::mark_executed] to inform the
     /// pool that the account's nonce has been updated and further transactions from this signer may now be ready.
-    // pub fn best_transactions(&self) -> Result<Vec<&VerifiedTransaction>> {
-    //     let mut best_txns = Vec::new();
-    //
-    //     for (_, gas_txns) in self.gas_index.iter() {
-    //         for tx_hash in gas_txns.iter() {
-    //             let index = self.hash_to_index.get(tx_hash).ok_or(anyhow!("Unable to find txn in hash_to_index set!"))?;
-    //             let txn = self.transactions.get(index).ok_or(anyhow!("Unable to find txn in global index!"))?;
-    //             best_txns.push(txn);
-    //         }
-    //     }
-    //     Ok(best_txns)
-    // }
 
     pub fn best_transaction(&self) -> Result<Option<&VerifiedTransaction>> {
         for (_, gas_txns) in self.gas_index.iter().rev() {
-            if let Some(tx_hash) = gas_txns.iter().next() {
-                let index = self.hash_to_index.get(tx_hash).ok_or(anyhow!("Unable to find txn in hash_to_index set!"))?;
-                let txn = self.transactions.get(index).ok_or(anyhow!("Unable to find txn in global index!"))?;
+            if let Some(tx_index) = gas_txns.iter().next() {
+                //let index = self.hash_to_index.get(tx_hash).ok_or(anyhow!("Unable to find txn in hash_to_index set!"))?;
+                let txn = self
+                    .transactions
+                    .get(tx_index)
+                    .ok_or(anyhow!("Unable to find txn in global index!"))?;
                 return Ok(Some(txn));
             }
         }
@@ -209,36 +196,49 @@ impl TransactionPool {
     pub fn pending_hashes(&self) -> Result<Vec<Hash>> {
         let mut pending_hash = Vec::new();
         for (_, gas_txns) in self.gas_index.iter().rev() {
-            for tx_hash in gas_txns.iter() {
-                let index = self.hash_to_index.get(tx_hash).ok_or(anyhow!("Unable to find txn in hash_to_index set!"))?;
-                let txn = self.transactions.get(index).ok_or(anyhow!("Unable to find txn in global index!"))?;
+            for tx_index in gas_txns.iter() {
+                //let index = self.hash_to_index.get(tx_hash).ok_or(anyhow!("Unable to find txn in hash_to_index set!"))?;
+                let txn = self
+                    .transactions
+                    .get(tx_index)
+                    .ok_or(anyhow!("Unable to find txn in global index!"))?;
                 pending_hash.push(txn.hash);
             }
         }
         Ok(pending_hash)
     }
 
-    pub fn preview_content(&self) -> TxPoolContent {
-        // First make a copy of 'ready' transactions
-        let mut ready = self.ready.clone();
-
+    pub fn preview_content(&self) -> Result<TxPoolContent> {
         let mut pending = Vec::new();
         let mut pending_set = HashSet::new();
 
+        let mut ready = self.gas_index.clone();
+
         // Find all transactions that are pending for inclusion in the next block
-        while let Some(ReadyItem { tx_index, .. }) = ready.pop() {
+        while !ready.is_empty() {
+            let tx_index = ready
+                .iter_mut()
+                .rev()
+                .next()
+                .unwrap()
+                .1
+                .iter()
+                .next()
+                .unwrap()
+                .clone();
+
+            //let tx_index= self.hash_to_index.get(&tx_hash).ok_or(anyhow!("Unable to find transaction index by given hash!"))?;
+            let txn = self
+                .transactions
+                .get(&tx_index)
+                .ok_or(anyhow!("Unable to find transaction in global index!"))?;
+
+            Self::remove_from_gas_index(&mut ready, &txn);
+
             // We don't include nonceless txns because the way we present results on API level requires having proper nonce
             if let TxIndex::Intershard(_, _) = tx_index {
                 continue;
             }
-
-            // A transaction might have been ready, but it might have gotten popped
-            // or the sender's nonce might have increased, making it invalid. In this case,
-            // we will have a stale reference would still exist in the heap.
-            //
-            let Some(txn) = self.transactions.get(&tx_index) else {
-                continue;
-            };
 
             if !pending_set.insert(&txn.hash) {
                 continue;
@@ -251,7 +251,7 @@ impl TransactionPool {
             };
 
             if let Some(next_txn) = self.transactions.get(&next) {
-                ready.push(next_txn.into());
+                Self::add_to_gas_index(&mut ready, next_txn);
             }
         }
 
@@ -268,7 +268,7 @@ impl TransactionPool {
             queued.push(txn.clone());
         }
 
-        TxPoolContent { pending, queued }
+        Ok(TxPoolContent { pending, queued })
     }
 
     pub fn pending_transaction_count(&self, account: Address, mut account_nonce: u64) -> u64 {
@@ -337,7 +337,7 @@ impl TransactionPool {
             return;
         };
 
-        same_gas_txns.remove(&txn.hash);
+        same_gas_txns.remove(&txn.mempool_index());
         if same_gas_txns.is_empty() {
             gas_index.remove(&gas_key);
         }
@@ -349,11 +349,11 @@ impl TransactionPool {
         gas_index
             .entry(gas_key)
             .and_modify(|existing| {
-                existing.insert(txn.hash);
+                existing.insert(txn.mempool_index());
             })
             .or_insert_with(|| {
                 let mut set = BTreeSet::new();
-                set.insert(txn.hash);
+                set.insert(txn.mempool_index());
                 set
             });
     }
@@ -397,8 +397,7 @@ impl TransactionPool {
     }
 
     /// Clear the transaction pool, returning all remaining transactions in an unspecified order.
-    pub fn drain(&mut self) -> impl Iterator<Item=VerifiedTransaction> {
-        self.ready.clear();
+    pub fn drain(&mut self) -> impl Iterator<Item = VerifiedTransaction> {
         self.hash_to_index.clear();
         self.gas_index.clear();
         std::mem::take(&mut self.transactions).into_values()
@@ -416,8 +415,9 @@ mod tests {
         consensus::TxLegacy,
         primitives::{Address, Bytes, Parity, Signature, TxKind, U256},
     };
-    use rand::{seq::SliceRandom, thread_rng};
     use anyhow::Result;
+    use rand::{seq::SliceRandom, thread_rng};
+
     use super::TransactionPool;
     use crate::{
         crypto::Hash,
@@ -441,7 +441,7 @@ mod tests {
                     U256::from(1),
                     Parity::Parity(false),
                 )
-                    .unwrap(),
+                .unwrap(),
             },
             signer: from_addr,
             hash: Hash::builder()
@@ -478,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn nonces_returned_in_order() -> Result<()>{
+    fn nonces_returned_in_order() -> Result<()> {
         let mut pool = TransactionPool::default();
         let from = "0x0000000000000000000000000000000000001234"
             .parse()
@@ -552,38 +552,23 @@ mod tests {
         assert_eq!(pool.transactions.len(), 5);
 
         let tx = pool.best_transaction()?.unwrap().clone();
-        assert_eq!(
-            tx.tx.gas_price_per_evm_gas(),
-            5
-        );
+        assert_eq!(tx.tx.gas_price_per_evm_gas(), 5);
         pool.mark_executed(&tx);
         let tx = pool.best_transaction()?.unwrap().clone();
-        assert_eq!(
-            tx.tx.gas_price_per_evm_gas(),
-            3
-        );
+        assert_eq!(tx.tx.gas_price_per_evm_gas(), 3);
 
         pool.mark_executed(&tx);
         let tx = pool.best_transaction()?.unwrap().clone();
 
-        assert_eq!(
-            tx.tx.gas_price_per_evm_gas(),
-            2
-        );
+        assert_eq!(tx.tx.gas_price_per_evm_gas(), 2);
         pool.mark_executed(&tx);
         let tx = pool.best_transaction()?.unwrap().clone();
 
-        assert_eq!(
-            tx.tx.gas_price_per_evm_gas(),
-            1
-        );
+        assert_eq!(tx.tx.gas_price_per_evm_gas(), 1);
         pool.mark_executed(&tx);
         let tx = pool.best_transaction()?.unwrap().clone();
 
-        assert_eq!(
-            tx.tx.gas_price_per_evm_gas(),
-            0
-        );
+        assert_eq!(tx.tx.gas_price_per_evm_gas(), 0);
         pool.mark_executed(&tx);
 
         assert_eq!(pool.transactions.len(), 0);
@@ -629,27 +614,27 @@ mod tests {
     }
 
     #[test]
-    fn preview_content_test() {
-        // let mut pool = TransactionPool::default();
-        // let from = "0x0000000000000000000000000000000000001234"
-        //     .parse()
-        //     .unwrap();
-        //
-        // pool.insert_transaction(transaction(from, 0, 1), 0);
-        // pool.insert_transaction(transaction(from, 1, 1), 1);
-        // pool.insert_transaction(transaction(from, 2, 1), 2);
-        // pool.insert_transaction(transaction(from, 10, 1), 3);
-        //
-        // let content = pool.preview_content();
-        //
-        // assert_eq!(content.pending.len(), 3);
-        // assert_eq!(content.pending[0].tx.nonce().unwrap(), 0);
-        // assert_eq!(content.pending[1].tx.nonce().unwrap(), 1);
-        // assert_eq!(content.pending[2].tx.nonce().unwrap(), 2);
-        //
-        // assert_eq!(content.queued.len(), 1);
-        // assert_eq!(content.queued[0].tx.nonce().unwrap(), 10);
-        // TODO
-        assert_eq!(true, true)
+    fn preview_content_test() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+
+        pool.insert_transaction(transaction(from, 0, 1), 0);
+        pool.insert_transaction(transaction(from, 1, 1), 1);
+        pool.insert_transaction(transaction(from, 2, 1), 2);
+        pool.insert_transaction(transaction(from, 10, 1), 3);
+
+        let content = pool.preview_content()?;
+
+        assert_eq!(content.pending.len(), 3);
+        assert_eq!(content.pending[0].tx.nonce().unwrap(), 0);
+        assert_eq!(content.pending[1].tx.nonce().unwrap(), 1);
+        assert_eq!(content.pending[2].tx.nonce().unwrap(), 2);
+
+        assert_eq!(content.queued.len(), 1);
+        assert_eq!(content.queued[0].tx.nonce().unwrap(), 10);
+
+        Ok(())
     }
 }

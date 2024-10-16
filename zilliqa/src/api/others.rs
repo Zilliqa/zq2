@@ -15,7 +15,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 }
 
 fn txpool_content(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::TxPoolContent>> {
-    let content = node.lock().unwrap().txpool_content();
+    let content = node.lock().unwrap().txpool_content()?;
 
     let mut result = eth::TxPoolContent {
         pending: HashMap::new(),

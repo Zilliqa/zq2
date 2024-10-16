@@ -831,8 +831,8 @@ impl Consensus {
         Ok(Some(result))
     }
 
-   pub fn txpool_content(&self) -> TxPoolContent {
-        let mut content = self.transaction_pool.preview_content();
+    pub fn txpool_content(&self) -> Result<TxPoolContent> {
+        let mut content = self.transaction_pool.preview_content()?;
         // Ignore txns having too low nonces
         content.pending.retain(|txn| {
             let account_nonce = self.state.must_get_account(txn.signer).nonce;
@@ -843,7 +843,7 @@ impl Consensus {
             let account_nonce = self.state.must_get_account(txn.signer).nonce;
             txn.tx.nonce().unwrap() >= account_nonce
         });
-        content
+        Ok(content)
     }
 
     pub fn pending_transaction_count(&self, account: Address) -> u64 {
