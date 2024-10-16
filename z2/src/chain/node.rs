@@ -506,7 +506,10 @@ impl ChainNode {
             }
         }
 
-        println!("Provisioning script run successfully");
+        println!(
+            "Provisioning script run successfully on {}",
+            self.name().bold()
+        );
 
         Ok(())
     }
@@ -709,6 +712,31 @@ impl ChainNode {
         progress_bar.inc(1);
 
         progress_bar.stop(format!("{} {}: Reset completed", "✔".green(), self.name()));
+
+        Ok(())
+    }
+
+    pub async fn restart(&self, multi_progress: &MultiProgress) -> Result<()> {
+        let machine = &self.machine;
+        let progress_bar = multi_progress.add(cliclack::progress_bar(2));
+
+        progress_bar.start(format!("{}: Stopping the service", self.name()));
+        machine
+            .run("sudo systemctl stop zilliqa.service", false)
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.start(format!("{}: Starting the service", self.name()));
+        machine
+            .run("sudo systemctl start zilliqa.service", false)
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.stop(format!(
+            "{} {}: Restart completed",
+            "✔".green(),
+            self.name()
+        ));
 
         Ok(())
     }
