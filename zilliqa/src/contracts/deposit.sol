@@ -8,6 +8,8 @@ struct Staker {
     uint256 balance;
     address rewardAddress;
     bytes peerId;
+    // Used by UCCB to identify the validators
+    address signerAddress;
 }
 
 contract Deposit {
@@ -17,6 +19,9 @@ contract Deposit {
 
     uint256 public _minimumStake;
     uint256 public _maximumStakers;
+
+    event StakerAdded(bytes blsPubKey);
+    event StakerRemoved(bytes blsPubKey);
 
     constructor(uint256 minimumStake, uint256 maximumStakers) {
         _minimumStake = minimumStake;
@@ -91,6 +96,7 @@ contract Deposit {
 
                 // Delete the staker from `_stakersMap` too.
                 delete _stakersMap[blsPubKey];
+                emit StakerRemoved(blsPubKey);
 
                 return;
             }
@@ -132,7 +138,8 @@ contract Deposit {
         bytes calldata blsPubKey,
         bytes calldata peerId,
         bytes calldata signature,
-        address rewardAddress
+        address rewardAddress,
+        address signerAddress
     ) public payable {
         require(blsPubKey.length == 48);
         require(peerId.length == 38);
@@ -160,12 +167,16 @@ contract Deposit {
 
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
         _stakersMap[blsPubKey].peerId = peerId;
+        _stakersMap[blsPubKey].signerAddress = signerAddress;
+
+        emit StakerAdded(blsPubKey);
     }
 
     function setStake(
         bytes calldata blsPubKey,
         bytes calldata peerId,
         address rewardAddress,
+        address signerAddress,
         uint256 amount
     ) public {
         require(msg.sender == address(0));
@@ -180,6 +191,7 @@ contract Deposit {
         _stakersMap[blsPubKey].balance = amount;
         totalStake += amount;
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
+        _stakersMap[blsPubKey].signerAddress = signerAddress;
         _stakersMap[blsPubKey].peerId = peerId;
         uint256 keyIndex = _stakersMap[blsPubKey].keyIndex;
         if (keyIndex == 0) {
@@ -207,6 +219,17 @@ contract Deposit {
 
     function getStakers() public view returns (bytes[] memory) {
         return _stakerKeys;
+    }
+
+    function getStakerSignerAddresses() public view returns (address[] memory) {
+        address[] memory signerAddresses = new address[](_stakerKeys.length);
+        for (uint256 i = 0; i < _stakerKeys.length; i++) {
+            bytes storage stakerKey = _stakerKeys[i];
+            Staker storage staker = _stakersMap[stakerKey];
+            signerAddresses[i] = staker.signerAddress;
+        }
+
+        return signerAddresses;
     }
 
     function getPeerId(
