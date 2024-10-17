@@ -15,7 +15,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
 }
 
 fn txpool_content(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::TxPoolContent>> {
-    let content = node.lock().unwrap().txpool_content()?;
+    let node = node.lock().unwrap();
+    let content = node.txpool_content()?;
 
     let mut result = eth::TxPoolContent {
         pending: HashMap::new(),
@@ -24,12 +25,18 @@ fn txpool_content(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth
 
     for item in content.pending {
         let txns = result.pending.entry(item.signer).or_default();
-        txns.insert(item.tx.nonce().unwrap(), Transaction::new(item, None));
+        txns.insert(
+            item.tx.nonce().unwrap(),
+            Transaction::new(item.clone(), None),
+        );
     }
 
     for item in content.queued {
         let txns = result.queued.entry(item.signer).or_default();
-        txns.insert(item.tx.nonce().unwrap(), Transaction::new(item, None));
+        txns.insert(
+            item.tx.nonce().unwrap(),
+            Transaction::new(item.clone(), None),
+        );
     }
 
     Ok(Some(result))
