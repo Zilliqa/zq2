@@ -24,7 +24,7 @@ Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <
 * `--reward-address <REWARD_ADDRESS>`: Specifies the address to receive rewards. You can generate a new wallet address to receive the rewards.
 * `--pop-signature <BLS_POP_SIGNATURE>`: The BLS proof-of-possession signature of the validator node.
 
-**Note**: The `--private-key` parameter should be the private key of a wallet that has secured a minimum stake amount of 10 million ZILs. It must be different from the validator node's private key.
+**Note**: The `--private-key` parameter should be the private key of a wallet that has secured a minimum stake amount of 10 million ZILs.
 
 ### Generating Required Values
 To generate the `public-key`, `pop-signature` and `peer-id`, use the following command inside the zq2 folder. Please pass `PRIVATE_KEY_OF_VALIDATOR` to the command input.
