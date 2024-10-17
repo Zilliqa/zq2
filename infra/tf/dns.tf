@@ -14,17 +14,26 @@
 #   rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
 # }
 
-resource "google_dns_record_set" "this" {
-  for_each = merge(
-    { for k, v in module.validators : k => module.validators },
-    { for k, v in module.distributed_validators : k => module.distributed_validators }
-  )
+# resource "google_dns_record_set" "this" {
+#   for_each = merge(
+#     { for k, v in module.validators : k => module.validators },
+#   )
 
-  project      = var.dns_zone_project_id
-  managed_zone = replace(var.nodes_dns_zone_name, ".", "-")
-  name         = each.key != "@" ? "${each.value.name}.${var.network_name}.${var.nodes_dns_zone_name}." : "${var.nodes_dns_zone_name}."
-  type         = "A"
-  ttl          = try(each.value.ttl, "60")
+#   project      = var.dns_zone_project_id
+#   managed_zone = replace(var.nodes_dns_zone_name, ".", "-")
+#   name         = each.key != "@" ? "${each.value.name}.${var.network_name}.${var.nodes_dns_zone_name}." : "${var.nodes_dns_zone_name}."
+#   type         = "A"
+#   ttl          = try(each.value.ttl, "60")
 
-  rrdatas = [each.value.external_ip]
+#   rrdatas = [each.value.external_ip]
+# }
+
+# Use a null_resource to log module outputs
+resource "null_resource" "log_module_outputs" {
+  provisioner "local-exec" {
+    command = <<EOT
+      echo "Logging module outputs:"
+      echo "External IPs: ${module.validators}"
+    EOT
+  }
 }
