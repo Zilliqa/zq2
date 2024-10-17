@@ -3,12 +3,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use alloy::primitives::{address, Address};
+use alloy::{
+    primitives::{address, Address},
+    signers::local::LocalSigner,
+};
 use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
+use tera::Tera;
 use tokio::fs;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
@@ -39,6 +43,7 @@ const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
 const DATADIR_PREFIX: &str = "z2_node_";
 const NETWORK_CONFIG_FILE_NAME: &str = "network.yaml";
 const ZQ2_CONFIG_FILE_NAME: &str = "config.toml";
+const CHAIN_ID: u64 = 700;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeData {
@@ -295,7 +300,7 @@ impl Setup {
             }
         }
 
-        let genesis_accounts: Vec<(Address, Amount)> = vec![
+        let mut genesis_accounts: Vec<(Address, Amount)> = vec![
             (
                 address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
                 5000000000000000000000u128.into(),
@@ -305,7 +310,64 @@ impl Setup {
                 address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
                 5000000000000000000000u128.into(),
             ),
+            // e53d1c3edaffc7a7bab5418eb836cf75819a82872b4a1a0f1c7fcf5c3e020b89
+            (
+                address!("2ce2dbd623b3c277fae4074f0b2605e624510e20"),
+                5000000000000000000000u128.into(),
+            ),
+            // d96e9eb5b782a80ea153c937fa83e5948485fbfc8b7e7c069d7b914dbc350aba
+            (
+                address!("f0cb24ac66ba7375bf9b9c4fa91e208d9eaabd2e"),
+                5000000000000000000000u128.into(),
+            ),
+            // 589417286a3213dceb37f8f89bd164c3505a4cec9200c61f7c6db13a30a71b45
+            (
+                address!("cf671756a8238cbeb19bcb4d77fc9091e2fce1a3"),
+                5000000000000000000000u128.into(),
+            ),
         ];
+
+        // Generate signers - these are accounts with privkeys 0x10000 .. - push them to a
+        // signers file, and add genesis accounts for them.
+        let mut signer_private_keys: Vec<String> = Vec::new();
+
+        for idx in 0..32 {
+            let mut bytes: [u8; 32] = [0; 32];
+            bytes[29] = 0x01;
+            bytes[31] = idx;
+            let signer = LocalSigner::from_slice(&bytes)?;
+            println!("PrivKey = {0:?}", signer.to_bytes());
+            println!("Address[{idx}] = {0}", signer.address());
+            signer_private_keys.push(format!("{0:?}", signer.to_bytes()));
+            genesis_accounts.push((signer.address(), 5000000000000000000000u128.into()))
+        }
+
+        {
+            let mut signer_path = PathBuf::from(&self.config_dir);
+            signer_path.push("test.signers");
+            let signer_path_str = utils::string_from_path(&signer_path)?;
+            println!("🎷 Writing JSON test signers to {0}", &signer_path_str);
+            // Write the signers file
+            fs::write(signer_path, &serde_json::to_string(&signer_private_keys)?).await?;
+
+            // And the env file
+            let mut test_env_path = PathBuf::from(&self.config_dir);
+            test_env_path.push("test_env.sh");
+            let test_env_path_str = utils::string_from_path(&test_env_path)?;
+            println!("🎷 Writing test source file to {test_env_path_str} .. ");
+            let mut test_tera: Tera = Default::default();
+            let mut context = tera::Context::new();
+
+            context.insert("signers_file", &signer_path_str);
+            context.insert("chain_url", &self.get_json_rpc_url(true));
+            context.insert("chain_id", &format!("{CHAIN_ID}"));
+            test_tera
+                .add_raw_template("test_env", include_str!("../resources/test_env.tera.sh"))?;
+            let env_str = test_tera
+                .render("test_env", &context)
+                .context("whilst rendering test_env.tera.sh")?;
+            fs::write(test_env_path, &env_str).await?;
+        }
 
         // Node vector
         println!(
@@ -381,7 +443,7 @@ impl Setup {
             // Create if doesn't exist
             tokio::fs::create_dir(&full_node_data_path).await?;
             node_config.disable_rpc = false;
-            node_config.eth_chain_id = 700 | 0x8000;
+            node_config.eth_chain_id = CHAIN_ID | 0x8000;
             node_config.data_dir = Some(utils::string_from_path(&full_node_data_path)?);
             node_config
                 .consensus
