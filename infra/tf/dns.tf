@@ -14,22 +14,17 @@
 #   rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
 # }
 
-# resource "google_dns_record_set" "this" {
-#   for_each = { for idx, node in module.validators : idx => node }
+resource "google_dns_record_set" "this" {
+  for_each = merge(
+    { for instance in module.validators.instances : instance.name => instance },
+    { for instance in module.distributed_validators.instances : instance.name => instance },
+  )
 
-#   project      = var.dns_zone_project_id
-#   managed_zone = replace(var.nodes_dns_zone_name, ".", "-")
-#   name         = "${each.value[idx].name}.${var.network_name}.${var.nodes_dns_zone_name}."
-#   type         = "A"
-#   ttl          = "60"
+  project      = var.dns_zone_project_id
+  managed_zone = replace(var.nodes_dns_zone_name, ".", "-")
+  name         = "${each.value.name}.${var.network_name}.${var.nodes_dns_zone_name}."
+  type         = "A"
+  ttl          = "60"
 
-#   rrdatas = [each.value[idx].external_ip]
-# }
-
-
-
-
-output "test" {
-  description = "The secret ID of the node private key in GCP Secrets Manager"
-  value       = { for idx, node in module.validators : idx => node }
+  rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
 }
