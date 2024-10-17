@@ -29,7 +29,7 @@
 
 
 
-output "reward_wallet" {
+output "test" {
   description = "The secret ID of the node private key in GCP Secrets Manager"
   value       = { for idx, node in module.validators : idx => node }
 }
