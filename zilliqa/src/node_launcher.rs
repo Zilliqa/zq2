@@ -219,6 +219,11 @@ impl NodeLauncher {
                     let sleep_time = r.expect("reset timeout stream should be infinite");
                     trace!(?sleep_time, "timeout reset");
                     sleep.as_mut().reset(Instant::now() + sleep_time);
+                    // If it has already passed timeout, then trigger timeout immediately
+                    if sleep.is_elapsed() {
+                        self.node.lock().unwrap().handle_timeout().unwrap();
+                        sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
+                    }
                 },
             }
         }
