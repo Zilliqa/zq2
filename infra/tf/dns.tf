@@ -16,7 +16,7 @@
 
 resource "google_dns_record_set" "this" {
   for_each = merge(
-    { for k, v in module.validators : k => val },
+    module.validators
   )
 
   project      = var.dns_zone_project_id
@@ -26,8 +26,4 @@ resource "google_dns_record_set" "this" {
   ttl          = "60"
 
   rrdatas = [each.value.external_ip]
-}
-
-output "test" {
-  value       = module.validators
 }
