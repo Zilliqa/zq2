@@ -393,15 +393,17 @@ impl Db {
             let mut account_trie = EthTrie::new(trie_storage.clone());
             let mut pointer: usize = 0;
             while account_storage_len > pointer {
-                let storage_key_len_buf: &[u8] = &account_storage[pointer..(pointer + 4)];
-                let storage_key_len = u32::from_be_bytes(storage_key_len_buf.try_into()?) as usize;
-                pointer += 4;
+                let storage_key_len_buf: &[u8] =
+                    &account_storage[pointer..(pointer + std::mem::size_of::<u16>())];
+                let storage_key_len = u16::from_be_bytes(storage_key_len_buf.try_into()?) as usize;
+                pointer += std::mem::size_of::<u16>();
                 let storage_key: &[u8] = &account_storage[pointer..(pointer + storage_key_len)];
                 pointer += storage_key_len;
 
-                let storage_val_len_buf: &[u8] = &account_storage[pointer..(pointer + 4)];
+                let storage_val_len_buf: &[u8] =
+                    &account_storage[pointer..(pointer + std::mem::size_of::<u32>())];
                 let storage_val_len = u32::from_be_bytes(storage_val_len_buf.try_into()?) as usize;
-                pointer += 4;
+                pointer += std::mem::size_of::<u32>();
                 let storage_val: &[u8] = &account_storage[pointer..(pointer + storage_val_len)];
                 pointer += storage_val_len;
 
@@ -950,6 +952,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
 
     // write the block...
     let block_ser = &bincode::serialize(&block)?;
+    // using u32 to store the block size. This gives us length values representing data up to ~500 MB
     writer.write_all(&(block_ser.len() as u32).to_be_bytes())?;
     writer.write_all(block_ser)?;
 
@@ -982,7 +985,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
             .at_root(bincode::deserialize::<Account>(&serialised_account)?.storage_root);
         let mut account_storage_buf = vec![];
         for (storage_key, storage_val) in account_storage.iter() {
-            account_storage_buf.extend_from_slice(&(storage_key.len() as u32).to_be_bytes());
+            account_storage_buf.extend_from_slice(&(storage_key.len() as u16).to_be_bytes());
             account_storage_buf.extend_from_slice(&storage_key);
 
             account_storage_buf.extend_from_slice(&(storage_val.len() as u32).to_be_bytes());
