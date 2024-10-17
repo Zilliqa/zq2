@@ -14,17 +14,16 @@
 #   rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
 # }
 
-resource "google_dns_record_set" "this" {
-  for_each = merge(
-    { for instance in module.validators.instances : instance.name => instance },
-    { for instance in module.apis.instances : instance.name => instance },
-  )
 
-  project      = var.dns_zone_project_id
-  managed_zone = replace(var.nodes_dns_zone_name, ".", "-")
-  name         = "${each.value.name}.${var.network_name}.${var.nodes_dns_zone_name}."
-  type         = "A"
-  ttl          = "60"
+# resource "google_compute_address" "external_regional" {
+#   for_each = var.regional_subdomains
 
-  rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
-}
+#   project = var.apps_project_id
+#   region       = each.value.region
+#   network_tier = local.network_tier
+#   name    = each.key != "@" ? "${replace(each.key, ".", "-")}-${local.domain_name}" : local.domain_name
+# }
+
+
+#         bootstrap.zq2-infratest:
+#           region: "asia-southeast1"
