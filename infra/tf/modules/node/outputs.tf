@@ -8,6 +8,11 @@ output "id" {
   value       = google_compute_instance.this[*].id
 }
 
+output "name" {
+  description = "The instances names"
+  value       = google_compute_instance.this[*].name
+}
+
 output "self_link" {
   description = "The instances self link"
   value       = google_compute_instance.this[*].self_link
