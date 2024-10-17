@@ -953,17 +953,17 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     // write the block...
     let block_ser = &bincode::serialize(&block)?;
     // using u32 to store the block size. This gives us length values representing data up to ~500 MB
-    writer.write_all(&(block_ser.len() as u32).to_be_bytes())?;
+    writer.write_all(&u32::try_from(block_ser.len())?.to_be_bytes())?;
     writer.write_all(block_ser)?;
 
     // write transactions
     let transactions_ser = &bincode::serialize(&transactions)?;
-    writer.write_all(&(transactions_ser.len() as u32).to_be_bytes())?;
+    writer.write_all(&u32::try_from(transactions_ser.len())?.to_be_bytes())?;
     writer.write_all(transactions_ser)?;
 
     // and its parent, to keep the qc tracked
     let parent_ser = &bincode::serialize(&parent)?;
-    writer.write_all(&(parent_ser.len() as u32).to_be_bytes())?;
+    writer.write_all(&u32::try_from(parent_ser.len())?.to_be_bytes())?;
     writer.write_all(parent_ser)?;
 
     // then write state for each account
@@ -985,13 +985,13 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
             .at_root(bincode::deserialize::<Account>(&serialised_account)?.storage_root);
         let mut account_storage_buf = vec![];
         for (storage_key, storage_val) in account_storage.iter() {
-            account_storage_buf.extend_from_slice(&(storage_key.len() as u16).to_be_bytes());
+            account_storage_buf.extend_from_slice(&u16::try_from(storage_key.len())?.to_be_bytes());
             account_storage_buf.extend_from_slice(&storage_key);
 
-            account_storage_buf.extend_from_slice(&(storage_val.len() as u32).to_be_bytes());
+            account_storage_buf.extend_from_slice(&u32::try_from(storage_val.len())?.to_be_bytes());
             account_storage_buf.extend_from_slice(&storage_val);
         }
-        writer.write_all(&(account_storage_buf.len() as u32).to_be_bytes())?;
+        writer.write_all(&u32::try_from(account_storage_buf.len())?.to_be_bytes())?;
         writer.write_all(&account_storage_buf)?;
     }
     writer.flush()?;
