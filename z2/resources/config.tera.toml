@@ -9,7 +9,7 @@ eth_chain_id = {{ eth_chain_id }}
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 consensus.genesis_accounts = [ ["{{ genesis_address }}", "21_000_000_000_000_000_000_000_000_000"] ]
-consensus.genesis_deposits = [ ["{{ bootstrap_bls_public_key }}", "{{ bootstrap_peer_id }}", "100_000_000_000_000_000_000_000_000", "{{ genesis_address }}"] ]
+consensus.genesis_deposits = [ ["{{ validator_0_bls_public_key }}", "{{ validator_0_peer_id }}", "100_000_000_000_000_000_000_000_000", "{{ genesis_address }}"] ]
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
