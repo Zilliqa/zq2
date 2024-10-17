@@ -534,6 +534,7 @@ mod tests {
                 blocks_per_epoch: 10,
                 epochs_per_checkpoint: 1,
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
+                scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
             },
             block_request_limit: block_request_limit_default(),
