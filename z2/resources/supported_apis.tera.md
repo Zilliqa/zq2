@@ -35,6 +35,18 @@ Zilliqa 2 supports APIs from a number of sources:
     differences due to the different construction of Zilliqa 2 which
     are noted on the individual API pages.
 
+## Zilliqa address checksums
+
+Prior to [ZIP-1](https://github.com/Zilliqa/ZIP/blob/master/zips/zip-1.md), Zilliqa's original addressing format featured Ethereum-style hex addresses with a checksum procedure:
+
+
+ * Lowercase the hex address given to give `Lower(Address)`
+ * Compute `SHA256(BytesFromHex(Lower(Address)))`
+ * Count through the hex digits of `Lower(Address)`, from left to right, starting at 0, with index `i`.
+ * If the `(255-(6*i))`th bit is set and the `i`th hex digit is a letter, uppercase it.
+
+This is essentially the same procedure as [ERC-55](https://github.com/ethereum/ercs/blob/master/ERCS/erc-55.md) but with a shift of 6 instead of 4.
+
 ## List of entry points
 
 If an API is not mentioned in this table, support for it is not planned.
