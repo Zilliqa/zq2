@@ -131,7 +131,7 @@ impl BlockCache {
             .filter_map(|x| self.by_parent_hash.remove(x))
             .flatten()
             .collect::<Vec<u128>>();
-        trace!("parent hashes {hashes:?} maps to keys {cache_keys:?}");
+        trace!("block_store::destructive.. : parent hashes {hashes:?} maps to keys {cache_keys:?}");
         let maybe = cache_keys
             .iter()
             .filter_map(|key| {
@@ -155,7 +155,7 @@ impl BlockCache {
             self.fork_counter = 0;
         }
         trace!(
-            "Pulled blocks for parent hashes {hashes:?} - {}",
+            "block_store::destructive.. : pulled blocks for parent hashes {hashes:?} - {}",
             maybe
                 .iter()
                 .map(|(_, v)| format!("v={} b={}", v.header.view, v.header.number))
@@ -300,7 +300,7 @@ impl BlockCache {
             );
         } else {
             trace!(
-                "cache insert {:?}  with key {1} view {2} ",
+                "block_store:: cache insert {:?}  with key {1} view {2} ",
                 parent_hash,
                 key,
                 proposal.header.view
@@ -621,12 +621,12 @@ impl BlockStore {
 
         // If this is the highest block we've seen, remember its view.
         if view > self.highest_known_view {
-            trace!(view, "new highest known view");
+            trace!(view, "block_store:: new highest known view");
             self.highest_known_view = view;
         }
 
         trace!(
-            "buffer_proposal: highest_confirmed_view {}",
+            "block_store:: buffer_proposal {view}, hc {0}",
             self.highest_confirmed_view
         );
         self.buffered.insert(
@@ -639,7 +639,7 @@ impl BlockStore {
 
         let peer = self.peer_info(from);
         if view > peer.availability.highest_known_view {
-            trace!(%from, view, "new highest known view for peer");
+            trace!(%from, view, "block_store:: new highest known view for peer");
             peer.availability.highest_known_view = view;
         }
 
@@ -686,7 +686,7 @@ impl BlockStore {
         // Take this opportunity to update the highest confirmed view.
         self.highest_confirmed_view = std::cmp::max(self.highest_confirmed_view, current_view);
         trace!(
-            "set highest_confirmed_view {0}",
+            "block_store::request_missing_blocks() : set highest_confirmed_view {0}",
             self.highest_confirmed_view
         );
 
@@ -707,7 +707,7 @@ impl BlockStore {
                 self.highest_known_view,
                 self.requested_view,
                 self.max_blocks_in_flight,
-                "missing some blocks"
+                "block_store::request_missing_blocks() : missing some blocks"
             );
             {
                 // We need to request from current_view, because these blocks might never be returned by our peers
@@ -721,7 +721,7 @@ impl BlockStore {
                     cmp::min(self.requested_view, current_view) + self.max_blocks_in_flight,
                     self.highest_known_view,
                 );
-                trace!("requesting blocks {from} to {to}");
+                trace!("block_store::request_missing_blocks() : requesting blocks {from} to {to}");
                 to_request.with_range(&Range {
                     start: from,
                     end: to + 1,
@@ -733,6 +733,11 @@ impl BlockStore {
             }
         } else {
             // We're synced - no need to try and guess forks.
+            trace!(
+                "block_store::request_missing_blocks() : synced with highest_known_view {0}, current_view {1}",
+                self.highest_known_view,
+                current_view
+            );
             self.buffered.reset_fork_counter();
         }
 
@@ -742,7 +747,6 @@ impl BlockStore {
     pub fn prune_pending_requests(&mut self) -> Result<()> {
         // In the good old days, we could've done this by linear interpolation on the timestamp.
         let current_time = SystemTime::now();
-        let min_timeout_us = 1000 * constants::BLOCK_REQUEST_RESPONSE_TIMEOUT_MIN;
         for peer in self.peers.keys().cloned().collect::<Vec<PeerId>>() {
             let the_peer = self.peer_info(peer);
             the_peer.pending_requests = the_peer
@@ -752,9 +756,9 @@ impl BlockStore {
                     // How long since this request was sent?
                     match current_time.duration_since(*v1) {
                         Ok(since) => {
-                            if since > min_timeout_us {
+                            if since > constants::BLOCK_REQUEST_RESPONSE_TIMEOUT {
                                 // Time out everything.
-                                trace!("Timing out pending request {k:?} {v1:?} {v2} {v3}");
+                                trace!("block_store::prune_pending_requests: timing out pending request {k:?} {v1:?} {v2} {v3}");
                                 None
                             } else {
                                 Some((*k, (*v1, *v2, *v3)))
@@ -785,17 +789,21 @@ impl BlockStore {
         // Prune the pending requests
         self.prune_pending_requests()?;
 
-        trace!("request_blocks for {:?} clock {}", remain, self.clock);
+        trace!(
+            "block_store::request_blocks() : entry remain {:?} clock {}",
+            remain,
+            self.clock
+        );
 
         // If it's already buffered, don't request it again - wait for us to reject it and
         // then we can re-request.
         let extant = self.buffered.extant_block_ranges();
-        trace!("cache has {:?}", extant);
+        trace!("block_store::request_blocks() : cache has {:?}", extant);
         (_, remain) = remain.diff_inter(&extant);
-        trace!(" .. after cache removal {remain:?}");
+        trace!("block_store::request_blocks() : .. after cache removal {remain:?}");
         trace!("known gaps {:?}", self.buffered.empty_view_ranges);
         (_, remain) = remain.diff_inter(&self.buffered.empty_view_ranges);
-        trace!(" .. after removal of empty view ranges {remain:?}");
+        trace!("block_store::request_blocks() : .. after removal of empty view ranges {remain:?}");
 
         // If it's in flight, don't request it again.
         let mut in_flight = RangeMap::new();
@@ -807,22 +815,25 @@ impl BlockStore {
                 });
             }
         }
-        debug!("in_flight {in_flight:?}");
+        debug!("block_store::request_blocks() : requests in flight {in_flight:?}");
         (_, remain) = remain.diff_inter(&in_flight);
 
         let now = SystemTime::now();
         let failed_request_sleep_duration = self.failed_request_sleep_duration;
-        debug!("after removing in_flight {:?}", remain);
+        debug!(
+            "block_store::request_blocks() : after removing in flight requests {:?}",
+            remain
+        );
 
         // If everything we have is in flight, we'll skip trying to request them (or update availability)
         if remain.is_empty() {
-            trace!(" .. no non in_flight requests. Returning early");
+            trace!("block_store::request_blocks() : .. no non in_flight requests. Returning early");
             return Ok(true);
         }
 
         for chance in 0..2 {
             trace!(
-                "chance = {chance} clock = {} peers = {}",
+                "block_store::request_blocks() : chance = {chance} clock = {} peers = {}",
                 self.clock,
                 self.peers.len()
             );
@@ -838,7 +849,7 @@ impl BlockStore {
                 .collect::<Vec<PeerId>>();
 
             for peer in &peers {
-                debug!("peer = {peer}");
+                debug!("block_store::request_blocks() : considering peer = {peer}");
                 // If the last request failed < 10s or so ago, skip this peer, unless we're second-chance in
                 // which case, hey, why not?
                 let (requests, rem, query_availability) = {
@@ -850,7 +861,7 @@ impl BlockStore {
                             .map(|time_since| time_since > failed_request_sleep_duration)
                             .unwrap_or(true)
                     {
-                        trace!(".. Last request failed; skipping this peer");
+                        trace!("block_store::request_blocks() : .. Last request failed; skipping this peer");
                         continue;
                     }
 
@@ -858,7 +869,7 @@ impl BlockStore {
                         >= constants::MAX_PENDING_BLOCK_REQUESTS_PER_PEER
                     {
                         trace!(
-                            ".. Skipping peer {peer} - too many pending requests {0}",
+                            "block_store::request_blocks() : .. Skipping peer {peer} - too many pending requests {0}",
                             peer_info.pending_requests.len()
                         );
                         continue;
@@ -867,9 +878,9 @@ impl BlockStore {
                     let left = constants::MAX_PENDING_BLOCK_REQUESTS_PER_PEER
                         - peer_info.pending_requests.len();
                     let ranges = peer_info.get_ranges(to);
-                    debug!("I want {remain:?} ({remain}) peer has ranges {ranges:?} ({ranges})");
+                    debug!("block_store::request_blocks() : I want {remain:?} ({remain}) peer has ranges {ranges:?} ({ranges})");
                     let (req, rem) = remain.diff_inter_limited(&ranges, Some(left));
-                    debug!("req {req:?} rem {rem:?} left {left}");
+                    debug!("block_store::request_blocks() : req {req:?} rem {rem:?} left {left}");
                     // If we are not about to make a request, and we do not have recent availability then
                     // make a synthetic request to get that availability.
                     let query_availability = req.is_empty()
@@ -886,12 +897,15 @@ impl BlockStore {
                 };
 
                 let mut request_sent = false;
-                debug!(" .. Requests to send: {:?}", requests);
+                debug!(
+                    " block_store::request_blocks() :.. Requests to send: {:?}",
+                    requests
+                );
                 // Send all requests now ..
                 for request in requests.ranges.iter() {
                     if !request.is_empty() {
                         trace!(
-                            "peer = {:?} request = {:?} remains = {:?}: sending block request",
+                            "block_store::request_blocks() : peer = {:?} request = {:?} remains = {:?}: sending block request",
                             peer,
                             request,
                             requests
@@ -911,7 +925,7 @@ impl BlockStore {
                 }
                 // If we haven't got recent availability, and we haven't already asked for it, ask ..
                 if !request_sent && chance == 0 && query_availability {
-                    trace!("Querying availability");
+                    trace!("block_store::request_blocks() : Querying availability");
                     // Executive decision: Don't ask for any blocks here, because we are about to do so in duplicate
                     // later and we don't want to duplicate work - you could viably go for a slightly faster
                     // sync by just asking for all the blocks and letting the peer send what it has.
@@ -928,9 +942,12 @@ impl BlockStore {
                 remain = rem;
             }
         }
-        trace!("All done");
+        trace!("block_store::request_blocks() : all done");
         if !remain.is_empty() {
-            warn!("Could not find peers for views {:?}", remain);
+            warn!(
+                "block_store::request_blocks() : Could not find peers for views {:?}",
+                remain
+            );
             if let Some(us) = &mut self.unserviceable_requests {
                 us.with_range_map(&remain);
             } else {
@@ -983,7 +1000,7 @@ impl BlockStore {
         from: Option<PeerId>,
         block: Block,
     ) -> Result<Vec<(PeerId, Proposal)>> {
-        trace!(?from, number = block.number(), hash = ?block.hash(), "insert block");
+        trace!(?from, number = block.number(), hash = ?block.hash(), "block_store::process_block() : starting");
         self.db.insert_block(&block)?;
 
         if let Some(from) = from {
@@ -1020,7 +1037,7 @@ impl BlockStore {
         };
         peer_info.last_request_failed_at = Some(SystemTime::now());
 
-        trace!("outgoing_message_failure: re-requesting {from} - {to}");
+        trace!("block_store : outgoing_message_failure: re-requesting {from} - {to}");
         self.request_blocks(&RangeMap::from_closed_interval(from, to))?;
 
         Ok(())
@@ -1044,7 +1061,7 @@ impl BlockStore {
         &mut self,
         hashes: &Vec<Hash>,
     ) -> Result<Vec<(PeerId, Proposal)>> {
-        trace!("getting child block candidates for {hashes:?}");
+        trace!("block_store::obtain_child_block_candidates_for :  {hashes:?}");
         // The easy case is that there's something in the buffer with us as its parent hash.
         let with_parent_hashes = self
             .buffered
@@ -1066,7 +1083,7 @@ impl BlockStore {
             if let Some(highest_block_number) = self.db.get_highest_block_number()? {
                 self.buffered.delete_blocks_up_to(highest_block_number + 1);
                 trace!(
-                    "deleted cached blocks up to and including {0}",
+                    "block_store::obtain_child_block_candidates : deleted cached blocks up to and including {0}",
                     highest_block_number + 1
                 );
             }
@@ -1078,7 +1095,7 @@ impl BlockStore {
                 .buffered
                 .destructive_proposals_from_parent_hashes(&parent_hashes);
             trace!(
-                "fork evasion of {fork_elems} elements - {parent_hashes:?} produces {revised:?}"
+                "block_store::obtain_child_block_candidates : fork evasion of {fork_elems} elements - {parent_hashes:?} produces {revised:?}"
             );
             if !revised.is_empty() {
                 // Found some!

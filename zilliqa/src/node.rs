@@ -246,11 +246,14 @@ impl Node {
             }
             ExternalMessage::BlockRequest(request) => {
                 if from == self.peer_id {
-                    debug!("ignoring blocks request to self");
+                    debug!("block_store::BlockRequest : ignoring blocks request to self");
                     return Ok(());
                 }
 
-                trace!("Received a block request");
+                trace!(
+                    "block_store::BlockRequest : received a block request - {}",
+                    self.peer_id
+                );
                 // Note that it is very important that we limit this by number of blocks
                 // returned, _not_ by max view range returned. If we don't, then any
                 // view gap larger than block_request_limit will never be filliable
@@ -265,9 +268,8 @@ impl Node {
                     })
                     .collect::<Result<_>>()?;
 
-                trace!("Call availability");
                 let availability = self.consensus.block_store.availability()?;
-                trace!("responding to new blocks request of {request:?} with props {0:?} availability {availability:?}",
+                trace!("block_store::BlockRequest - responding to new blocks request of {request:?} with props {0:?} availability {availability:?}",
                        proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
 
                 // Send the response to this block request.
@@ -901,7 +903,7 @@ impl Node {
 
     fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
         trace!(
-            "Received blocks response of length {}",
+            "block_store::handle_block_response - received blocks response of length {}",
             response.proposals.len()
         );
         self.consensus
@@ -915,6 +917,7 @@ impl Node {
             // that we can include it in the chain if necessary.
             self.consensus.buffer_proposal(from, block)?;
         }
+        trace!("block_store::handle_block_response: finished handling response");
         Ok(())
     }
 
