@@ -28,12 +28,6 @@
 #   rrdatas = [each.value.external_ip]
 # }
 
-# Use a null_resource to log module outputs
-resource "null_resource" "log_module_outputs" {
-  provisioner "local-exec" {
-    command = <<EOT
-      echo "Logging module outputs:"
-      echo "External IPs: ${module.validators}"
-    EOT
-  }
+output "reward_wallet" {
+  value       = module.validators
 }
