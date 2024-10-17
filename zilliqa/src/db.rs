@@ -407,7 +407,7 @@ impl Db {
                 let storage_val: &[u8] = &account_storage[pointer..(pointer + storage_val_len)];
                 pointer += storage_val_len;
 
-                account_trie.insert(&storage_key, &storage_val)?;
+                account_trie.insert(storage_key, storage_val)?;
             }
 
             let account_trie_root =
