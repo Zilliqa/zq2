@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    fmt::Display,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
@@ -16,7 +17,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     block_store::BlockStore,
-    cfg::{Amount, NodeConfig},
+    cfg::{Amount, NodeConfig, ScillaExtLibsPath},
     contracts, crypto,
     db::TrieStorage,
     exec::BaseFeeCheck,
@@ -46,6 +47,7 @@ pub struct State {
     scilla_address: String,
     local_address: String,
     scilla_lib_dir: String,
+    pub scilla_ext_libs_path: ScillaExtLibsPath,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
     pub chain_id: ChainId,
@@ -62,7 +64,8 @@ impl State {
             scilla: Arc::new(OnceLock::new()),
             scilla_address: consensus_config.scilla_address.clone(),
             local_address: consensus_config.local_address.clone(),
-            scilla_lib_dir: consensus_config.scilla_lib_dir.clone(),
+            scilla_lib_dir: consensus_config.scilla_stdlib_dir.clone(),
+            scilla_ext_libs_path: consensus_config.scilla_ext_libs_path.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
             chain_id: ChainId::new(config.eth_chain_id),
@@ -191,6 +194,7 @@ impl State {
             scilla_address: self.scilla_address.clone(),
             local_address: self.local_address.clone(),
             scilla_lib_dir: self.scilla_lib_dir.clone(),
+            scilla_ext_libs_path: self.scilla_ext_libs_path.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
             chain_id: self.chain_id,
@@ -318,6 +322,82 @@ impl Default for Account {
             code: Code::default(),
             storage_root: EMPTY_ROOT_HASH,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalLibrary {
+    pub name: String,
+    pub address: Address,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractInit(Vec<ParamValue>);
+
+impl ContractInit {
+    pub fn new(init: Vec<ParamValue>) -> Self {
+        Self(init)
+    }
+
+    pub fn scilla_version(&self) -> Result<String> {
+        for entry in &self.0 {
+            if entry.name == "_scilla_version" {
+                return Ok(entry.value.to_string());
+            }
+        }
+        Ok(String::new())
+    }
+
+    pub fn is_library(&self) -> Result<bool> {
+        for entry in &self.0 {
+            if entry.name == "_library" {
+                return Ok(entry.value["constructor"]
+                    .as_str()
+                    .map_or(false, |value| value == "True"));
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn external_libraries(&self) -> Result<Vec<ExternalLibrary>> {
+        let mut external_libraries = Vec::new();
+        for entry in &self.0 {
+            if entry.name == "_extlibs" {
+                if let Some(ext_libs) = entry.value.as_array() {
+                    for ext_lib in ext_libs {
+                        if let Some(lib) = ext_lib["arguments"].as_array() {
+                            if lib.len() != 2 {
+                                return Err(anyhow!("Invalid init."));
+                            }
+                            let lib_name = lib[0].as_str().ok_or_else(|| {
+                                anyhow!("Invalid init. Library name is not an string")
+                            })?;
+                            let lib_address = lib[1].as_str().ok_or_else(|| {
+                                anyhow!("Invalid init. Library address is not an string")
+                            })?;
+                            external_libraries.push(ExternalLibrary {
+                                name: lib_name.to_string(),
+                                address: lib_address.parse::<Address>()?,
+                            });
+                        } else {
+                            return Err(anyhow!("Invalid init."));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(external_libraries)
+    }
+
+    pub fn into_inner(self) -> Vec<ParamValue> {
+        self.0
+    }
+}
+
+impl Display for ContractInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let json = serde_json::to_string(&self.0).map_err(|_| std::fmt::Error)?;
+        write!(f, "{}", json)
     }
 }
 
