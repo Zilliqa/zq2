@@ -327,6 +327,9 @@ impl TransactionPool {
 
     pub fn pop_transaction(&mut self, hash: Hash) -> Option<VerifiedTransaction> {
         let tx_index = self.hash_to_index.remove(&hash)?;
+        if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
+            self.ready.push(next.into());
+        }
         self.transactions.remove(&tx_index)
     }
 

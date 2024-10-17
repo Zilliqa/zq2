@@ -671,7 +671,8 @@ impl Consensus {
             }
             let stakers: Vec<_> = self.state.get_stakers()?;
 
-            self.execute_block(Some(from), &block, transactions, &stakers)?;
+            let from = (self.peer_id() != from).then_some(from);
+            self.execute_block(from, &block, transactions, &stakers)?;
 
             if self.view.get_view() != proposal_view + 1 {
                 self.view.set_view(proposal_view + 1);
@@ -2765,7 +2766,7 @@ impl Consensus {
                 block_receipts.push((
                     self.receipts_cache
                         .remove(&txn.hash)
-                        .expect("receipt must be inserted during proposal assembly"),
+                        .expect("receipt were inserted during proposal assembly"),
                     tx_index,
                 ));
                 // TODO: Apply 'touched-address' from cache
