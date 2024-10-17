@@ -224,13 +224,13 @@ pub async fn deploy_scilla_contract(
 ) -> H160 {
     let (contract_address, txn) = send_transaction(
         network,
-        &sender_secret_key,
+        sender_secret_key,
         1,
         H160::zero(),
         0,
         50_000,
-        Some(&code),
-        Some(&data),
+        Some(code),
+        Some(data),
     )
     .await;
 
