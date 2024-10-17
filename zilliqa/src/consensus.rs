@@ -1226,7 +1226,7 @@ impl Consensus {
         let mut tx_index_in_block = proposal.transactions.len();
 
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = self.transaction_pool.best_transaction(state)? {
+        while let Some(tx) = self.transaction_pool.best_transaction(&state)? {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (
                 time_since_last_view_change,
