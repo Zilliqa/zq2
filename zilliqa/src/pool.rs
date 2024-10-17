@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
 };
 
 use alloy::primitives::Address;
@@ -142,14 +142,23 @@ impl TransactionPool {
     /// If the returned transaction is executed, the caller must call [TransactionPool::mark_executed] to inform the
     /// pool that the account's nonce has been updated and further transactions from this signer may now be ready.
 
-    pub fn best_transaction(&self) -> Result<Option<&VerifiedTransaction>> {
+    pub fn best_transaction(&self, state: &State) -> Result<Option<&VerifiedTransaction>> {
         for (_, gas_txns) in self.gas_index.iter().rev() {
-            if let Some(tx_index) = gas_txns.iter().next() {
-                //let index = self.hash_to_index.get(tx_hash).ok_or(anyhow!("Unable to find txn in hash_to_index set!"))?;
+            let mut same_price_iter = gas_txns.iter();
+            while let Some(tx_index) = same_price_iter.next() {
                 let txn = self
                     .transactions
                     .get(tx_index)
                     .ok_or(anyhow!("Unable to find txn in global index!"))?;
+
+                let tx_cost = txn.tx.maximum_cost()?;
+                let balance = state.must_get_account(txn.signer).balance;
+
+                // We're not going to propose txn this time
+                if tx_cost > balance {
+                    continue;
+                }
+
                 return Ok(Some(txn));
             }
         }
@@ -193,19 +202,68 @@ impl TransactionPool {
     }*/
 
     /// Returns a list of txns that are pending for inclusion in the next block
-    pub fn pending_hashes(&self) -> Result<Vec<Hash>> {
-        let mut pending_hash = Vec::new();
-        for (_, gas_txns) in self.gas_index.iter().rev() {
-            for tx_index in gas_txns.iter() {
-                //let index = self.hash_to_index.get(tx_hash).ok_or(anyhow!("Unable to find txn in hash_to_index set!"))?;
-                let txn = self
-                    .transactions
-                    .get(tx_index)
-                    .ok_or(anyhow!("Unable to find txn in global index!"))?;
-                pending_hash.push(txn.hash);
+    pub fn pending_transactions(&self, state: &State) -> Result<Vec<&VerifiedTransaction>> {
+        // Keeps track of [account, cumulative_txns_cost]
+        let mut tracked_accounts = HashMap::new();
+
+        let mut ready = self.gas_index.clone();
+
+        let mut pending_txns = Vec::new();
+
+        // Find all transactions that are pending for inclusion in the next block
+        while !ready.is_empty() {
+            // It's safe to unwrap since ready must have at least one non-empty same-gas-price set
+            let tx_index = ready
+                .iter_mut()
+                .rev()
+                .next()
+                .unwrap()
+                .1
+                .iter()
+                .next()
+                .unwrap()
+                .clone();
+
+            let txn = self
+                .transactions
+                .get(&tx_index)
+                .ok_or(anyhow!("Unable to find transaction in global index!"))?;
+
+            Self::remove_from_gas_index(&mut ready, &txn);
+
+            let cum_cost = tracked_accounts
+                .get(&txn.signer)
+                .cloned()
+                .unwrap_or_else(|| u128::default());
+
+            let tx_cost = txn.tx.maximum_cost()?;
+
+            if cum_cost + tx_cost > state.get_account(txn.signer)?.balance {
+                continue;
+            }
+
+            // We don't include nonceless txns because the way we present results on API level requires having proper nonce
+            // if let TxIndex::Intershard(_, _) = tx_index {
+            //     continue;
+            // }
+
+            // if !pending_set.insert(&txn.hash) {
+            //     continue;
+            // }
+
+            pending_txns.push(txn);
+            tracked_accounts.insert(txn.signer, cum_cost + tx_cost);
+
+            let Some(next) = tx_index.next() else {
+                continue;
+            };
+
+            if let Some(next_txn) = self.transactions.get(&next) {
+                Self::add_to_gas_index(&mut ready, next_txn);
             }
         }
-        Ok(pending_hash)
+
+        Ok(pending_txns)
     }
 
     pub fn preview_content(&self) -> Result<TxPoolContent> {
@@ -227,7 +285,6 @@ impl TransactionPool {
                 .unwrap()
                 .clone();
 
-            //let tx_index= self.hash_to_index.get(&tx_hash).ok_or(anyhow!("Unable to find transaction index by given hash!"))?;
             let txn = self
                 .transactions
                 .get(&tx_index)
@@ -411,16 +468,24 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+
     use alloy::{
         consensus::TxLegacy,
         primitives::{Address, Bytes, Parity, Signature, TxKind, U256},
     };
     use anyhow::Result;
+    use libp2p::PeerId;
     use rand::{seq::SliceRandom, thread_rng};
 
     use super::TransactionPool;
     use crate::{
+        block_store::BlockStore,
+        cfg::{ConsensusConfig, NodeConfig, *},
         crypto::Hash,
+        db::{Db, TrieStorage},
+        node::{MessageSender, RequestId},
+        state::State,
         transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
     };
 
@@ -431,7 +496,7 @@ mod tests {
                     chain_id: Some(0),
                     nonce: nonce as u64,
                     gas_price,
-                    gas_limit: 0,
+                    gas_limit: 1,
                     to: TxKind::Create,
                     value: U256::ZERO,
                     input: Bytes::new(),
@@ -477,6 +542,73 @@ mod tests {
         }
     }
 
+    fn get_in_memory_state() -> Result<State> {
+        let node_config = NodeConfig {
+            eth_chain_id: 0,
+            allowed_timestamp_skew: allowed_timestamp_skew_default(),
+            data_dir: None,
+            load_checkpoint: None,
+            do_checkpoints: false,
+            disable_rpc: disable_rpc_default(),
+            json_rpc_port: json_rpc_port_default(),
+            consensus: ConsensusConfig {
+                genesis_deposits: vec![],
+                is_main: true,
+                consensus_timeout: Duration::from_secs(5),
+                // Give a genesis account 1 billion ZIL.
+                genesis_accounts: vec![],
+                empty_block_timeout: Duration::from_millis(25),
+                rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
+                blocks_per_hour: 3600 * 40,
+                minimum_stake: 32_000_000_000_000_000_000u128.into(),
+                eth_block_gas_limit: EvmGas(84000000),
+                gas_price: 4_761_904_800_000u128.into(),
+                local_address: local_address_default(),
+                main_shard_id: None,
+                minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+                scilla_address: scilla_address_default(),
+                blocks_per_epoch: 10,
+                epochs_per_checkpoint: 1,
+                scilla_lib_dir: scilla_lib_dir_default(),
+                total_native_token_supply: total_native_token_supply_default(),
+            },
+            block_request_limit: block_request_limit_default(),
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
+            state_rpc_limit: state_rpc_limit_default(),
+            failed_request_sleep_duration: failed_request_sleep_duration_default(),
+        };
+
+        let (s1, _) = tokio::sync::mpsc::unbounded_channel();
+        let (s2, _) = tokio::sync::mpsc::unbounded_channel();
+
+        let message_sender = MessageSender {
+            our_shard: 0,
+            our_peer_id: PeerId::random(),
+            outbound_channel: s1,
+            local_channel: s2,
+            request_id: RequestId::default(),
+        };
+
+        let db = Db::new::<PathBuf>(None, 0)?;
+        let db = Arc::new(db);
+
+        let block_store = BlockStore::new(&node_config, db.clone(), message_sender.clone())?;
+
+        Ok(State::new_with_genesis(
+            db.state_trie()?,
+            node_config,
+            Arc::new(block_store),
+        )?)
+    }
+
+    fn create_acc(state: &mut State, address: Address, balance: u128, nonce: u64) -> Result<()> {
+        let mut acc = state.get_account(address)?;
+        acc.balance = balance;
+        acc.nonce = nonce;
+        state.save_account(address, acc)
+    }
+
     #[test]
     fn nonces_returned_in_order() -> Result<()> {
         let mut pool = TransactionPool::default();
@@ -484,23 +616,26 @@ mod tests {
             .parse()
             .unwrap();
 
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 100, 0)?;
+
         pool.insert_transaction(transaction(from, 1, 1), 0);
 
-        let tx = pool.best_transaction()?;
+        let tx = pool.best_transaction(&state)?;
         assert_eq!(tx, None);
 
         pool.insert_transaction(transaction(from, 2, 2), 0);
         pool.insert_transaction(transaction(from, 0, 0), 0);
 
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
         pool.mark_executed(&tx);
 
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 1);
         pool.mark_executed(&tx);
 
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 2);
         pool.mark_executed(&tx);
         Ok(())
@@ -513,6 +648,9 @@ mod tests {
             .parse()
             .unwrap();
 
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 100, 0)?;
+
         const COUNT: u64 = 100;
 
         let mut nonces = (0..COUNT).collect::<Vec<_>>();
@@ -524,7 +662,7 @@ mod tests {
         }
 
         for i in 0..COUNT {
-            let tx = pool.best_transaction()?.unwrap().clone();
+            let tx = pool.best_transaction(&state)?.unwrap().clone();
             assert_eq!(tx.tx.nonce().unwrap(), i);
             pool.mark_executed(&tx);
         }
@@ -544,6 +682,11 @@ mod tests {
             .parse()
             .unwrap();
 
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from1, 100, 0)?;
+        create_acc(&mut state, from2, 100, 0)?;
+        create_acc(&mut state, from3, 100, 0)?;
+
         pool.insert_transaction(intershard_transaction(0, 0, 1), 0);
         pool.insert_transaction(transaction(from1, 0, 2), 0);
         pool.insert_transaction(transaction(from2, 0, 3), 0);
@@ -551,22 +694,22 @@ mod tests {
         pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
         assert_eq!(pool.transactions.len(), 5);
 
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 5);
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 3);
 
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction(&state)?.unwrap().clone();
 
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 2);
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction(&state)?.unwrap().clone();
 
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 1);
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction(&state)?.unwrap().clone();
 
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 0);
         pool.mark_executed(&tx);
@@ -582,6 +725,9 @@ mod tests {
             .parse()
             .unwrap();
 
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 100, 0)?;
+
         assert_eq!(pool.transactions.len(), 0);
         let normal_tx = transaction(from, 0, 1);
         let xshard_tx = intershard_transaction(0, 0, 1);
@@ -593,7 +739,7 @@ mod tests {
         assert_eq!(pool.transactions.len(), 1);
         assert_eq!(pool.pop_transaction(xshard_tx.hash), Some(xshard_tx));
         assert_eq!(pool.transactions.len(), 0);
-        assert_eq!(pool.best_transaction()?, None);
+        assert_eq!(pool.best_transaction(&state)?, None);
         Ok(())
     }
 
@@ -604,12 +750,52 @@ mod tests {
             .parse()
             .unwrap();
 
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 100, 0)?;
+
         pool.insert_transaction(transaction(from, 0, 0), 0);
         pool.insert_transaction(transaction(from, 1, 0), 0);
 
         pool.mark_executed(&transaction(from, 0, 0));
 
-        assert_eq!(pool.best_transaction()?.unwrap().tx.nonce().unwrap(), 1);
+        assert_eq!(
+            pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn too_expensive_tranactions_are_not_proposed() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let from = "0x0000000000000000000000000000000000001234"
+            .parse()
+            .unwrap();
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 100, 0)?;
+
+        pool.insert_transaction(transaction(from, 0, 1), 0);
+        pool.insert_transaction(transaction(from, 1, 200), 0);
+
+        assert_eq!(
+            pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
+            0
+        );
+        pool.mark_executed(&transaction(from, 0, 1));
+
+        // Sender has insufficient funds at this point
+        assert_eq!(pool.best_transaction(&state)?, None);
+
+        // Increase funds of sender to satisfy txn fee
+        let mut acc = state.must_get_account(from);
+        acc.balance = 500;
+        state.save_account(from, acc)?;
+
+        assert_eq!(
+            pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
+            1
+        );
         Ok(())
     }
 
@@ -620,9 +806,13 @@ mod tests {
             .parse()
             .unwrap();
 
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 100, 0)?;
+
         pool.insert_transaction(transaction(from, 0, 1), 0);
         pool.insert_transaction(transaction(from, 1, 1), 1);
         pool.insert_transaction(transaction(from, 2, 1), 2);
+        pool.insert_transaction(transaction(from, 3, 200), 3);
         pool.insert_transaction(transaction(from, 10, 1), 3);
 
         let content = pool.preview_content()?;
@@ -632,8 +822,9 @@ mod tests {
         assert_eq!(content.pending[1].tx.nonce().unwrap(), 1);
         assert_eq!(content.pending[2].tx.nonce().unwrap(), 2);
 
-        assert_eq!(content.queued.len(), 1);
-        assert_eq!(content.queued[0].tx.nonce().unwrap(), 10);
+        assert_eq!(content.queued.len(), 2);
+        assert_eq!(content.queued[0].tx.nonce().unwrap(), 3);
+        assert_eq!(content.queued[1].tx.nonce().unwrap(), 10);
 
         Ok(())
     }

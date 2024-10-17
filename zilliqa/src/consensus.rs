@@ -1227,7 +1227,7 @@ impl Consensus {
         let mut tx_index_in_block = proposal.transactions.len();
 
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = self.transaction_pool.best_transaction()? {
+        while let Some(tx) = self.transaction_pool.best_transaction(&state)? {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (
                 time_since_last_view_change,
@@ -1262,10 +1262,7 @@ impl Consensus {
                 g
             } else {
                 // undo last transaction
-                info!(
-                    nonce = tx.tx.nonce(),
-                    "gas limit reached, returning last transaction to pool",
-                );
+                info!(nonce = tx.tx.nonce(), "gas limit reached",);
                 state.set_to_root(updated_root_hash.into());
                 break;
             };
@@ -1402,9 +1399,9 @@ impl Consensus {
         };
 
         // Retrieve a list of pending transactions
-        let pending = self.transaction_pool.pending_hashes()?;
+        let pending = self.transaction_pool.pending_transactions(&state)?;
 
-        for hash in pending.into_iter() {
+        for txn in pending.into_iter() {
             // First - check for time
             let (
                 time_since_last_view_change,
@@ -1417,11 +1414,6 @@ impl Consensus {
             {
                 break;
             }
-
-            // Retrieve txn from the pool
-            let Some(txn) = self.transaction_pool.get_transaction(hash) else {
-                continue;
-            };
 
             // Apply specific txn
             let result = Self::apply_transaction_at(
