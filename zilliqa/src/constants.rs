@@ -50,7 +50,7 @@ pub const RETAINS_LAST_N_BLOCKS: u64 = 10;
 
 // WARNING: these must be at least 1000*max_blocks_in_flight.
 // All requests get this number of ms.
-pub const BLOCK_REQUEST_RESPONSE_TIMEOUT_MIN: Duration = Duration::from_millis(4000);
+pub const BLOCK_REQUEST_RESPONSE_TIMEOUT: Duration = Duration::from_millis(4000);
 
 // log2 of the number of ways in the block cache. Max 8.
 pub const BLOCK_CACHE_LOG2_WAYS: usize = 4;
