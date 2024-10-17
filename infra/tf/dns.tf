@@ -15,7 +15,10 @@
 # }
 
 resource "google_dns_record_set" "this" {
-  for_each = merge(module.validators)
+  for_each = merge(
+    { for k, v in module.validators : k => module.validators },
+    { for k, v in module.distributed_validators : k => module.distributed_validators }
+  )
 
   project      = var.dns_zone_project_id
   managed_zone = replace(var.nodes_dns_zone_name, ".", "-")
