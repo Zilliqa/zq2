@@ -840,7 +840,7 @@ impl Node {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn txpool_content(&self) -> TxPoolContent {
+    pub fn txpool_content(&self) -> Result<TxPoolContent> {
         self.consensus.txpool_content()
     }
 
