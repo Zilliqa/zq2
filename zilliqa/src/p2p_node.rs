@@ -309,7 +309,16 @@ impl P2pNode {
                             };
                             let to = self.peer_id;
                             debug!(%source, %to, %message, "broadcast recieved");
-                            self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
+
+                            // Route broadcasts to speed-up Proposal processing
+                            match message {
+                                ExternalMessage::Proposal(_) => {
+                                    self.send_to(&topic_hash, |c| c.requests.send((source, message, ResponseChannel::Local)))?;
+                                }
+                                _ => {
+                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
+                                }
+                            }
                         }
 
                         SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source })) => {
@@ -417,8 +426,17 @@ impl P2pNode {
                                     trace!(%e, "failed to publish message");
                                 }
                             }
-                            // Also broadcast the message to ourselves.
-                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+
+                            // Also route broadcasts to ourselves
+                            match message {
+                                ExternalMessage::Proposal(_) => {
+                                    self.send_to(&topic.hash(), |c| c.requests.send((from, message, ResponseChannel::Local)))?;
+                                }
+                                _ => {
+                                    self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                }
+
+                            }
                         },
                     }
                 },
