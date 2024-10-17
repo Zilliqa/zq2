@@ -21,26 +21,25 @@ Currently, old checkpoints are kept indefinitely. It is the node operator's resp
 If the node does not have a data directory (i.e. is running on an ephemeral in-memory database), no checkpoints will be exported, regardless of the `do_checkpoints` parameter.
 
 ## Checkpoint file format
-The checkpoint file consists of a 21-byte header followed by, in version 2, the block data, the block's transactions and the state trie of the *parent* block in a plaintext format.
+The version 3 checkpoint file is a byte-array representing the concaternation of:
 
-The header contains:
- * 8 magic bytes corresponding to the ASCII string `ZILCHKPT`
- * 4 bytes containing the big-endian 32-bit checkpoint version number
- * 8 bytes containing the big-endian 64-bit chain ID that the checkpoint corresponds to.
- * The 21st byte is an ASCII newline.
+- A 21-byte header containing:
+  * 8 magic bytes corresponding to the ASCII string `ZILCHKPT`
+  * 4 bytes containing the big-endian 32-bit checkpoint version number
+  * 8 bytes containing the big-endian 64-bit chain ID that the checkpoint corresponds to.
+  * The 21st byte is an ASCII newline.
+- A serialisation of the block data, 
+- A serialisation of the block's transactions
+- A serialisation of the parent block
+- A serialisation of the state trie of the *parent* block
 
-### Version `2`
-Currently checkpoints use a plaintext, line-based format.
 
-The first two lines (after the header) are the checkpoint block data: first, the checkpoint block itself; then, its transactions, then its parent block. Blocks are currently encoded using `bincode` and the default serialization format - refer to `zilliqa/src/message.rs`. The resulting binary strings are hex-encoded.
+### Version `3`
 
-All subsequent lines contain serialised state data of the parent block. We pass the state trie of the parent rather than the checkpoint block itself to ensure that all state data for the checkpointed block is available, even that which requires a lookup to the parent state trie such as the commitee and author.
+After the header we have the checkpoint block itself, then its transactions, then its parent block. Blocks and transactions are currently encoded using `bincode` and the default serialization format - refer to `zilliqa/src/message.rs`.
 
-As some background, the state consists of a patricia merkle trie of accounts, and each account additionally stores the state root hash of a sub-trie for its storage. Each line has a format that looks like this:
-```
-{account key}:{serialized account};{storage entry key}:{storage value},{storage entry key}:{storage value},{...}
-```
+All subsequent lines contain serialised state data of the parent block. We pass the state trie of the parent rather than the checkpoint block itself to ensure that all state data for the checkpointed block is available, including that which requires a lookup to the parent state trie such as the commitee and author. 
 
-In detail: the account's key in the trie, followed by a colon `:`, followed by the serialized account data structure, followed by a semicolon `;`. This is then followed by a serialization of the account's storage trie: pairs of colon-separated keys and values for each node, every pair followed by a comma `,`. All binary values are hex-encoded for this. There may be zero or more accounts in the state (though in practice, even at genesis it is not usually possible to generate a state with zero accounts).
+As some background, the state consists of a patricia merkle trie of accounts, and each account additionally stores the state root hash of a sub-trie for its storage. We loop through each account concaternating its key, its `Account` and its storage trie's keys and values. There may be zero or more accounts in the state (though in practice, even at genesis it is not usually possible to generate a state with zero accounts).
 
-The format of each element currently tightly coupled to the state implementation (in `zilliqa/src/state.rs`). The account structure is bincode-serialized; the keys for every node are also defined by the implementation in `State`. For example, an account node's key is a keccak256 hash of the account address; an EVM storage entry's key is the keccak256 of the concatetation of the corresponding account's address and its 256 bit EVM storage index. Keys for scilla storage nodes are slightly more complex.
+The format of each element currently is tightly coupled to the state implementation (in `zilliqa/src/state.rs`). The account structure is bincode-serialized; the keys for every node are also defined by the implementation in `State`. For example, an account node's key is a keccak256 hash of the account address; an EVM storage entry's key is the keccak256 of the concatetation of the corresponding account's address and its 256 bit EVM storage index. Keys for scilla storage nodes are slightly more complex.
