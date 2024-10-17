@@ -14,19 +14,19 @@
 #   rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
 # }
 
-# resource "google_dns_record_set" "this" {
-#   for_each = merge(
-#     { for k, v in module.validators : k => module.validators },
-#   )
+resource "google_dns_record_set" "this" {
+  for_each = merge(
+    { for k, v in module.validators : k => val },
+  )
 
-#   project      = var.dns_zone_project_id
-#   managed_zone = replace(var.nodes_dns_zone_name, ".", "-")
-#   name         = each.key != "@" ? "${each.value.name}.${var.network_name}.${var.nodes_dns_zone_name}." : "${var.nodes_dns_zone_name}."
-#   type         = "A"
-#   ttl          = try(each.value.ttl, "60")
+  project      = var.dns_zone_project_id
+  managed_zone = replace(var.nodes_dns_zone_name, ".", "-")
+  name         = "${each.value.name}.${var.network_name}.${var.nodes_dns_zone_name}."
+  type         = "A"
+  ttl          = "60"
 
-#   rrdatas = [each.value.external_ip]
-# }
+  rrdatas = [each.value.external_ip]
+}
 
 output "test" {
   value       = module.validators
