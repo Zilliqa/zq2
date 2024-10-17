@@ -28,6 +28,6 @@
 #   rrdatas = [each.value.external_ip]
 # }
 
-output "reward_wallet" {
+output "test" {
   value       = module.validators
 }
