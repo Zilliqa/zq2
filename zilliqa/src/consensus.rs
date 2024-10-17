@@ -464,9 +464,12 @@ impl Consensus {
                     )));
                 };
             } else {
-                self.reset_timeout.send(Duration::from_millis(
-                    empty_block_timeout_ms - time_since_last_view_change + 1,
-                ))?;
+                self.reset_timeout.send(
+                    self.config
+                        .consensus
+                        .empty_block_timeout
+                        .saturating_sub(Duration::from_millis(time_since_last_view_change)),
+                )?;
                 return Ok(None);
             }
         }

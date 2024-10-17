@@ -112,6 +112,13 @@ impl MessageSender {
             .send((None, self.our_shard, message))?;
         Ok(())
     }
+
+    /// Broadcast to the entire network of this shard
+    pub fn broadcast_proposal(&self, message: ExternalMessage) -> Result<()> {
+        self.outbound_channel
+            .send((None, self.our_shard, message))?;
+        Ok(())
+    }
 }
 
 /// Messages sent by [Consensus].
