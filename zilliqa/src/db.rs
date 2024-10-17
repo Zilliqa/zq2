@@ -281,7 +281,7 @@ impl Db {
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
         // For now, only support a single version: you want to load the latest checkpoint, anyway.
-        const SUPPORTED_VERSION: u32 = 2;
+        const SUPPORTED_VERSION: u32 = 3;
 
         let input = File::open(path)?;
         let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
@@ -926,7 +926,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     shard_id: u64,
     output_dir: P,
 ) -> Result<()> {
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
 
     fs::create_dir_all(&output_dir)?;
 
