@@ -17,7 +17,7 @@
 resource "google_dns_record_set" "this" {
   for_each = merge(
     { for instance in module.validators.instances : instance.name => instance },
-    { for instance in module.distributed_validators.instances : instance.name => instance },
+    { for instance in module.apis.instances : instance.name => instance },
   )
 
   project      = var.dns_zone_project_id
