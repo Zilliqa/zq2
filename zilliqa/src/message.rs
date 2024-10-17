@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fmt::{self, Display, Formatter},
+    ops::Range,
     path::Path,
 };
 
@@ -8,6 +9,7 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -187,6 +189,20 @@ impl NewView {
     }
 }
 
+/// Each node advertises one or more block strategies. Each strategy signifies a willingness to maintain
+/// some group of blocks; when we attempt to fetch a block or block range, we will try to pick a peer that
+/// maintains the blocks we are interested in.
+///
+/// This allows us to compute the blocks a peer is likely to have in its cache before having to be told.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum BlockStrategy {
+    /// "I have these blocks at the moment and I won't drop them until view .."
+    /// None == unlimited
+    CachedViewRange(Range<u64>, Option<u64>),
+    /// Latest N blocks.
+    Latest(u64),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockRequest {
     pub from_view: u64,
@@ -196,6 +212,18 @@ pub struct BlockRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub proposals: Vec<Proposal>,
+    pub from_view: u64,
+    /// When we send a block response, we may also send data on what blocks we are prepared
+    /// to serve.
+    pub availability: Option<Vec<BlockStrategy>>,
+}
+
+/// Used to convey proposal processing internally, to avoid blocking threads for too long.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessProposal {
+    // An encoded PeerId
+    pub from: Vec<u8>,
+    pub block: Proposal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,6 +245,7 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
+    ProcessProposal(ProcessProposal),
     NewTransaction(SignedTransaction),
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
@@ -242,15 +271,31 @@ impl Display for ExternalMessage {
             ExternalMessage::BlockRequest(r) => {
                 write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
             }
+            ExternalMessage::ProcessProposal(r) => {
+                write!(
+                    f,
+                    "ProcessProposal({}, view={} num={})",
+                    PeerId::from_bytes(&r.from)
+                        .map_or("(undecodable)".to_string(), |x| x.to_base58()),
+                    r.block.header.view,
+                    r.block.header.number
+                )
+            }
             ExternalMessage::BlockResponse(r) => {
                 let mut views = r.proposals.iter().map(|p| p.view());
                 let first = views.next();
                 let last = views.last();
                 match (first, last) {
-                    (None, None) => write!(f, "BlockResponse([])"),
-                    (Some(first), None) => write!(f, "BlockResponse([{first}])"),
+                    (None, None) => write!(f, "BlockResponse([], avail={:?})", r.availability),
+                    (Some(first), None) => {
+                        write!(f, "BlockResponse([{first}, avail={:?}])", r.availability)
+                    }
                     (Some(first), Some(last)) => {
-                        write!(f, "BlockResponse([{first}, ..., {last}])")
+                        write!(
+                            f,
+                            "BlockResponse([{first}, ..., {last}, avail={:?}])",
+                            r.availability
+                        )
                     }
                     (None, Some(_)) => unreachable!(),
                 }
