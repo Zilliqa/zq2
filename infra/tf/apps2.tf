@@ -41,7 +41,7 @@ variable "apps" {
 module "apps2" {
   source = "./modules/node2"
 
-  nodes = var.apps
+  config = var.apps
 
   chain_name             = var.chain_name
   role                   = "apps"
