@@ -19,5 +19,6 @@ data "google_compute_zones" "available" {
 data "google_compute_subnetworks" "default" {
   for_each = toset(local.regions)
   project  = data.google_project.current.project_id
+  filter   = "privateIpGoogleAccess eq true"
   region   = each.value
 }
