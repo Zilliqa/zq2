@@ -28,7 +28,7 @@ module "apps2" {
   zq_network_name = var.network_name
 }
 
-resource "google_compute_instance_group" "apps" {
+resource "google_compute_instance_group" "apps2" {
   for_each = toset(local.default_zones)
 
   name      = "${var.network_name}-apps2-${each.key}"
