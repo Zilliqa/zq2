@@ -38,15 +38,15 @@ resource "google_project_iam_member" "secret_manager_accessor" {
   member  = "serviceAccount:${google_service_account.this.email}"
 }
 
-# resource "google_compute_address" "external_regional" {
-#   for_each = local.instances_map
+resource "google_compute_address" "external_regional" {
+  for_each = local.instances_map
 
-#   project = data.google_project.current.project_id
+  project = data.google_project.current.project_id
 
-#   name         = each.value.resource_name
-#   region       = each.value.region
-#   network_tier = "PREMIUM"
-# }
+  name         = each.value.resource_name
+  region       = each.value.region
+  network_tier = "PREMIUM"
+}
 
 # resource "google_compute_instance" "this" {
 #   for_each = local.instances_map

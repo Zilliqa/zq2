@@ -298,7 +298,7 @@ data "google_compute_global_address" "api" {
 }
 
 data "google_compute_address" "bootstrap" {
-  name = "bootstrap-${replace(var.subdomain, ".", "-")}"
+  name   = "bootstrap-${replace(var.subdomain, ".", "-")}"
   region = var.region
 }
 
