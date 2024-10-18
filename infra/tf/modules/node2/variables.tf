@@ -45,28 +45,17 @@ variable "nodes" {
 
   # Validation for provisioning_model
   validation {
-    condition     = contains(["STANDARD", "SPOT"], var.apps.provisioning_model)
+    condition     = contains(["STANDARD", "SPOT"], var.nodes.provisioning_model)
     error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
   }
 
   # Validation to check that both 'region' and 'zone' are not specified together
   validation {
     condition = alltrue([
-      for node in var.apps.nodes : (node.region != null && node.zone == null)
+      for node in var.nodes.nodes : (node.region != null && node.zone == null)
     ])
     error_message = "You need to specify either 'region' or 'zone' for a node."
   }
-}
-
-# Validation for provisioning_model
-locals {
-  apps_nodes = [
-    for node in var.apps.nodes : {
-      count  = lookup(node, "count", 1)
-      region = lookup(node, "region", null)
-      zone   = lookup(node, "zone", null)
-    }
-  ]
 }
 
 variable "chain_name" {
