@@ -1,10 +1,10 @@
 # Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
 # changes and any instance groups containing them are updated.
 
-# resource "random_bytes" "generate_node_key" {
-#   count  = !var.generate_node_key ? 0 : var.vm_num
-#   length = 32
-# }
+resource "random_bytes" "generate_node_key" {
+  count  = var.generate_node_key ? length(var.apps.nodes) * var.apps.nodes[count.index].count : 0
+  length = 32
+}
 
 # resource "google_secret_manager_secret" "node_key" {
 #   count     = !var.generate_node_key ? 0 : var.vm_num
