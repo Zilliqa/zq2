@@ -2,6 +2,29 @@
 # ZQ2 GCP Terraform apps resources
 ################################################################################
 
+variable "node_role_mappings" {
+  description = "(Optional) The node role short names"
+  type        = map(string)
+  default = {
+    apps       = "app",
+    api        = "api",
+    bootstrap  = "bts",
+    validator  = "val",
+    checkpoint = "ckp",
+  }
+}
+
+variable "region_mappings" {
+  description = "(Optional) The regions short names"
+  type        = map(string)
+  default = {
+    "europe-west1"    = "ewe1"
+    "europe-west2"    = "ewe2"
+    "asia-southeast1" = "ase1"
+    "us-west1"        = "usw1"
+  }
+}
+
 variable "apps" {
   description = "(Optional) The configuration of the apps nodes"
   type = object({
@@ -47,16 +70,12 @@ locals {
       zone   = lookup(node, "zone", null)
     }
   ]
+}
 
-  # Raise an error if both region and zone are specified
-  validation_region_zone = [
-    for node in local.apps_nodes : {
-      error = node.region != null && node.zone != null ? "Cannot specify both region and zone" : null
-    }
-  ]
-
-  # Validate provisioning_model only allows STANDARD or SPOT
-  validation_provisioning_model = contains(["STANDARD", "SPOT"], var.apps.provisioning_model) ? null : "Provisioning model must be STANDARD or SPOT"
+# Data to retrieve all zones in the region if only a region is specified
+data "google_compute_zones" "available" {
+  count  = length(var.apps.nodes)
+  region = lookup(var.apps.nodes[count.index], "region", null)
 }
 
 resource "google_service_account" "apps2" {
