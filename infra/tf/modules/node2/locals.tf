@@ -14,7 +14,7 @@ locals {
         in_region_index = n
         count = node.count
         region = node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region)
-        zone = node.zone != null ? node.zone : ([for region in data.google_compute_zones.available : region if region.region == node.region][0].names[n])
+        zone = node.zone != null ? node.zone : ([for region in data.google_compute_zones.available : region if region.region == node.region][0].names[n % length([for region in data.google_compute_zones.available : region if region.region == node.region][0]).names])
       }
     ]
   ])
@@ -35,3 +35,5 @@ locals {
 #   )
 
   # total unique zones
+
+length(var.node_zones) > 1 ? sort(var.node_zones)[count.index % length(var.node_zones)] : var.node_zones[count.index % length(var.node_zones)]
