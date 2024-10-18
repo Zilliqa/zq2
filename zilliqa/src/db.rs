@@ -901,19 +901,32 @@ impl eth_trie::DB for TrieStorage {
         }
 
         assert_eq!(keys.len(), values.len());
-        // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
-        // parameters for each key. Note that parameters are one-indexed.
-        #[allow(unstable_name_collisions)]
-        let params_stmt: String = (0..keys.len())
-            .map(|i| format!("(?{}, ?{})", i * 2 + 1, i * 2 + 2))
-            .intersperse(",".to_owned())
-            .collect();
-        let query = format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
-        let params = keys.into_iter().zip(values).flat_map(|(k, v)| [k, v]);
-        self.db
-            .lock()
-            .unwrap()
-            .execute(&query, rusqlite::params_from_iter(params))?;
+
+        // https://www.sqlite.org/limits.html#max_variable_number
+        let maximum_sql_parameters = 32766;
+        // Each key-value pair needs two parameters.
+        let chunk_size = maximum_sql_parameters / 2;
+
+        let keys = keys.chunks(chunk_size);
+        let values = values.chunks(chunk_size);
+
+        for (keys, values) in keys.zip(values) {
+            // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
+            // parameters for each key. Note that parameters are one-indexed.
+            #[allow(unstable_name_collisions)]
+            let params_stmt: String = (0..keys.len())
+                .map(|i| format!("(?{}, ?{})", i * 2 + 1, i * 2 + 2))
+                .intersperse(",".to_owned())
+                .collect();
+            let query =
+                format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
+            let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
+            self.db
+                .lock()
+                .unwrap()
+                .execute(&query, rusqlite::params_from_iter(params))?;
+        }
+
         Ok(())
     }
 
