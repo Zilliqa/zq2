@@ -47,86 +47,86 @@ resource "google_project_iam_member" "secret_manager_accessor" {
 #   name    = "${replace(each.key, ".", "-")}-${local.domain_name}"
 # }
 
-resource "google_compute_instance" "this" {
-  for_each = local.instances
+# resource "google_compute_instance" "this" {
+#   for_each = local.instances
 
-  name                      = format("%s-%s-%s-%s", var.chain_name, local.role_short_name, each.value.region, random_id.name_suffix.hex)
-  machine_type              = var.config.instance_type
-  allow_stopping_for_update = true
-  # zone                      = length(var.node_zones) > 1 ? sort(var.node_zones)[count.index % length(var.node_zones)] : var.node_zones[count.index % length(var.node_zones)]
-  zone = "projects/prj-d-zq2-devnet-c83bkpsd/zones/asia-southeast1-a"
+#   name                      = format("%s-%s-%s-%s", var.chain_name, local.role_short_name, each.value.region, random_id.name_suffix.hex)
+#   machine_type              = var.config.instance_type
+#   allow_stopping_for_update = true
+#   # zone                      = length(var.node_zones) > 1 ? sort(var.node_zones)[count.index % length(var.node_zones)] : var.node_zones[count.index % length(var.node_zones)]
+#   zone = "projects/prj-d-zq2-devnet-c83bkpsd/zones/asia-southeast1-a"
 
-  scheduling {
-    provisioning_model = var.config.provisioning_model
-    preemptible        = var.config.provisioning_model == "SPOT"
-    automatic_restart  = var.config.provisioning_model != "SPOT"
+#   scheduling {
+#     provisioning_model = var.config.provisioning_model
+#     preemptible        = var.config.provisioning_model == "SPOT"
+#     automatic_restart  = var.config.provisioning_model != "SPOT"
 
-    instance_termination_action = var.config.provisioning_model == "SPOT" ? "STOP" : null
-  }
+#     instance_termination_action = var.config.provisioning_model == "SPOT" ? "STOP" : null
+#   }
 
-  labels = local.labels
+#   labels = local.labels
 
-  service_account {
-    email = google_service_account.this.email
-    scopes = [
-      "https://www.googleapis.com/auth/cloud-platform",
-      "https://www.googleapis.com/auth/devstorage.read_only",
-      "https://www.googleapis.com/auth/logging.write",
-      "https://www.googleapis.com/auth/monitoring.write",
-      "https://www.googleapis.com/auth/compute", # REMOVE
-    ]
-  }
+#   service_account {
+#     email = google_service_account.this.email
+#     scopes = [
+#       "https://www.googleapis.com/auth/cloud-platform",
+#       "https://www.googleapis.com/auth/devstorage.read_only",
+#       "https://www.googleapis.com/auth/logging.write",
+#       "https://www.googleapis.com/auth/monitoring.write",
+#       "https://www.googleapis.com/auth/compute", # REMOVE
+#     ]
+#   }
 
-  boot_disk {
-    initialize_params {
-      size  = 256
-      image = "ubuntu-os-cloud/ubuntu-2204-lts"
-      type  = "pd-ssd"
-    }
-  }
+#   boot_disk {
+#     initialize_params {
+#       size  = 256
+#       image = "ubuntu-os-cloud/ubuntu-2204-lts"
+#       type  = "pd-ssd"
+#     }
+#   }
 
-  network_interface {
-    # network    = var.network_name
-    # subnetwork = var.subnetwork_name
+#   network_interface {
+#     # network    = var.network_name
+#     # subnetwork = var.subnetwork_name
 
-    network = "projects/prj-d-zq2-devnet-c83bkpsd/global/networks/vpc-d-main"
-    subnetwork = "projects/prj-d-zq2-devnet-c83bkpsd/regions/asia-southeast1/subnetworks/sb-d-main-ase1"
+#     network = "projects/prj-d-zq2-devnet-c83bkpsd/global/networks/vpc-d-main"
+#     subnetwork = "projects/prj-d-zq2-devnet-c83bkpsd/regions/asia-southeast1/subnetworks/sb-d-main-ase1"
 
-    # dynamic "access_config" {
-    #   for_each = [var.role == "validator" ? 1 : 0] # Always create the access_config block for validators
-    #   content {
-    #     # Conditionally set nat_ip only if var.external_ip is not empty
-    #     nat_ip = var.external_ip != "" ? var.external_ip : null
-    #   }
-    # }
-  }
+#     # dynamic "access_config" {
+#     #   for_each = [var.role == "validator" ? 1 : 0] # Always create the access_config block for validators
+#     #   content {
+#     #     # Conditionally set nat_ip only if var.external_ip is not empty
+#     #     nat_ip = var.external_ip != "" ? var.external_ip : null
+#     #   }
+#     # }
+#   }
 
-  shielded_instance_config {
-    enable_secure_boot          = true
-    enable_vtpm                 = true
-    enable_integrity_monitoring = true
-  }
+#   shielded_instance_config {
+#     enable_secure_boot          = true
+#     enable_vtpm                 = true
+#     enable_integrity_monitoring = true
+#   }
 
-  tags = local.network_tags
+#   tags = local.network_tags
 
-  metadata = {
-    "enable-guest-attributes"   = "TRUE"
-    "enable-osconfig"           = "TRUE"
-    "genesis_key"               = base64encode(var.genesis_key)
-    "persistence_url"           = base64encode(var.persistence_url)
-    "subdomain"                 = base64encode(var.chain_subdomain)
-    # "secret_key"                = !var.generate_node_key ? "" : base64encode(google_secret_manager_secret_version.node_key_version[count.index].secret_data)
-    # "secret_id"                 = !var.generate_node_key ? "" : google_secret_manager_secret_version.node_key_version[count.index].id
-    # "reward_wallet_private_key" = !var.generate_reward_wallet ? "" : base64encode(google_secret_manager_secret_version.reward_wallet_version[count.index].secret_data)
-    # "reward_wallet_secret_id"   = !var.generate_reward_wallet ? "" : google_secret_manager_secret_version.reward_wallet_version[count.index].id
-  }
+#   metadata = {
+#     "enable-guest-attributes"   = "TRUE"
+#     "enable-osconfig"           = "TRUE"
+#     "genesis_key"               = base64encode(var.genesis_key)
+#     "persistence_url"           = base64encode(var.persistence_url)
+#     "subdomain"                 = base64encode(var.chain_subdomain)
+#     # "secret_key"                = !var.generate_node_key ? "" : base64encode(google_secret_manager_secret_version.node_key_version[count.index].secret_data)
+#     # "secret_id"                 = !var.generate_node_key ? "" : google_secret_manager_secret_version.node_key_version[count.index].id
+#     # "reward_wallet_private_key" = !var.generate_reward_wallet ? "" : base64encode(google_secret_manager_secret_version.reward_wallet_version[count.index].secret_data)
+#     # "reward_wallet_secret_id"   = !var.generate_reward_wallet ? "" : google_secret_manager_secret_version.reward_wallet_version[count.index].id
+#   }
 
-  lifecycle {
-    ignore_changes = [
-      labels["peer-id"]
-    ]
-  }
-}
+#   lifecycle {
+#     ignore_changes = [
+#       labels["peer-id"]
+#     ]
+#   }
+# }
 
 # resource "google_compute_instance_group" "apps2" {
 #   for_each = toset(local.default_zones)
