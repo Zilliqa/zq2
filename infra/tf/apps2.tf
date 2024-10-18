@@ -32,7 +32,7 @@ variable "apps" {
   # Validation to check that both 'region' and 'zone' are not specified together
   validation {
     condition = alltrue([
-      for node in var.apps.nodes : !(node.region != null && node.zone != null)
+      for node in var.apps.nodes : (node.region != null && node.zone == null)
     ])
     error_message = "You cannot specify both 'region' and 'zone' for a node. Please choose only one."
   }
