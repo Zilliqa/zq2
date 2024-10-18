@@ -3,5 +3,5 @@
 ################################################################################
 
 locals {
-  nodes_domain_name = replace(var.nodes_dns_zone_name, ".", "-")
+  nodes_domain_name = replace(var.node_dns_zone_name, ".", "-")
 }

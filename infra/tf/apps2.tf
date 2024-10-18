@@ -2,29 +2,6 @@
 # ZQ2 GCP Terraform apps resources
 ################################################################################
 
-variable "node_role_mappings" {
-  description = "(Optional) The node role short names"
-  type        = map(string)
-  default = {
-    apps       = "app",
-    api        = "api",
-    bootstrap  = "bts",
-    validator  = "val",
-    checkpoint = "ckp",
-  }
-}
-
-variable "region_mappings" {
-  description = "(Optional) The regions short names"
-  type        = map(string)
-  default = {
-    "europe-west1"    = "ewe1"
-    "europe-west2"    = "ewe2"
-    "asia-southeast1" = "ase1"
-    "us-west1"        = "usw1"
-  }
-}
-
 variable "apps" {
   description = "(Optional) The configuration of the apps nodes"
   type = object({
@@ -61,63 +38,22 @@ variable "apps" {
   }
 }
 
-# Validation for provisioning_model
-locals {
-  apps_nodes = [
-    for node in var.apps.nodes : {
-      count  = lookup(node, "count", 1)
-      region = lookup(node, "region", null)
-      zone   = lookup(node, "zone", null)
-    }
-  ]
-}
-
-# Data to retrieve all zones in the region if only a region is specified
-data "google_compute_zones" "available" {
-  count  = length(var.apps.nodes)
-  region = lookup(var.apps.nodes[count.index], "region", null)
-}
-
-resource "google_service_account" "apps2" {
-  account_id = substr("${var.chain_name}-apps2", 0, 28)
-}
-
 module "apps2" {
   source = "./modules/node2"
-  vm_num = var.apps_node_count
 
-  role                  = "apps"
-  name                  = "${var.chain_name}-apps2"
-  service_account_email = google_service_account.apps2.email
-  dns_zone_project_id   = var.dns_zone_project_id
-  nodes_dns_zone_name   = var.nodes_dns_zone_name
-  network_name          = local.network_name
-  subnetwork_name       = data.google_compute_subnetwork.default.name
-  node_zones            = local.default_zones
-  subdomain             = var.subdomain
-  generate_node_key     = false
-  persistence_url       = ""
-  genesis_key           = local.genesis_key
-  node_type             = var.apps_node_type
-  provisioning_model    = var.provisioning_model
+  nodes = var.apps
 
-  zq_network_name = var.chain_name
-}
+  chain_name             = var.chain_name
+  role                   = "apps"
+  labels                 = {}
+  network_tags           = []
+  generate_external_ip   = true
+  generate_node_key      = false
+  generate_reward_wallet = false
+  chain_subdomain        = var.subdomain
+  persistence_url        = ""
+  genesis_key            = local.genesis_key
 
-resource "google_compute_instance_group" "apps2" {
-  for_each = toset(local.default_zones)
-
-  name      = "${var.chain_name}-apps2-${each.key}"
-  zone      = each.key
-  instances = [for instance in module.apps.instances : instance.self_link if instance.zone == each.key]
-
-  named_port {
-    name = "otterscan"
-    port = "80"
-  }
-
-  named_port {
-    name = "spout"
-    port = "8080"
-  }
+  node_dns_zone_name       = var.nodes_dns_zone_name
+  node_dns_zone_project_id = var.dns_zone_project_id
 }

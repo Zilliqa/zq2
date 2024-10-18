@@ -1,106 +1,76 @@
-variable "name" {
-  description = "The instance name"
-  type        = string
-  nullable    = false
+variable "node_role_mappings" {
+  description = "(Optional) The node role short names"
+  type        = map(string)
+  default = {
+    apps       = "app",
+    api        = "api",
+    bootstrap  = "boo",
+    validator  = "val",
+    checkpoint = "che",
+    sentry     = "sen",
+  }
 }
 
-variable "service_account_email" {
-  description = "The instance service account"
-  type        = string
-  nullable    = false
+variable "region_mappings" {
+  description = "(Optional) The regions short names"
+  type        = map(string)
+  default = {
+    "europe-west1"    = "ewe1"
+    "europe-west2"    = "ewe2"
+    "asia-southeast1" = "ase1"
+    "us-west1"        = "usw1"
+  }
 }
 
-variable "generate_node_key" {
-  description = "Enable private key generation"
-  type        = bool
-  nullable    = false
-  default     = true
-}
-
-variable "generate_reward_wallet" {
-  description = "Enable reward wallet generation"
-  type        = bool
-  nullable    = false
-  default     = false
-}
-
-variable "vm_num" {
-  description = "The number of instances to provision"
-  type        = number
-  nullable    = false
-  default     = 1
-}
-
-variable "provisioning_model" {
-  description = "The provisioning model for the instance. Must be either 'STANDARD' or 'SPOT'."
-  type        = string
-
-  validation {
-    condition     = contains(["STANDARD", "SPOT"], var.provisioning_model)
-    error_message = "The provisioning model must be either 'STANDARD' or 'SPOT'."
+variable "nodes" {
+  description = "(Optional) The configuration of the apps nodes"
+  type = object({
+    disk_size          = optional(number, 256)
+    instance_type      = optional(string, "e2-standard-2")
+    provisioning_model = optional(string, "STANDARD")
+    nodes = list(object({
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
+    }))
+  })
+  default = {
+    nodes : [
+      {
+        count  = 1
+        region = "asia-southeast1"
+      }
+    ]
   }
 
-  default = "STANDARD"
+  # Validation for provisioning_model
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.apps.provisioning_model)
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+  }
+
+  # Validation to check that both 'region' and 'zone' are not specified together
+  validation {
+    condition = alltrue([
+      for node in var.apps.nodes : (node.region != null && node.zone == null)
+    ])
+    error_message = "You need to specify either 'region' or 'zone' for a node."
+  }
 }
 
-variable "network_name" {
-  description = "The network name"
-  type        = string
-  nullable    = false
+# Validation for provisioning_model
+locals {
+  apps_nodes = [
+    for node in var.apps.nodes : {
+      count  = lookup(node, "count", 1)
+      region = lookup(node, "region", null)
+      zone   = lookup(node, "zone", null)
+    }
+  ]
 }
 
-variable "subnetwork_name" {
-  description = "The subnetwork name"
-  type        = string
-  nullable    = false
-}
-
-variable "subdomain" {
-  description = "(Optional) ZQ2 network subdomain"
-  type        = string
-  default     = ""
-}
-
-variable "genesis_key" {
-  description = "The network genesis key"
-  type        = string
-  default     = ""
-}
-
-variable "node_type" {
-  description = "The node type"
-  type        = string
-  default     = "e2-standard-2"
-  nullable    = false
-}
-
-variable "node_zones" {
-  description = "The instances zone"
-  type        = list(string)
-  default     = ["europe-west2-a"]
-  nullable    = false
-}
-
-variable "persistence_url" {
-  description = "The persistence url"
-  type        = string
-  nullable    = true
-}
-
-variable "zq_network_name" {
-  description = "The ZQ2 network name"
-  type        = string
-  nullable    = false
-}
-
-variable "nodes_dns_zone_name" {
-  description = "Nodes DNS zone name"
-  type        = string
-  nullable    = false
-}
-
-variable "dns_zone_project_id" {
-  description = "The id of the Google project that hosts the DNS zone."
+variable "chain_name" {
+  description = "The blockchain name"
   type        = string
   nullable    = false
 }
@@ -121,15 +91,60 @@ variable "labels" {
   default     = {}
 }
 
-variable "external_ip" {
-  description = "The external IP address. Leave empty for no external IP."
-  type        = string
-  default     = ""
-}
-
 variable "network_tags" {
   description = "The network tags"
   type        = list(string)
   default     = []
+  nullable    = false
+}
+
+variable "generate_external_ip" {
+  description = "Enable static IP generation"
+  type        = bool
+  nullable    = false
+  default     = true
+}
+
+variable "generate_node_key" {
+  description = "Enable private key generation"
+  type        = bool
+  nullable    = false
+  default     = true
+}
+
+variable "generate_reward_wallet" {
+  description = "Enable reward wallet generation"
+  type        = bool
+  nullable    = false
+  default     = false
+}
+
+variable "chain_subdomain" {
+  description = "(Optional) ZQ2 blockchain subdomain (ie. zq2-prototestnet.zilliqa.com)"
+  type        = string
+  default     = ""
+}
+
+variable "genesis_key" {
+  description = "The network genesis key"
+  type        = string
+  default     = ""
+}
+
+variable "persistence_url" {
+  description = "The persistence url"
+  type        = string
+  nullable    = true
+}
+
+variable "node_dns_zone_name" {
+  description = "Nodes DNS zone name"
+  type        = string
+  nullable    = false
+}
+
+variable "node_dns_zone_project_id" {
+  description = "The id of the Google project that hosts the DNS zone."
+  type        = string
   nullable    = false
 }
