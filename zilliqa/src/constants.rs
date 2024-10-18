@@ -57,10 +57,10 @@ pub const BLOCK_CACHE_LOG2_WAYS: usize = 4;
 /// The block cache will deliberately keep this number of entries near the highest known view
 /// so that it can catch up quickly when it reaches the current head of the chain.
 /// Not required for correctness.
-pub const BLOCK_CACHE_HEAD_BUFFER_ENTRIES: usize = 16;
+pub const BLOCK_CACHE_HEAD_BUFFER_ENTRIES: usize = 1024;
 
 /// Max pending requests per peer
-pub const MAX_PENDING_BLOCK_REQUESTS_PER_PEER: usize = 4;
+pub const MAX_PENDING_BLOCK_REQUESTS_PER_PEER: usize = 16;
 
 /// Number of previous blocks to examine at each level of fork counter. Should be
 /// set small enough to avoid serious database load, but large enough to jump any
