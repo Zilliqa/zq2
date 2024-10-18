@@ -3,7 +3,7 @@
 ################################################################################
 
 variable "apps" {
-  type = map(object({
+  type = object({
     disk_size           = optional(number, 256)
     instance_type       = optional(string, "e2-standard-2")
     provisioning_model  = optional(string, "STANDARD")
@@ -12,7 +12,7 @@ variable "apps" {
       region = optional(string)
       zone   = optional(string)
     }))
-  }))
+  })
 }
 
 # Validation for provisioning_model
