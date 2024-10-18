@@ -9,7 +9,7 @@ variable "apps" {
     instance_type      = optional(string, "e2-standard-2")
     provisioning_model = optional(string, "STANDARD")
     nodes = list(object({
-      count  = optional(number)
+      count  = number
       region = optional(string)
       zone   = optional(string)
     }))
