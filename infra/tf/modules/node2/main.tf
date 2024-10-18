@@ -38,14 +38,15 @@ resource "google_project_iam_member" "secret_manager_accessor" {
   member  = "serviceAccount:${google_service_account.this.email}"
 }
 
-# resource "google_compute_address" "external_regional" {
-#   for_each = var.regional_subdomains
+resource "google_compute_address" "external_regional" {
+  for_each = local.instances
 
-#   project = data.google_project.current.project_id
-#   region       = each.value.region
-#   network_tier = each.value.network_tier
-#   name    = "${replace(each.key, ".", "-")}-${local.domain_name}"
-# }
+  project = data.google_project.current.project_id
+
+  name         = each.value.resource_name
+  region       = each.value.region
+  network_tier = "PREMIUM"
+}
 
 # resource "google_compute_instance" "this" {
 #   for_each = local.instances
@@ -64,7 +65,8 @@ resource "google_project_iam_member" "secret_manager_accessor" {
 #     instance_termination_action = var.config.provisioning_model == "SPOT" ? "STOP" : null
 #   }
 
-#   labels = local.labels
+#   labels = local.labels 
+# { "node-name" = "${local.resource_name}" },
 
 #   service_account {
 #     email = google_service_account.this.email

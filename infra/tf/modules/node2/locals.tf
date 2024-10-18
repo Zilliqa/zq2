@@ -15,7 +15,7 @@ locals {
         count           = node.count
         region          = node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region)
         zone            = node.zone != null ? node.zone : ([for region in data.google_compute_zones.available : region if region.region == node.region][0].names[n % length([for region in data.google_compute_zones.available : region if region.region == node.region][0].names)])
-        resource_name = format("%s-%s-%s-%s-%s", var.chain_name, var.role, var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n, random_id.name_suffix.hex)
+        resource_name   = format("%s-%s-%s-%s-%s", var.chain_name, var.role, var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n, random_id.name_suffix.hex)
       }
     ]
   ])
@@ -24,17 +24,6 @@ locals {
   labels = merge(
     { "zq2-network" = var.chain_name },
     { "role" = var.role },
-    { "node-name" = "${local.resource_name}" },
     var.labels
   )
 }
-
-
-# lookup(
-#     var.config.nodes[local.instances[count.index].node_index], "zone",
-#     data.google_compute_zones.available[local.instances[count.index].node_index].zones[count.index % length(data.google_compute_zones.available[local.instances[count.index].node_index].zones)]
-#   )
-
-# total unique zones
-
-# zq2-devnet-validator-europe-west2-1-4b89
