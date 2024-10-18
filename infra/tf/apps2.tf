@@ -2,12 +2,46 @@
 # ZQ2 GCP Terraform apps resources
 ################################################################################
 
+variable "apps" {
+  type = map(object({
+    disk_size           = optional(number, 256)
+    instance_type       = optional(string, "e2-standard-2")
+    provisioning_model  = optional(string, "STANDARD")
+    nodes               = list(object({
+      count  = optional(number, 1)
+      region = optional(string)
+      zone   = optional(string)
+    }))
+  }))
+}
+
+# Validation for provisioning_model
+locals {
+  apps_nodes = [
+    for node in var.apps["nodes"] : {
+      count  = node.count
+      region = lookup(node, "region", null)
+      zone   = lookup(node, "zone", null)
+    }
+  ]
+
+  # Raise an error if both region and zone are specified
+  validation_region_zone = [
+    for node in local.apps_nodes : {
+      error = node.region != null && node.zone != null ? "Cannot specify both region and zone" : null
+    }
+  ]
+
+  # Validate provisioning_model only allows STANDARD or SPOT
+  validation_provisioning_model = contains(["STANDARD", "SPOT"], var.apps["provisioning_model"]) ? null : "Provisioning model must be STANDARD or SPOT"
+}
+
 resource "google_service_account" "apps2" {
   account_id = substr("${var.chain_name}-apps2", 0, 28)
 }
 
 module "apps2" {
-  source = "./modules/node"
+  source = "./modules/node2"
   vm_num = var.apps_node_count
 
   role                  = "apps"
