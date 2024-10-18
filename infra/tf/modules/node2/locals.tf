@@ -10,11 +10,11 @@ locals {
   instances = flatten([
     for idx, node in var.config.nodes : [
       for n in range(node.count) : {
-        node_index = idx
-        instance_index = n
+        region_index = idx
+        in_region_index = n
         count = node.count
         region = node.region
-        zone = node.zone
+        # zone = node.zone != null ? node.zone : 
       }
     ]
   ])
@@ -27,3 +27,11 @@ locals {
     var.labels
   )
 }
+
+
+# lookup(
+#     var.config.nodes[local.instances[count.index].node_index], "zone",
+#     data.google_compute_zones.available[local.instances[count.index].node_index].zones[count.index % length(data.google_compute_zones.available[local.instances[count.index].node_index].zones)]
+#   )
+
+  # total unique zones
