@@ -30,5 +30,5 @@
 
 output "test" {
   description = "The secret ID of the node private key in GCP Secrets Manager"
-  value       = google_compute_instance.this[*].id
+  value       = google_compute_instance.this["zq2-infratest-apps-ewe2-0-6100"].id
 }
