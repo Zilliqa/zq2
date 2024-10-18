@@ -7,7 +7,7 @@ data "google_project" "current" {}
 # Data to retrieve all zones in the region if only a region is specified
 data "google_compute_zones" "available" {
   count  = length(var.config.nodes)
-  # region = lookup(var.config.nodes[count.index], "region", null)
+  region = lookup(var.config.nodes[count.index], "region", null)
 }
 
 # data "google_compute_subnetwork" "default" {
