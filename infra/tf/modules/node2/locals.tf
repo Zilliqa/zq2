@@ -15,6 +15,7 @@ locals {
         count           = node.count
         region          = node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region)
         zone            = node.zone != null ? node.zone : ([for region in data.google_compute_zones.available : region if region.region == node.region][0].names[n % length([for region in data.google_compute_zones.available : region if region.region == node.region][0].names)])
+        resource_name = format("%s-%s-%s", var.chain_name, var.role, (node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region)), n, random_id.name_suffix.hex)
       }
     ]
   ])
@@ -36,4 +37,4 @@ locals {
 
 # total unique zones
 
-# length(var.node_zones) > 1 ? sort(var.node_zones)[count.index % length(var.node_zones)] : var.node_zones[count.index % length(var.node_zones)]
+# zq2-devnet-validator-europe-west2-1-4b89
