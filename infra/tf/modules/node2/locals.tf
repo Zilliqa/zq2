@@ -11,6 +11,10 @@ locals {
     for instance in local.instances : instance.region
   ])
 
+  zones = distinct(flatten([
+    for instance in local.instances : instance.zone
+  ]))
+
   instances = flatten([
     for idx, node in var.config.nodes : [
       for n in range(node.count) : {

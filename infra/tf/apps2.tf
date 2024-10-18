@@ -59,3 +59,21 @@ module "apps2" {
 
   gcp_docker_registry_project_id = var.gcp_docker_registry_project_id
 }
+
+# resource "google_compute_instance_group" "apps2" {
+#   for_each = toset(local.zones)
+
+#   name      = "${var.chain_name}-apps2-${each.key}"
+#   zone      = each.key
+#   instances = [for instance in google_compute_instance.this : instance.self_link if instance.zone == each.key]
+
+#   named_port {
+#     name = "otterscan"
+#     port = "80"
+#   }
+
+#   named_port {
+#     name = "spout"
+#     port = "8080"
+#   }
+# }

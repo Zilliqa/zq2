@@ -1,6 +1,63 @@
 # Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
 # changes and any instance groups containing them are updated.
 
+resource "random_bytes" "generate_node_key" {
+  count  = var.generate_node_key ? length(local.instances) : 0
+
+  length = 32
+}
+
+# resource "google_secret_manager_secret" "node_key" {
+#   count  = var.generate_node_key ? length(local.instances) : 0
+
+#   secret_id = "${local.resource_name}-${count.index}-pk"
+
+#   labels = merge(
+#     { "zq2-network" = var.chain_name },
+#     { "role" = var.role },
+#     { "node-name" = "${local.resource_name}" },
+#     var.labels
+#   )
+
+#   replication {
+#     auto {}
+#   }
+# }
+
+# resource "google_secret_manager_secret_version" "node_key_version" {
+#   count       = !var.generate_node_key ? 0 : var.vm_num
+#   secret      = google_secret_manager_secret.node_key[count.index].id
+#   secret_data = random_bytes.generate_node_key[count.index].hex
+# }
+
+# resource "random_bytes" "generate_reward_wallet" {
+#   count  = !var.generate_reward_wallet ? 0 : var.vm_num
+#   length = 32
+# }
+
+# resource "google_secret_manager_secret" "reward_wallet" {
+#   count     = !var.generate_reward_wallet ? 0 : var.vm_num
+#   secret_id = "${var.name}-${count.index}-${random_id.name_suffix.hex}-wallet-pk"
+
+#   labels = merge(
+#     { "zq2-network" = var.zq_network_name },
+#     { "role" = var.role },
+#     { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" },
+#     { "is_reward_wallet" = true },
+#     var.labels
+#   )
+
+#   replication {
+#     auto {}
+#   }
+# }
+
+# resource "google_secret_manager_secret_version" "reward_wallet_version" {
+#   count       = !var.generate_reward_wallet ? 0 : var.vm_num
+#   secret      = google_secret_manager_secret.reward_wallet[count.index].id
+#   secret_data = random_bytes.generate_reward_wallet[count.index].hex
+# }
+
 resource "random_id" "name_suffix" {
   byte_length = 2
 
@@ -124,24 +181,6 @@ resource "google_compute_instance" "this" {
   }
 }
 
-# resource "google_compute_instance_group" "apps2" {
-#   for_each = toset(local.default_zones)
-
-#   name      = "${var.chain_name}-apps2-${each.key}"
-#   zone      = each.key
-#   instances = [for instance in module.apps.instances : instance.self_link if instance.zone == each.key]
-
-#   named_port {
-#     name = "otterscan"
-#     port = "80"
-#   }
-
-#   named_port {
-#     name = "spout"
-#     port = "8080"
-#   }
-# }
-
 resource "google_dns_record_set" "this" {
   for_each = { for instance in google_compute_instance.this : instance.name => instance }
 
@@ -153,60 +192,3 @@ resource "google_dns_record_set" "this" {
 
   rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
 }
-
-# resource "random_bytes" "generate_node_key" {
-#   count  = var.generate_node_key ? length(local.instances) : 0
-
-#   length = 32
-# }
-
-# resource "google_secret_manager_secret" "node_key" {
-#   count  = var.generate_node_key ? length(local.instances) : 0
-
-#   secret_id = "${local.resource_name}-${count.index}-pk"
-
-#   labels = merge(
-#     { "zq2-network" = var.chain_name },
-#     { "role" = var.role },
-#     { "node-name" = "${local.resource_name}" },
-#     var.labels
-#   )
-
-#   replication {
-#     auto {}
-#   }
-# }
-
-# resource "google_secret_manager_secret_version" "node_key_version" {
-#   count       = !var.generate_node_key ? 0 : var.vm_num
-#   secret      = google_secret_manager_secret.node_key[count.index].id
-#   secret_data = random_bytes.generate_node_key[count.index].hex
-# }
-
-# resource "random_bytes" "generate_reward_wallet" {
-#   count  = !var.generate_reward_wallet ? 0 : var.vm_num
-#   length = 32
-# }
-
-# resource "google_secret_manager_secret" "reward_wallet" {
-#   count     = !var.generate_reward_wallet ? 0 : var.vm_num
-#   secret_id = "${var.name}-${count.index}-${random_id.name_suffix.hex}-wallet-pk"
-
-#   labels = merge(
-#     { "zq2-network" = var.zq_network_name },
-#     { "role" = var.role },
-#     { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" },
-#     { "is_reward_wallet" = true },
-#     var.labels
-#   )
-
-#   replication {
-#     auto {}
-#   }
-# }
-
-# resource "google_secret_manager_secret_version" "reward_wallet_version" {
-#   count       = !var.generate_reward_wallet ? 0 : var.vm_num
-#   secret      = google_secret_manager_secret.reward_wallet[count.index].id
-#   secret_data = random_bytes.generate_reward_wallet[count.index].hex
-# }
