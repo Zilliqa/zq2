@@ -22,7 +22,7 @@ variable "region_mappings" {
   }
 }
 
-variable "nodes" {
+variable "config" {
   description = "(Optional) The configuration of the apps nodes"
   type = object({
     disk_size          = optional(number, 256)
@@ -45,14 +45,14 @@ variable "nodes" {
 
   # Validation for provisioning_model
   validation {
-    condition     = contains(["STANDARD", "SPOT"], var.nodes.provisioning_model)
+    condition     = contains(["STANDARD", "SPOT"], var.config.provisioning_model)
     error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
   }
 
   # Validation to check that both 'region' and 'zone' are not specified together
   validation {
     condition = alltrue([
-      for node in var.nodes.nodes : (node.region != null && node.zone == null)
+      for node in var.config.nodes : (node.region != null && node.zone == null)
     ])
     error_message = "You need to specify either 'region' or 'zone' for a node."
   }
