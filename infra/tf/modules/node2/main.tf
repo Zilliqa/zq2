@@ -56,40 +56,51 @@
 #   secret_data = random_bytes.generate_reward_wallet[count.index].hex
 # }
 
-# resource "random_id" "name_suffix" {
-#   byte_length = 2
+resource "random_id" "name_suffix" {
+  byte_length = 2
 
-#   keepers = {
-#     name                  = var.name
-#     service_account_email = var.service_account_email
-#     network_name          = var.network_name
-#     subnetwork_name       = var.subnetwork_name
-#   }
-# }
-
-resource "google_service_account" "apps2" {
-  account_id = substr("${var.chain_name}-${var.role}2", 0, 28)
+  keepers = {
+    genesis_key     = var.genesis_key
+    persistence_url = var.persistence_url
+  }
 }
 
-# resource "google_compute_instance_group" "apps2" {
-#   for_each = toset(local.default_zones)
+resource "google_service_account" "this" {
+  account_id = substr(local.resource_name, 0, 28)
+}
 
-#   name      = "${var.chain_name}-apps2-${each.key}"
-#   zone      = each.key
-#   instances = [for instance in module.apps.instances : instance.self_link if instance.zone == each.key]
+resource "google_project_iam_member" "metric_writer" {
+  project = data.google_project.current.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.this.email}"
+}
 
-#   named_port {
-#     name = "otterscan"
-#     port = "80"
-#   }
+resource "google_project_iam_member" "log_writer" {
+  project = data.google_project.current.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.this.email}"
+}
 
-#   named_port {
-#     name = "spout"
-#     port = "8080"
-#   }
+resource "google_project_iam_member" "artifact_registry_reader" {
+  project = var.gcp_docker_registry_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.this.email}"
+}
+
+resource "google_project_iam_member" "secret_manager_accessor" {
+  project = data.google_project.current.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.this.email}"
+}
+
+# resource "google_compute_address" "external_regional" {
+#   for_each = var.regional_subdomains
+
+#   project = data.google_project.current.project_id
+#   region       = each.value.region
+#   network_tier = each.value.network_tier
+#   name    = "${replace(each.key, ".", "-")}-${local.domain_name}"
 # }
-
-# ## Generate STATIC IP
 
 # resource "google_compute_instance" "this" {
 #   count = var.vm_num
@@ -166,6 +177,24 @@ resource "google_service_account" "apps2" {
 #     ignore_changes = [
 #       labels["peer-id"]
 #     ]
+#   }
+# }
+
+# resource "google_compute_instance_group" "apps2" {
+#   for_each = toset(local.default_zones)
+
+#   name      = "${var.chain_name}-apps2-${each.key}"
+#   zone      = each.key
+#   instances = [for instance in module.apps.instances : instance.self_link if instance.zone == each.key]
+
+#   named_port {
+#     name = "otterscan"
+#     port = "80"
+#   }
+
+#   named_port {
+#     name = "spout"
+#     port = "8080"
 #   }
 # }
 

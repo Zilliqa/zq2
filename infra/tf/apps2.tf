@@ -54,6 +54,8 @@ module "apps2" {
   persistence_url        = ""
   genesis_key            = local.genesis_key
 
-  node_dns_zone_name       = var.nodes_dns_zone_name
+  node_dns_subdomain       = var.nodes_dns_zone_name
   node_dns_zone_project_id = var.dns_zone_project_id
+
+  gcp_docker_registry_project_id = var.gcp_docker_registry_project_id
 }

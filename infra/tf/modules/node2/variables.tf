@@ -126,8 +126,8 @@ variable "persistence_url" {
   nullable    = true
 }
 
-variable "node_dns_zone_name" {
-  description = "Nodes DNS zone name"
+variable "node_dns_subdomain" {
+  description = "Nodes DNS zone name (ie. zq2.dev)"
   type        = string
   nullable    = false
 }
@@ -136,4 +136,10 @@ variable "node_dns_zone_project_id" {
   description = "The id of the Google project that hosts the DNS zone."
   type        = string
   nullable    = false
+}
+
+variable "gcp_docker_registry_project_id" {
+  description = "(Optional) ZQ2 Artifact Registry project id"
+  type        = string
+  default     = "prj-p-devops-services-tvwmrf63"
 }
