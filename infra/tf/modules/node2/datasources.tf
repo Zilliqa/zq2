@@ -10,12 +10,6 @@ data "google_compute_zones" "available" {
   region = lookup(var.config.nodes[count.index], "region", null)
 }
 
-# data "google_compute_subnetwork" "default" {
-#   project = data.google_project.current.project_id
-#   # region  = var.region
-#   # name    = var.vpc_main_subnet_name
-# }
-
 data "google_compute_subnetworks" "default" {
   for_each = toset(local.regions)
   project  = data.google_project.current.project_id
