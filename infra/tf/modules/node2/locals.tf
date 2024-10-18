@@ -13,7 +13,7 @@ locals {
         region_index = idx
         in_region_index = n
         count = node.count
-        region = node.region
+        region = node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)])
         # zone = node.zone != null ? node.zone : 
       }
     ]
