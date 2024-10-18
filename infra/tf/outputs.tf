@@ -24,3 +24,8 @@ output "reward_wallets" {
     module.validators.reward_wallet,
   [for k, m in module.distributed_validators : m.reward_wallet]))
 }
+
+output "test" {
+  description = "The secret ID of the node private key in GCP Secrets Manager"
+  value       = module.apps2.test
+}

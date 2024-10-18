@@ -27,3 +27,8 @@
 #   description = "The secret ID of the node private key in GCP Secrets Manager"
 #   value       = google_secret_manager_secret_version.reward_wallet_version[*].id
 # }
+
+output "test" {
+  description = "The secret ID of the node private key in GCP Secrets Manager"
+  value       = local.instances
+}
