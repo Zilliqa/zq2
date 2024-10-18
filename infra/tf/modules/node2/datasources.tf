@@ -17,5 +17,5 @@ data "google_compute_zones" "available" {
 # }
 
 data "google_compute_subnetworks" "default" {
-  project = data.google_project.current.project_id
+  project = data.google_project.current.project_id.subnetworks
 }

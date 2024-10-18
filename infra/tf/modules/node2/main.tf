@@ -90,8 +90,8 @@ resource "google_compute_instance" "this" {
     # network    = var.network_name
     # subnetwork = var.subnetwork_name
 
-    network = "projects/prj-d-zq2-devnet-c83bkpsd/global/networks/vpc-d-main"
-    subnetwork = "projects/prj-d-zq2-devnet-c83bkpsd/regions/asia-southeast1/subnetworks/sb-d-main-ase1"
+    network = "vpc-d-main"
+    subnetwork = "sb-d-main-ase1"
 
     # dynamic "access_config" {
     #   for_each = [var.role == "validator" ? 1 : 0] # Always create the access_config block for validators
