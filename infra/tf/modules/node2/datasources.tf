@@ -16,6 +16,6 @@ data "google_compute_zones" "available" {
 #   # name    = var.vpc_main_subnet_name
 # }
 
-data "google_compute_subnetworks" "default" {
-  project = data.google_project.current.project_id
-}
+# data "google_compute_subnetworks" "default" {
+#   project = data.google_project.current.project_id
+# }
