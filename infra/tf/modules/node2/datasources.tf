@@ -9,3 +9,9 @@ data "google_compute_zones" "available" {
   count  = length(var.config.nodes)
   region = lookup(var.config.nodes[count.index], "region", null)
 }
+
+data "google_compute_subnetwork" "default" {
+  project = data.google_project.current.project_id
+  # region  = var.region
+  # name    = var.vpc_main_subnet_name
+}

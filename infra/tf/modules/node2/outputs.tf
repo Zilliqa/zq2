@@ -30,5 +30,5 @@
 
 output "test" {
   description = "The secret ID of the node private key in GCP Secrets Manager"
-  value       = local.instances_map
+  value       = data.google_compute_subnetwork.default
 }
