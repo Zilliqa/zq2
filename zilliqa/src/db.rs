@@ -13,6 +13,7 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, Context, Result};
 use eth_trie::{EthTrie, Trie};
 use itertools::Itertools;
+use lz4::{Decoder, EncoderBuilder};
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -283,7 +284,14 @@ impl Db {
         // For now, only support a single version: you want to load the latest checkpoint, anyway.
         const SUPPORTED_VERSION: u32 = 3;
 
-        let input = File::open(path)?;
+        // Decompress file and write to temp file
+        let input_filename = path.as_ref();
+        let temp_filename = input_filename.with_extension("part");
+        decompress_file(input_filename, &temp_filename)?;
+
+        // Read decompressed file
+        let input = File::open(&temp_filename)?;
+
         let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
@@ -309,9 +317,9 @@ impl Db {
         }
 
         // Decode and validate checkpoint block, its transactions and parent block
-        let mut block_len_buf = [0u8; std::mem::size_of::<u32>()];
+        let mut block_len_buf = [0u8; std::mem::size_of::<u64>()];
         reader.read_exact(&mut block_len_buf)?;
-        let mut block_ser = vec![0u8; u32::from_be_bytes(block_len_buf) as usize];
+        let mut block_ser = vec![0u8; usize::try_from(u64::from_be_bytes(block_len_buf))?];
         reader.read_exact(&mut block_ser)?;
         let block: Block = bincode::deserialize(&block_ser)?;
         if block.hash() != *hash {
@@ -319,15 +327,16 @@ impl Db {
         }
         block.verify_hash()?;
 
-        let mut transactions_len_buf = [0u8; std::mem::size_of::<u32>()];
+        let mut transactions_len_buf = [0u8; std::mem::size_of::<u64>()];
         reader.read_exact(&mut transactions_len_buf)?;
-        let mut transactions_ser = vec![0u8; u32::from_be_bytes(transactions_len_buf) as usize];
+        let mut transactions_ser =
+            vec![0u8; usize::try_from(u64::from_be_bytes(transactions_len_buf))?];
         reader.read_exact(&mut transactions_ser)?;
         let transactions: Vec<SignedTransaction> = bincode::deserialize(&transactions_ser)?;
 
-        let mut parent_len_buf = [0u8; std::mem::size_of::<u32>()];
+        let mut parent_len_buf = [0u8; std::mem::size_of::<u64>()];
         reader.read_exact(&mut parent_len_buf)?;
-        let mut parent_ser = vec![0u8; u32::from_be_bytes(parent_len_buf) as usize];
+        let mut parent_ser = vec![0u8; usize::try_from(u64::from_be_bytes(parent_len_buf))?];
         reader.read_exact(&mut parent_ser)?;
         let parent: Block = bincode::deserialize(&parent_ser)?;
         if block.parent_hash() != parent.hash() {
@@ -376,16 +385,16 @@ impl Db {
                 Err(e) => return Err(e.into()),
             };
 
-            let mut serialised_account_len_buf = [0u8; std::mem::size_of::<u32>()];
+            let mut serialised_account_len_buf = [0u8; std::mem::size_of::<u64>()];
             reader.read_exact(&mut serialised_account_len_buf)?;
             let mut serialised_account =
-                vec![0u8; u32::from_be_bytes(serialised_account_len_buf) as usize];
+                vec![0u8; usize::try_from(u64::from_be_bytes(serialised_account_len_buf))?];
             reader.read_exact(&mut serialised_account)?;
 
             // Read entire account storage as a buffer
-            let mut account_storage_len_buf = [0u8; std::mem::size_of::<u32>()];
+            let mut account_storage_len_buf = [0u8; std::mem::size_of::<u64>()];
             reader.read_exact(&mut account_storage_len_buf)?;
-            let account_storage_len = u32::from_be_bytes(account_storage_len_buf) as usize;
+            let account_storage_len = usize::try_from(u64::from_be_bytes(account_storage_len_buf))?;
             let mut account_storage = vec![0u8; account_storage_len];
             reader.read_exact(&mut account_storage)?;
 
@@ -394,16 +403,18 @@ impl Db {
             let mut pointer: usize = 0;
             while account_storage_len > pointer {
                 let storage_key_len_buf: &[u8] =
-                    &account_storage[pointer..(pointer + std::mem::size_of::<u16>())];
-                let storage_key_len = u16::from_be_bytes(storage_key_len_buf.try_into()?) as usize;
-                pointer += std::mem::size_of::<u16>();
+                    &account_storage[pointer..(pointer + std::mem::size_of::<u64>())];
+                let storage_key_len =
+                    usize::try_from(u64::from_be_bytes(storage_key_len_buf.try_into()?))?;
+                pointer += std::mem::size_of::<u64>();
                 let storage_key: &[u8] = &account_storage[pointer..(pointer + storage_key_len)];
                 pointer += storage_key_len;
 
                 let storage_val_len_buf: &[u8] =
-                    &account_storage[pointer..(pointer + std::mem::size_of::<u32>())];
-                let storage_val_len = u32::from_be_bytes(storage_val_len_buf.try_into()?) as usize;
-                pointer += std::mem::size_of::<u32>();
+                    &account_storage[pointer..(pointer + std::mem::size_of::<u64>())];
+                let storage_val_len =
+                    usize::try_from(u64::from_be_bytes(storage_val_len_buf.try_into()?))?;
+                pointer += std::mem::size_of::<u64>();
                 let storage_val: &[u8] = &account_storage[pointer..(pointer + storage_val_len)];
                 pointer += storage_val_len;
 
@@ -431,6 +442,8 @@ impl Db {
             self.set_high_qc_with_db_tx(tx, block.header.qc)?;
             Ok(())
         })?;
+
+        fs::remove_file(temp_filename)?;
 
         Ok(Some((block, transactions, parent)))
     }
@@ -952,18 +965,17 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
 
     // write the block...
     let block_ser = &bincode::serialize(&block)?;
-    // using u32 to store the block size. This gives us length values representing data up to ~500 MB
-    writer.write_all(&u32::try_from(block_ser.len())?.to_be_bytes())?;
+    writer.write_all(&u64::try_from(block_ser.len())?.to_be_bytes())?;
     writer.write_all(block_ser)?;
 
     // write transactions
     let transactions_ser = &bincode::serialize(&transactions)?;
-    writer.write_all(&u32::try_from(transactions_ser.len())?.to_be_bytes())?;
+    writer.write_all(&u64::try_from(transactions_ser.len())?.to_be_bytes())?;
     writer.write_all(transactions_ser)?;
 
     // and its parent, to keep the qc tracked
     let parent_ser = &bincode::serialize(&parent)?;
-    writer.write_all(&u32::try_from(parent_ser.len())?.to_be_bytes())?;
+    writer.write_all(&u64::try_from(parent_ser.len())?.to_be_bytes())?;
     writer.write_all(parent_ser)?;
 
     // then write state for each account
@@ -977,7 +989,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
         account_key_buf.copy_from_slice(&key);
         writer.write_all(&account_key_buf)?;
 
-        writer.write_all(&(serialised_account.len() as u32).to_be_bytes())?;
+        writer.write_all(&u64::try_from(serialised_account.len())?.to_be_bytes())?;
         writer.write_all(&serialised_account)?;
 
         // now write the entire account storage map
@@ -985,18 +997,59 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
             .at_root(bincode::deserialize::<Account>(&serialised_account)?.storage_root);
         let mut account_storage_buf = vec![];
         for (storage_key, storage_val) in account_storage.iter() {
-            account_storage_buf.extend_from_slice(&u16::try_from(storage_key.len())?.to_be_bytes());
+            account_storage_buf.extend_from_slice(&u64::try_from(storage_key.len())?.to_be_bytes());
             account_storage_buf.extend_from_slice(&storage_key);
 
-            account_storage_buf.extend_from_slice(&u32::try_from(storage_val.len())?.to_be_bytes());
+            account_storage_buf.extend_from_slice(&u64::try_from(storage_val.len())?.to_be_bytes());
             account_storage_buf.extend_from_slice(&storage_val);
         }
-        writer.write_all(&u32::try_from(account_storage_buf.len())?.to_be_bytes())?;
+        writer.write_all(&u64::try_from(account_storage_buf.len())?.to_be_bytes())?;
         writer.write_all(&account_storage_buf)?;
     }
     writer.flush()?;
 
-    fs::rename(&temp_filename, &output_filename)?;
+    // lz4 compress and write to output
+    compress_file(&temp_filename, &output_filename)?;
+
+    fs::remove_file(temp_filename)?;
+
+    Ok(())
+}
+
+/// Read temp file, compress usign lz4, write into output file
+fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P) -> Result<()> {
+    let mut reader = BufReader::new(File::open(input_file_path)?);
+
+    let mut encoder = EncoderBuilder::new().build(File::create(output_file_path)?)?;
+    let mut buffer = [0u8; 1024 * 64]; // read 64KB chunks at a time
+    loop {
+        let bytes_read = reader.read(&mut buffer)?; // Read a chunk of decompressed data
+        if bytes_read == 0 {
+            break; // End of file
+        }
+        encoder.write_all(&buffer[..bytes_read])?;
+    }
+    encoder.finish().1?;
+
+    Ok(())
+}
+
+/// Read lz4 compressed file and write into output file
+fn decompress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P) -> Result<()> {
+    let reader: BufReader<File> = BufReader::new(File::open(input_file_path)?);
+    let mut decoder = Decoder::new(reader)?;
+
+    let mut writer = BufWriter::new(File::create(output_file_path)?);
+    let mut buffer = [0u8; 1024 * 64]; // read 64KB chunks at a time
+    loop {
+        let bytes_read = decoder.read(&mut buffer)?; // Read a chunk of decompressed data
+        if bytes_read == 0 {
+            break; // End of file
+        }
+        writer.write_all(&buffer[..bytes_read])?;
+    }
+
+    writer.flush()?;
 
     Ok(())
 }

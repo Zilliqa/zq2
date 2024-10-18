@@ -21,7 +21,7 @@ Currently, old checkpoints are kept indefinitely. It is the node operator's resp
 If the node does not have a data directory (i.e. is running on an ephemeral in-memory database), no checkpoints will be exported, regardless of the `do_checkpoints` parameter.
 
 ## Checkpoint file format
-The version 3 checkpoint file is a byte-array representing the concaternation of:
+The version 3 checkpoint file is an lz4 compressed byte-array representing the concaternation of:
 
 - A 21-byte header containing:
   * 8 magic bytes corresponding to the ASCII string `ZILCHKPT`
