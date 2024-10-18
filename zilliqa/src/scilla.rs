@@ -35,14 +35,177 @@ use tokio::runtime;
 use tracing::trace;
 
 use crate::{
+    cfg::ScillaExtLibsPathInScilla,
     crypto::Hash,
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
-    state::Code,
+    state::{Code, ContractInit},
     time::SystemTime,
     transaction::{ScillaGas, ZilAmount},
 };
+
+#[derive(PartialEq, Debug)]
+enum ScillaServerRequestType {
+    Check,
+    Run,
+}
+
+#[derive(Debug)]
+struct ScillaServerRequestBuilder {
+    request_type: ScillaServerRequestType,
+    init: Option<String>,
+    message: Option<String>,
+    lib_dirs: Option<Vec<String>>,
+    code: Option<String>,
+    gas_limit: Option<String>,
+    ipc_address: Option<String>,
+    balance: Option<String>,
+    is_library: bool,
+    contract_info: bool,
+    json_errors: bool,
+    pplit: bool,
+}
+
+impl ScillaServerRequestBuilder {
+    fn new(request_type: ScillaServerRequestType) -> Self {
+        Self {
+            request_type,
+            init: None,
+            lib_dirs: None,
+            code: None,
+            message: None,
+            gas_limit: None,
+            balance: None,
+            ipc_address: None,
+            is_library: false,
+            contract_info: false,
+            json_errors: false,
+            pplit: false,
+        }
+    }
+
+    fn init(mut self, init: String) -> Self {
+        self.init = Some(init);
+        self
+    }
+
+    fn message(mut self, msg: &Value) -> Result<Self> {
+        self.message = Some(serde_json::to_string(&msg)?);
+        Ok(self)
+    }
+
+    fn lib_dirs(mut self, lib_dirs: Vec<String>) -> Self {
+        self.lib_dirs = Some(lib_dirs);
+        self
+    }
+
+    fn code(mut self, code: String) -> Self {
+        self.code = Some(code);
+        self
+    }
+
+    fn ipc_address(mut self, ipc_address: String) -> Self {
+        self.ipc_address = Some(ipc_address);
+        self
+    }
+
+    fn gas_limit(mut self, gas_limit: ScillaGas) -> Self {
+        self.gas_limit = Some(gas_limit.to_string());
+        self
+    }
+
+    fn balance(mut self, balance: ZilAmount) -> Self {
+        self.balance = Some(balance.to_string());
+        self
+    }
+
+    fn pplit(mut self, pplit: bool) -> Self {
+        self.pplit = pplit;
+        self
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    fn is_library(mut self, is_library: bool) -> Self {
+        self.is_library = is_library;
+        self
+    }
+
+    fn contract_info(mut self, contract_info: bool) -> Self {
+        self.contract_info = contract_info;
+        self
+    }
+
+    fn json_errors(mut self, json_errors: bool) -> Self {
+        self.json_errors = json_errors;
+        self
+    }
+
+    fn build(self) -> Result<(&'static str, ObjectParams)> {
+        let mut args = vec![];
+
+        if let Some(init) = self.init {
+            args.extend(["-init".to_owned(), init]);
+        }
+
+        if let Some(lib_dirs) = self.lib_dirs {
+            args.extend(["-libdir".to_owned(), lib_dirs.join(":")]);
+        }
+
+        if let Some(ipc_address) = self.ipc_address {
+            args.extend(["-ipcaddress".to_owned(), ipc_address])
+        }
+
+        if let Some(balance) = self.balance {
+            args.extend(["-balance".to_owned(), balance]);
+        }
+
+        if let Some(message) = self.message {
+            args.extend(["-imessage".to_owned(), message]);
+        }
+
+        if let Some(code) = self.code {
+            // Check request doesn't need `-i` for input code.
+            if self.request_type == ScillaServerRequestType::Run {
+                args.push("-i".to_owned());
+            }
+            args.push(code);
+        }
+
+        if let Some(gas_limit) = self.gas_limit {
+            args.extend(vec!["-gaslimit".to_owned(), gas_limit.to_string()]);
+        }
+
+        if self.contract_info {
+            args.push("-contractinfo".to_owned());
+        }
+
+        if self.json_errors {
+            args.push("-jsonerrors".to_owned());
+        }
+
+        if self.is_library {
+            args.push("-islibrary".to_owned());
+            if self.request_type == ScillaServerRequestType::Run {
+                // Check request doesn't need `true` if -islibrary is specified.
+                args.push("true".to_owned());
+            }
+        }
+        if self.pplit {
+            args.extend(vec!["-pplit".to_owned(), "true".to_owned()]);
+        }
+
+        let request_type = match self.request_type {
+            ScillaServerRequestType::Check => "check",
+            ScillaServerRequestType::Run => "run",
+        };
+
+        let mut params = ObjectParams::new();
+        params.insert("argv", args)?;
+
+        Ok((request_type, params))
+    }
+}
 
 /// The interface to the Scilla interpreter.
 #[derive(Debug)]
@@ -51,7 +214,7 @@ pub struct Scilla {
     response_rx: Mutex<Receiver<Result<Value, ClientError>>>,
     state_server: Arc<Mutex<StateServer>>,
     local_address: String,
-    lib_dir: String,
+    scilla_stdlib_dir: String,
 }
 
 impl Scilla {
@@ -74,7 +237,7 @@ impl Scilla {
     ///
     /// After creating the [StateServer], we wrap it in an `Arc<Mutex<T>>` and send a clone back to the main thread,
     /// to enable shared access to the server.
-    pub fn new(address: String, local_address: String, lib_dir: String) -> Scilla {
+    pub fn new(address: String, local_address: String, scilla_stdlib_dir: String) -> Scilla {
         let (request_tx, request_rx) = channel();
         let (response_tx, response_rx) = channel();
 
@@ -121,7 +284,7 @@ impl Scilla {
             response_rx: Mutex::new(response_rx),
             state_server,
             local_address,
-            lib_dir,
+            scilla_stdlib_dir,
         }
     }
 
@@ -136,24 +299,20 @@ impl Scilla {
         &self,
         code: &str,
         gas_limit: ScillaGas,
-        init: &[ParamValue],
+        init: &ContractInit,
+        ext_libs_dir: &ScillaExtLibsPathInScilla,
     ) -> Result<Result<CheckOutput, ErrorResponse>> {
-        let args = vec![
-            "-init".to_owned(),
-            serde_json::to_string(&init)?,
-            "-libdir".to_owned(),
-            self.lib_dir.clone(),
-            code.to_owned(),
-            "-gaslimit".to_owned(),
-            gas_limit.to_string(),
-            "-contractinfo".to_owned(),
-            "-jsonerrors".to_owned(),
-        ];
+        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
+            .init(init.to_string())
+            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+            .code(code.to_owned())
+            .gas_limit(gas_limit)
+            .contract_info(true)
+            .json_errors(true)
+            .is_library(init.is_library()?)
+            .build()?;
 
-        let mut params = ObjectParams::new();
-        params.insert("argv", args)?;
-
-        self.request_tx.send(("check", params))?;
+        self.request_tx.send(request)?;
         let response = self.response_rx.lock().unwrap().recv()?;
 
         trace!(?response, "check response");
@@ -186,6 +345,7 @@ impl Scilla {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_contract(
         &self,
         state: PendingState,
@@ -193,33 +353,26 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         value: ZilAmount,
-        init: &[ParamValue],
+        init: &ContractInit,
+        ext_libs_dir: &ScillaExtLibsPathInScilla,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
-        let args = vec![
-            "-i".to_owned(),
-            code.to_owned(),
-            "-init".to_owned(),
-            serde_json::to_string(&init)?,
-            "-ipcaddress".to_owned(),
-            self.state_server_addr(),
-            "-gaslimit".to_owned(),
-            gas_limit.to_string(),
-            "-balance".to_owned(),
-            value.to_string(),
-            "-libdir".to_owned(),
-            self.lib_dir.clone(),
-            "-jsonerrors".to_owned(),
-        ];
-
-        let mut params = ObjectParams::new();
-        params.insert("argv", args)?;
+        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
+            .ipc_address(self.state_server_addr())
+            .init(init.to_string())
+            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+            .code(code.to_owned())
+            .gas_limit(gas_limit)
+            .balance(value)
+            .json_errors(true)
+            .is_library(init.is_library()?)
+            .build()?;
 
         let (response, state) =
             self.state_server
                 .lock()
                 .unwrap()
                 .active_call(sender, state, || {
-                    self.request_tx.send(("run", params))?;
+                    self.request_tx.send(request)?;
                     Ok(self.response_rx.lock().unwrap().recv()?)
                 })?;
 
@@ -261,38 +414,28 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         contract_balance: ZilAmount,
-        init: &[ParamValue],
+        init: &ContractInit,
         msg: &Value,
+        ext_libs_dir: &ScillaExtLibsPathInScilla,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
-        let args = vec![
-            "-init".to_owned(),
-            serde_json::to_string(&init)?,
-            "-ipcaddress".to_owned(),
-            self.state_server_addr(),
-            "-imessage".to_owned(),
-            serde_json::to_string(&msg)?,
-            "-i".to_owned(),
-            code.to_owned(),
-            "-gaslimit".to_owned(),
-            gas_limit.to_string(),
-            "-balance".to_owned(),
-            contract_balance.to_string(),
-            "-libdir".to_owned(),
-            self.lib_dir.clone(),
-            "-jsonerrors".to_owned(),
-            "-pplit".to_owned(),
-            "true".to_owned(),
-        ];
-
-        let mut params = ObjectParams::new();
-        params.insert("argv", args)?;
+        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
+            .init(init.to_string())
+            .ipc_address(self.state_server_addr())
+            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+            .code(code.to_owned())
+            .message(msg)?
+            .balance(contract_balance)
+            .gas_limit(gas_limit)
+            .json_errors(true)
+            .pplit(true)
+            .build()?;
 
         let (response, state) =
             self.state_server
                 .lock()
                 .unwrap()
                 .active_call(contract, state, || {
-                    self.request_tx.send(("run", params))?;
+                    self.request_tx.send(request)?;
                     Ok(self.response_rx.lock().unwrap().recv()?)
                 })?;
 
@@ -331,7 +474,7 @@ impl Scilla {
 pub struct CheckOutput {
     #[serde(with = "num_as_str")]
     pub gas_remaining: ScillaGas,
-    pub contract_info: ContractInfo,
+    pub contract_info: Option<ContractInfo>, // It's not included in the response for scilla libraries.
 }
 
 #[derive(Debug, Deserialize)]
@@ -345,21 +488,21 @@ pub struct Location {
     pub line: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ContractInfo {
     pub scilla_major_version: String,
     pub fields: Vec<Param>,
     pub transitions: Vec<Transition>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct Transition {
     #[serde(rename = "vname")]
     pub name: String,
     pub params: Vec<TransitionParam>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct TransitionParam {
     #[serde(rename = "vname")]
     pub name: String,

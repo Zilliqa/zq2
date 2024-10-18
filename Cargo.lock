@@ -9941,6 +9941,7 @@ dependencies = [
  "revm-inspectors",
  "rusqlite",
  "scilla-parser",
+ "scopeguard",
  "semver 1.0.23",
  "serde",
  "serde_bytes",
