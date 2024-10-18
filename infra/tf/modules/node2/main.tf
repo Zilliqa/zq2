@@ -79,7 +79,7 @@ resource "google_compute_instance" "this" {
 
   boot_disk {
     initialize_params {
-      size  = var.config.disk
+      size  = var.config.disk_size
       image = "ubuntu-os-cloud/ubuntu-2204-lts"
       type  = "pd-ssd"
     }
