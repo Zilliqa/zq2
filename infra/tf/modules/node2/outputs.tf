@@ -30,5 +30,5 @@
 
 output "test" {
   description = "The secret ID of the node private key in GCP Secrets Manager"
-  value       = local.instances
+  value       = local.instances_map
 }
