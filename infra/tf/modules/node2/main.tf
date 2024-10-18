@@ -2,12 +2,7 @@
 # changes and any instance groups containing them are updated.
 
 resource "random_bytes" "generate_node_key" {
-  # count  = var.generate_node_key ? length(var.config.nodes) * var.config.nodes[count.index].count : 0
-
-  for_each = { for idx, node in var.config.nodes : idx => node }
-
-  count = each.value.count
-
+  count  = var.generate_node_key ? length(local.instances) : 0
 
   length = 32
 }
