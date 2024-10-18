@@ -48,8 +48,8 @@ module "apps2" {
   labels                 = {}
   network_tags           = []
   generate_external_ip   = true
-  generate_node_key      = false
-  generate_reward_wallet = false
+  generate_node_key      = true # false
+  generate_reward_wallet = true # false
   chain_subdomain        = var.subdomain
   persistence_url        = ""
   genesis_key            = local.genesis_key
