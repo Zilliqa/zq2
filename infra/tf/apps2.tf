@@ -5,23 +5,23 @@
 variable "apps" {
   description = "(Optional) The configuration of the apps nodes"
   type = object({
-    disk_size           = optional(number, 256)
-    instance_type       = optional(string, "e2-standard-2")
-    provisioning_model  = optional(string, "STANDARD")
-    nodes               = list(object({
+    disk_size          = optional(number, 256)
+    instance_type      = optional(string, "e2-standard-2")
+    provisioning_model = optional(string, "STANDARD")
+    nodes = list(object({
       count  = optional(number, 1)
       region = optional(string)
       zone   = optional(string)
     }))
   })
-  default     = { nodes: []}
+  default = { nodes : [] }
 }
 
 # Validation for provisioning_model
 locals {
   apps_nodes = [
-    for node in var.apps["nodes"] : {
-      count  = node.count
+    for node in var.apps.nodes : {
+      count  = lookup(node, "count", 1)
       region = lookup(node, "region", null)
       zone   = lookup(node, "zone", null)
     }
@@ -35,7 +35,7 @@ locals {
   ]
 
   # Validate provisioning_model only allows STANDARD or SPOT
-  validation_provisioning_model = contains(["STANDARD", "SPOT"], var.apps["provisioning_model"]) ? null : "Provisioning model must be STANDARD or SPOT"
+  validation_provisioning_model = contains(["STANDARD", "SPOT"], var.apps.provisioning_model) ? null : "Provisioning model must be STANDARD or SPOT"
 }
 
 resource "google_service_account" "apps2" {
