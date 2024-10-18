@@ -14,7 +14,23 @@ variable "apps" {
       zone   = optional(string)
     }))
   })
-  default = { nodes : [] }
+  default = {
+    nodes : []
+  }
+
+  # Validation for provisioning_model
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.apps.provisioning_model)
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+  }
+
+  # Validation to check that both 'region' and 'zone' are not specified together
+  validation {
+    condition = alltrue([
+      for node in var.apps.nodes : !(node.region != null && node.zone != null)
+    ])
+    error_message = "You cannot specify both 'region' and 'zone' for a node. Please choose only one."
+  }
 }
 
 # Validation for provisioning_model
