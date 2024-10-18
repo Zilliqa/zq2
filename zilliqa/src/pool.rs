@@ -165,42 +165,6 @@ impl TransactionPool {
         Ok(None)
     }
 
-    /*pub fn best_transactions(&mut self, state: &State) -> Result<Vec<VerifiedTransaction>> {
-        let mut candidate_txns = Vec::new();
-        let mut skipped_txns = Vec::new();
-
-        // Keeps track of [account, [next_nonce, cumulative_txns_cost]
-        let mut tracked_accounts = HashMap::new();
-
-        while let Some(transaction) = self.best_transaction() {
-            let (next_nonce, cum_cost) = tracked_accounts
-                .get(&transaction.signer)
-                .cloned()
-                .unwrap_or_else(|| (0u64, u128::default()));
-
-            let tx_cost = transaction.tx.maximum_cost()?;
-
-            if cum_cost + tx_cost > state.get_account(transaction.signer)?.balance {
-                skipped_txns.push(transaction);
-                continue;
-            }
-
-            if next_nonce < transaction.tx.nonce().unwrap_or_default() {
-                skipped_txns.push(transaction);
-                continue;
-            }
-
-            tracked_accounts.insert(transaction.signer, (next_nonce + 1, cum_cost + tx_cost));
-            candidate_txns.push(transaction);
-        }
-
-        for skipped in skipped_txns {
-            self.insert_ready_transaction(skipped);
-        }
-
-        Ok(candidate_txns)
-    }*/
-
     /// Returns a list of txns that are pending for inclusion in the next block
     pub fn pending_transactions(&self, state: &State) -> Result<Vec<&VerifiedTransaction>> {
         // Keeps track of [account, cumulative_txns_cost]
@@ -241,15 +205,6 @@ impl TransactionPool {
             if cum_cost + tx_cost > state.get_account(txn.signer)?.balance {
                 continue;
             }
-
-            // We don't include nonceless txns because the way we present results on API level requires having proper nonce
-            // if let TxIndex::Intershard(_, _) = tx_index {
-            //     continue;
-            // }
-
-            // if !pending_set.insert(&txn.hash) {
-            //     continue;
-            // }
 
             pending_txns.push(txn);
             tracked_accounts.insert(txn.signer, cum_cost + tx_cost);
