@@ -12,6 +12,9 @@ locals {
       for n in range(node.count) : {
         node_index = idx
         instance_index = n
+        count = node.count
+        region = node.region
+        zone = node.zone
       }
     ]
   ])
