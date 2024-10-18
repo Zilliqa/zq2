@@ -9,13 +9,18 @@ variable "apps" {
     instance_type      = optional(string, "e2-standard-2")
     provisioning_model = optional(string, "STANDARD")
     nodes = list(object({
-      count  = optional(number, 1)
-      region = optional(string, "asia-southeast1")
+      count  = optional(number)
+      region = optional(string)
       zone   = optional(string)
     }))
   })
   default = {
-    nodes : []
+    nodes : [
+      {
+        count  = 1
+        region = "asia-southeast1"
+      }
+    ]
   }
 
   # Validation for provisioning_model
