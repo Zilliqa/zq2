@@ -142,17 +142,17 @@ resource "google_compute_instance" "this" {
 #   }
 # }
 
-# resource "google_dns_record_set" "this" {
-#   for_each = { for idx, instance in google_compute_instance.this : idx => instance }
+resource "google_dns_record_set" "this" {
+  for_each = { for instance in google_compute_instance.this : instance.name => instance }
 
-#   project      = var.dns_zone_project_id
-#   managed_zone = local.nodes_domain_name
-#   name         = each.key != "@" ? "${each.value.name}.${var.nodes_dns_zone_name}." : "${var.nodes_dns_zone_name}."
-#   type         = "A"
-#   ttl          = try(each.value.ttl, "60")
+  project      = var.node_dns_zone_project_id
+  managed_zone = local.node_dns_zone_name
+  name         = "${each.value.name}.${var.node_dns_subdomain}."
+  type         = "A"
+  ttl          = "60"
 
-#   rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
-# }
+  rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
+}
 
 # resource "random_bytes" "generate_node_key" {
 #   count  = var.generate_node_key ? length(local.instances) : 0
