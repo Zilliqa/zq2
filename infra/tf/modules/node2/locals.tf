@@ -7,7 +7,7 @@ locals {
   resource_name      = format("%s-%s-%s", var.chain_name, local.role_short_name, random_id.name_suffix.hex)
   role_short_name    = var.node_role_mappings[var.role]
 
-  instances = flatten([
+  instances = toset(flatten([
     for idx, node in var.config.nodes : [
       for n in range(node.count) : {
         region_index    = idx
@@ -18,7 +18,7 @@ locals {
         resource_name   = format("%s-%s-%s-%s-%s", var.chain_name, var.role, var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n, random_id.name_suffix.hex)
       }
     ]
-  ])
+  ]))
 
   network_tags = flatten(concat(var.network_tags, [var.chain_name, format("%s-%s", var.chain_name, var.role)]))
   labels = merge(
