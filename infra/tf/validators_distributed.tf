@@ -4,7 +4,7 @@
 
 resource "google_service_account" "validators" {
   count      = length(var.distributed_validators) >= 1 ? 1 : 0
-  account_id = substr("${var.network_name}-validators", 0, 28)
+  account_id = substr("${var.chain_name}-validators", 0, 28)
 }
 
 resource "google_project_iam_member" "validators_metric_writer" {
@@ -47,7 +47,7 @@ module "distributed_validators" {
 
   vm_num = each.value.vm_num
 
-  name                   = "${var.network_name}-node-validator-${each.value.region}"
+  name                   = "${var.chain_name}-node-validator-${each.value.region}"
   service_account_email  = google_service_account.validators[0].email
   dns_zone_project_id    = var.dns_zone_project_id
   nodes_dns_zone_name    = var.nodes_dns_zone_name
@@ -56,7 +56,7 @@ module "distributed_validators" {
   subnetwork_name        = each.value.vpc_subnet_name
   persistence_url        = var.persistence_url
   role                   = "validator"
-  zq_network_name        = var.network_name
+  zq_network_name        = var.chain_name
   generate_reward_wallet = true
   provisioning_model     = var.provisioning_model
   node_type              = var.node_type

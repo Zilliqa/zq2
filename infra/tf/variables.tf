@@ -39,8 +39,8 @@ variable "subdomain" {
   nullable    = false
 }
 
-variable "network_name" {
-  description = "(Optional) ZQ2 network name"
+variable "chain_name" {
+  description = "(Optional) ZQ2 blockchain name"
   type        = string
   nullable    = false
   default     = "zq2-devnet"

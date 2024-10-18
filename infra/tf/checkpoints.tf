@@ -3,7 +3,7 @@
 ################################################################################
 
 resource "google_service_account" "checkpoint" {
-  account_id = substr("${var.network_name}-checkpoint", 0, 28)
+  account_id = substr("${var.chain_name}-checkpoint", 0, 28)
 }
 
 data "google_project" "checkpoint" {}
@@ -36,7 +36,7 @@ module "checkpoints" {
   source = "./modules/node"
   vm_num = 1
 
-  name                  = "${var.network_name}-node-checkpoint"
+  name                  = "${var.chain_name}-node-checkpoint"
   service_account_email = google_service_account.checkpoint.email
   dns_zone_project_id   = var.dns_zone_project_id
   nodes_dns_zone_name   = var.nodes_dns_zone_name
@@ -45,7 +45,7 @@ module "checkpoints" {
   subnetwork_name       = data.google_compute_subnetwork.default.name
   persistence_url       = var.persistence_url
   role                  = "checkpoint"
-  zq_network_name       = var.network_name
+  zq_network_name       = var.chain_name
   provisioning_model    = var.provisioning_model
   node_type             = var.node_type
 }
@@ -53,7 +53,7 @@ module "checkpoints" {
 resource "google_compute_instance_group" "checkpoint" {
   for_each = toset(local.default_zones)
 
-  name      = "${var.network_name}-checkpoint-${each.key}"
+  name      = "${var.chain_name}-checkpoint-${each.key}"
   zone      = each.key
   instances = [for instance in module.checkpoints.instances : instance.self_link if instance.zone == each.key]
 
@@ -64,7 +64,7 @@ resource "google_compute_instance_group" "checkpoint" {
 }
 
 resource "google_storage_bucket" "checkpoint" {
-  name     = join("-", compact([var.network_name, "checkpoint"]))
+  name     = join("-", compact([var.chain_name, "checkpoint"]))
   project  = var.project_id
   location = var.region
   labels   = local.labels
@@ -92,7 +92,7 @@ resource "google_storage_bucket_iam_binding" "checkpoint_bucket_viewers" {
 
 # backend bucket with CDN policy with default ttl settings
 resource "google_compute_backend_bucket" "checkpoint" {
-  name        = format("cdn-%s-backend", var.network_name)
+  name        = format("cdn-%s-backend", var.chain_name)
   bucket_name = google_storage_bucket.checkpoint.name
   enable_cdn  = true
   cdn_policy {
@@ -110,12 +110,12 @@ resource "google_compute_backend_bucket" "checkpoint" {
 }
 
 resource "google_compute_url_map" "checkpoint" {
-  name            = format("%s-checkpoint-cdn", var.network_name)
+  name            = format("%s-checkpoint-cdn", var.chain_name)
   default_service = google_compute_backend_bucket.checkpoint.id
 }
 
 resource "google_compute_managed_ssl_certificate" "checkpoint" {
-  name = format("%s-checkpoint-cdn", var.network_name)
+  name = format("%s-checkpoint-cdn", var.chain_name)
 
   managed {
     domains = [format("checkpoints.%s", var.subdomain)]
@@ -124,18 +124,18 @@ resource "google_compute_managed_ssl_certificate" "checkpoint" {
 
 resource "google_compute_ssl_policy" "tls12_modern" {
   project         = var.project_id
-  name            = format("%s-checkpoint-cdn", var.network_name)
+  name            = format("%s-checkpoint-cdn", var.chain_name)
   profile         = "COMPATIBLE"
   min_tls_version = "TLS_1_2"
 }
 
 resource "google_compute_target_http_proxy" "checkpoint" {
-  name    = format("%s-checkpoint-cdn", var.network_name)
+  name    = format("%s-checkpoint-cdn", var.chain_name)
   url_map = google_compute_url_map.checkpoint.id
 }
 
 resource "google_compute_target_https_proxy" "checkpoint" {
-  name             = format("%s-checkpoint-cdn", var.network_name)
+  name             = format("%s-checkpoint-cdn", var.chain_name)
   url_map          = google_compute_url_map.checkpoint.id
   ssl_certificates = [google_compute_managed_ssl_certificate.checkpoint.id]
   ssl_policy       = google_compute_ssl_policy.tls12_modern.id
@@ -146,7 +146,7 @@ data "google_compute_global_address" "checkpoint" {
 }
 
 resource "google_compute_global_forwarding_rule" "checkpoint_http" {
-  name                  = "${var.network_name}-checkpoint-forwarding-rule-http"
+  name                  = "${var.chain_name}-checkpoint-forwarding-rule-http"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "80"
@@ -155,7 +155,7 @@ resource "google_compute_global_forwarding_rule" "checkpoint_http" {
 }
 
 resource "google_compute_global_forwarding_rule" "checkpoint_https" {
-  name                  = "${var.network_name}-checkpoint-forwarding-rule-https"
+  name                  = "${var.chain_name}-checkpoint-forwarding-rule-https"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "443"
