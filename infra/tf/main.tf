@@ -299,6 +299,7 @@ data "google_compute_global_address" "api" {
 
 data "google_compute_address" "bootstrap" {
   name = "bootstrap-${replace(var.subdomain, ".", "-")}"
+  region = var.region
 }
 
 resource "google_compute_global_forwarding_rule" "api_http" {
