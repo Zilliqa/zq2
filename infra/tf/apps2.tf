@@ -3,6 +3,7 @@
 ################################################################################
 
 variable "apps" {
+  description = "(Optional) The configuration of the apps nodes"
   type = object({
     disk_size           = optional(number, 256)
     instance_type       = optional(string, "e2-standard-2")
@@ -13,6 +14,7 @@ variable "apps" {
       zone   = optional(string)
     }))
   })
+  default     = {}
 }
 
 # Validation for provisioning_model
