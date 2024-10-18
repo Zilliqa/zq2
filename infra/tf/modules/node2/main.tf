@@ -2,33 +2,29 @@
 # changes and any instance groups containing them are updated.
 
 resource "random_bytes" "generate_node_key" {
-  count  = var.generate_node_key ? length(local.instances) : 0
+  for_each = var.generate_node_key ? local.instances_map : {}
 
   length = 32
 }
 
-# resource "google_secret_manager_secret" "node_key" {
-#   count  = var.generate_node_key ? length(local.instances) : 0
+resource "google_secret_manager_secret" "node_key" {
+  for_each = var.generate_node_key ? local.instances_map : {}
 
-#   secret_id = "${local.resource_name}-${count.index}-pk"
+  secret_id = "${each.value.resource_name}-pk"
 
-#   labels = merge(
-#     { "zq2-network" = var.chain_name },
-#     { "role" = var.role },
-#     { "node-name" = "${local.resource_name}" },
-#     var.labels
-#   )
+  labels = merge(local.labels, { "node-name" = each.value.resource_name})
 
-#   replication {
-#     auto {}
-#   }
-# }
+  replication {
+    auto {}
+  }
+}
 
-# resource "google_secret_manager_secret_version" "node_key_version" {
-#   count       = !var.generate_node_key ? 0 : var.vm_num
-#   secret      = google_secret_manager_secret.node_key[count.index].id
-#   secret_data = random_bytes.generate_node_key[count.index].hex
-# }
+resource "google_secret_manager_secret_version" "node_key_version" {
+  for_each = var.generate_node_key ? local.instances_map : {}
+
+  secret      = google_secret_manager_secret.node_key[each.values.resource_name].id
+  secret_data = random_bytes.generate_node_key[each.values.resource_name].hex
+}
 
 # resource "random_bytes" "generate_reward_wallet" {
 #   count  = !var.generate_reward_wallet ? 0 : var.vm_num
@@ -168,8 +164,8 @@ resource "google_compute_instance" "this" {
     "genesis_key"               = base64encode(var.genesis_key)
     "persistence_url"           = base64encode(var.persistence_url)
     "subdomain"                 = base64encode(var.chain_subdomain)
-    # "secret_key"                = !var.generate_node_key ? "" : base64encode(google_secret_manager_secret_version.node_key_version[count.index].secret_data)
-    # "secret_id"                 = !var.generate_node_key ? "" : google_secret_manager_secret_version.node_key_version[count.index].id
+    "secret_key"                = !var.generate_node_key ? "" : base64encode(google_secret_manager_secret_version.node_key_version[count.index].secret_data)
+    "secret_id"                 = !var.generate_node_key ? "" : google_secret_manager_secret_version.node_key_version[count.index].id
     # "reward_wallet_private_key" = !var.generate_reward_wallet ? "" : base64encode(google_secret_manager_secret_version.reward_wallet_version[count.index].secret_data)
     # "reward_wallet_secret_id"   = !var.generate_reward_wallet ? "" : google_secret_manager_secret_version.reward_wallet_version[count.index].id
   }
