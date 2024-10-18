@@ -14,7 +14,7 @@ variable "apps" {
       zone   = optional(string)
     }))
   })
-  default     = { nodes: {}}
+  default     = { nodes: []}
 }
 
 # Validation for provisioning_model
