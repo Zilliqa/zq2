@@ -225,6 +225,7 @@ impl Db {
                 qc BLOB NOT NULL,
                 agg BLOB,
                 is_canonical BOOLEAN NOT NULL);
+            CREATE INDEX IF NOT EXISTS idx_blocks_height ON blocks(height);
             CREATE TABLE IF NOT EXISTS transactions (
                 tx_hash BLOB NOT NULL PRIMARY KEY,
                 data BLOB NOT NULL);
