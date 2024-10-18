@@ -4,7 +4,8 @@
 
 locals {
   node_dns_zone_name = replace(var.node_dns_subdomain, ".", "-")
-  resource_name      = format("%s-%s-%s", var.chain_name, var.node_role_mappings[var.role], random_id.name_suffix.hex)
+  resource_name      = format("%s-%s-%s", var.chain_name, local.role_short_name, random_id.name_suffix.hex)
+  role_short_name = var.node_role_mappings[var.role]
 
   instances = flatten([
     for idx, node in var.config.nodes : [
@@ -14,4 +15,12 @@ locals {
       }
     ]
   ])
+
+  network_tags = flatten(concat(var.network_tags, [var.chain_name, format("%s-%s", var.chain_name, var.role)]))
+    labels = merge(
+    { "zq2-network" = var.chain_name },
+    { "role" = var.role },
+    { "node-name" = "${local.resource_name}" },
+    var.labels
+  )
 }
