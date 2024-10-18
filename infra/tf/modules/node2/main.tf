@@ -39,7 +39,7 @@ resource "google_project_iam_member" "secret_manager_accessor" {
 }
 
 resource "google_compute_address" "external_regional" {
-  for_each = toset(local.instances)
+  for_each = local.instances
 
   project = data.google_project.current.project_id
 
