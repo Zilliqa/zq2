@@ -10,7 +10,7 @@ variable "apps" {
     provisioning_model = optional(string, "STANDARD")
     nodes = list(object({
       count  = optional(number, 1)
-      region = optional(string)
+      region = optional(string, "asia-southeast1")
       zone   = optional(string)
     }))
   })
