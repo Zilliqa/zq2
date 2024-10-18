@@ -30,5 +30,5 @@
 
 output "test" {
   description = "The secret ID of the node private key in GCP Secrets Manager"
-  value       = data.google_compute_zones.available
+  value       = local.regions
 }
