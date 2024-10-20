@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use alloy::{
@@ -33,10 +34,11 @@ use zilliqa::{
 };
 
 use crate::{
+    chain,
     collector::{self, Collector},
     components::{Component, Requirements},
     node_spec::Composition,
-    scilla, utils,
+    scilla, utils, validators,
 };
 
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
@@ -60,6 +62,8 @@ pub struct Config {
     pub node_data: HashMap<u64, NodeData>,
     /// Base port
     pub base_port: u16,
+    /// Existing chain?
+    pub chain: Option<String>,
 }
 
 pub struct Setup {
@@ -77,6 +81,8 @@ pub struct Setup {
     pub keep_old_network: bool,
     /// Watch source
     pub watch: bool,
+    /// Existing chain?
+    pub chain_config: Option<validators::ChainConfig>,
 }
 
 impl Config {
@@ -127,12 +133,56 @@ impl Config {
             shape: network.clone(),
             node_data,
             base_port,
+            chain: None,
         };
         Ok(result)
     }
 }
 
 impl Setup {
+    // Set up a single node from a published network
+    #[allow(clippy::too_many_arguments)]
+    pub async fn from_named_network(
+        chain: &chain::Chain,
+        config_dir: &str,
+        base_port: u16,
+        log_spec: &str,
+        base_dir: &str,
+        watch: bool,
+        secret_key_hex: &str,
+        is_validator: bool,
+    ) -> Result<Self> {
+        let chain_config = validators::ChainConfig::new(chain).await?;
+        let mut node_data = HashMap::new();
+        let secret_key =
+            SecretKey::from_hex(secret_key_hex).map_err(|err| anyhow!(Box::new(err)))?;
+        let signing_key = SigningKey::from_slice(&hex::decode(secret_key_hex)?)?;
+        let address = TransactionPublicKey::Ecdsa(*signing_key.verifying_key(), true).into_addr();
+        node_data.insert(
+            0,
+            NodeData {
+                secret_key: secret_key.to_hex(),
+                address,
+            },
+        );
+        let chain_name = format!("{}", chain);
+        let config = Config {
+            shape: Composition::single_node(is_validator),
+            node_data,
+            base_port,
+            chain: Some(chain_name),
+        };
+        Ok(Self {
+            config,
+            collector: None,
+            config_dir: config_dir.to_string(),
+            log_spec: log_spec.to_string(),
+            base_dir: base_dir.to_string(),
+            keep_old_network: true,
+            watch,
+            chain_config: Some(chain_config),
+        })
+    }
     pub fn ephemeral(base_port: u16, base_dir: &str, config_dir: &str) -> Result<Self> {
         let config = Config::from_spec(&Composition::small_network(), base_port)?;
         Ok(Self {
@@ -143,6 +193,7 @@ impl Setup {
             base_dir: base_dir.to_string(),
             keep_old_network: true,
             watch: false,
+            chain_config: None,
         })
     }
 
@@ -155,6 +206,11 @@ impl Setup {
         let config = Config::from_config_dir(config_dir)
             .await?
             .ok_or(anyhow!("Couldn't load configuration from {config_dir}"))?;
+        let chain_config = if let Some(v) = &config.chain {
+            Some(validators::ChainConfig::new(&chain::Chain::from_str(v)?).await?)
+        } else {
+            None
+        };
         Ok(Self {
             config,
             collector: None,
@@ -163,6 +219,7 @@ impl Setup {
             base_dir: base_dir.to_string(),
             keep_old_network: true,
             watch,
+            chain_config,
         })
     }
 
@@ -204,6 +261,7 @@ impl Setup {
             base_dir: base_dir.to_string(),
             keep_old_network,
             watch,
+            chain_config: None,
         })
     }
 
@@ -280,6 +338,44 @@ impl Setup {
     }
 
     pub async fn generate_config(&self) -> Result<()> {
+        match &self.chain_config {
+            None => Ok(self.generate_standalone_config().await?),
+            Some(v) => Ok(self.generate_chain_config(v).await?),
+        }
+    }
+
+    pub fn get_config_path(&self, node_idx: u64) -> Result<String> {
+        match self.chain_config {
+            None => Ok(format!(
+                "{0}/{1}/{2}/{ZQ2_CONFIG_FILE_NAME}",
+                self.config_dir, DATADIR_PREFIX, node_idx
+            )),
+            Some(ref v) => Ok(format!("{0}/{1}.toml", self.config_dir, &v.get_name())),
+        }
+    }
+
+    pub async fn generate_chain_config(&self, chain: &validators::ChainConfig) -> Result<()> {
+        // Generate the zilliqa config
+        let mut config_path = PathBuf::from(self.config_dir.clone());
+        config_path.push(format!("{0}.toml", chain.get_name()));
+        chain.write_to_path(&config_path).await?;
+
+        // Now we need to change the data directory, so load it again ..
+        let config_data = fs::read_to_string(&config_path).await?;
+        let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&config_data)?;
+        for (idx, node) in loaded_config.nodes.iter_mut().enumerate() {
+            let mut data_path = PathBuf::from(&self.config_dir);
+            data_path.push(format!("{idx}"));
+            data_path.push("data");
+            let data_path_as_string = data_path.to_string_lossy();
+            node.data_dir = Some(data_path_as_string.to_string());
+        }
+        let config_str = toml::to_string(&loaded_config)?;
+        fs::write(&config_path, config_str).await?;
+        Ok(())
+    }
+
+    pub async fn generate_standalone_config(&self) -> Result<()> {
         // The genesis deposits.
         let mut genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)> = Vec::new();
         for (node, desc) in self.config.shape.nodes.iter() {
@@ -538,10 +634,7 @@ impl Setup {
             }
             Component::ZQ2 => {
                 for idx in for_nodes.nodes.keys() {
-                    let config_file = format!(
-                        "{0}/{1}{2}/{ZQ2_CONFIG_FILE_NAME}",
-                        self.config_dir, DATADIR_PREFIX, idx
-                    );
+                    let config_file = self.get_config_path(*idx)?;
                     // Now, we need to rewrite the config file to take account of checkpoints...
                     Self::preprocess_config_file(
                         &config_file,

@@ -217,10 +217,11 @@ impl Node {
     pub fn handle_request(
         &mut self,
         from: PeerId,
+        id: &str,
         message: ExternalMessage,
         response_channel: ResponseChannel,
     ) -> Result<()> {
-        debug!(%from, to = %self.peer_id, %message, "handling request");
+        debug!(%from, to = %self.peer_id, %id, %message, "handling request");
         match message {
             ExternalMessage::Vote(m) => {
                 if let Some((block, transactions)) = self.consensus.vote(*m)? {
