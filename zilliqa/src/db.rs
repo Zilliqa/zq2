@@ -10,7 +10,7 @@ use std::{
 };
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use eth_trie::{EthTrie, Trie};
 use itertools::Itertools;
 use rusqlite::{
@@ -191,9 +191,11 @@ impl Db {
         let (mut connection, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
-                fs::create_dir_all(&path)?;
+                fs::create_dir_all(&path).context(format!("Unable to create {path:?}"))?;
+                let db_path = path.join("db.sqlite3");
                 (
-                    Connection::open(path.join("db.sqlite3"))?,
+                    Connection::open(&db_path)
+                        .context(format!("Cannot access sqlite db {0:?}", &db_path))?,
                     Some(path.into_boxed_path()),
                 )
             }

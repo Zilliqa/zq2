@@ -1,10 +1,11 @@
 use core::convert::AsRef;
-use std::{env, path::Path};
+use std::{env, fs, path::Path};
 
 use anyhow::{anyhow, Result};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::os::unix::fs::PermissionsExt;
 
 pub async fn file_exists(file_name: impl AsRef<Path>) -> Result<bool> {
     Ok(tokio::fs::metadata(file_name).await.is_ok())
@@ -92,4 +93,11 @@ pub fn compute_log_string(
         }
     };
     Ok(log_spec)
+}
+
+pub fn make_executable<P: AsRef<Path>>(file_path: &P) -> Result<()> {
+    let mut perms = fs::metadata(file_path)?.permissions();
+    perms.set_mode(perms.mode() | 0o111);
+    fs::set_permissions(file_path, perms)?;
+    Ok(())
 }

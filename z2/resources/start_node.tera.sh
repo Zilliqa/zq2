@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ZQ_VERSION="{{ version }}"
-ZQ2_IMAGE="asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:${ZQ_VERSION}"
+ZQ2_IMAGE={% if container %}"{{container}}"{% else %}"asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:${ZQ_VERSION}"{% endif %}
 CHAIN_NAME="{{ chain_name }}"
 
 NODE_PRIVATE_KEY=""
