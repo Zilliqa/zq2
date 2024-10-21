@@ -92,6 +92,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNumDSBlocks", get_num_ds_blocks),
             ("GetRecentTransactions", get_recent_transactions),
             ("GetNumTransactions", get_num_transactions),
+            ("GetNumTxnsTXEpoch", get_num_txns_tx_epoch),
+            ("GetNumTxnsDSEpoch", get_num_txns_ds_epoch),
         ],
     )
 }
@@ -1038,4 +1040,34 @@ fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
     let node = node.lock().unwrap();
     let num_transactions = node.consensus.block_store.get_num_transactions()?;
     Ok(num_transactions.to_string())
+}
+
+fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let latest_block = node
+        .consensus
+        .block_store
+        .get_block_by_number(node.get_chain_tip())?;
+    let num_transactions = match latest_block {
+        Some(block) => block.transactions.len(),
+        None => 0,
+    };
+    Ok(num_transactions.to_string())
+}
+
+fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    let ds_epoch_size = TX_BLOCKS_PER_DS_BLOCK;
+    let current_epoch = node.get_chain_tip() / ds_epoch_size;
+    let current_epoch_first = current_epoch * ds_epoch_size;
+    let mut num_txns_epoch = 0;
+    for i in current_epoch_first..node.get_chain_tip() {
+        let block = node
+            .consensus
+            .block_store
+            .get_block_by_number(i)?
+            .ok_or_else(|| anyhow!("Block not found"))?;
+        num_txns_epoch += block.transactions.len();
+    }
+    Ok(num_txns_epoch.to_string())
 }
