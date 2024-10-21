@@ -335,7 +335,9 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
         }
 
-        if state_trie.iter().next().is_some() || self.get_highest_block_number()?.is_some() {
+        if state_trie.iter().next().is_some()
+            || self.get_highest_canonical_block_number()?.is_some()
+        {
             // If checkpointed block already exists then assume checkpoint load already complete. Return None
             if self.get_block_by_hash(&block.hash())?.is_some() {
                 return Ok(None);
@@ -458,7 +460,23 @@ impl Db {
             .optional()?)
     }
 
-    pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
+    // Deliberately not named get_highest_block_number() because there used to be one
+    // of those with unclear semantics, so changing name to force the compiler to error
+    // if it was used.
+    pub fn get_highest_recorded_block_number(&self) -> Result<Option<u64>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .query_row_and_then(
+                "SELECT height FROM blocks ORDER BY height DESC LIMIT 1",
+                (),
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
         Ok(self
             .db
             .lock()

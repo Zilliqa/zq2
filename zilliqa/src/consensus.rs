@@ -281,33 +281,51 @@ impl Consensus {
                     let finalized_number = db
                         .get_latest_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
-                    let finalzied_block = db
+                    let finalized_block = db
                         .get_block_by_view(finalized_number)?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
-                    let highest_block_number = db
-                        .get_highest_block_number()?
-                        .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
+                    let start_view = std::cmp::max(high_block.view(), finalized_block.view()) + 1;
+                    trace!(
+                        "recovery: high_block view {0}, finalized_number {1} , start_view {2}",
+                        high_block.view(),
+                        finalized_number,
+                        start_view
+                    );
 
-                    let head_block = block_store
-                        .get_block_by_number(highest_block_number)?
-                        .ok_or_else(|| anyhow!("missing head block!"))?;
-
-                    if finalized_number > high_block.number() {
-                        state.set_to_root(finalzied_block.header.state_root_hash.into());
+                    if finalized_number > high_block.view() {
+                        // We know of a finalized view higher than the view in finalized_number; start there.
+                        state.set_to_root(finalized_block.header.state_root_hash.into());
                     } else {
+                        // The high_block contains the latest finalized view. Start there.
                         state.set_to_root(high_block.header.state_root_hash.into());
                     }
 
-                    // If there was a newer block proposed - it's no longer valid because not every participant could have received it
-                    if head_block.number() > high_block.number()
-                        && head_block.number() > finalized_number
-                    {
-                        db.remove_transactions_executed_in_block(&head_block.hash())?;
-                        db.remove_block(&head_block)?;
-                    }
+                    // If we have newer blocks, erase them
+                    // @todo .. more elegantly :-)
+                    loop {
+                        let highest_block_number = db
+                            .get_highest_canonical_block_number()?
+                            .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
 
-                    let start_view = std::cmp::max(high_block.view(), finalzied_block.view()) + 1;
+                        let head_block = block_store
+                            .get_canonical_block_by_number(highest_block_number)?
+                            .ok_or_else(|| anyhow!("missing head block!"))?;
+                        trace!(
+                            "recovery: highest_block_number {highest_block_number} view {0}",
+                            head_block.view()
+                        );
+
+                        if head_block.view() > high_block.view()
+                            && head_block.view() > finalized_number
+                        {
+                            trace!("recovery: stored block {0} reverted", highest_block_number);
+                            db.remove_transactions_executed_in_block(&head_block.hash())?;
+                            db.remove_block(&head_block)?;
+                        } else {
+                            break;
+                        }
+                    }
 
                     info!("During recovery, starting consensus at view {}", start_view);
                     (start_view, qc)
@@ -367,11 +385,11 @@ impl Consensus {
     pub fn head_block(&self) -> Block {
         let highest_block_number = self
             .block_store
-            .get_highest_block_number()
+            .get_highest_canonical_block_number()
             .unwrap()
             .unwrap();
         self.block_store
-            .get_block_by_number(highest_block_number)
+            .get_canonical_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
     }
@@ -1149,10 +1167,10 @@ impl Consensus {
                 // Start with highest canonical block
                 let num = self
                     .db
-                    .get_highest_block_number()?
+                    .get_highest_canonical_block_number()?
                     .context("no canonical blocks")?; // get highest canonical block number
                 let block = self
-                    .get_block_by_number(num)?
+                    .get_canonical_block_by_number(num)?
                     .context("missing canonical block")?; // retrieve highest canonical block
                 (
                     QuorumCertificate::new_with_identity(block.hash(), block.view()),
@@ -1378,10 +1396,10 @@ impl Consensus {
         // Start with highest canonical block
         let num = self
             .db
-            .get_highest_block_number()?
+            .get_highest_canonical_block_number()?
             .context("no canonical blocks")?; // get highest canonical block number
         let block = self
-            .get_block_by_number(num)?
+            .get_canonical_block_by_number(num)?
             .context("missing canonical block")?; // retrieve highest canonical block
 
         // Generate early QC
@@ -2052,7 +2070,7 @@ impl Consensus {
     /// Returns (file_name, block_hash). At some time after you call this function, hopefully a checkpoint will end up in the file
     pub fn checkpoint_at(&mut self, block_number: u64) -> Result<(String, String)> {
         let block = self
-            .get_block_by_number(block_number)?
+            .get_canonical_block_by_number(block_number)?
             .ok_or(anyhow!("No such block number {block_number}"))?;
         let parent = self
             .db
@@ -2355,8 +2373,8 @@ impl Consensus {
         self.block_store.get_block_by_view(view)
     }
 
-    pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.block_store.get_block_by_number(number)
+    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+        self.block_store.get_canonical_block_by_number(number)
     }
 
     pub fn view(&self) -> u64 {
@@ -2374,7 +2392,7 @@ impl Consensus {
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
             .block_store
-            .get_block_by_number(number)?
+            .get_canonical_block_by_number(number)?
             .map(|block| self.state.at_root(block.state_root_hash().into())))
     }
 
