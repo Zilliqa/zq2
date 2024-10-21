@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     num::NonZeroUsize,
     ops::Range,
     sync::{Arc, RwLock},
@@ -80,6 +80,12 @@ pub struct BlockCache {
     pub fork_counter: usize,
     /// Copied from the parent to minimise the number of additional parameters we need.
     pub max_blocks_in_flight: u64,
+    /// These are views which we have removed from the cache to process later. Remember not to re-request them, or
+    /// we will end up asking peers for views which we are about to process.
+    /// We need to remember to clear these flags once we have the proposal, because it might be a lie and we may need
+    /// to rerequest in order to get the right view (there will only ever be one legitimate view with a given number,
+    /// but peers may lie to us about what it is)
+    pub views_expecting_proposals: BTreeSet<u64>,
 }
 
 impl BlockCache {
@@ -92,6 +98,7 @@ impl BlockCache {
             shift: 8 - constants::BLOCK_CACHE_LOG2_WAYS,
             fork_counter: 0,
             max_blocks_in_flight,
+            views_expecting_proposals: BTreeSet::new(),
         }
     }
 
@@ -106,6 +113,14 @@ impl BlockCache {
 
     pub fn min_key_for_view(&self, view: u64) -> u128 {
         u128::from(view) << self.shift
+    }
+
+    pub fn expect_process_proposal(&mut self, view: u64) {
+        self.views_expecting_proposals.insert(view);
+    }
+
+    pub fn received_process_proposal(&mut self, view: u64) {
+        self.views_expecting_proposals.remove(&view);
     }
 
     /// returns the minimum key (view << shift) that we are prepared to store in the head cache.
@@ -173,8 +188,26 @@ impl BlockCache {
 
     pub fn trim(&mut self, highest_confirmed_view: u64) {
         let lowest_ignored_key = self.min_key_for_view(highest_confirmed_view);
+        debug!(
+            "before trim {highest_confirmed_view} cache has {0:?} expecting {3:?} with {1}/{2}",
+            self.extant_block_ranges(),
+            self.cache.len(),
+            self.head_cache.len(),
+            &self.views_expecting_proposals
+        );
         debug!("trim: lowest_ignored_key = {0}", lowest_ignored_key);
         self.trim_with_fn(|k, _| -> bool { *k < lowest_ignored_key });
+        // We don't care about anything lower than what we're about to flush
+        self.views_expecting_proposals = self
+            .views_expecting_proposals
+            .split_off(&highest_confirmed_view);
+        debug!(
+            "after trim cache has {0:?} with {3:?} , {1}/{2}",
+            self.extant_block_ranges(),
+            self.cache.len(),
+            self.head_cache.len(),
+            &self.views_expecting_proposals
+        );
     }
 
     /// DANGER WILL ROBINSON! This function only searches from the minimum key to the maximum, so
@@ -230,13 +263,16 @@ impl BlockCache {
         let cache_size = usize::try_from(cache_entries).unwrap();
         self.empty_view_ranges.truncate(cache_size);
 
-        while self.cache.len() > cache_size {
-            if let Some((k, v)) = self.cache.pop_last() {
-                unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
-            }
-        }
         while self.head_cache.len() > constants::BLOCK_CACHE_HEAD_BUFFER_ENTRIES {
             if let Some((k, v)) = self.head_cache.pop_first() {
+                // Push this into the main cache, otherwise we will get into the state where
+                // blocks are removed from the head cache and lost and we are constantly
+                // requesting blocks to replace them.
+                self.cache.insert(k, v);
+            }
+        }
+        while self.cache.len() > cache_size {
+            if let Some((k, v)) = self.cache.pop_last() {
                 unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
             }
         }
@@ -340,6 +376,14 @@ impl BlockCache {
         for key in self.head_cache.keys() {
             let _ = u128::try_into(key >> shift).map(|x| result.with_elem(x));
         }
+        result
+    }
+
+    pub fn expectant_block_ranges(&self) -> RangeMap {
+        let mut result = RangeMap::new();
+        self.views_expecting_proposals.iter().for_each(|v| {
+            result.with_elem(*v);
+        });
         result
     }
 }
@@ -792,10 +836,22 @@ impl BlockStore {
             self.clock
         );
 
+        // If it's in our input queue, don't expect it again.
+        let expected = self.buffered.expectant_block_ranges();
+        trace!("block_store::request_blocks() : in our input queue {expected:?}");
+        (_, remain) = remain.diff_inter(&expected);
+        trace!("block_store::request_blocks() : .. after input queue removal {remain:?}");
+
         // If it's already buffered, don't request it again - wait for us to reject it and
         // then we can re-request.
         let extant = self.buffered.extant_block_ranges();
-        trace!("block_store::request_blocks() : cache has {:?}", extant);
+        trace!(
+            "block_store::request_blocks() : cache has {0:?} with {1}/{2}",
+            extant,
+            self.buffered.cache.len(),
+            self.buffered.head_cache.len()
+        );
+
         (_, remain) = remain.diff_inter(&extant);
         trace!("block_store::request_blocks() : .. after cache removal {remain:?}");
         trace!("known gaps {:?}", self.buffered.empty_view_ranges);
@@ -1165,5 +1221,13 @@ impl BlockStore {
 
     pub fn summarise_buffered(&self) -> RangeMap {
         self.buffered.extant_block_ranges()
+    }
+
+    pub fn expect_process_proposal(&mut self, view: u64) {
+        self.buffered.expect_process_proposal(view);
+    }
+
+    pub fn received_process_proposal(&mut self, view: u64) {
+        self.buffered.received_process_proposal(view);
     }
 }

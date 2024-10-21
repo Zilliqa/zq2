@@ -2294,7 +2294,8 @@ impl Consensus {
             proposal.number(),
             proposal.view()
         );
-
+        self.block_store
+            .received_process_proposal(proposal.header.view);
         let result = self.proposal(from, proposal, true)?;
         // Processing the received block can either result in:
         // * A `Proposal`, if we have buffered votes for this block which form a supermajority, meaning we can
@@ -2317,6 +2318,8 @@ impl Consensus {
             .try_for_each(|(from_id, child_proposal)| -> Result<()> {
                 // The only reason this can fail is permanent failure of the messaging mechanism, so
                 // propagate it back here.
+                // Mark this block in the cache as "we're about to process this one"
+                let view = child_proposal.header.view;
                 self.message_sender.send_external_message(
                     self.peer_id(),
                     ExternalMessage::ProcessProposal(ProcessProposal {
@@ -2324,6 +2327,7 @@ impl Consensus {
                         block: child_proposal,
                     }),
                 )?;
+                self.block_store.expect_process_proposal(view);
                 Ok(())
             })?;
         Ok(())
@@ -2934,6 +2938,7 @@ impl Consensus {
                         block.number()
                     );
                     // Ignore errors here - just carry on and wait for re-request to clean up.
+                    let view = block.view();
                     let _ = self.message_sender.send_external_message(
                         self.peer_id(),
                         ExternalMessage::ProcessProposal(ProcessProposal {
@@ -2941,6 +2946,7 @@ impl Consensus {
                             block,
                         }),
                     );
+                    self.block_store.expect_process_proposal(view);
                 });
             }
         } else {
