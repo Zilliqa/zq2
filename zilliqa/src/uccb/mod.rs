@@ -1,18 +1,65 @@
 use std::{fs, path::PathBuf};
 
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 
+pub mod bridge_node;
 pub mod cfg;
 pub mod client;
+pub mod contracts;
+pub mod event;
+pub mod message;
+pub mod signature;
+pub mod validator_node;
 
 pub fn read_config(config_file: &PathBuf) -> Result<cfg::Config> {
     let config_content = if config_file.exists() {
-        fs::read_to_string(config_file)?
+        fs::read_to_string(&config_file)?
     } else {
         panic!("Please specify a config file");
     };
 
     Ok(toml::from_str(&config_content)?)
+}
+
+// Creates the chain clients from the configuration. The first one is
+// the ZQ2 one.
+pub async fn create_chain_clients(
+    config: &cfg::Config,
+    signer: &PrivateKeySigner,
+) -> Result<Vec<client::ChainClient>> {
+    let mut chain_clients = vec![create_zq2_chain_client(config.clone(), &signer).await?];
+
+    for chain_config in &config.chain_configs {
+        chain_clients.push(
+            client::ChainClient::new(
+                &chain_config,
+                config.zq2.validator_manager_address,
+                config.zq2.chain_gateway_address,
+                signer.clone(),
+            )
+            .await?,
+        );
+    }
+
+    Ok(chain_clients)
+}
+
+async fn create_zq2_chain_client(
+    config: cfg::Config,
+    signer: &PrivateKeySigner,
+) -> Result<client::ChainClient> {
+    client::ChainClient::new(
+        &cfg::ChainConfig {
+            rpc_url: config.zq2.rpc_url,
+            estimate_gas: false,
+            legacy_gas_estimation: true,
+        },
+        config.zq2.validator_manager_address,
+        config.zq2.chain_gateway_address,
+        signer.clone(),
+    )
+    .await
 }
 
 /// See: src/contracts/mod.rs
@@ -36,7 +83,8 @@ mod tests {
         let input = SolcInput {
             language: SolcLanguage::Solidity,
             sources: Source::read_all(
-                ["ValidatorManager.sol"].map(|c| format!("contracts/src/{c}")),
+                ["ValidatorManager.sol", "ChainGateway.sol"]
+                    .map(|c| format!("../uccb/contracts/src/core/{c}")),
             )
             .unwrap(),
             settings: Settings {

@@ -18,13 +18,15 @@ use futures_util::stream::StreamExt;
 use tokio::{select, sync::watch};
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
-use uccb::{
-    cfg::{ChainConfig, Config},
-    client::ChainClient,
+use zilliqa::{
+    contracts,
+    crypto::SecretKey,
+    state::contract_addr,
+    uccb::{
+        cfg::Config,
+        client::{ChainClient, ChainProvider},
+    },
 };
-use zilliqa::{contracts, crypto::SecretKey, state::contract_addr};
-
-const VALIDATOR_MANAGER_ABI_JSON: &str = include_str!("../../contracts/compiled.json");
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -37,26 +39,14 @@ struct Args {
 struct ValidatorOracle {
     signer: PrivateKeySigner,
     chain_clients: Vec<ChainClient>,
-    validator_manager_abi: JsonAbi,
-    deposit_contract: ContractInstance<PubSubFrontend, uccb::client::ChainProvider, Ethereum>,
+    deposit_contract: ContractInstance<PubSubFrontend, ChainProvider, Ethereum>,
     pending_validators: BTreeMap<u64, Vec<Address>>,
 }
 
 impl ValidatorOracle {
     pub async fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
         let signer = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
-        let mut chain_clients = vec![Self::create_zq2_chain_client(config.clone(), &signer).await?];
-
-        for chain_config in config.chain_configs {
-            chain_clients.push(
-                ChainClient::new(
-                    &chain_config,
-                    config.zq2.validator_manager_address,
-                    signer.clone(),
-                )
-                .await?,
-            );
-        }
+        let chain_clients = zilliqa::uccb::create_chain_clients(&config, &signer).await?;
 
         // We need to convert ethabi::Contract -> alloy::json_abi::JsonAbi. Both JSON
         // representations are the same.
@@ -71,12 +61,6 @@ impl ValidatorOracle {
         Ok(Self {
             signer,
             chain_clients,
-            // See above comment regarding ethabi::Contract -> alloy::json_abi::JsonAbi.
-            validator_manager_abi: serde_json::from_value(
-                serde_json::from_str::<serde_json::Value>(VALIDATOR_MANAGER_ABI_JSON)?["contracts"]
-                    ["contracts/src/ValidatorManager.sol"]["ValidatorManager"]["abi"]
-                    .clone(),
-            )?,
             deposit_contract,
             pending_validators: BTreeMap::new(),
         })
@@ -97,16 +81,10 @@ impl ValidatorOracle {
         for chain_client in &self.chain_clients {
             let mut receiver = receiver.clone();
             let chain_client = chain_client.clone();
-            let validator_manager_abi = self.validator_manager_abi.clone();
             let handle = tokio::spawn(async move {
                 loop {
                     let validators = receiver.borrow_and_update().clone();
-                    if let Err(e) = Self::update_validator_manager(
-                        &chain_client,
-                        &validators,
-                        validator_manager_abi.clone(),
-                    )
-                    .await
+                    if let Err(e) = Self::update_validator_manager(&chain_client, &validators).await
                     {
                         error!(
                             "Failed updating the validator manager on {}: {e}",
@@ -189,21 +167,6 @@ impl ValidatorOracle {
         }
     }
 
-    async fn create_zq2_chain_client(
-        config: Config,
-        signer: &PrivateKeySigner,
-    ) -> Result<ChainClient> {
-        ChainClient::new(
-            &ChainConfig {
-                rpc_url: config.zq2.rpc_url,
-                chain_gateway_address: config.zq2.chain_gateway_address,
-            },
-            config.zq2.validator_manager_address,
-            signer.clone(),
-        )
-        .await
-    }
-
     fn zq2_chain_client(&self) -> &ChainClient {
         &self.chain_clients[0]
     }
@@ -215,30 +178,28 @@ impl ValidatorOracle {
             .deposit_contract
             .function("getStakerData", &[])?;
         let output = call_builder.call().await?;
-        let validators = output[1]
+        let validators = output[0]
             .as_array()
             .unwrap()
             .iter()
             .map(|k| k.as_address().unwrap())
             .collect();
 
+        debug!("Retrieved validator set: {validators:?}");
         Ok(validators)
     }
 
     async fn update_validator_manager(
         chain_client: &ChainClient,
         validators: &[Address],
-        validator_manager_abi: JsonAbi,
     ) -> Result<()> {
         info!("Updating validators at {}", &chain_client.rpc_url);
 
-        let validator_manager_interface = Interface::new(validator_manager_abi);
-
-        let contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
-            chain_client.validator_manager_address,
-            chain_client.provider.as_ref(),
-            validator_manager_interface.clone(),
-        );
+        let contract: ContractInstance<PubSubFrontend, _> =
+            zilliqa::uccb::contracts::validator_manager::instance(
+                chain_client.validator_manager_address,
+                chain_client.provider.as_ref(),
+            );
 
         let validators = DynSolValue::Array(
             validators
@@ -265,7 +226,7 @@ impl ValidatorOracle {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let config = uccb::read_config(&args.config_file)?;
+    let config = zilliqa::uccb::read_config(&args.config_file)?;
 
     let builder = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())

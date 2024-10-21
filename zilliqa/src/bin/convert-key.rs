@@ -1,5 +1,6 @@
-use std::io;
+use std::{io, str::FromStr};
 
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use crypto_bigint::generic_array::GenericArray;
 use serde::Deserialize;
@@ -25,11 +26,14 @@ fn main() -> Result<()> {
 
     let tx_pubkey = TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
 
+    let signer = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
+
     let output = json!({
         "bls_public_key": secret_key.node_public_key(),
         "peer_id": secret_key.to_libp2p_keypair().public().to_peer_id(),
         "tx_pubkey": tx_pubkey,
         "address": tx_pubkey.into_addr(),
+        "signer_address": signer.address(),
         "bls_pop_signature": secret_key.pop_prove(),
     });
 

@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use alloy::{
     network::{Ethereum, EthereumWallet},
-    primitives::Address,
+    primitives::{Address, U256},
     providers::{fillers::*, Identity, Provider, ProviderBuilder, RootProvider, WsConnect},
     pubsub::PubSubFrontend,
     signers::local::PrivateKeySigner,
 };
 use anyhow::Result;
 
-use crate::cfg::ChainConfig;
+use crate::uccb::cfg::ChainConfig;
 
 pub type ChainProvider = FillProvider<
     JoinFill<
@@ -26,14 +26,18 @@ pub struct ChainClient {
     pub rpc_url: String,
     pub provider: Arc<ChainProvider>,
     pub validator_manager_address: Address,
-    pub chain_id: u64,
+    pub chain_gateway_address: Address,
+    pub chain_id: U256,
     pub signer: PrivateKeySigner,
+    pub estimate_gas: bool,
+    pub legacy_gas_estimation: bool,
 }
 
 impl ChainClient {
     pub async fn new(
         config: &ChainConfig,
         validator_manager_address: Address,
+        chain_gateway_address: Address,
         signer: PrivateKeySigner,
     ) -> Result<Self> {
         let ws = WsConnect::new(&config.rpc_url);
@@ -59,8 +63,11 @@ impl ChainClient {
             rpc_url: config.rpc_url.clone(),
             provider,
             validator_manager_address,
-            chain_id,
             signer,
+            chain_id: U256::from(chain_id),
+            chain_gateway_address,
+            estimate_gas: config.estimate_gas,
+            legacy_gas_estimation: config.legacy_gas_estimation,
         })
     }
 }

@@ -727,6 +727,8 @@ pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
     let measurement_blocks = height.min(max_measurement_blocks);
     let start_measure_block = node
         .consensus
+        .lock()
+        .unwrap()
         .get_block_by_number(height - measurement_blocks + 1)?
         .ok_or(anyhow!("Unable to get block"))?;
     let start_measure_time = start_measure_block.header.timestamp;
@@ -1012,6 +1014,8 @@ fn get_recent_transactions(
     while block_number > 0 && txns.len() < 100 && blocks_searched < 100 {
         let block = match node
             .consensus
+            .lock()
+            .unwrap()
             .block_store
             .get_block_by_number(block_number)?
         {
@@ -1036,6 +1040,11 @@ fn get_recent_transactions(
 
 fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
-    let num_transactions = node.consensus.block_store.get_num_transactions()?;
+    let num_transactions = node
+        .consensus
+        .lock()
+        .unwrap()
+        .block_store
+        .get_num_transactions()?;
     Ok(num_transactions.to_string())
 }

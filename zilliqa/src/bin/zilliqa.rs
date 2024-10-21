@@ -18,6 +18,8 @@ struct Args {
     secret_key: SecretKey,
     #[clap(long, short, default_values = ["config.toml"])]
     config_file: Vec<PathBuf>,
+    #[clap(long, short)]
+    uccb_config_file: Option<PathBuf>,
     #[clap(long, default_value = "false")]
     log_json: bool,
 }
@@ -80,6 +82,12 @@ async fn main() -> Result<()> {
         }
     }));
 
+    let uccb_config = if let Some(uccb_config_file) = args.uccb_config_file {
+        Some(zilliqa::uccb::read_config(&uccb_config_file)?)
+    } else {
+        None
+    };
+
     let mut merged_config = toml::Table::new();
     for config_file in args.config_file {
         let config = fs::read_to_string(&config_file)?;
@@ -117,7 +125,7 @@ async fn main() -> Result<()> {
             .build()?;
     };
 
-    let mut node = P2pNode::new(args.secret_key, config.clone())?;
+    let mut node = P2pNode::new(args.secret_key, config.clone(), uccb_config)?;
 
     node.add_shard_node(config.nodes.first().unwrap().clone())
         .await?;
