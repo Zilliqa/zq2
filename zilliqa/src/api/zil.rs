@@ -1065,9 +1065,8 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
         let block = node
             .consensus
             .block_store
-            .get_block_by_number(i)
-            .unwrap()
-            .unwrap();
+            .get_block_by_number(i)?
+            .ok_or_else(|| anyhow!("Block not found"))?;
         num_txns_epoch += block.transactions.len();
     }
     Ok(num_txns_epoch.to_string())
