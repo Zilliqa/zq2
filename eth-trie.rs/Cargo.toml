@@ -20,7 +20,7 @@ alloy = { version = "0.4.2", default-features = false, features = ["getrandom"] 
 rand = "0.8.5"
 hex = "0.4.3"
 criterion = "0.5.1"
-uuid = { version = "1.9.0", features = ["serde", "v4"] }
+uuid = { version = "1.11.0", features = ["serde", "v4"] }
 
 [[bench]]
 name = "trie"
