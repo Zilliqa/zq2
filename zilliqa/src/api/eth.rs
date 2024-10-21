@@ -178,7 +178,6 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let mut node = node.lock().unwrap();
     let block = node.get_block(block_id)?;
-
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
     let ret = node.call_contract(

@@ -62,6 +62,18 @@ s = k - (r * privateKey)
 
 Now represent `r` and `s` as big-endian 0-padded 32-byte byte arrays, and concatenate them - `r . s` - to form an EC-Schnorr signature for the transaction, encode it in hex with no leading `0x`, and put it in the `signature` field eg. `9fe2d73db6cc4635c54dfdeb6c6965ed14a172ac5ba4dc77f9bdfe230394d62b47c8c5702cb757b460b2fc407090ed2c1d6732855ac891fea46ca3e86ab6ec4a`.
 
+## Parameter validation
+
+Zilliqa 1 validates at least the following on transaction submission:
+
+ 1. The `toAddr` must have an ethereum or Zilliqa checksum (see the overview page for a description).
+ 2. It's not possible to send a transfer transaction to a contract.
+ 4. The destination address for a contract transaction must exist and must be a contract.
+
+We validate only the first of these, since it is not in general
+possible to know what the state of the blockchain will be when a
+transaction is executed.
+
 # Curl
 
 With private key `0x2`:
