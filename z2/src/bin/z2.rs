@@ -93,6 +93,8 @@ enum DeployerCommands {
     Restore(DeployerRestoreArgs),
     /// Reset a network stopping all the nodes and cleaning the /data folder
     Reset(DeployerActionsArgs),
+    /// Restart a network stopping all the nodes and starting the service again
+    Restart(DeployerActionsArgs),
 }
 
 #[derive(Args, Debug)]
@@ -756,6 +758,19 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer reset command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Restart(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_restart(&config_file, arg.select)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer restart command: {}", err)
                     })?;
                 Ok(())
             }

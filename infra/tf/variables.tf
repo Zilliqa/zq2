@@ -14,20 +14,199 @@ variable "region" {
   default     = "europe-west2"
 }
 
-variable "node_zone" {
-  description = "(Optional) The GCP zone to provision the node in"
-  type        = string
-  nullable    = true
-  default     = ""
+variable "apps" {
+  description = "(Optional) The configuration of the apps nodes"
+  type = object({
+    disk_size            = optional(number, 256)
+    instance_type        = optional(string, "e2-standard-2")
+    provisioning_model   = optional(string, "STANDARD")
+    generate_external_ip = optional(bool, false)
+    nodes = list(object({
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
+    }))
+  })
+  default = {
+    nodes : [
+      {
+        count  = 1
+        region = "asia-southeast1"
+      }
+    ]
+  }
+
+  # Validation for provisioning_model
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.apps.provisioning_model)
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+  }
+
+  # Validation to check that both 'region' and 'zone' are not specified together
+  validation {
+    condition = alltrue([
+      for node in var.apps.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+    ])
+    error_message = "You need to specify either 'region' or 'zone' for a node."
+  }
 }
 
-variable "nodes_dns_zone_name" {
+variable "api" {
+  description = "(Optional) The configuration of the api nodes"
+  type = object({
+    disk_size            = optional(number, 256)
+    instance_type        = optional(string, "e2-standard-2")
+    provisioning_model   = optional(string, "STANDARD")
+    generate_external_ip = optional(bool, false)
+    nodes = list(object({
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
+    }))
+  })
+  default = {
+    nodes : [
+      {
+        count  = 3
+        region = "asia-southeast1"
+      }
+    ]
+  }
+
+  # Validation for provisioning_model
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.api.provisioning_model)
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+  }
+
+  # Validation to check that both 'region' and 'zone' are not specified together
+  validation {
+    condition = alltrue([
+      for node in var.api.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+    ])
+    error_message = "You need to specify either 'region' or 'zone' for a node."
+  }
+}
+
+variable "validator" {
+  description = "(Optional) The configuration of the validator nodes"
+  type = object({
+    disk_size            = optional(number, 256)
+    instance_type        = optional(string, "e2-standard-2")
+    provisioning_model   = optional(string, "STANDARD")
+    generate_external_ip = optional(bool, false)
+    nodes = list(object({
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
+    }))
+  })
+  default = {
+    nodes : [
+      {
+        count  = 3
+        region = "asia-southeast1"
+      }
+    ]
+  }
+
+  # Validation for provisioning_model
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.validator.provisioning_model)
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+  }
+
+  # Validation to check that both 'region' and 'zone' are not specified together
+  validation {
+    condition = alltrue([
+      for node in var.validator.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+    ])
+    error_message = "You need to specify either 'region' or 'zone' for a node."
+  }
+}
+
+variable "bootstrap" {
+  description = "(Optional) The configuration of the bootstrap nodes"
+  type = object({
+    disk_size            = optional(number, 256)
+    instance_type        = optional(string, "e2-standard-2")
+    provisioning_model   = optional(string, "STANDARD")
+    generate_external_ip = optional(bool, true)
+    nodes = list(object({
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
+    }))
+  })
+  default = {
+    nodes : [
+      {
+        count  = 1
+        region = "asia-southeast1"
+      }
+    ]
+  }
+
+  # Validation for provisioning_model
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.bootstrap.provisioning_model)
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+  }
+
+  # Validation to check that both 'region' and 'zone' are not specified together
+  validation {
+    condition = alltrue([
+      for node in var.bootstrap.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+    ])
+    error_message = "You need to specify either 'region' or 'zone' for a node."
+  }
+}
+
+variable "checkpoint" {
+  description = "(Optional) The configuration of the checkpoint nodes"
+  type = object({
+    disk_size            = optional(number, 256)
+    instance_type        = optional(string, "e2-standard-2")
+    provisioning_model   = optional(string, "STANDARD")
+    generate_external_ip = optional(bool, false)
+    bucket_force_destroy = optional(bool, true)
+    nodes = list(object({
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
+    }))
+  })
+  default = {
+    nodes : [
+      {
+        count  = 1
+        region = "asia-southeast1"
+      }
+    ]
+  }
+
+  # Validation for provisioning_model
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.checkpoint.provisioning_model)
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+  }
+
+  # Validation to check that both 'region' and 'zone' are not specified together
+  validation {
+    condition = alltrue([
+      for node in var.checkpoint.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+    ])
+    error_message = "You need to specify either 'region' or 'zone' for a node."
+  }
+}
+
+variable "node_dns_subdomain" {
   description = "Nodes DNS zone name"
   type        = string
   nullable    = false
 }
 
-variable "dns_zone_project_id" {
+variable "node_dns_zone_project_id" {
   description = "The id of the Google project that hosts the DNS zone."
   type        = string
   nullable    = false
@@ -39,8 +218,8 @@ variable "subdomain" {
   nullable    = false
 }
 
-variable "network_name" {
-  description = "(Optional) ZQ2 network name"
+variable "chain_name" {
+  description = "(Optional) ZQ2 blockchain name"
   type        = string
   nullable    = false
   default     = "zq2-devnet"
@@ -59,39 +238,6 @@ variable "vpc_main_subnet_name" {
   nullable    = false
 }
 
-variable "apps_node_count" {
-  description = "(Optional) ZQ2 Node apps count"
-  type        = number
-  nullable    = false
-  default     = 1
-}
-
-variable "provisioning_model" {
-  description = "The provisioning model for the instance. Must be either 'STANDARD' or 'SPOT'."
-  type        = string
-
-  validation {
-    condition     = contains(["STANDARD", "SPOT"], var.provisioning_model)
-    error_message = "The provisioning model must be either 'STANDARD' or 'SPOT'."
-  }
-
-  default = "STANDARD"
-}
-
-variable "api_node_count" {
-  description = "(Optional) ZQ2 Node apps count"
-  type        = number
-  nullable    = false
-  default     = 3
-}
-
-variable "validator_node_count" {
-  description = "(Optional) ZQ2 Node apps count"
-  type        = number
-  nullable    = false
-  default     = 3
-}
-
 variable "persistence_url" {
   description = "(Optional) ZQ2 Recovery persistence URL"
   type        = string
@@ -105,34 +251,8 @@ variable "gcp_docker_registry_project_id" {
   default     = "prj-p-devops-services-tvwmrf63"
 }
 
-variable "distributed_validators" {
-  description = "(Optional) regional validators deployment. Useful for distributed load tests."
-  type = list(object({
-    region          = string
-    vm_num          = number
-    vpc_subnet_name = string
-    vm_type         = optional(string)
-    vm_zone         = optional(string)
-  }))
-  default = []
-}
-
-variable "apps_node_type" {
-  description = "(Optional) The size of the apps nodes."
-  type        = string
-  default     = "e2-standard-2"
-  nullable    = false
-}
-
-variable "node_type" {
-  description = "(Optional) The size of the nodes."
-  type        = string
-  default     = "e2-standard-2"
-  nullable    = false
-}
-
-variable "checkpoint_bucket_force_destroy" {
-  description = "(Optional) Whether force destroying the checkpoint bucket deprovisioning the infrastructure."
+variable "persistence_bucket_force_destroy" {
+  description = "(Optional) Whether force destroying the persistence bucket deprovisioning the infrastructure."
   type        = bool
   default     = true
   nullable    = false
