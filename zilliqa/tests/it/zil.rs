@@ -1645,3 +1645,92 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
 
     assert_eq!(response_num, 1);
 }
+
+#[zilliqa_macros::test]
+async fn get_total_coin_supply(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTotalCoinSupply", [""])
+        .await
+        .expect("Failed to call GetTotalCoinSupply API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+
+    let total_coin_supply_str = response.as_str().expect("Expected string conversion");
+    let total_coin_supply_as_int: u128 = total_coin_supply_str
+        .parse()
+        .expect("Expected string to be parsed as an integer");
+
+    assert!(
+        total_coin_supply_as_int > 0,
+        "Total coin supply should be greater than 0"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_total_coin_supply_as_int(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTotalCoinSupplyAsInt", [""])
+        .await
+        .expect("Failed to call GetTotalCoinSupplyAsInt API");
+
+    assert!(
+        response.is_number(),
+        "Expected response to be a number, got: {:?}",
+        response
+    );
+
+    assert!(response.is_number());
+    let total_coin_supply_as_int: u128 = response
+        .as_number()
+        .expect("Expected number converstion")
+        .as_u128()
+        .expect("Expected u128 conversion");
+    assert!(
+        total_coin_supply_as_int > 0,
+        "Total coin supply should be greater than 0"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn compare_total_coin_supply(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response_str: Value = wallet
+        .provider()
+        .request("GetTotalCoinSupply", [""])
+        .await
+        .expect("Failed to call GetTotalCoinSupply API");
+
+    let response_int: Value = wallet
+        .provider()
+        .request("GetTotalCoinSupplyAsInt", [""])
+        .await
+        .expect("Failed to call GetTotalCoinSupplyAsInt API");
+
+    let total_coin_supply_str = response_str.as_str().expect("Expected string conversion");
+    let total_coin_supply_as_int_from_str: u128 = total_coin_supply_str
+        .parse()
+        .expect("Expected string to be parsed as an integer");
+
+    assert!(response_int.is_number());
+    let total_coin_supply_as_int: u128 = response_int
+        .as_number()
+        .expect("Expected number converstion")
+        .as_u128()
+        .expect("Expected u128 conversion");
+
+    assert_eq!(
+        total_coin_supply_as_int_from_str, total_coin_supply_as_int,
+        "Total coin supply from string and int APIs should be the same"
+    );
+}
