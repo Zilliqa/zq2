@@ -1,11 +1,10 @@
 use core::convert::AsRef;
-use std::{env, fs, path::Path};
+use std::{env, fs, os::unix::fs::PermissionsExt, path::Path};
 
 use anyhow::{anyhow, Result};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::os::unix::fs::PermissionsExt;
 
 pub async fn file_exists(file_name: impl AsRef<Path>) -> Result<bool> {
     Ok(tokio::fs::metadata(file_name).await.is_ok())

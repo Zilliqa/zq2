@@ -971,6 +971,7 @@ impl Network {
                                     inner
                                         .handle_request(
                                             source,
+                                            "(synthetic_id)",
                                             external_message.clone(),
                                             response_channel,
                                         )

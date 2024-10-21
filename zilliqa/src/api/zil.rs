@@ -1049,7 +1049,7 @@ fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
     let latest_block = node
         .consensus
         .block_store
-        .get_block_by_number(node.get_chain_tip())?;
+        .get_canonical_block_by_number(node.get_chain_tip())?;
     let num_transactions = match latest_block {
         Some(block) => block.transactions.len(),
         None => 0,
@@ -1067,7 +1067,7 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
         let block = node
             .consensus
             .block_store
-            .get_block_by_number(i)?
+            .get_canonical_block_by_number(i)?
             .ok_or_else(|| anyhow!("Block not found"))?;
         num_txns_epoch += block.transactions.len();
     }
