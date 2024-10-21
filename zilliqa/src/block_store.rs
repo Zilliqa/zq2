@@ -367,8 +367,6 @@ pub struct BlockStore {
     highest_confirmed_view: u64,
     /// Information we keep about our peers' state.
     peers: BTreeMap<PeerId, PeerInfo>,
-    /// The maximum view of blocks we've sent a request for.
-    requested_view: u64,
     /// The maximum number of blocks to send requests for at a time.
     max_blocks_in_flight: u64,
     /// When a request to a peer fails, do not send another request to this peer for this amount of time.
@@ -543,7 +541,6 @@ impl BlockStore {
             highest_known_view: 0,
             highest_confirmed_view: 0,
             peers: BTreeMap::new(),
-            requested_view: 0,
             max_blocks_in_flight: config.max_blocks_in_flight,
             failed_request_sleep_duration: config.failed_request_sleep_duration,
             strategies: vec![BlockStrategy::Latest(constants::RETAINS_LAST_N_BLOCKS)],
@@ -565,7 +562,6 @@ impl BlockStore {
             highest_known_view: 0,
             highest_confirmed_view: 0,
             peers: BTreeMap::new(),
-            requested_view: 0,
             max_blocks_in_flight: 0,
             failed_request_sleep_duration: Duration::ZERO,
             strategies: self.strategies.clone(),
@@ -671,22 +667,23 @@ impl BlockStore {
     /// Returns whether this function thinks we are syncing or not.
     pub fn request_missing_blocks(&mut self) -> Result<bool> {
         // Get the highest view we currently have committed to our chain.
+        // This is a bit horrid - it can go down as well as up, because we can roll back blocks
+        // when we discover that they are ahead of what we think the rest of the chain
+        // has committed to - if we don't roll back here, we won't then fetch the canonical
+        // versions of those blocks (thinking we already have them).
         let current_view = self
-            .get_block_by_number(
+            .db
+            .get_canonical_block_by_number(
                 self.db
-                    .get_highest_block_number()?
+                    .get_highest_canonical_block_number()?
                     .ok_or_else(|| anyhow!("no highest block"))?,
             )?
             .ok_or_else(|| anyhow!("missing highest block"))?
             .view();
-        // We've already got any block we've previously committed, so don't request them again.
-        if self.requested_view < current_view {
-            self.requested_view = current_view;
-        }
         // Take this opportunity to update the highest confirmed view.
-        self.highest_confirmed_view = std::cmp::max(self.highest_confirmed_view, current_view);
+        self.highest_confirmed_view = current_view;
         trace!(
-            "block_store::request_missing_blocks() : set highest_confirmed_view {0}",
+            "block_store::request_missing_blocks() : set highest_confirmed_view {0} (current = {current_view})",
             self.highest_confirmed_view
         );
 
@@ -700,12 +697,13 @@ impl BlockStore {
         // If we think the network might be ahead of where we currently are, attempt to download the missing blocks.
         // This is complicated, because we mustn't request more blocks than will fit in our cache, or we might
         // end up evicting the critical part of the chain..
-        let syncing = self.highest_known_view > current_view;
+        // @todo I can't think of a more elegant way than this, but it's horrid - we want to exclude views which
+        // we might still be voting on.
+        let syncing = (self.highest_known_view + 2) > current_view;
         if syncing {
             trace!(
                 current_view,
                 self.highest_known_view,
-                self.requested_view,
                 self.max_blocks_in_flight,
                 "block_store::request_missing_blocks() : missing some blocks"
             );
@@ -718,7 +716,7 @@ impl BlockStore {
                 // the network will hold some blocks for us, but true enough that I think we ought to treat it as
                 // such.
                 let to = cmp::min(
-                    cmp::min(self.requested_view, current_view) + self.max_blocks_in_flight,
+                    current_view + self.max_blocks_in_flight,
                     self.highest_known_view,
                 );
                 trace!("block_store::request_missing_blocks() : requesting blocks {from} to {to}");
@@ -726,7 +724,6 @@ impl BlockStore {
                     start: from,
                     end: to + 1,
                 });
-                self.requested_view = to;
             }
             if !to_request.is_empty() {
                 self.request_blocks(&to_request)?;
@@ -979,11 +976,11 @@ impl BlockStore {
         self.get_block(hash)
     }
 
-    pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
-        self.db.get_highest_block_number()
+    pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
+        self.db.get_highest_canonical_block_number()
     }
 
-    pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
         self.db.get_canonical_block_by_number(number)
     }
 
@@ -1080,7 +1077,7 @@ impl BlockStore {
             // In any case, deleting any cached block that calls itself the next block is
             // the right thing to do - if it really was the next block, we would not be
             // executing this branch.
-            if let Some(highest_block_number) = self.db.get_highest_block_number()? {
+            if let Some(highest_block_number) = self.db.get_highest_canonical_block_number()? {
                 self.buffered.delete_blocks_up_to(highest_block_number + 1);
                 trace!(
                     "block_store::obtain_child_block_candidates : deleted cached blocks up to and including {0}",

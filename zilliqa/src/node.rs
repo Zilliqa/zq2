@@ -270,7 +270,7 @@ impl Node {
                     .collect::<Result<_>>()?;
 
                 let availability = self.consensus.block_store.availability()?;
-                trace!("block_store::BlockRequest - responding to new blocks request of {request:?} with props {0:?} availability {availability:?}",
+                trace!("block_store::BlockRequest - responding to new blocks request {id:?} from {from:?} of {request:?} with props {0:?} availability {availability:?}",
                        proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
 
                 // Send the response to this block request.
@@ -414,9 +414,9 @@ impl Node {
 
     pub fn resolve_block_number(&self, block_number: BlockNumberOrTag) -> Result<Option<Block>> {
         match block_number {
-            BlockNumberOrTag::Number(n) => self.consensus.get_block_by_number(n),
+            BlockNumberOrTag::Number(n) => self.consensus.get_canonical_block_by_number(n),
 
-            BlockNumberOrTag::Earliest => self.consensus.get_block_by_number(0),
+            BlockNumberOrTag::Earliest => self.consensus.get_canonical_block_by_number(0),
             BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
             BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
             BlockNumberOrTag::Finalized => {

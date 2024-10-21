@@ -965,20 +965,20 @@ impl ActiveCall {
     fn fetch_blockchain_info(&self, name: String, args: String) -> Result<(bool, String)> {
         match name.as_str() {
             "CHAINID" => Ok((true, self.state.zil_chain_id().to_string())),
-            "BLOCKNUMBER" => match self.state.get_highest_block_number()? {
+            "BLOCKNUMBER" => match self.state.get_highest_canonical_block_number()? {
                 Some(block_number) => Ok((true, block_number.to_string())),
                 None => Ok((false, "".to_string())),
             },
             "BLOCKHASH" => {
                 let block_number: u64 = args.parse()?;
-                match self.state.get_block_by_number(block_number)? {
+                match self.state.get_canonical_block_by_number(block_number)? {
                     Some(block) => Ok((true, block.hash().to_string())),
                     None => Ok((false, "".to_string())),
                 }
             }
             "TIMESTAMP" => {
                 let block_number: u64 = args.parse()?;
-                match self.state.get_block_by_number(block_number)? {
+                match self.state.get_canonical_block_by_number(block_number)? {
                     Some(block) => Ok((
                         true,
                         block
