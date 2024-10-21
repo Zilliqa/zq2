@@ -103,7 +103,7 @@ resource "google_compute_backend_service" "otterscan" {
   session_affinity      = "CLIENT_IP"
 
   dynamic "backend" {
-    for_each = google_compute_instance_group.apps
+    for_each = var.apps.detach_load_balancer ? {} : google_compute_instance_group.apps
     content {
       group           = backend.value.self_link
       balancing_mode  = "UTILIZATION"
@@ -121,7 +121,7 @@ resource "google_compute_backend_service" "spout" {
   session_affinity      = "CLIENT_IP"
 
   dynamic "backend" {
-    for_each = google_compute_instance_group.apps
+    for_each = var.apps.detach_load_balancer ? {} : google_compute_instance_group.apps
     content {
       group           = backend.value.self_link
       balancing_mode  = "UTILIZATION"

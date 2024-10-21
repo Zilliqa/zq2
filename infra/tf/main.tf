@@ -279,7 +279,7 @@ resource "google_compute_backend_service" "api" {
   session_affinity      = "CLIENT_IP"
 
   dynamic "backend" {
-    for_each = google_compute_instance_group.api
+    for_each = var.api.detach_load_balancer ? {} : google_compute_instance_group.api
     content {
       group           = backend.value.self_link
       balancing_mode  = "UTILIZATION"
