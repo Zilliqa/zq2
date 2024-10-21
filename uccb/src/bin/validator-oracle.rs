@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 
 use alloy::{
     contract::{ContractInstance, DynCallBuilder, Interface},
@@ -15,7 +15,7 @@ use alloy::{
 use anyhow::Result;
 use clap::Parser;
 use futures_util::stream::StreamExt;
-use tokio::sync::watch;
+use tokio::{select, sync::watch};
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 use uccb::{
@@ -39,6 +39,7 @@ struct ValidatorOracle {
     chain_clients: Vec<ChainClient>,
     validator_manager_abi: JsonAbi,
     deposit_contract: ContractInstance<PubSubFrontend, uccb::client::ChainProvider, Ethereum>,
+    pending_validators: BTreeMap<u64, Vec<Address>>,
 }
 
 impl ValidatorOracle {
@@ -77,6 +78,7 @@ impl ValidatorOracle {
                     .clone(),
             )?,
             deposit_contract,
+            pending_validators: BTreeMap::new(),
         })
     }
 
@@ -141,38 +143,50 @@ impl ValidatorOracle {
         .map(|x| FixedBytes::<32>::from(x.as_fixed_bytes()))
         .collect();
 
-        let filter = Filter::new()
+        let stakers_filter = Filter::new()
             .address(contract_addr::DEPOSIT)
             .event_signature(signatures)
-            .from_block(BlockNumberOrTag::Finalized);
+            .to_block(BlockNumberOrTag::Finalized);
 
-        let subscription = self
+        let stakers_subscription = self
             .zq2_chain_client()
             .provider
-            .subscribe_logs(&filter)
+            .subscribe_logs(&stakers_filter)
             .await?;
-        let mut stream = subscription.into_stream();
-        while let Some(log) = stream.next().await {
-            info!("Received validator update: {log:?}");
+        let mut stakers_stream = stakers_subscription.into_stream();
 
-            //let block_number = self.zq2_chain_client().provider.get_block_number().await?;
-            let block_number: u64 = self
-                .zq2_chain_client()
-                .provider
-                .raw_request("eth_blockNumber".into(), (BlockNumberOrTag::Finalized,))
-                .await?;
+        let new_heads_subscription = self.zq2_chain_client().provider.subscribe_blocks().await?;
+        let mut new_heads_stream = new_heads_subscription.into_stream();
 
-            if let Some(log_block_number) = log.block_number {
-                if log_block_number >= block_number {
-                    let validators = self.get_stakers().await?;
-                    info!("Updating chains to the current validator set to: {validators:?}");
+        loop {
+            select! {
+                Some(block) = new_heads_stream.next() => {
+                    debug!("Received new head update: {block:?}");
 
-                    sender.send(validators)?;
+                    let block_numbers: Vec<u64> = self.pending_validators.range(..block.header.number).map(|(&block_number, _)| block_number).collect();
+                    if let Some(block_number) = block_numbers.last() {
+                        let validators = self.pending_validators.get_mut(block_number).unwrap();
+                        info!("Scheduling validator update for block {block_number}: {validators:?}");
+                        sender.send(std::mem::take(validators))?;
+                    }
+
+                    for block_number in block_numbers {
+                        self.pending_validators.remove(&block_number);
+                    }
+                }
+                Some(log) = stakers_stream.next() => {
+                    if log.removed {
+                        continue;
+                    }
+
+                    info!("Validator update event: {log:?}");
+
+                    if let Some(log_block_number) = log.block_number {
+                        self.pending_validators.insert(log_block_number, self.get_stakers().await?);
+                    }
                 }
             }
         }
-
-        Ok(())
     }
 
     async fn create_zq2_chain_client(
@@ -199,9 +213,9 @@ impl ValidatorOracle {
 
         let call_builder: DynCallBuilder<_, _, _> = self
             .deposit_contract
-            .function("getStakerSignerAddresses", &[])?;
+            .function("getStakerData", &[])?;
         let output = call_builder.call().await?;
-        let validators = output[0]
+        let validators = output[1]
             .as_array()
             .unwrap()
             .iter()
@@ -216,6 +230,8 @@ impl ValidatorOracle {
         validators: &[Address],
         validator_manager_abi: JsonAbi,
     ) -> Result<()> {
+        info!("Updating validators at {}", &chain_client.rpc_url);
+
         let validator_manager_interface = Interface::new(validator_manager_abi);
 
         let contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
