@@ -218,6 +218,12 @@ pub async fn run_deployer_reset(config_file: &str, node_selection: bool) -> Resu
     Ok(())
 }
 
+pub async fn run_deployer_restart(config_file: &str, node_selection: bool) -> Result<()> {
+    println!("🦆 Running restart for {config_file} .. ");
+    deployer::run_restart(config_file, node_selection).await?;
+    Ok(())
+}
+
 pub async fn print_depends(_base_dir: &str) -> Result<()> {
     for p in Component::all().iter() {
         let req = setup::Setup::describe_component(p).await?;

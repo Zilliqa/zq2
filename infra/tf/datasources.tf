@@ -7,8 +7,3 @@ data "google_compute_subnetwork" "default" {
   region  = var.region
   name    = var.vpc_main_subnet_name
 }
-
-data "google_compute_zones" "zones" {
-  project = var.project_id
-  region  = var.region
-}

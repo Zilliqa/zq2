@@ -11,16 +11,16 @@ output "genesis_key" {
 output "node_keys" {
   description = "The secret ID of the node private key in GCP Secrets Manager"
   value = flatten(concat(
-    module.bootstrap_node.node_key,
+    module.bootstraps.node_key,
     module.apis.node_key,
     module.validators.node_key,
     module.checkpoints.node_key,
-  [for k, m in module.distributed_validators : m.node_key]))
+  ))
 }
 
 output "reward_wallets" {
   description = "The secret ID of the node reward wallet in GCP Secrets Manager"
   value = flatten(concat(
     module.validators.reward_wallet,
-  [for k, m in module.distributed_validators : m.reward_wallet]))
+  ))
 }
