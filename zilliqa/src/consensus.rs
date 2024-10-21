@@ -556,15 +556,6 @@ impl Consensus {
             return Ok(None);
         }
 
-        if block.view() <= head_block.header.view {
-            warn!(
-                "Rejecting block - view not greater than our current head block! {} vs {}",
-                block.view(),
-                head_block.header.view
-            );
-            return Ok(None);
-        }
-
         if block.gas_limit() > self.config.consensus.eth_block_gas_limit
             || block.gas_used() > block.gas_limit()
         {
@@ -600,6 +591,17 @@ impl Consensus {
                 }
                 return Ok(None);
             }
+        }
+
+        // The block has been checked but if its view is lower than current then store it without executing incase it is used in canonical chain
+        if block.view() <= head_block.header.view {
+            self.db.insert_block(&block)?;
+            warn!(
+                "View not greater than our current head block! {} vs {}. Storing but not executing.",
+                block.view(),
+                head_block.header.view
+            );
+            return Ok(None);
         }
 
         self.update_high_qc_and_view(block.agg.is_some(), block.header.qc)?;
@@ -1876,6 +1878,7 @@ impl Consensus {
         Ok(current.view() == 0 || current.hash() == ancestor.hash())
     }
 
+    /// Check block is valid to vote on
     fn check_safe_block(&mut self, proposal: &Block, during_sync: bool) -> Result<bool> {
         let Some(qc_block) = self.get_block(&proposal.parent_hash())? else {
             trace!("could not get qc for block: {}", proposal.parent_hash());
@@ -2508,7 +2511,6 @@ impl Consensus {
             head = self.get_block(&head.parent_hash())?.unwrap();
             head_height = head.number();
         }
-
         while proposed_block_height > head_height {
             trace!("Stepping back proposed block pointer");
             proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
