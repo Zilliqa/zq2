@@ -1,0 +1,19 @@
+bootstrap_address = ["12D3KooWEpeCSbza6zYXJ8PY8v6iEZYzYD4mhk4QbmHGbjx186dS", "/ip4/34.87.62.126/udp/3333/quic-v1"]
+p2p_port = 3333
+
+[[nodes]]
+data_dir = "/data"
+eth_chain_id = 33103
+
+[nodes.allowed_timestamp_skew]
+nanos = 0
+secs = 60
+
+[nodes.consensus]
+blocks_per_hour = 3600
+eth_block_gas_limit = 84000000
+gas_price = "4_761_904_800_000"
+genesis_accounts = [["0x3b5cf50bb3ed8d77d1895084092156c7549be7df", "21_000_000_000_000_000_000_000_000_000"]]
+genesis_deposits = [["b95bb5b3669baa33ebedd784bcab7e281deba89537ccabbe2bbb81c7bdbbd11c8a8118dfc3fd8af17077c4636c52b508", "12D3KooWEpeCSbza6zYXJ8PY8v6iEZYzYD4mhk4QbmHGbjx186dS", "100_000_000_000_000_000_000_000_000", "0x3b5cf50bb3ed8d77d1895084092156c7549be7df"]]
+minimum_stake = "10_000_000_000_000_000_000_000_000"
+rewards_per_hour = "51_000_000_000_000_000_000_000"

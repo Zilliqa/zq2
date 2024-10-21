@@ -1,8 +1,8 @@
 #!/bin/bash
 
-ZQ_VERSION="{{ version }}"
+ZQ_VERSION="v0.3.1"
 ZQ2_IMAGE="asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:${ZQ_VERSION}"
-CHAIN_NAME="{{ chain_name }}"
+CHAIN_NAME="zq2-prototestnet"
 
 NODE_PRIVATE_KEY=""
 CONFIG_FILE="${CHAIN_NAME}.toml"
