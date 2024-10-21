@@ -49,9 +49,11 @@ use crate::{
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
+    uccb::validator_node,
 };
 
 type UCCBValidatorNode = crate::uccb::validator_node::ValidatorNode;
+type UCCBStateInfo = crate::uccb::validator_node::StateInfo;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct RequestId(u64);
@@ -151,6 +153,7 @@ pub struct Node {
     pub chain_id: ChainId,
     // UCCB
     validator_node: Option<UCCBValidatorNode>,
+    uccb_state_info: Arc<Mutex<UCCBStateInfo>>,
     bridge_inbound_message_sender: Option<UnboundedSender<ExternalMessage>>,
 }
 
@@ -199,6 +202,7 @@ impl Node {
             db.clone(),
         )?));
 
+        let uccb_state_info = Arc::new(Mutex::new(validator_node::StateInfo::new()));
         let (bridge_inbound_message_sender, validator_node) = if let Some(uccb_config) = uccb_config
         {
             let signer = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
@@ -210,6 +214,7 @@ impl Node {
                 config.eth_chain_id,
                 message_sender_channel,
                 consensus.clone(),
+                uccb_state_info.clone(),
             ) {
                 Ok(validator_node) => (
                     Some(validator_node.get_bridge_inbound_message_sender()),
@@ -235,9 +240,14 @@ impl Node {
             consensus,
             peer_num,
             validator_node,
+            uccb_state_info,
             bridge_inbound_message_sender,
         };
         Ok(node)
+    }
+
+    pub fn uccb_state_info(&self) -> Arc<Mutex<validator_node::StateInfo>> {
+        self.uccb_state_info.clone()
     }
 
     pub fn start(&mut self) -> Option<JoinHandle<()>> {

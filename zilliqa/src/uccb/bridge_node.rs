@@ -29,6 +29,7 @@ use crate::{
         event::{DispatchedEvent, RelayEventSignatures, RelayedEvent},
         message::{Dispatch, Dispatched, InboundBridgeMessage, OutboundBridgeMessage, Relay},
         signature::SignatureTracker,
+        validator_node::StateInfo,
     },
 };
 
@@ -42,6 +43,7 @@ pub struct BridgeNode {
     pub chain_client: ChainClient,
     validators: HashSet<Address>,
     consensus: Arc<Mutex<Consensus>>,
+    state_info: Arc<Mutex<StateInfo>>,
 }
 
 impl BridgeNode {
@@ -49,6 +51,7 @@ impl BridgeNode {
         chain_client: ChainClient,
         outbound_message_sender: UnboundedSender<OutboundBridgeMessage>,
         consensus: Arc<Mutex<Consensus>>,
+        state_info: Arc<Mutex<StateInfo>>,
     ) -> Result<Self> {
         let (inbound_message_sender, inbound_message_receiver) = mpsc::unbounded_channel();
         let inbound_message_receiver = UnboundedReceiverStream::new(inbound_message_receiver);
@@ -62,6 +65,7 @@ impl BridgeNode {
             inbound_message_sender,
             consensus,
             relay_nonces: HashSet::new(),
+            state_info,
         })
     }
 
@@ -136,6 +140,13 @@ impl BridgeNode {
                             },
                         );
                     }
+                };
+
+                if let Some(event_signature) = self.event_signatures.get(&dispatch.nonce) {
+                    if let Some(event) = &event_signature.event {
+                        let mut state_info = self.state_info.lock().unwrap();
+                        state_info.pending_relayed_events.remove(event);
+                    }
                 }
             }
             InboundBridgeMessage::Relay(relay) => {
@@ -164,6 +175,12 @@ impl BridgeNode {
 
         info!("Received a relay event: {event:?}");
         self.relay_nonces.insert(event.nonce);
+
+        {
+            let mut state_info = self.state_info.lock().unwrap();
+            state_info.pending_relayed_events.insert(event.clone());
+            state_info.relayed_events.push(event.clone());
+        }
 
         self.outbound_message_sender
             .send(OutboundBridgeMessage::Relay(Relay {
