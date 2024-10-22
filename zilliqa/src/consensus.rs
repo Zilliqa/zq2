@@ -1341,7 +1341,6 @@ impl Consensus {
 
                 // Forwarding cache
                 self.receipts_cache.insert(tx.hash, receipt);
-                self.transaction_pool.insert_shadow_transaction(tx.clone());
 
                 tx_index_in_block += 1;
                 updated_root_hash = state.root_hash()?;
@@ -2732,31 +2731,6 @@ impl Consensus {
             trace!("applying {} transactions to state", transactions.len());
         }
 
-        let mut verified_txns = Vec::new();
-
-        // We re-inject any missing Intershard transactions (or really, any missing
-        // transactions) from our mempool. If any txs are unavailable in both the
-        // message or locally, the proposal cannot be applied
-        for (idx, tx_hash) in block.transactions.iter().enumerate() {
-            // Prefer to insert verified txn from pool. This is faster.
-            let txn = match self.transaction_pool.pop_transaction(*tx_hash) {
-                Some(txn) => txn,
-                _ => match transactions
-                    .get(idx)
-                    .map(|sig_tx| sig_tx.clone().verify())
-                    .transpose()?
-                {
-                    // Otherwise, recover txn from proposal. This is slower.
-                    Some(txn) if txn.hash == *tx_hash => txn,
-                    _ => {
-                        warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
-                        return Ok(());
-                    }
-                },
-            };
-            verified_txns.push(txn);
-        }
-
         let mut block_receipts: Vec<(TransactionReceipt, usize)> = Vec::new();
 
         if from.is_some_and(|peer_id| peer_id == self.peer_id()) {
@@ -2774,6 +2748,31 @@ impl Consensus {
             // fast-forward state
             self.state.set_to_root(block.state_root_hash().into());
         } else {
+            let mut verified_txns = Vec::new();
+
+            // We re-inject any missing Intershard transactions (or really, any missing
+            // transactions) from our mempool. If any txs are unavailable in both the
+            // message or locally, the proposal cannot be applied
+            for (idx, tx_hash) in block.transactions.iter().enumerate() {
+                // Prefer to insert verified txn from pool. This is faster.
+                let txn = match self.transaction_pool.pop_transaction(*tx_hash) {
+                    Some(txn) => txn,
+                    _ => match transactions
+                        .get(idx)
+                        .map(|sig_tx| sig_tx.clone().verify())
+                        .transpose()?
+                    {
+                        // Otherwise, recover txn from proposal. This is slower.
+                        Some(txn) if txn.hash == *tx_hash => txn,
+                        _ => {
+                            warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
+                            return Ok(());
+                        }
+                    },
+                };
+                verified_txns.push(txn);
+            }
+
             let mut cumulative_gas_used = EvmGas(0);
             let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
             let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
