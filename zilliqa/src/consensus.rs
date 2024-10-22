@@ -2762,11 +2762,11 @@ impl Consensus {
         if from.is_some_and(|peer_id| peer_id == self.peer_id()) {
             info!("Fast-forward self-proposal");
             // recover previous receipts from cache
-            for (tx_index, txn) in verified_txns.into_iter().enumerate() {
+            for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
                 block_receipts.push((
                     self.receipts_cache
-                        .remove(&txn.hash)
-                        .expect("receipt were inserted during proposal assembly"),
+                        .remove(txn_hash)
+                        .expect("receipt inserted during proposal assembly"),
                     tx_index,
                 ));
                 // TODO: Apply 'touched-address' from cache
