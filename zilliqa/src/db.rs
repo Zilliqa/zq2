@@ -521,7 +521,8 @@ impl Db {
             .lock()
             .unwrap()
             .query_row("SELECT high_qc FROM tip_info", (), |row| row.get(0))
-            .optional()?)
+            .optional()?
+            .flatten())
     }
 
     pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {

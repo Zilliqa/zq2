@@ -364,7 +364,11 @@ impl Consensus {
         // If we're at genesis, add the genesis block.
         if latest_block_view == 0 {
             if let Some(genesis) = latest_block {
-                consensus.add_block(None, genesis.clone())?;
+                // The genesis block might already be stored and we were interrupted before we got a
+                // QC for it.
+                if consensus.get_block(&genesis.hash())?.is_none() {
+                    consensus.add_block(None, genesis.clone())?;
+                }
             }
             // treat genesis as finalized
             consensus.finalize_view(latest_block_view)?;
