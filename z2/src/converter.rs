@@ -5,6 +5,7 @@ use std::{
     fs,
     path::PathBuf,
     process::{self, Stdio},
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -23,6 +24,7 @@ use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
 use libp2p::PeerId;
 use revm::primitives::ResultAndState;
+use scilla_parser::Contract;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -42,7 +44,7 @@ use zilliqa::{
     message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
     schnorr,
-    scilla::{storage_key, ParamValue},
+    scilla::{storage_key, ParamValue, Transition, TransitionParam},
     state::{contract_addr, Account, Code, State},
     time::SystemTime,
     transaction::{
@@ -199,12 +201,30 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
         None => String::new(),
     };
 
+    let code = String::from_utf8(code)
+        .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?;
+
+    let contract = Contract::from_str(&code)?;
+
     Ok(Code::Scilla {
-        code: String::from_utf8(code)
-            .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?,
+        code,
         init_data: serde_json::from_str(&init_data)?,
         types: BTreeMap::default(),
-        transitions: vec![],
+        transitions: contract
+            .transitions
+            .iter()
+            .map(|elem| Transition {
+                name: elem.name.clone(),
+                params: elem
+                    .params
+                    .iter()
+                    .map(|params| TransitionParam {
+                        name: params.name.clone(),
+                        ty: format!("{}", params.r#type),
+                    })
+                    .collect(),
+            })
+            .collect(),
     })
 }
 
