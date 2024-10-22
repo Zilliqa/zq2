@@ -2737,10 +2737,11 @@ impl Consensus {
             info!("Fast-forward self-proposal");
             // recover previous receipts from cache
             for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
+                // Retrieve set of receipts
                 block_receipts.push((
                     self.receipts_cache
                         .remove(txn_hash)
-                        .expect("receipt inserted during proposal assembly"),
+                        .expect("receipt cached during proposal assembly"),
                     tx_index,
                 ));
                 // TODO: Apply 'touched-address' from cache
