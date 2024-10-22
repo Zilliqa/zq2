@@ -168,8 +168,6 @@ impl ChainId {
     }
 }
 
-const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
-
 impl Node {
     pub fn new(
         config: NodeConfig,
@@ -233,9 +231,10 @@ impl Node {
             ExternalMessage::Vote(m) => {
                 if let Some((block, transactions)) = self.consensus.vote(*m)? {
                     self.message_sender
-                        .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, transactions),
-                        ))?;
+                        .broadcast_proposal(ExternalMessage::Proposal(Proposal::from_parts(
+                            block,
+                            transactions,
+                        )))?;
                 }
                 // Acknowledge this vote.
                 self.request_responses
@@ -244,9 +243,10 @@ impl Node {
             ExternalMessage::NewView(m) => {
                 if let Some((block, transactions)) = self.consensus.new_view(*m)? {
                     self.message_sender
-                        .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, transactions),
-                        ))?;
+                        .broadcast_proposal(ExternalMessage::Proposal(Proposal::from_parts(
+                            block,
+                            transactions,
+                        )))?;
                 }
                 // Acknowledge this new view.
                 self.request_responses
@@ -394,7 +394,7 @@ impl Node {
                     .send_external_message(leader, response)
                     .unwrap();
             } else {
-                self.message_sender.broadcast_external_message(response)?;
+                self.message_sender.broadcast_proposal(response)?;
             }
             return Ok(true);
         }
@@ -899,11 +899,12 @@ impl Node {
 
     fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
         if let Some((to, message)) = self.consensus.proposal(from, proposal, false)? {
-            self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
+            self.reset_timeout
+                .send(self.config.consensus.consensus_timeout)?;
             if let Some(to) = to {
                 self.message_sender.send_external_message(to, message)?;
             } else {
-                self.message_sender.broadcast_external_message(message)?;
+                self.message_sender.broadcast_proposal(message)?;
             }
         }
 
