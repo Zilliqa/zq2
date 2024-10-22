@@ -94,6 +94,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNumTransactions", get_num_transactions),
             ("GetNumTxnsTXEpoch", get_num_txns_tx_epoch),
             ("GetNumTxnsDSEpoch", get_num_txns_ds_epoch),
+            ("GetTotalCoinSupply", get_total_coin_supply),
+            ("GetTotalCoinSupplyAsInt", get_total_coin_supply_as_int),
         ],
     )
 }
@@ -1070,4 +1072,14 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
         num_txns_epoch += block.transactions.len();
     }
     Ok(num_txns_epoch.to_string())
+}
+
+fn get_total_coin_supply(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    let node = node.lock().unwrap();
+    Ok(node.config.consensus.total_native_token_supply.to_string())
+}
+
+fn get_total_coin_supply_as_int(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
+    let node = node.lock().unwrap();
+    Ok(node.config.consensus.total_native_token_supply.0)
 }
