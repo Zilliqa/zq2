@@ -84,7 +84,7 @@ start() {
     --name zilliqa-${ZQ_VERSION} \
     -e RUST_LOG='zilliqa=debug' \
     -e RUST_BACKTRACE=1 \
-    -v $(pwd)/$CHAIN_NAME.toml:/config.toml \
+    -v $(pwd)/$CONFIG_FILE:/config.toml \
     -v /zilliqa.log:/zilliqa.log \
     -v $(pwd)/data:/data"
 
