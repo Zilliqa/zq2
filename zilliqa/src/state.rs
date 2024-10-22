@@ -118,18 +118,27 @@ impl State {
             Some(contract_addr::INTERSHARD_BRIDGE),
         )?;
 
-        let zero_account_balance = config.consensus.total_native_token_supply.0
-            - (config
-                .consensus
-                .genesis_accounts
-                .iter()
-                .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0))
-            - (config.consensus.genesis_deposits.iter().fold(
+        let zero_account_balance = config
+            .consensus
+            .total_native_token_supply
+            .0
+            .checked_sub(
+                config
+                    .consensus
+                    .genesis_accounts
+                    .iter()
+                    .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0),
+            )
+            .expect("Genesis accounts sum to more than total native token supply")
+            .checked_sub(config.consensus.genesis_deposits.iter().fold(
                 0,
                 |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| {
                     acc + item.2 .0
                 },
-            ));
+            ))
+            .expect(
+                "Genesis accounts + genesis deposits sum to more than total native token supply",
+            );
         state.mutate_account(Address::ZERO, |a| {
             a.balance = zero_account_balance;
             Ok(())
