@@ -1,6 +1,6 @@
 p2p_port = 3333
 
-{%- if role != "bootstrap" %}
+{%- if set_bootstrap_address == "true" %}
 bootstrap_address = [ "{{ bootstrap_peer_id }}", "/ip4/{{ bootstrap_public_ip }}/udp/3333/quic-v1" ]
 {%- endif %}
 

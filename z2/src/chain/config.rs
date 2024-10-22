@@ -47,4 +47,10 @@ impl NetworkConfig {
             versions,
         })
     }
+
+    pub async fn from_file(file: &str) -> Result<Self> {
+        let config = tokio::fs::read_to_string(file).await?;
+        let config: Self = serde_yaml::from_str(&config)?;
+        Ok(config)
+    }
 }
