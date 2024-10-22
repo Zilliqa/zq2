@@ -11,7 +11,6 @@ use alloy::{
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
-use revm::primitives::ResultAndState;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -20,9 +19,7 @@ use crate::{
     cfg::{Amount, NodeConfig, ScillaExtLibsPath},
     contracts, crypto,
     db::TrieStorage,
-    exec::BaseFeeCheck,
-    inspector,
-    message::{BlockHeader, MAX_COMMITTEE_SIZE},
+    message::MAX_COMMITTEE_SIZE,
     node::ChainId,
     scilla::{ParamValue, Scilla, Transition},
     serde_util::vec_param_value,
@@ -130,12 +127,13 @@ impl State {
                     .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0),
             )
             .expect("Genesis accounts sum to more than total native token supply")
-            .checked_sub(config.consensus.genesis_deposits.iter().fold(
-                0,
-                |acc, item: &(crypto::NodePublicKey, libp2p::PeerId, Amount, Address)| {
-                    acc + item.2 .0
-                },
-            ))
+            .checked_sub(
+                config
+                    .consensus
+                    .genesis_deposits
+                    .iter()
+                    .fold(0, |acc, item| acc + item.stake.0),
+            )
             .expect(
                 "Genesis accounts + genesis deposits sum to more than total native token supply",
             );
@@ -151,46 +149,69 @@ impl State {
             })?;
         }
 
+        let initial_stakers: Vec<_> = config
+            .consensus
+            .genesis_deposits
+            .into_iter()
+            .map(|deposit| {
+                Token::Tuple(vec![
+                    Token::Bytes(deposit.public_key.as_bytes()),
+                    Token::Bytes(deposit.peer_id.to_bytes()),
+                    Token::Address(ethabi::Address::from(deposit.reward_address.into_array())),
+                    Token::Address(ethabi::Address::from(deposit.control_address.into_array())),
+                    Token::Uint((*deposit.stake).into()),
+                ])
+            })
+            .collect();
         let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
             contracts::deposit::BYTECODE.to_vec(),
             &[
                 Token::Uint((*config.consensus.minimum_stake).into()),
                 Token::Uint(MAX_COMMITTEE_SIZE.into()),
+                Token::Uint(config.consensus.blocks_per_epoch.into()),
+                Token::Array(initial_stakers),
             ],
         )?;
-
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
-        for (pub_key, peer_id, stake, reward_address) in config.consensus.genesis_deposits {
-            let data = contracts::deposit::SET_STAKE.encode_input(&[
-                Token::Bytes(pub_key.as_bytes()),
-                Token::Bytes(peer_id.to_bytes()),
-                Token::Address(ethabi::Address::from(reward_address.into_array())),
-                Token::Uint((*stake).into()),
-            ])?;
-            let (
-                ResultAndState {
-                    result,
-                    state: result_state,
-                },
-                ..,
-            ) = state.apply_transaction_evm(
-                Address::ZERO,
-                Some(contract_addr::DEPOSIT),
-                0,
-                config.consensus.eth_block_gas_limit,
-                0,
-                data,
-                None,
-                BlockHeader::default(),
-                inspector::noop(),
-                BaseFeeCheck::Ignore,
-            )?;
-            if !result.is_success() {
-                return Err(anyhow!("setting stake failed: {result:?}"));
-            }
-            state.apply_delta_evm(&result_state)?;
-        }
+        //for GenesisDeposit {
+        //    public_key,
+        //    peer_id,
+        //    stake,
+        //    reward_address,
+        //    control_address,
+        //} in config.consensus.genesis_deposits
+        //{
+        //    let data = contracts::deposit::SET_STAKE.encode_input(&[
+        //        Token::Bytes(public_key.as_bytes()),
+        //        Token::Bytes(peer_id.to_bytes()),
+        //        Token::Address(ethabi::Address::from(reward_address.into_array())),
+        //        Token::Address(ethabi::Address::from(control_address.into_array())),
+        //        Token::Uint((*stake).into()),
+        //    ])?;
+        //    let (
+        //        ResultAndState {
+        //            result,
+        //            state: result_state,
+        //        },
+        //        ..,
+        //    ) = state.apply_transaction_evm(
+        //        Address::ZERO,
+        //        Some(contract_addr::DEPOSIT),
+        //        0,
+        //        config.consensus.eth_block_gas_limit,
+        //        0,
+        //        data,
+        //        None,
+        //        BlockHeader::default(),
+        //        inspector::noop(),
+        //        BaseFeeCheck::Ignore,
+        //    )?;
+        //    if !result.is_success() {
+        //        return Err(anyhow!("setting stake failed: {result:?}"));
+        //    }
+        //    state.apply_delta_evm(&result_state)?;
+        //}
 
         Ok(state)
     }

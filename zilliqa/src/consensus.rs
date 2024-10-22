@@ -950,6 +950,7 @@ impl Consensus {
             );
             return Ok(None);
         }
+
         let committee = self.state.get_stakers_at_block(&block)?;
 
         // verify the sender's signature on block_hash
@@ -2007,42 +2008,40 @@ impl Consensus {
             }
         }
 
-        if self.block_is_first_in_epoch(block.number()) && !block.is_genesis() {
-            // TODO: handle epochs (#1140)
-
-            if self.config.do_checkpoints
-                && self.epoch_is_checkpoint(self.epoch_number(block.number()))
-            {
-                if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                    let parent = self
-                        .db
-                        .get_block_by_hash(block.parent_hash())?
-                        .ok_or(anyhow!(
-                            "Trying to checkpoint block, but we don't have its parent"
+        if self.block_is_first_in_epoch(block.number())
+            && !block.is_genesis()
+            && self.config.do_checkpoints
+            && self.epoch_is_checkpoint(self.epoch_number(block.number()))
+        {
+            if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
+                let parent = self
+                    .db
+                    .get_block_by_hash(block.parent_hash())?
+                    .ok_or(anyhow!(
+                        "Trying to checkpoint block, but we don't have its parent"
+                    ))?;
+                let transactions: Vec<SignedTransaction> = block
+                    .transactions
+                    .iter()
+                    .map(|txn_hash| {
+                        let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
+                            "failed to fetch transaction {} for checkpoint parent {}",
+                            txn_hash,
+                            parent.hash()
                         ))?;
-                    let transactions: Vec<SignedTransaction> = block
-                        .transactions
-                        .iter()
-                        .map(|txn_hash| {
-                            let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                                "failed to fetch transaction {} for checkpoint parent {}",
-                                txn_hash,
-                                parent.hash()
-                            ))?;
-                            Ok::<_, anyhow::Error>(tx)
-                        })
-                        .collect::<Result<Vec<SignedTransaction>>>()?;
+                        Ok::<_, anyhow::Error>(tx)
+                    })
+                    .collect::<Result<Vec<SignedTransaction>>>()?;
 
-                    self.message_sender.send_message_to_coordinator(
-                        InternalMessage::ExportBlockCheckpoint(
-                            Box::new(block),
-                            transactions,
-                            Box::new(parent),
-                            self.db.state_trie()?.clone(),
-                            checkpoint_path,
-                        ),
-                    )?;
-                }
+                self.message_sender.send_message_to_coordinator(
+                    InternalMessage::ExportBlockCheckpoint(
+                        Box::new(block),
+                        transactions,
+                        Box::new(parent),
+                        self.db.state_trie()?.clone(),
+                        checkpoint_path,
+                    ),
+                )?;
             }
         }
 
@@ -2463,7 +2462,11 @@ impl Consensus {
             return None;
         };
 
-        let public_key = state_at.leader(view).unwrap();
+        let executed_block = BlockHeader {
+            number: block.header.number + 1,
+            ..Default::default()
+        };
+        let public_key = state_at.leader(view, executed_block).unwrap();
         let peer_id = state_at.get_peer_id(public_key).unwrap().unwrap();
 
         Some(Validator {

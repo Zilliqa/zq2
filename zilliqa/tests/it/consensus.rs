@@ -152,6 +152,7 @@ async fn create_shard(
         network.scilla_address.clone(),
         network.scilla_stdlib_dir.clone(),
         false,
+        2,
     );
     let shard_wallet = shard_network.genesis_wallet().await;
 
@@ -658,7 +659,7 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .consensus
         .genesis_deposits
         .clone();
-    let total_staked: u128 = genesis_deposits[0].2 .0 * 4;
+    let total_staked: u128 = genesis_deposits[0].stake.0 * 4;
 
     // Zero account balance plus genesis account plus initial stakes should equal total_native_token_supply
     let zero_account_balance: u128 = wallet

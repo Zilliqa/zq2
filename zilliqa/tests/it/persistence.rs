@@ -14,13 +14,13 @@ use zilliqa::{
         failed_request_sleep_duration_default, json_rpc_port_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default,
         scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_rpc_limit_default,
-        total_native_token_supply_default, Checkpoint,
+        total_native_token_supply_default, Checkpoint, ConsensusConfig, NodeConfig,
     },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
 };
 
-use crate::{deploy_contract, ConsensusConfig, Network, NewNodeOptions, NodeConfig, TestNode};
+use crate::{deploy_contract, Network, NewNodeOptions, TestNode};
 
 #[zilliqa_macros::test]
 async fn block_and_tx_data_persistence(mut network: Network) {
@@ -75,6 +75,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
     let last_block = inner.get_block(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
+
     // sanity check
     assert_eq!(tx.hash, hash);
     assert_eq!(block_with_tx.transactions.len(), 1);
