@@ -1,13 +1,10 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-    str::FromStr,
-};
+use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use anyhow::{anyhow, Ok, Result};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
+use rand::seq::SliceRandom;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,6 +12,7 @@ use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
+use super::instance::ChainInstance;
 use crate::{address::EthereumAddress, chain::Chain};
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -256,42 +254,25 @@ impl Machine {
 
 #[derive(Clone, Debug)]
 pub struct ChainNode {
-    chain_name: String,
-    eth_chain_id: u64,
+    chain: ChainInstance,
     pub role: NodeRole,
     machine: Machine,
-    versions: HashMap<String, String>,
-    bootstrap_public_ip: String,
-    bootstrap_private_key: String,
-    genesis_wallet_private_key: String,
+    eth_chain_id: u64,
 }
 
 #[allow(clippy::too_many_arguments)]
 impl ChainNode {
-    pub fn new(
-        chain_name: String,
-        eth_chain_id: u64,
-        role: NodeRole,
-        machine: Machine,
-        versions: HashMap<String, String>,
-        bootstrap_public_ip: String,
-        bootstrap_private_key: String,
-        genesis_wallet_private_key: String,
-    ) -> Self {
+    pub fn new(chain: ChainInstance, eth_chain_id: u64, role: NodeRole, machine: Machine) -> Self {
         Self {
-            chain_name,
+            chain,
             eth_chain_id,
             role,
             machine,
-            versions,
-            bootstrap_public_ip,
-            bootstrap_private_key,
-            genesis_wallet_private_key,
         }
     }
 
     pub fn chain(&self) -> Result<Chain> {
-        let chain_name = &self.chain_name;
+        let chain_name = &self.chain.name();
         chain_name.parse()
     }
 
@@ -338,14 +319,6 @@ impl ChainNode {
         Ok(())
     }
 
-    pub fn get_genesis_key(&self) -> String {
-        self.genesis_wallet_private_key.clone()
-    }
-
-    pub fn get_node_name(&self) -> String {
-        self.machine.name.clone()
-    }
-
     pub async fn get_private_key(&self) -> Result<String> {
         if self.role == NodeRole::Apps {
             return Err(anyhow!(
@@ -355,7 +328,7 @@ impl ChainNode {
         }
 
         let private_keys = retrieve_secret_by_node_name(
-            &self.chain_name,
+            &self.chain.name(),
             &self.machine.project_id,
             &self.machine.name,
         )
@@ -381,7 +354,7 @@ impl ChainNode {
         }
 
         let private_keys = retrieve_wallet_secret_by_node_name(
-            &self.chain_name,
+            &self.chain.name(),
             &self.machine.project_id,
             &self.machine.name,
         )
@@ -404,7 +377,7 @@ impl ChainNode {
         }
 
         let private_keys = retrieve_secret_by_node_name(
-            &self.chain_name,
+            &self.chain.name(),
             &self.machine.project_id,
             &self.machine.name,
         )
@@ -517,10 +490,11 @@ impl ChainNode {
     async fn create_checkpoint_cron_job(&self, filename: &str) -> Result<String> {
         let spec_config = include_str!("../../resources/checkpoints.tera.sh");
 
+        let chain_name = self.chain.name();
         let eth_chain_id = self.eth_chain_id.to_string();
 
         let mut var_map = BTreeMap::<&str, &str>::new();
-        var_map.insert("network_name", &self.chain_name);
+        var_map.insert("network_name", &chain_name);
         var_map.insert("eth_chain_id", &eth_chain_id);
 
         let ctx = Context::from_serialize(var_map)?;
@@ -534,20 +508,48 @@ impl ChainNode {
         Ok(filename.to_owned())
     }
 
-    pub fn get_config_toml(&self) -> Result<String> {
+    pub async fn get_config_toml(&self) -> Result<String> {
         let spec_config = include_str!("../../resources/config.tera.toml");
+        let mut bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
 
-        let genesis_wallet = EthereumAddress::from_private_key(&self.genesis_wallet_private_key)?;
-        let bootstrap_node = EthereumAddress::from_private_key(&self.bootstrap_private_key)?;
+        let set_bootstrap_address = if self.role != NodeRole::Bootstrap || bootstrap_nodes.len() > 1
+        {
+            "true"
+        } else {
+            "false"
+        };
+
+        if bootstrap_nodes.len() > 1 {
+            bootstrap_nodes.retain(|node| node.name() != self.name());
+        }
+
+        // Pick a random element among the bootstrap nodes
+        let selected_bootstrap =
+            if let Some(random_item) = bootstrap_nodes.choose(&mut rand::thread_rng()) {
+                println!("Bootstrap picked: {}", random_item.name().bold());
+                random_item.to_owned()
+            } else {
+                return Err(anyhow!(
+                    "No bootstrap instances found in the network {}",
+                    &self.chain.name()
+                ));
+            };
+
+        let genesis_wallet =
+            EthereumAddress::from_private_key(&self.chain.genesis_wallet_private_key().await?)?;
+        let bootstrap_node =
+            EthereumAddress::from_private_key(&selected_bootstrap.get_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
+        let bootstrap_public_ip = selected_bootstrap.machine.external_address;
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", &role_name);
         var_map.insert("eth_chain_id", &eth_chain_id);
-        var_map.insert("bootstrap_public_ip", &self.bootstrap_public_ip);
+        var_map.insert("bootstrap_public_ip", &bootstrap_public_ip);
         var_map.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
         var_map.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
+        var_map.insert("set_bootstrap_address", set_bootstrap_address);
         var_map.insert("genesis_address", &genesis_wallet.address);
 
         let ctx = Context::from_serialize(var_map)?;
@@ -555,7 +557,7 @@ impl ChainNode {
     }
 
     async fn create_config_toml(&self, filename: &str) -> Result<String> {
-        let rendered_template = self.get_config_toml()?;
+        let rendered_template = self.get_config_toml().await?;
         let config_file = rendered_template.as_str();
 
         let mut fh = File::create(filename).await?;
@@ -575,22 +577,11 @@ impl ChainNode {
         let provisioning_script = include_str!("../../resources/node_provision.tera.py");
         let role_name = &self.role.to_string();
 
-        let z2_image = &docker_image(
-            "zq2",
-            self.versions.get("zq2").unwrap_or(&"latest".to_string()),
-        )?;
+        let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
 
-        let otterscan_image = &docker_image(
-            "otterscan",
-            self.versions
-                .get("otterscan")
-                .unwrap_or(&"latest".to_string()),
-        )?;
+        let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
 
-        let spout_image = &docker_image(
-            "spout",
-            self.versions.get("spout").unwrap_or(&"latest".to_string()),
-        )?;
+        let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
