@@ -312,14 +312,6 @@ impl TransactionPool {
         self.transactions.insert(txn.mempool_index(), txn);
     }
 
-    /// The transaction is ready to be executed but is not present in the heap.
-    /// This is used to forward a transaction to [Consensus::execute_block]
-    /// These transactions may balloon unless popped during fast-forwarding.
-    pub fn insert_shadow_transaction(&mut self, txn: VerifiedTransaction) {
-        self.hash_to_index.insert(txn.hash, txn.mempool_index());
-        self.transactions.insert(txn.mempool_index(), txn);
-    }
-
     pub fn get_transaction(&self, hash: Hash) -> Option<&VerifiedTransaction> {
         let tx_index = self.hash_to_index.get(&hash)?;
         self.transactions.get(tx_index)
