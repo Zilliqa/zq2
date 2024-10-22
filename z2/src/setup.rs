@@ -350,7 +350,7 @@ impl Setup {
                 "{0}/{1}{2}",
                 self.config_dir, DATADIR_PREFIX, node_idx
             ))),
-            Some(_) => Ok(PathBuf::from(format!("{0}", self.config_dir))),
+            Some(_) => Ok(PathBuf::from(self.config_dir.to_string())),
         }
     }
 
