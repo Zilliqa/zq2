@@ -420,6 +420,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
             PageStatus::Implemented,
         );
     }
+    // @todo we don't document the admin_ entrypoints for now.
     Ok(methods)
 }
 
