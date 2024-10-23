@@ -1,3 +1,4 @@
+pub mod admin;
 mod erigon;
 pub mod eth;
 mod net;
@@ -20,6 +21,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     module.merge(ots::rpc_module(node.clone())).unwrap();
     module.merge(web3::rpc_module(node.clone())).unwrap();
     module.merge(zil::rpc_module(node.clone())).unwrap();
+    module.merge(admin::rpc_module(node.clone())).unwrap();
 
     module.merge(others::rpc_module(node.clone())).unwrap();
 
