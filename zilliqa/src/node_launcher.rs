@@ -33,7 +33,7 @@ pub struct NodeLauncher {
     pub config: NodeConfig,
     pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
-    pub requests: UnboundedReceiverStream<(PeerId, ExternalMessage, ResponseChannel)>,
+    pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
     pub request_failures: UnboundedReceiverStream<(PeerId, OutgoingMessageFailure)>,
     pub responses: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
     pub local_messages: UnboundedReceiverStream<(u64, InternalMessage)>,
@@ -74,7 +74,7 @@ pub struct NodeInputChannels {
     pub broadcasts: UnboundedSender<(PeerId, ExternalMessage)>,
     /// Send direct requests down this channel. The `ResponseChannel` must be used by the receiver to respond to this
     /// request.
-    pub requests: UnboundedSender<(PeerId, ExternalMessage, ResponseChannel)>,
+    pub requests: UnboundedSender<(PeerId, String, ExternalMessage, ResponseChannel)>,
     /// Send failed requests down this channel.
     pub request_failures: UnboundedSender<(PeerId, OutgoingMessageFailure)>,
     /// Send direct responses to direct requests down this channel.
@@ -187,8 +187,8 @@ impl NodeLauncher {
                     }
                 }
                 message = self.requests.next() => {
-                    let (source, message, response_channel) = message.expect("message stream should be infinite");
-                    if let Err(e) = self.node.lock().unwrap().handle_request(source, message, response_channel) {
+                    let (source, id, message, response_channel) = message.expect("message stream should be infinite");
+                    if let Err(e) = self.node.lock().unwrap().handle_request(source, &id, message, response_channel) {
                         error!("Failed to process request message: {e}");
                     }
                 }
@@ -209,6 +209,8 @@ impl NodeLauncher {
                     todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
                 () = &mut sleep => {
+                    // Send any missing blocks.
+                    self.node.lock().unwrap().consensus.tick().unwrap();
                     // No messages for a while, so check if consensus wants to timeout
                     self.node.lock().unwrap().handle_timeout().unwrap();
                     sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));

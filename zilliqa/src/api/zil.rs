@@ -731,7 +731,7 @@ pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
     let measurement_blocks = height.min(max_measurement_blocks);
     let start_measure_block = node
         .consensus
-        .get_block_by_number(height - measurement_blocks + 1)?
+        .get_canonical_block_by_number(height - measurement_blocks + 1)?
         .ok_or(anyhow!("Unable to get block"))?;
     let start_measure_time = start_measure_block.header.timestamp;
     let end_measure_time = SystemTime::now();
@@ -1017,7 +1017,7 @@ fn get_recent_transactions(
         let block = match node
             .consensus
             .block_store
-            .get_block_by_number(block_number)?
+            .get_canonical_block_by_number(block_number)?
         {
             Some(block) => block,
             None => continue,
@@ -1049,7 +1049,7 @@ fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
     let latest_block = node
         .consensus
         .block_store
-        .get_block_by_number(node.get_chain_tip())?;
+        .get_canonical_block_by_number(node.get_chain_tip())?;
     let num_transactions = match latest_block {
         Some(block) => block.transactions.len(),
         None => 0,
@@ -1067,7 +1067,7 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
         let block = node
             .consensus
             .block_store
-            .get_block_by_number(i)?
+            .get_canonical_block_by_number(i)?
             .ok_or_else(|| anyhow!("Block not found"))?;
         num_txns_epoch += block.transactions.len();
     }

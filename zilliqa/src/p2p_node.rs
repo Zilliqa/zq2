@@ -314,14 +314,15 @@ impl P2pNode {
 
                         SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source })) => {
                             match message {
-                                request_response::Message::Request { request, channel: _channel, .. } => {
+                                request_response::Message::Request { request, channel: _channel, request_id: _request_id, .. } => {
                                     let to = self.peer_id;
                                     let (shard_id, _external_message) = request;
-                                    debug!(source = %_source, %to, external_message = %_external_message, "message received");
+                                    debug!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "message received");
                                     let _topic = Self::shard_id_to_topic(shard_id);
+                                    let _id = format!("{}", _request_id);
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
-                                            self.send_to(&_topic.hash(), |c| c.requests.send((_source, _external_message, ResponseChannel::Remote(_channel))))?;
+                                            self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
                                         } else {
                                             panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
                                         }
@@ -400,8 +401,9 @@ impl P2pNode {
                     match dest {
                         Some((dest, request_id)) => {
                             debug!(%from, %dest, %message, ?request_id, "sending direct message");
+                            let id = format!("{:?}", request_id);
                             if from == dest {
-                                self.send_to(&topic.hash(), |c| c.requests.send((from, message, ResponseChannel::Local)))?;
+                                self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
                             } else {
                                 let libp2p_request_id = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
                                 self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));

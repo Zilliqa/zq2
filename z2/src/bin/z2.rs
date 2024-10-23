@@ -1,10 +1,11 @@
 use std::{
     collections::{HashMap, HashSet},
     env, fmt,
+    str::FromStr,
 };
 
 use alloy::primitives::B256;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use z2lib::{
@@ -54,6 +55,8 @@ enum Commands {
     Ports(RunStruct),
     /// Start some nodes - this starts all the instanced components (scilla and zq2)
     Nodes(NodesStruct),
+    /// Start a node and join it to a network
+    JoinNode(JoinNodeStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -386,6 +389,9 @@ struct JoinStruct {
     /// Specify the ZQ2 chain you want join
     #[clap(long = "chain")]
     chain_name: chain::Chain,
+    /// Specify the container label to run
+    #[clap(long = "container")]
+    container: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -441,6 +447,61 @@ struct NodesStruct {
     zq2: bool,
     #[clap(long = "zq2", overrides_with = "zq2")]
     _no_zq2: bool,
+    #[clap(long="no-scilla",action=ArgAction::SetFalse)]
+    scilla: bool,
+    #[clap(long = "scilla", overrides_with = "scilla")]
+    _no_scilla: bool,
+}
+
+#[derive(Args, Debug)]
+struct JoinNodeStruct {
+    config_dir: String,
+    /// The network to join (devnet, infratest, perftest, .. )
+    network: String,
+    #[clap(long)]
+    #[clap(default_value = "warn")]
+    log_level: LogLevel,
+
+    #[clap(long)]
+    debug_modules: Vec<String>,
+
+    #[clap(long)]
+    trace_modules: Vec<String>,
+
+    #[clap(long, default_value = "4000")]
+    base_port: u16,
+
+    /// If --watch is specified, we will auto-reload Zilliqa 2 (but not other programs!) when the source changes.
+    #[clap(long, action=ArgAction::SetTrue)]
+    watch: bool,
+
+    #[clap(long = "restart-network")]
+    restart_network: bool,
+
+    #[clap(long="no-otterscan", action= ArgAction::SetFalse)]
+    otterscan: bool,
+    #[clap(long = "otterscan", overrides_with = "otterscan")]
+    _no_otterscan: bool,
+
+    #[clap(long = "otel", action = ArgAction::SetTrue)]
+    otel: bool,
+
+    #[clap(long="no-zq2", action= ArgAction::SetFalse)]
+    zq2: bool,
+    #[clap(long = "zq2", overrides_with = "zq2")]
+    _no_zq2: bool,
+
+    #[clap(long = "spout", action = ArgAction::SetTrue)]
+    spout: bool,
+
+    #[clap(long="no-mitmweb", action= ArgAction::SetFalse)]
+    mitmweb: bool,
+    #[clap(long = "mitmweb", overrides_with = "mitmweb")]
+    _no_mitmweb: bool,
+
+    #[clap(long = "docs", action = ArgAction::SetTrue)]
+    docs: bool,
+
     #[clap(long="no-scilla",action=ArgAction::SetFalse)]
     scilla: bool,
     #[clap(long = "scilla", overrides_with = "scilla")]
@@ -546,8 +607,8 @@ async fn main() -> Result<()> {
                 &arg.debug_modules,
                 &arg.trace_modules,
             )?;
-            plumbing::run_local_net(
-                &spec,
+            plumbing::run_net(
+                &plumbing::NetworkType::Local(spec),
                 &base_dir,
                 arg.base_port,
                 &arg.config_dir,
@@ -556,6 +617,7 @@ async fn main() -> Result<()> {
                 keep_old_network,
                 arg.watch,
                 &None,
+                None,
             )
             .await?;
             Ok(())
@@ -596,8 +658,8 @@ async fn main() -> Result<()> {
                 &arg.trace_modules,
             )?;
             let spec = nodespec_from_arg(&arg.nodespec)?;
-            plumbing::run_local_net(
-                &spec,
+            plumbing::run_net(
+                &plumbing::NetworkType::Local(spec),
                 &base_dir,
                 arg.base_port,
                 &arg.config_dir,
@@ -606,6 +668,7 @@ async fn main() -> Result<()> {
                 keep_old_network,
                 arg.watch,
                 &None,
+                None,
             )
             .await?;
             Ok(())
@@ -818,7 +881,7 @@ async fn main() -> Result<()> {
         },
         Commands::Join(ref args) => {
             let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain).await?;
+            validators::gen_validator_startup_script(&chain, &args.container).await?;
             Ok(())
         }
         Commands::Deposit(ref args) => {
@@ -877,6 +940,54 @@ async fn main() -> Result<()> {
                 &to_run,
                 args.watch,
                 &checkpoints,
+            )
+            .await?;
+            Ok(())
+        }
+        Commands::JoinNode(ref arg) => {
+            let secret_key_hex = std::env::var("PRIVATE_KEY").context("Please set PRIVATE_KEY to the hex representation of the key for the node you want to join")?;
+            let mut to_run: HashSet<Component> = HashSet::new();
+
+            if arg.otterscan {
+                to_run.insert(Component::Otterscan);
+            }
+            if arg.otel {
+                to_run.insert(Component::Otel);
+            }
+            if arg.zq2 {
+                to_run.insert(Component::ZQ2);
+            }
+            if arg.spout {
+                to_run.insert(Component::Spout);
+            }
+            if arg.mitmweb {
+                to_run.insert(Component::Mitmweb);
+            }
+            if arg.docs {
+                to_run.insert(Component::Docs);
+            }
+            if arg.scilla {
+                to_run.insert(Component::Scilla);
+            }
+
+            let log_spec = utils::compute_log_string(
+                &arg.log_level.to_string(),
+                &arg.debug_modules,
+                &arg.trace_modules,
+            )?;
+            let chain = chain::Chain::from_str(&arg.network)?;
+            plumbing::run_net(
+                &plumbing::NetworkType::Deployed(chain),
+                &base_dir,
+                arg.base_port,
+                &arg.config_dir,
+                &log_spec,
+                &to_run,
+                // Not relevant for joining existing networks.
+                false,
+                arg.watch,
+                &None,
+                Some(secret_key_hex),
             )
             .await?;
             Ok(())

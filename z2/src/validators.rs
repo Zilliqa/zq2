@@ -1,6 +1,6 @@
 /// Code to render the validator join configuration and startup script.
 use std::env;
-use std::{convert::TryFrom, str::FromStr};
+use std::{convert::TryFrom, path::Path, str::FromStr};
 
 use anyhow::{anyhow, Context as _, Result};
 use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
@@ -19,7 +19,7 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use toml::Value;
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
 
-use crate::{chain::Chain, github};
+use crate::{chain::Chain, github, utils};
 
 #[derive(Debug)]
 pub struct Validator {
@@ -90,11 +90,19 @@ impl ChainConfig {
     pub async fn write(&self) -> Result<()> {
         let mut file_path = env::current_dir()?;
         file_path.push(format!("{}.toml", self.name));
-        let mut fh = File::create(file_path.clone()).await?;
+        self.write_to_path(&file_path).await
+    }
+
+    pub async fn write_to_path(&self, file_path: &Path) -> Result<()> {
+        let mut fh = File::create(file_path).await?;
         fh.write_all(toml::to_string(&self.spec).unwrap().as_bytes())
             .await?;
         println!("💾 Validator config: {}", file_path.to_string_lossy());
         Ok(())
+    }
+
+    pub fn get_name(&self) -> String {
+        self.name.to_string()
     }
 }
 
@@ -121,7 +129,10 @@ pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
     Ok(config)
 }
 
-pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
+pub async fn gen_validator_startup_script(
+    config: &ChainConfig,
+    container: &Option<String>,
+) -> Result<()> {
     println!("✌️ Generating the validator startup scripts and configuration");
     println!("📋 Chain specification: {}", config.name);
     println!("👤 Role: Node");
@@ -137,6 +148,9 @@ pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
 
     context.insert("version", &config.version);
     context.insert("chain_name", &config.name);
+    if let Some(v) = container {
+        context.insert("container", v)
+    }
 
     let script = tera_template
         .render("start_node", &context)
@@ -146,6 +160,7 @@ pub async fn gen_validator_startup_script(config: &ChainConfig) -> Result<()> {
     file_path.push("start_node.sh");
     let mut fh = File::create(file_path.clone()).await?;
     fh.write_all(script.as_bytes()).await?;
+    utils::make_executable(&file_path)?;
 
     println!("💾 Startup script: {}", file_path.to_string_lossy());
 

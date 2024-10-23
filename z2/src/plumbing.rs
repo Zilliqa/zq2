@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     path::PathBuf,
     str::FromStr,
 };
@@ -12,15 +13,30 @@ use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
 use crate::{
+    chain,
     chain::node::NodeRole,
     kpi,
     node_spec::{Composition, NodeSpec},
-    utils,
+    utils, validators,
 };
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
 use crate::{collector, components::Component, converter, deployer, docgen, perf, setup, zq1};
+
+pub enum NetworkType {
+    Local(Option<NodeSpec>),
+    Deployed(chain::Chain),
+}
+
+impl fmt::Display for NetworkType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            NetworkType::Local(v) => write!(f, "local {0:?}", v),
+            NetworkType::Deployed(c) => write!(f, "deployed {c}"),
+        }
+    }
+}
 
 pub async fn print_ports(base_port: u16, base_dir: &str, config_dir: &str) -> Result<()> {
     let setup_obj = setup::Setup::ephemeral(base_port, base_dir, config_dir)?;
@@ -54,8 +70,8 @@ pub async fn run_extra_nodes(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn run_local_net(
-    spec: &Option<NodeSpec>,
+pub async fn run_net(
+    spec: &NetworkType,
     base_dir: &str,
     base_port: u16,
     config_dir: &str,
@@ -64,29 +80,47 @@ pub async fn run_local_net(
     keep_old_network: bool,
     watch: bool,
     checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
+    secret_key_hex: Option<String>,
 ) -> Result<()> {
     println!("RUST_LOG = {log_spec}");
-    println!("Running network with nodespec = {spec:?}");
-    println!("Create config directory .. ");
+    println!("Running network {spec}");
+    println!("Create config directory {config_dir} .. ");
     let _ = fs::create_dir(&config_dir).await;
     println!("Generate zq2 configuration .. ");
-    let configured = spec.clone().map(|x| x.configured);
-    let mut setup_obj = setup::Setup::create(
-        &configured,
-        config_dir,
-        base_port,
-        log_spec,
-        base_dir,
-        keep_old_network,
-        watch,
-    )
-    .await?;
+
+    let mut setup_obj = match spec {
+        NetworkType::Local(local_spec) => {
+            let configured = local_spec.clone().map(|x| x.configured);
+            setup::Setup::create(
+                &configured,
+                config_dir,
+                base_port,
+                log_spec,
+                base_dir,
+                keep_old_network,
+                watch,
+            )
+            .await?
+        }
+        NetworkType::Deployed(chain) => {
+            if let Some(key) = secret_key_hex {
+                setup::Setup::from_named_network(
+                    chain, config_dir, base_port, log_spec, base_dir, watch, &key, false,
+                )
+                .await?
+            } else {
+                return Err(anyhow!(
+                    "Please supply a secret key to join another network"
+                ));
+            }
+        }
+    };
     // Generate configuration.
     setup_obj.generate_config().await?;
     println!("{0}", setup_obj.get_port_map());
     println!("Set up collector");
     let mut collector = collector::Collector::new(log_spec, base_dir).await?;
-    let actually_start = if let Some(to_start) = spec {
+    let actually_start = if let NetworkType::Local(Some(to_start)) = spec {
         &to_start.start
     } else {
         // All of them!

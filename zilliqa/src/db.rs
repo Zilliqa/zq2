@@ -3,13 +3,14 @@ use std::{
     fmt::Debug,
     fs::{self, File},
     io::{BufRead, BufReader, BufWriter, Read, Write},
-    path::Path,
+    ops::Range,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use eth_trie::{EthTrie, Trie};
 use itertools::Itertools;
 use rusqlite::{
@@ -190,9 +191,11 @@ impl Db {
         let (mut connection, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
-                fs::create_dir_all(&path)?;
+                fs::create_dir_all(&path).context(format!("Unable to create {path:?}"))?;
+                let db_path = path.join("db.sqlite3");
                 (
-                    Connection::open(path.join("db.sqlite3"))?,
+                    Connection::open(&db_path)
+                        .context(format!("Cannot access sqlite db {0:?}", &db_path))?,
                     Some(path.into_boxed_path()),
                 )
             }
@@ -332,9 +335,11 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
         }
 
-        if state_trie.iter().next().is_some() || self.get_highest_block_number()?.is_some() {
+        if state_trie.iter().next().is_some()
+            || self.get_highest_canonical_block_number()?.is_some()
+        {
             // If checkpointed block already exists then assume checkpoint load already complete. Return None
-            if self.get_block_by_hash(block.hash())?.is_some() {
+            if self.get_block_by_hash(&block.hash())?.is_some() {
                 return Ok(None);
             }
             // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
@@ -344,7 +349,7 @@ impl Db {
             // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
             // a node that already contains previous state, until (and unless) there's ever a
             // usecase for going through the effort to support it and ensure it works as expected.
-            if let Some(db_block) = self.get_block_by_hash(parent.hash())? {
+            if let Some(db_block) = self.get_block_by_hash(&parent.hash())? {
                 if db_block.parent_hash() != parent.parent_hash() {
                     return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
                 } else {
@@ -455,7 +460,23 @@ impl Db {
             .optional()?)
     }
 
-    pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
+    // Deliberately not named get_highest_block_number() because there used to be one
+    // of those with unclear semantics, so changing name to force the compiler to error
+    // if it was used.
+    pub fn get_highest_recorded_block_number(&self) -> Result<Option<u64>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .query_row_and_then(
+                "SELECT height FROM blocks ORDER BY height DESC LIMIT 1",
+                (),
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
         Ok(self
             .db
             .lock()
@@ -466,6 +487,16 @@ impl Db {
                 |row| row.get(0),
             )
             .optional()?)
+    }
+
+    pub fn get_highest_block_hashes(&self, how_many: usize) -> Result<Vec<Hash>> {
+        Ok(self
+            .db
+            .lock()
+           .unwrap()
+           .prepare_cached(
+               "select block_hash from blocks where is_canonical = true order by height desc limit ?1")?
+           .query_map([how_many], |row| row.get(0))?.collect::<Result<Vec<Hash>, _>>()?)
     }
 
     pub fn set_high_qc_with_db_tx(
@@ -490,7 +521,8 @@ impl Db {
             .lock()
             .unwrap()
             .query_row("SELECT high_qc FROM tip_info", (), |row| row.get(0))
-            .optional()?)
+            .optional()?
+            .flatten())
     }
 
     pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
@@ -684,8 +716,8 @@ impl Db {
         Ok(Some(block))
     }
 
-    pub fn get_block_by_hash(&self, block_hash: Hash) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::Hash(block_hash))
+    pub fn get_block_by_hash(&self, block_hash: &Hash) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::Hash(*block_hash))
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
@@ -708,6 +740,16 @@ impl Db {
             )
             .optional()?
             .is_some())
+    }
+
+    fn make_view_range(row: &Row) -> rusqlite::Result<Range<u64>> {
+        // Add one to end because the range returned from SQL is inclusive.
+        let start: u64 = row.get(0)?;
+        let end_inc: u64 = row.get(1)?;
+        Ok(Range {
+            start,
+            end: end_inc + 1,
+        })
     }
 
     fn make_receipt(row: &Row) -> rusqlite::Result<TransactionReceipt> {
@@ -785,6 +827,66 @@ impl Db {
                 .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))?;
         Ok(count)
     }
+
+    /// Retrieve a list of the views in our db.
+    /// This is a bit horrific. What we actually do here is to find the view lower and upper bounds for the contiguous block ranges in the database.
+    /// See block_store.rs::availability() for details.
+    pub fn get_view_ranges(&self) -> Result<Vec<Range<u64>>> {
+        // The island field is technically redundant, but it helps with debugging.
+        //
+        // First off, note that this function returns all available blocks - it is up to the ultimate receiver of those blocks
+        // to decide if they are _canonical_ blocks or not. We take no view and serve everything we have.
+        //
+        // This query:
+        //
+        // R1 = SELECT height, MIN(view) as vlb, MAX(view) as vub from blocks GROUP BY height
+        //   - Take everything in the blocks table, group by height and retrieve the max and min view for each block height.
+        //
+        // R2 = SELECT height, vlb, vub, ROW_NUMBER() OVER (ORDER BY height) AS rank FROM R1
+        //   - order the result by height, and find me the height, vlb, vub, and row number in the results (which we call rank).
+        //   (OVER is sqlite magic -see docs for details)
+        //
+        // R3 = SELECT MIN(vlb), MAX(vub), MIN(height), MAX(height), height-rank AS island FROM R2 GROUP BY island ORDER BY MIN(height) ASC
+        //   - now group R2 by island number (i.e contiguous range of heights), and select the max view, min view, max height and min height for this range.
+        //     Return this list ordered by MIN(height) for convenience.
+        //
+        // And now you have the set of ranges you can advertise that you can serve. You could get the same result by SELECT height FROM blocks, putting the results in
+        // a RangeMap and then iterating the resulting ranges - this query just makes the database do the work (and returns the associated views, since block requests
+        // are made by view).
+        Ok(self.db.lock().unwrap()
+            .prepare_cached("SELECT MIN(vlb), MAX(vub), MIN(height),MAX(height),height-rank AS island FROM ( SELECT height,vlb,vub,ROW_NUMBER() OVER (ORDER BY height) AS rank FROM
+ (SELECT height,MIN(view) as vlb, MAX(view) as vub from blocks GROUP BY height ) )  GROUP BY island ORDER BY MIN(height) ASC")?
+           .query_map([], Self::make_view_range)?.collect::<Result<Vec<_>,_>>()?)
+    }
+
+    /// Forget about a range of blocks; this saves space, but also allows us to test our block fetch algorithm.
+    pub fn forget_block_range(&self, blocks: Range<u64>) -> Result<()> {
+        self.with_sqlite_tx(move |tx| {
+            // Remove everything!
+            tx.execute("DELETE FROM tip_info WHERE latest_finalized_view IN (SELECT view FROM blocks WHERE height >= :low AND height < :high)",
+                       named_params! {
+                           ":low" : blocks.start,
+                           ":high" : blocks.end } )?;
+            tx.execute("DELETE FROM receipts WHERE block_hash IN (SELECT block_hash FROM blocks WHERE height >= :low AND height < :high)",
+                       named_params! {
+                           ":low": blocks.start,
+                           ":high": blocks.end })?;
+            tx.execute(
+                "DELETE FROM blocks WHERE height >= :low AND height < :high",
+                named_params! {
+                    ":low": blocks.start,
+                    ":high": blocks.end },
+            )?;
+            Ok(())
+        })
+    }
+}
+
+pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
+    output_dir: P,
+    block: &Block,
+) -> Result<PathBuf> {
+    Ok(output_dir.as_ref().join(block.number().to_string()))
 }
 
 pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
@@ -808,7 +910,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     }
 
     // Note: we ignore any existing file
-    let output_filename = output_dir.as_ref().join(block.number().to_string());
+    let output_filename = get_checkpoint_filename(output_dir, block)?;
     let temp_filename = output_filename.with_extension("part");
     let outfile_temp = File::create_new(&temp_filename)?;
     let mut writer = BufWriter::with_capacity(8192 * 1024, outfile_temp); // 8 MiB chunks

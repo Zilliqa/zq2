@@ -360,7 +360,7 @@ impl DatabaseRef for &State {
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         Ok(self
             .block_store
-            .get_block_by_number(number)?
+            .get_canonical_block_by_number(number)?
             .map(|block| B256::new(block.hash().0))
             .unwrap_or_default())
     }
@@ -1039,12 +1039,16 @@ impl PendingState {
         self.pre_state.chain_id.zil()
     }
 
-    pub fn get_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
-        self.pre_state.block_store.get_block_by_number(block_number)
+    pub fn get_canonical_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
+        self.pre_state
+            .block_store
+            .get_canonical_block_by_number(block_number)
     }
 
-    pub fn get_highest_block_number(&self) -> Result<Option<u64>> {
-        self.pre_state.block_store.get_highest_block_number()
+    pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
+        self.pre_state
+            .block_store
+            .get_highest_canonical_block_number()
     }
 
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {

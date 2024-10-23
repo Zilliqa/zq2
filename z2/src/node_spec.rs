@@ -72,6 +72,12 @@ impl Composition {
         Ok(Self { nodes })
     }
 
+    pub fn single_node(is_validator: bool) -> Self {
+        let mut nodes = HashMap::new();
+        nodes.insert(0, NodeDesc { is_validator });
+        Self { nodes }
+    }
+
     pub fn small_network() -> Self {
         let mut nodes = HashMap::new();
         for i in 0..4 {

@@ -18,13 +18,13 @@ use crate::{
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
-    db::Db,
+    db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
-        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockResponse,
-        ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
-        MAX_COMMITTEE_SIZE,
+        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
+        ExternalMessage, InternalMessage, NewView, ProcessProposal, Proposal, QuorumCertificate,
+        Vote, MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
@@ -281,33 +281,51 @@ impl Consensus {
                     let finalized_number = db
                         .get_latest_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
-                    let finalzied_block = db
+                    let finalized_block = db
                         .get_block_by_view(finalized_number)?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
-                    let highest_block_number = db
-                        .get_highest_block_number()?
-                        .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
+                    let start_view = std::cmp::max(high_block.view(), finalized_block.view()) + 1;
+                    trace!(
+                        "recovery: high_block view {0}, finalized_number {1} , start_view {2}",
+                        high_block.view(),
+                        finalized_number,
+                        start_view
+                    );
 
-                    let head_block = block_store
-                        .get_block_by_number(highest_block_number)?
-                        .ok_or_else(|| anyhow!("missing head block!"))?;
-
-                    if finalized_number > high_block.number() {
-                        state.set_to_root(finalzied_block.header.state_root_hash.into());
+                    if finalized_number > high_block.view() {
+                        // We know of a finalized view higher than the view in finalized_number; start there.
+                        state.set_to_root(finalized_block.header.state_root_hash.into());
                     } else {
+                        // The high_block contains the latest finalized view. Start there.
                         state.set_to_root(high_block.header.state_root_hash.into());
                     }
 
-                    // If there was a newer block proposed - it's no longer valid because not every participant could have received it
-                    if head_block.number() > high_block.number()
-                        && head_block.number() > finalized_number
-                    {
-                        db.remove_transactions_executed_in_block(&head_block.hash())?;
-                        db.remove_block(&head_block)?;
-                    }
+                    // If we have newer blocks, erase them
+                    // @todo .. more elegantly :-)
+                    loop {
+                        let highest_block_number = db
+                            .get_highest_canonical_block_number()?
+                            .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
 
-                    let start_view = std::cmp::max(high_block.view(), finalzied_block.view()) + 1;
+                        let head_block = block_store
+                            .get_canonical_block_by_number(highest_block_number)?
+                            .ok_or_else(|| anyhow!("missing head block!"))?;
+                        trace!(
+                            "recovery: highest_block_number {highest_block_number} view {0}",
+                            head_block.view()
+                        );
+
+                        if head_block.view() > high_block.view()
+                            && head_block.view() > finalized_number
+                        {
+                            trace!("recovery: stored block {0} reverted", highest_block_number);
+                            db.remove_transactions_executed_in_block(&head_block.hash())?;
+                            db.remove_block(&head_block)?;
+                        } else {
+                            break;
+                        }
+                    }
 
                     info!("During recovery, starting consensus at view {}", start_view);
                     (start_view, qc)
@@ -346,7 +364,11 @@ impl Consensus {
         // If we're at genesis, add the genesis block.
         if latest_block_view == 0 {
             if let Some(genesis) = latest_block {
-                consensus.add_block(None, genesis.clone())?;
+                // The genesis block might already be stored and we were interrupted before we got a
+                // QC for it.
+                if consensus.get_block(&genesis.hash())?.is_none() {
+                    consensus.add_block(None, genesis.clone())?;
+                }
             }
             // treat genesis as finalized
             consensus.finalize_view(latest_block_view)?;
@@ -367,11 +389,11 @@ impl Consensus {
     pub fn head_block(&self) -> Block {
         let highest_block_number = self
             .block_store
-            .get_highest_block_number()
+            .get_highest_canonical_block_number()
             .unwrap()
             .unwrap();
         self.block_store
-            .get_block_by_number(highest_block_number)
+            .get_canonical_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
     }
@@ -551,7 +573,7 @@ impl Consensus {
             block.hash()
         );
 
-        if self.block_store.contains_block(block.hash())? {
+        if self.block_store.contains_block(&block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
             return Ok(None);
         }
@@ -1149,10 +1171,10 @@ impl Consensus {
                 // Start with highest canonical block
                 let num = self
                     .db
-                    .get_highest_block_number()?
+                    .get_highest_canonical_block_number()?
                     .context("no canonical blocks")?; // get highest canonical block number
                 let block = self
-                    .get_block_by_number(num)?
+                    .get_canonical_block_by_number(num)?
                     .context("missing canonical block")?; // retrieve highest canonical block
                 (
                     QuorumCertificate::new_with_identity(block.hash(), block.view()),
@@ -1378,10 +1400,10 @@ impl Consensus {
         // Start with highest canonical block
         let num = self
             .db
-            .get_highest_block_number()?
+            .get_highest_canonical_block_number()?
             .context("no canonical blocks")?; // get highest canonical block number
         let block = self
-            .get_block_by_number(num)?
+            .get_canonical_block_by_number(num)?
             .context("missing canonical block")?; // retrieve highest canonical block
 
         // Generate early QC
@@ -2014,12 +2036,12 @@ impl Consensus {
                 && self.epoch_is_checkpoint(self.epoch_number(block.number()))
             {
                 if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                    let parent = self
-                        .db
-                        .get_block_by_hash(block.parent_hash())?
-                        .ok_or(anyhow!(
-                            "Trying to checkpoint block, but we don't have its parent"
-                        ))?;
+                    let parent =
+                        self.db
+                            .get_block_by_hash(&block.parent_hash())?
+                            .ok_or(anyhow!(
+                                "Trying to checkpoint block, but we don't have its parent"
+                            ))?;
                     let transactions: Vec<SignedTransaction> = block
                         .transactions
                         .iter()
@@ -2032,7 +2054,6 @@ impl Consensus {
                             Ok::<_, anyhow::Error>(tx)
                         })
                         .collect::<Result<Vec<SignedTransaction>>>()?;
-
                     self.message_sender.send_message_to_coordinator(
                         InternalMessage::ExportBlockCheckpoint(
                             Box::new(block),
@@ -2047,6 +2068,47 @@ impl Consensus {
         }
 
         Ok(())
+    }
+
+    /// Trigger a checkpoint, for debugging.
+    /// Returns (file_name, block_hash). At some time after you call this function, hopefully a checkpoint will end up in the file
+    pub fn checkpoint_at(&mut self, block_number: u64) -> Result<(String, String)> {
+        let block = self
+            .get_canonical_block_by_number(block_number)?
+            .ok_or(anyhow!("No such block number {block_number}"))?;
+        let parent = self
+            .db
+            .get_block_by_hash(&block.parent_hash())?
+            .ok_or(anyhow!(
+                "Trying to checkpoint block, but we don't have its parent"
+            ))?;
+        let transactions: Vec<SignedTransaction> = block
+            .transactions
+            .iter()
+            .map(|txn_hash| {
+                let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
+                    "failed to fetch transaction {} for checkpoint parent {}",
+                    txn_hash,
+                    parent.hash()
+                ))?;
+                Ok::<_, anyhow::Error>(tx)
+            })
+            .collect::<Result<Vec<SignedTransaction>>>()?;
+        let checkpoint_dir = self
+            .db
+            .get_checkpoint_dir()?
+            .ok_or(anyhow!("No checkpoint directory configured"))?;
+        let file_name = db::get_checkpoint_filename(checkpoint_dir.clone(), &block)?;
+        let hash = block.hash();
+        self.message_sender
+            .send_message_to_coordinator(InternalMessage::ExportBlockCheckpoint(
+                Box::new(block),
+                transactions,
+                Box::new(parent),
+                self.db.state_trie()?.clone(),
+                checkpoint_dir,
+            ))?;
+        Ok((file_name.display().to_string(), hash.to_string()))
     }
 
     /// Check the validity of a block. Returns `Err(_, true)` if this block could become valid in the future and
@@ -2209,6 +2271,21 @@ impl Consensus {
         Ok(())
     }
 
+    // Receives availability and passes it on to the block store.
+    pub fn receive_block_availability(
+        &mut self,
+        from: PeerId,
+        availability: &Option<Vec<BlockStrategy>>,
+    ) -> Result<()> {
+        trace!(
+            "Received block availability from {:?} avail {:?}",
+            from,
+            availability
+        );
+        self.block_store.update_availability(from, availability)?;
+        Ok(())
+    }
+
     // Checks for the validity of a block and adds it to our block store if valid.
     // Returns true when the block is valid and newly seen and false otherwise.
     // Optionally returns a proposal that should be sent as the result of this newly received block. This occurs when
@@ -2221,7 +2298,8 @@ impl Consensus {
             proposal.number(),
             proposal.view()
         );
-
+        self.block_store
+            .received_process_proposal(proposal.header.view);
         let result = self.proposal(from, proposal, true)?;
         // Processing the received block can either result in:
         // * A `Proposal`, if we have buffered votes for this block which form a supermajority, meaning we can
@@ -2237,14 +2315,25 @@ impl Consensus {
         let hash = block.hash();
         debug!(?from, ?hash, ?block.header.view, ?block.header.number, "added block");
         let _ = self.new_blocks.send(block.header);
-        if let Some(child_proposal) = self.block_store.process_block(from, block)? {
-            self.message_sender.send_external_message(
-                self.peer_id(),
-                ExternalMessage::BlockResponse(BlockResponse {
-                    proposals: vec![child_proposal],
-                }),
-            )?;
-        }
+        // We may have child blocks; process them too.
+        self.block_store
+            .process_block(from, block)?
+            .into_iter()
+            .try_for_each(|(from_id, child_proposal)| -> Result<()> {
+                // The only reason this can fail is permanent failure of the messaging mechanism, so
+                // propagate it back here.
+                // Mark this block in the cache as "we're about to process this one"
+                let view = child_proposal.header.view;
+                self.message_sender.send_external_message(
+                    self.peer_id(),
+                    ExternalMessage::ProcessProposal(ProcessProposal {
+                        from: from_id.to_bytes(),
+                        block: child_proposal,
+                    }),
+                )?;
+                self.block_store.expect_process_proposal(view);
+                Ok(())
+            })?;
         Ok(())
     }
 
@@ -2292,8 +2381,8 @@ impl Consensus {
         self.block_store.get_block_by_view(view)
     }
 
-    pub fn get_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.block_store.get_block_by_number(number)
+    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+        self.block_store.get_canonical_block_by_number(number)
     }
 
     pub fn view(&self) -> u64 {
@@ -2311,7 +2400,7 @@ impl Consensus {
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
             .block_store
-            .get_block_by_number(number)?
+            .get_canonical_block_by_number(number)?
             .map(|block| self.state.at_root(block.state_root_hash().into())))
     }
 
@@ -2790,8 +2879,6 @@ impl Consensus {
 
         self.db.mark_block_as_canonical(block.hash())?;
 
-        // Tell the block store to request more blocks if it can.
-        self.block_store.request_missing_blocks()?;
         Ok(())
     }
 
@@ -2828,5 +2915,61 @@ impl Consensus {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.block_store.report_outgoing_message_failure(failure)
+    }
+
+    pub fn tick(&mut self) -> Result<()> {
+        trace!("consensus::tick()");
+        trace!("request_missing_blocks from timer");
+
+        // Drives the block fetching state machine - see docs/fetching_blocks.md
+        if self.block_store.request_missing_blocks()? {
+            // We're syncing..
+            // Is it likely that the next thing in the buffer could be the next block?
+            let likely_blocks = self.block_store.next_proposals_if_likely()?;
+            if likely_blocks.is_empty() {
+                trace!("no blocks buffered");
+                // If there are no next blocks buffered, someone may well have lied to us about
+                // where the gaps in the view range are. This should be a rare occurrence, so in
+                // lieu of timing it out, just zap the view range gap and we'll take the hit on
+                // any rerequests.
+                self.block_store.delete_empty_view_range_cache();
+            } else {
+                likely_blocks.into_iter().for_each(|(from, block)| {
+                    trace!(
+                        "buffer may contain the next block - {0:?} v={1} n={2}",
+                        block.hash(),
+                        block.view(),
+                        block.number()
+                    );
+                    // Ignore errors here - just carry on and wait for re-request to clean up.
+                    let view = block.view();
+                    let _ = self.message_sender.send_external_message(
+                        self.peer_id(),
+                        ExternalMessage::ProcessProposal(ProcessProposal {
+                            from: from.to_bytes(),
+                            block,
+                        }),
+                    );
+                    self.block_store.expect_process_proposal(view);
+                });
+            }
+        } else {
+            trace!("not syncing ...");
+        }
+        Ok(())
+    }
+
+    pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
+        self.block_store.buffer_proposal(from, proposal)?;
+        Ok(())
+    }
+
+    pub fn buffer_lack_of_proposals(
+        &mut self,
+        from_view: u64,
+        proposals: &Vec<Proposal>,
+    ) -> Result<()> {
+        self.block_store
+            .buffer_lack_of_proposals(from_view, proposals)
     }
 }
