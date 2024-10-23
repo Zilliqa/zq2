@@ -671,7 +671,9 @@ impl Consensus {
             }
             let stakers: Vec<_> = self.state.get_stakers()?;
 
-            let from = (self.peer_id() != from).then_some(from);
+            // It is possible to source Proposals from own storage during sync, which alters the source of the Proposal.
+            // Only allow from == self, for fast-forwarding, in normal case but not during sync
+            let from = (!(self.peer_id() == from && during_sync)).then_some(from);
             self.execute_block(from, &block, transactions, &stakers)?;
 
             if self.view.get_view() != proposal_view + 1 {
