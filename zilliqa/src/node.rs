@@ -114,6 +114,8 @@ impl MessageSender {
     }
 
     /// Broadcast to the entire network of this shard
+    // This is a duplicate of [MessageSender::broadcast_external_message] but it allows for
+    // a separate treatment for proposals, if desired for debugging or future purposes.
     pub fn broadcast_proposal(&self, message: ExternalMessage) -> Result<()> {
         self.outbound_channel
             .send((None, self.our_shard, message))?;
