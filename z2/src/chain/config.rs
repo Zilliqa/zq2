@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{Context,Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::node::NodeRole;
