@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     fs::{self, File},
-    io::{BufRead, BufReader, BufWriter, Read, Write},
+    io::{BufReader, BufWriter, Read, Write},
     ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -13,6 +13,7 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, Context, Result};
 use eth_trie::{EthTrie, Trie};
 use itertools::Itertools;
+use lz4::{Decoder, EncoderBuilder};
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -281,9 +282,16 @@ impl Db {
         our_shard_id: u64,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
         // For now, only support a single version: you want to load the latest checkpoint, anyway.
-        const SUPPORTED_VERSION: u32 = 2;
+        const SUPPORTED_VERSION: u32 = 3;
 
-        let input = File::open(path)?;
+        // Decompress file and write to temp file
+        let input_filename = path.as_ref();
+        let temp_filename = input_filename.with_extension("part");
+        decompress_file(input_filename, &temp_filename)?;
+
+        // Read decompressed file
+        let input = File::open(&temp_filename)?;
+
         let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
@@ -309,28 +317,28 @@ impl Db {
         }
 
         // Decode and validate checkpoint block, its transactions and parent block
-        let mut lines = reader.lines(); // V1 uses a plaintext, line-based format
-        let block = lines.next().ok_or(anyhow!(
-            "Invalid checkpoint file: missing block info on line 1"
-        ))??;
-        let block: Block = bincode::deserialize(&hex::decode(block.as_bytes())?)?;
+        let mut block_len_buf = [0u8; std::mem::size_of::<u64>()];
+        reader.read_exact(&mut block_len_buf)?;
+        let mut block_ser = vec![0u8; usize::try_from(u64::from_be_bytes(block_len_buf))?];
+        reader.read_exact(&mut block_ser)?;
+        let block: Block = bincode::deserialize(&block_ser)?;
         if block.hash() != *hash {
             return Err(anyhow!("Checkpoint does not match trusted hash"));
         }
         block.verify_hash()?;
 
-        let transactions = lines.next().ok_or(anyhow!(
-            "Invalid checkpoint file: missing transactions info on line 2"
-        ))??;
-        let transactions: Vec<SignedTransaction> =
-            bincode::deserialize(&hex::decode(transactions.as_bytes())?)?;
+        let mut transactions_len_buf = [0u8; std::mem::size_of::<u64>()];
+        reader.read_exact(&mut transactions_len_buf)?;
+        let mut transactions_ser =
+            vec![0u8; usize::try_from(u64::from_be_bytes(transactions_len_buf))?];
+        reader.read_exact(&mut transactions_ser)?;
+        let transactions: Vec<SignedTransaction> = bincode::deserialize(&transactions_ser)?;
 
-        let parent = lines.next().ok_or(anyhow!(
-            "Invalid checkpoint file: missing parent info on line 3"
-        ))??;
-        let parent: Block = bincode::deserialize(&hex::decode(parent.as_bytes())?)?;
-        parent.verify_hash()?;
-
+        let mut parent_len_buf = [0u8; std::mem::size_of::<u64>()];
+        reader.read_exact(&mut parent_len_buf)?;
+        let mut parent_ser = vec![0u8; usize::try_from(u64::from_be_bytes(parent_len_buf))?];
+        reader.read_exact(&mut parent_ser)?;
+        let parent: Block = bincode::deserialize(&parent_ser)?;
         if block.parent_hash() != parent.hash() {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
         }
@@ -364,35 +372,65 @@ impl Db {
         }
 
         // then decode state
-        for (idx, line) in lines.enumerate() {
-            let idx = idx + 2; // +1 because first line is just serialised block, +1 for 1-indexing
-            let line = line?;
-            let (account, trie) = line
-                .split_once(';')
-                .ok_or(anyhow!("Invalid checkpoint file at line {idx}"))?;
-            let (account_hash, serialized_account) = account.split_once(':').ok_or(anyhow!(
-                "Invalid checkpoint file: invalid state account information at line {idx}"
-            ))?;
-            let serialized_account = hex::decode(serialized_account)?;
-            let mut account_trie = EthTrie::new(trie_storage.clone());
-            for (storage_idx, storage_entry) in trie.split(',').enumerate() {
-                if storage_entry.is_empty() {
-                    continue;
+        loop {
+            // Read account key and the serialised Account
+            let mut account_hash = [0u8; 32];
+            match reader.read_exact(&mut account_hash) {
+                // Read successful
+                Ok(_) => (),
+                // Break loop here if weve reached the end of the file
+                Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    break;
                 }
-                let (key, val) = storage_entry.split_once(':').ok_or(anyhow!(
-                    "Invalid checkpoint file: invalid storage entry at line {idx}, index {storage_idx}",
-                ))?;
-                account_trie.insert(&hex::decode(key)?, &hex::decode(val)?)?;
+                Err(e) => return Err(e.into()),
+            };
+
+            let mut serialised_account_len_buf = [0u8; std::mem::size_of::<u64>()];
+            reader.read_exact(&mut serialised_account_len_buf)?;
+            let mut serialised_account =
+                vec![0u8; usize::try_from(u64::from_be_bytes(serialised_account_len_buf))?];
+            reader.read_exact(&mut serialised_account)?;
+
+            // Read entire account storage as a buffer
+            let mut account_storage_len_buf = [0u8; std::mem::size_of::<u64>()];
+            reader.read_exact(&mut account_storage_len_buf)?;
+            let account_storage_len = usize::try_from(u64::from_be_bytes(account_storage_len_buf))?;
+            let mut account_storage = vec![0u8; account_storage_len];
+            reader.read_exact(&mut account_storage)?;
+
+            // Pull out each storage key and value
+            let mut account_trie = EthTrie::new(trie_storage.clone());
+            let mut pointer: usize = 0;
+            while account_storage_len > pointer {
+                let storage_key_len_buf: &[u8] =
+                    &account_storage[pointer..(pointer + std::mem::size_of::<u64>())];
+                let storage_key_len =
+                    usize::try_from(u64::from_be_bytes(storage_key_len_buf.try_into()?))?;
+                pointer += std::mem::size_of::<u64>();
+                let storage_key: &[u8] = &account_storage[pointer..(pointer + storage_key_len)];
+                pointer += storage_key_len;
+
+                let storage_val_len_buf: &[u8] =
+                    &account_storage[pointer..(pointer + std::mem::size_of::<u64>())];
+                let storage_val_len =
+                    usize::try_from(u64::from_be_bytes(storage_val_len_buf.try_into()?))?;
+                pointer += std::mem::size_of::<u64>();
+                let storage_val: &[u8] = &account_storage[pointer..(pointer + storage_val_len)];
+                pointer += storage_val_len;
+
+                account_trie.insert(storage_key, storage_val)?;
             }
+
             let account_trie_root =
-                bincode::deserialize::<Account>(&serialized_account)?.storage_root;
+                bincode::deserialize::<Account>(&serialised_account)?.storage_root;
             if account_trie.root_hash()?.as_slice() != account_trie_root {
                 return Err(anyhow!(
-                    "Invalid checkpoint file: account trie root hash mismatch, at line {idx}: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(account_trie_root)
+                    "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(account_trie_root)
                 ));
             }
-            state_trie.insert(&hex::decode(account_hash)?, &serialized_account)?;
+            state_trie.insert(&account_hash, &serialised_account)?;
         }
+
         if state_trie.root_hash()? != parent.state_root_hash().0 {
             return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
         }
@@ -404,6 +442,8 @@ impl Db {
             self.set_high_qc_with_db_tx(tx, block.header.qc)?;
             Ok(())
         })?;
+
+        fs::remove_file(temp_filename)?;
 
         Ok(Some((block, transactions, parent)))
     }
@@ -889,6 +929,8 @@ pub fn get_checkpoint_filename<P: AsRef<Path> + Debug>(
     Ok(output_dir.as_ref().join(block.number().to_string()))
 }
 
+/// Build checkpoint and write to disk.
+/// A description of the data written can be found in docs/checkpoints
 pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     block: &Block,
     transactions: &Vec<SignedTransaction>,
@@ -897,7 +939,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     shard_id: u64,
     output_dir: P,
 ) -> Result<()> {
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
 
     fs::create_dir_all(&output_dir)?;
 
@@ -922,46 +964,92 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     writer.write_all(b"\n")?;
 
     // write the block...
-    writer.write_all(hex::encode(bincode::serialize(&block)?).as_bytes())?; // TODO: better serialization (#1007)
-    writer.write_all(b"\n")?;
+    let block_ser = &bincode::serialize(&block)?;
+    writer.write_all(&u64::try_from(block_ser.len())?.to_be_bytes())?;
+    writer.write_all(block_ser)?;
 
     // write transactions
-    writer.write_all(hex::encode(bincode::serialize(&transactions)?).as_bytes())?; // TODO: better serialization (#1007)
-    writer.write_all(b"\n")?;
+    let transactions_ser = &bincode::serialize(&transactions)?;
+    writer.write_all(&u64::try_from(transactions_ser.len())?.to_be_bytes())?;
+    writer.write_all(transactions_ser)?;
 
     // and its parent, to keep the qc tracked
-    writer.write_all(hex::encode(bincode::serialize(&parent)?).as_bytes())?; // TODO: better serialization (#1007)
-    writer.write_all(b"\n")?;
+    let parent_ser = &bincode::serialize(&parent)?;
+    writer.write_all(&u64::try_from(parent_ser.len())?.to_be_bytes())?;
+    writer.write_all(parent_ser)?;
 
-    // then write state
+    // then write state for each account
     let accounts =
         EthTrie::new(state_trie_storage.clone()).at_root(parent.state_root_hash().into());
     let account_storage = EthTrie::new(state_trie_storage);
-    let mut account_key_buf = [0u8; 64]; // save a few allocations, since account keys are fixed length
+    let mut account_key_buf = [0u8; 32]; // save a few allocations, since account keys are fixed length
 
-    for (key, val) in accounts.iter() {
-        let account_storage =
-            account_storage.at_root(bincode::deserialize::<Account>(&val)?.storage_root);
-
+    for (key, serialised_account) in accounts.iter() {
         // export the account itself
-        hex::encode_to_slice(key, &mut account_key_buf)?;
+        account_key_buf.copy_from_slice(&key);
         writer.write_all(&account_key_buf)?;
-        writer.write_all(b":")?;
-        writer.write_all(hex::encode(val).as_bytes())?;
-        writer.write_all(b";")?;
 
-        // now the account storage
+        writer.write_all(&u64::try_from(serialised_account.len())?.to_be_bytes())?;
+        writer.write_all(&serialised_account)?;
+
+        // now write the entire account storage map
+        let account_storage = account_storage
+            .at_root(bincode::deserialize::<Account>(&serialised_account)?.storage_root);
+        let mut account_storage_buf = vec![];
         for (storage_key, storage_val) in account_storage.iter() {
-            writer.write_all(hex::encode(storage_key).as_bytes())?;
-            writer.write_all(b":")?;
-            writer.write_all(hex::encode(storage_val).as_bytes())?;
-            writer.write_all(b",")?;
+            account_storage_buf.extend_from_slice(&u64::try_from(storage_key.len())?.to_be_bytes());
+            account_storage_buf.extend_from_slice(&storage_key);
+
+            account_storage_buf.extend_from_slice(&u64::try_from(storage_val.len())?.to_be_bytes());
+            account_storage_buf.extend_from_slice(&storage_val);
         }
-        writer.write_all(b"\n")?;
+        writer.write_all(&u64::try_from(account_storage_buf.len())?.to_be_bytes())?;
+        writer.write_all(&account_storage_buf)?;
     }
     writer.flush()?;
 
-    fs::rename(&temp_filename, &output_filename)?;
+    // lz4 compress and write to output
+    compress_file(&temp_filename, &output_filename)?;
+
+    fs::remove_file(temp_filename)?;
+
+    Ok(())
+}
+
+/// Read temp file, compress usign lz4, write into output file
+fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P) -> Result<()> {
+    let mut reader = BufReader::new(File::open(input_file_path)?);
+
+    let mut encoder = EncoderBuilder::new().build(File::create(output_file_path)?)?;
+    let mut buffer = [0u8; 1024 * 64]; // read 64KB chunks at a time
+    loop {
+        let bytes_read = reader.read(&mut buffer)?; // Read a chunk of decompressed data
+        if bytes_read == 0 {
+            break; // End of file
+        }
+        encoder.write_all(&buffer[..bytes_read])?;
+    }
+    encoder.finish().1?;
+
+    Ok(())
+}
+
+/// Read lz4 compressed file and write into output file
+fn decompress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P) -> Result<()> {
+    let reader: BufReader<File> = BufReader::new(File::open(input_file_path)?);
+    let mut decoder = Decoder::new(reader)?;
+
+    let mut writer = BufWriter::new(File::create(output_file_path)?);
+    let mut buffer = [0u8; 1024 * 64]; // read 64KB chunks at a time
+    loop {
+        let bytes_read = decoder.read(&mut buffer)?; // Read a chunk of decompressed data
+        if bytes_read == 0 {
+            break; // End of file
+        }
+        writer.write_all(&buffer[..bytes_read])?;
+    }
+
+    writer.flush()?;
 
     Ok(())
 }
