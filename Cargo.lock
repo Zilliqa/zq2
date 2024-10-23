@@ -5913,7 +5913,7 @@ dependencies = [
  "http 1.1.0",
  "opentelemetry 0.24.0",
  "opentelemetry-proto",
- "opentelemetry_sdk",
+ "opentelemetry_sdk 0.24.1",
  "prost 0.13.3",
  "thiserror",
  "tokio",
@@ -5927,7 +5927,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30ee9f20bff9c984511a02f082dc8ede839e4a9bf15cc2487c8d6fea5ad850d9"
 dependencies = [
  "opentelemetry 0.24.0",
- "opentelemetry_sdk",
+ "opentelemetry_sdk 0.24.1",
  "prost 0.13.3",
  "tonic",
 ]
@@ -5945,6 +5945,25 @@ dependencies = [
  "glob",
  "once_cell",
  "opentelemetry 0.24.0",
+ "percent-encoding",
+ "rand",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "opentelemetry_sdk"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2c627d9f4c9cdc1f21a29ee4bfbd6028fcb8bcf2a857b43f3abdf72c9c862f3"
+dependencies = [
+ "async-trait",
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "glob",
+ "once_cell",
+ "opentelemetry 0.26.0",
  "percent-encoding",
  "rand",
  "serde_json",
@@ -9968,7 +9987,7 @@ dependencies = [
  "once_cell",
  "opentelemetry 0.26.0",
  "opentelemetry-otlp",
- "opentelemetry_sdk",
+ "opentelemetry_sdk 0.26.0",
  "paste",
  "primitive-types",
  "prost 0.13.3",
