@@ -162,7 +162,7 @@ pub struct Consensus {
     /// The persistence database
     db: Arc<Db>,
     /// Receipts cache
-    receipts_cache: HashMap<Hash, TransactionReceipt>,
+    receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
@@ -1292,12 +1292,13 @@ impl Consensus {
             }
 
             // Apply specific txn
+            let mut inspector = TouchedAddressInspector::default();
             let result = Self::apply_transaction_at(
                 &mut state,
                 self.db.clone(),
                 tx.clone(),
                 proposal.header,
-                inspector::noop(),
+                &mut inspector,
             )?;
 
             // Skip transactions whose execution resulted in an error and drop them.
@@ -1342,7 +1343,8 @@ impl Consensus {
                 receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
                 // Forwarding cache
-                self.receipts_cache.insert(tx.hash, receipt);
+                let addresses = inspector.touched.into_iter().collect_vec();
+                self.receipts_cache.insert(tx.hash, (receipt, addresses));
 
                 tx_index_in_block += 1;
                 updated_root_hash = state.root_hash()?;
@@ -2736,17 +2738,25 @@ impl Consensus {
         let mut block_receipts: Vec<(TransactionReceipt, usize)> = Vec::new();
 
         if from.is_some_and(|peer_id| peer_id == self.peer_id()) {
-            info!("Fast-forward self-proposal");
-            // recover previous receipts from cache
+            trace!(
+                block.header.number,
+                block.header.view,
+                "fast-forward self-proposal"
+            );
+
             for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
-                // Retrieve set of receipts
-                block_receipts.push((
-                    self.receipts_cache
-                        .remove(txn_hash)
-                        .expect("receipt cached during proposal assembly"),
-                    tx_index,
-                ));
-                // TODO: Apply 'touched-address' from cache
+                let (receipt, addresses) = self
+                    .receipts_cache
+                    .remove(txn_hash)
+                    .expect("receipt cached during proposal assembly");
+
+                // Recover set of receipts
+                block_receipts.push((receipt, tx_index));
+
+                // Apply 'touched-address' from cache
+                for address in addresses {
+                    self.db.add_touched_address(address, *txn_hash)?;
+                }
             }
             // fast-forward state
             self.state.set_to_root(block.state_root_hash().into());
