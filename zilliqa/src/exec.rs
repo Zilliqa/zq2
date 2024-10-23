@@ -422,9 +422,7 @@ impl State {
                 self.apply_delta_evm(&state)?;
                 Ok(addr)
             }
-            ExecutionResult::Success { .. } => {
-                Err(anyhow!("deployment did not create a transaction"))
-            }
+            ExecutionResult::Success { .. } => Err(anyhow!("deployment did not create a contract")),
             ExecutionResult::Revert { .. } => Err(anyhow!("deployment reverted")),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("deployment halted: {reason:?}")),
         }
@@ -715,7 +713,7 @@ impl State {
         Ok(())
     }
 
-    pub fn leader(&self, view: u64) -> Result<NodePublicKey> {
+    pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
         let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
 
         let leader = self.call_contract(
@@ -723,7 +721,7 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            BlockHeader::default(),
+            current_block,
         )?;
 
         NodePublicKey::from_bytes(
@@ -754,7 +752,7 @@ impl State {
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            BlockHeader::default(),
+            BlockHeader::default(), // TODO
         )?;
 
         let stakers = contracts::deposit::GET_STAKERS
@@ -770,6 +768,22 @@ impl State {
             .collect()
     }
 
+    pub fn committee(&self) -> Result<()> {
+        let data = contracts::deposit::COMMITTEE.encode_input(&[])?;
+
+        let committee = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            BlockHeader::default(),
+        )?;
+        let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
+        info!("committee: {committee:?}");
+
+        Ok(())
+    }
+
     pub fn get_stake(&self, public_key: NodePublicKey) -> Result<Option<NonZeroU128>> {
         let data =
             contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
@@ -781,7 +795,7 @@ impl State {
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            BlockHeader::default(),
+            BlockHeader::default(), // TODO
         )?;
 
         let stake = NonZeroU128::new(U256::from_be_slice(&stake).to());
@@ -844,7 +858,7 @@ impl State {
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
-            BlockHeader::default(),
+            BlockHeader::default(), // TODO
         )?;
 
         let amount = contracts::deposit::TOTAL_STAKE.decode_output(&return_value)?[0]
