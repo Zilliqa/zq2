@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use colored::Colorize;
 use tokio::{fs, sync::Semaphore, task};
 
@@ -522,9 +522,7 @@ pub async fn run_restore(config_file: &str, filename: &str, max_parallel: usize)
 }
 
 pub async fn run_reset(config_file: &str, node_selection: bool) -> Result<()> {
-    let config = NetworkConfig::from_file(config_file)
-        .await
-        .context(format!("Cannot read {config_file}"))?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let mut chain_nodes = chain.nodes().await?;
     chain_nodes.retain(|node| node.role != NodeRole::Apps);
