@@ -166,10 +166,16 @@ mod tests {
             },
         };
 
-        let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 26))
+        let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 28))
             .unwrap();
 
         let output = solc.compile_exact(&input).unwrap();
+        if output.has_error() {
+            for error in output.errors {
+                eprintln!("{error}");
+            }
+            panic!("compilation failed");
+        }
         let output_file = root.join("src").join("contracts").join("compiled.json");
 
         if std::env::var_os("ZQ_CONTRACT_TEST_BLESS").is_some() {

@@ -107,12 +107,19 @@ library Deque {
 
 using Deque for Deque.Withdrawals;
 
+struct CommitteeStakerEntry {
+    // The index of the value in the `stakers` array plus 1.
+    // Index 0 is used to mean a value is not present.
+    uint256 index;
+    // Invariant: `balance >= minimumStake`
+    uint256 balance;
+}
+
 struct Committee {
-    // Invariant: Equal to the sum of `balances`
+    // Invariant: Equal to the sum of `balances` in `stakers`.
     uint256 totalStake;
-    bytes[] stakers;
-    // Invariant: for b in balances: `b >= minimumStake`
-    uint256[] balances;
+    bytes[] stakerKeys;
+    mapping(bytes => CommitteeStakerEntry) stakers;
 }
 
 struct Staker {
@@ -121,8 +128,6 @@ struct Staker {
     address controlAddress;
     // The address which rewards for this staker will be sent to.
     address rewardAddress;
-    // The index of this staker's `blsPubKey` in the `Committee`'s `stakers` array. Set to -1 if not currently part of the committee.
-    int256 keyIndex;
     // libp2p peer ID, corresponding to the staker's `blsPubKey`
     bytes peerId;
     // Invariants: Items are always sorted by `startedAt`. No two items have the same value of `startedAt`.
@@ -185,7 +190,7 @@ contract Deposit {
             );
 
             require(
-                committee().stakers.length < maximumStakers,
+                committee().stakerKeys.length < maximumStakers,
                 "too many stakers"
             );
 
@@ -207,9 +212,11 @@ contract Deposit {
 
             Committee storage currentCommittee = _committee[currentEpoch() % 3];
             currentCommittee.totalStake += amount;
-            staker.keyIndex = int(currentCommittee.stakers.length);
-            currentCommittee.stakers.push(blsPubKey);
-            currentCommittee.balances.push(amount);
+            currentCommittee.stakers[blsPubKey].balance = amount;
+            currentCommittee.stakers[blsPubKey].index =
+                currentCommittee.stakerKeys.length +
+                1;
+            currentCommittee.stakerKeys.push(blsPubKey);
         }
     }
 
@@ -217,7 +224,7 @@ contract Deposit {
         return uint64(block.number / blocksPerEpoch);
     }
 
-    function committee() public view returns (Committee memory) {
+    function committee() private view returns (Committee storage) {
         if (latestComputedEpoch <= currentEpoch()) {
             // If the current epoch is after the latest computed epoch, it is implied that no changes have happened to
             // the committee since the latest computed epoch. Therefore, it suffices to return the committee at that
@@ -238,9 +245,9 @@ contract Deposit {
         uint256 cummulative_stake = 0;
 
         // TODO: Consider binary search for performance. Or consider an alias method for O(1) performance.
-        for (uint256 i = 0; i < committee().stakers.length; i++) {
-            bytes memory stakerKey = committee().stakers[i];
-            uint256 stakedBalance = committee().balances[i];
+        for (uint256 i = 0; i < committee().stakerKeys.length; i++) {
+            bytes memory stakerKey = committee().stakerKeys[i];
+            uint256 stakedBalance = committee().stakers[stakerKey].balance;
 
             cummulative_stake += stakedBalance;
 
@@ -262,27 +269,35 @@ contract Deposit {
     }
 
     function getStakers() public view returns (bytes[] memory) {
-        return committee().stakers;
+        return committee().stakerKeys;
     }
 
     function getStakersData()
         public
         view
-        returns (Committee memory, Staker[] memory)
+        returns (
+            bytes[] memory stakerKeys,
+            uint256[] memory balances,
+            Staker[] memory stakers
+        )
     {
-        Committee memory currentCommittee = committee();
-        bytes[] memory stakerKeys = currentCommittee.stakers;
-        Staker[] memory stakers = new Staker[](stakerKeys.length);
+        Committee storage currentCommittee = committee();
+        stakerKeys = currentCommittee.stakerKeys;
+        balances = new uint256[](stakerKeys.length);
+        stakers = new Staker[](stakerKeys.length);
         for (uint i = 0; i < stakerKeys.length; i++) {
-            stakers[i] = _stakersMap[stakerKeys[i]];
+            bytes memory key = stakerKeys[i];
+            balances[i] = currentCommittee.stakers[key].balance;
+            stakers[i] = _stakersMap[key];
         }
-        return (currentCommittee, stakers);
     }
 
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
         require(blsPubKey.length == 48);
 
-        return committee().balances[uint(_stakersMap[blsPubKey].keyIndex)];
+        // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
+        // balance will default to zero.
+        return committee().stakers[blsPubKey].balance;
     }
 
     function getRewardAddress(
@@ -321,7 +336,31 @@ contract Deposit {
                 i <= currentEpoch() + 2 && i < latestComputedEpoch + 3;
                 i++
             ) {
-                _committee[i % 3] = latestComputedCommittee;
+                // The operation we want to do is: `_committee[i % 3] = latestComputedCommittee` but we need to do it
+                // explicitly because `stakers` is a mapping.
+
+                // Delete old keys from `_committee[i % 3].stakers`.
+                for (uint j = 0; j < _committee[i % 3].stakerKeys.length; j++) {
+                    delete _committee[i % 3].stakers[
+                        _committee[i % 3].stakerKeys[j]
+                    ];
+                }
+
+                _committee[i % 3].totalStake = latestComputedCommittee
+                    .totalStake;
+                _committee[i % 3].stakerKeys = latestComputedCommittee
+                    .stakerKeys;
+                for (
+                    uint j = 0;
+                    j < latestComputedCommittee.stakerKeys.length;
+                    j++
+                ) {
+                    bytes storage stakerKey = latestComputedCommittee
+                        .stakerKeys[j];
+                    _committee[i % 3].stakers[
+                        stakerKey
+                    ] = latestComputedCommittee.stakers[stakerKey];
+                }
             }
 
             latestComputedEpoch = currentEpoch() + 2;
@@ -371,8 +410,6 @@ contract Deposit {
         require(pop, "rogue key check");
 
         Staker storage staker = _stakersMap[blsPubKey];
-        // This must be a new staker, meaning the control address must be zero.
-        require(staker.controlAddress == address(0), "staker already exists");
 
         if (msg.value < minimumStake) {
             revert("stake is less than minimum stake");
@@ -390,28 +427,37 @@ contract Deposit {
         ];
 
         require(
-            futureCommittee.stakers.length < maximumStakers,
+            futureCommittee.stakerKeys.length < maximumStakers,
             "too many stakers"
+        );
+        require(
+            futureCommittee.stakers[blsPubKey].index == 0,
+            "staker already exists"
         );
 
         futureCommittee.totalStake += msg.value;
-        staker.keyIndex = int(futureCommittee.stakers.length);
-        futureCommittee.stakers.push(blsPubKey);
-        futureCommittee.balances.push(msg.value);
+        futureCommittee.stakers[blsPubKey].balance = msg.value;
+        futureCommittee.stakers[blsPubKey].index =
+            futureCommittee.stakerKeys.length +
+            1;
+        futureCommittee.stakerKeys.push(blsPubKey);
     }
 
     function depositTopup() public payable {
         bytes storage stakerKey = _stakerKeys[msg.sender];
         require(stakerKey.length != 0, "staker does not exist");
-        Staker storage staker = _stakersMap[stakerKey];
 
         updateLatestComputedEpoch();
 
         Committee storage futureCommittee = _committee[
             (currentEpoch() + 2) % 3
         ];
+        require(
+            futureCommittee.stakers[stakerKey].index != 0,
+            "staker does not exist"
+        );
         futureCommittee.totalStake += msg.value;
-        futureCommittee.balances[uint(staker.keyIndex)] += msg.value;
+        futureCommittee.stakers[stakerKey].balance += msg.value;
     }
 
     function unstake(uint256 amount) public {
@@ -425,55 +471,50 @@ contract Deposit {
             (currentEpoch() + 2) % 3
         ];
 
-        require(futureCommittee.stakers.length > 1, "too few stakers");
-
         require(
-            futureCommittee.balances[uint(staker.keyIndex)] >= amount,
+            futureCommittee.stakers[stakerKey].index != 0,
+            "staker does not exist"
+        );
+        require(futureCommittee.stakerKeys.length > 1, "too few stakers");
+        require(
+            futureCommittee.stakers[stakerKey].balance >= amount,
             "amount is greater than staked balance"
         );
 
-        if (futureCommittee.balances[uint(staker.keyIndex)] - amount == 0) {
+        if (futureCommittee.stakers[stakerKey].balance - amount == 0) {
             // Remove the staker from the future committee, because their staked amount has gone to zero.
             futureCommittee.totalStake -= amount;
 
-            // Delete this staker. We need to delete it in 3 places:
-            // 1. `futureCommittee.stakers`
-            // 2. `futureCommittee.balances`
-            // 3. `_stakersMap`
+            uint256 deleteIndex = futureCommittee.stakers[stakerKey].index - 1;
+            uint256 lastIndex = futureCommittee.stakerKeys.length - 1;
 
-            // First move the last staker into the position of the staker we want to delete. This needs to be done in
-            // `futureCommittee.stakers` and `futureCommittee.balances`. We also need to update the `keyIndex` of the
-            // last staker to point to its new index.
-            bytes storage lastStakerKey = futureCommittee.stakers[
-                futureCommittee.stakers.length - 1
-            ];
-            uint256 lastStakerBalance = futureCommittee.balances[
-                futureCommittee.balances.length - 1
-            ];
-            Staker storage lastStaker = _stakersMap[lastStakerKey];
-            futureCommittee.stakers[uint(staker.keyIndex)] = lastStakerKey;
-            futureCommittee.balances[uint(staker.keyIndex)] = lastStakerBalance;
-            lastStaker.keyIndex = staker.keyIndex;
+            if (deleteIndex != lastIndex) {
+                // Move the last staker in `stakerKeys` to the position of the staker we want to delete.
+                bytes storage lastStakerKey = futureCommittee.stakerKeys[
+                    lastIndex
+                ];
+                futureCommittee.stakerKeys[deleteIndex] = lastStakerKey;
+                // We need to remember to update the moved staker's `index` too.
+                futureCommittee.stakers[lastStakerKey].index = futureCommittee
+                    .stakers[stakerKey]
+                    .index;
+            }
 
-            // FIXME: This logic is wrong. Now if I query the balance of `lastStaker` in the current committee, their
-            // `keyIndex` will point to the balance of the staker who has unstaked. Not sure how to fix yet..?
-
-            // Now the last staker has been moved to a new position, we can safely delete the final element from both
-            // arrays.
-            futureCommittee.stakers.pop();
-            futureCommittee.balances.pop();
+            // It is now safe to delete the final staker in the list.
+            futureCommittee.stakerKeys.pop();
+            delete futureCommittee.stakers[stakerKey];
 
             // Note that we leave the staker in `_stakersMap` forever.
         } else {
             require(
-                futureCommittee.balances[uint(staker.keyIndex)] - amount >=
+                futureCommittee.stakers[stakerKey].balance - amount >=
                     minimumStake,
                 "unstaking this amount would take the validator below the minimum stake"
             );
 
             // Partial unstake. The staker stays in the committee, but with a reduced stake.
             futureCommittee.totalStake -= amount;
-            futureCommittee.balances[uint(staker.keyIndex)] -= amount;
+            futureCommittee.stakers[stakerKey].balance -= amount;
         }
 
         // Enqueue the withdrawal for this staker.
