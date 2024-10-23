@@ -1175,7 +1175,6 @@ impl Consensus {
         {
             return Ok(());
         }
-        info!("assemble early proposal for view {}", self.view.get_view());
 
         let (qc, parent) = match agg {
             // Create dummy QC for now if aggQC not provided
@@ -1202,7 +1201,20 @@ impl Consensus {
             }
         };
 
-        info!("parent block number: {}", parent.header.number);
+        // This is a partial header of a block that will be proposed with some transactions executed below.
+        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
+        let executed_block_header = BlockHeader {
+            view: self.view(),
+            number: parent.header.number + 1,
+            timestamp: parent.header.timestamp, // will be overridden by `finish_early_proposal_at`
+            gas_limit: self.config.consensus.eth_block_gas_limit,
+            ..BlockHeader::default()
+        };
+
+        info!(
+            "assemble early proposal {} in view {}",
+            executed_block_header.number, executed_block_header.view
+        );
 
         // Ensure sane state
         if self.state.root_hash()? != parent.state_root_hash() {
@@ -1218,16 +1230,6 @@ impl Consensus {
         let mut transactions_trie: EthTrie<MemoryDB> =
             eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let applied_txs = Vec::<VerifiedTransaction>::new();
-
-        // This is a partial header of a block that will be proposed with some transactions executed below.
-        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
-        let executed_block_header = BlockHeader {
-            view: self.view(),
-            number: parent.header.number + 1,
-            timestamp: parent.header.timestamp, // will be overridden by `finish_early_proposal_at`
-            gas_limit: self.config.consensus.eth_block_gas_limit,
-            ..BlockHeader::default()
-        };
 
         // Generate the early proposal
         // Some critical parts are dummy/missing:
@@ -2725,7 +2727,7 @@ impl Consensus {
         transactions: Vec<SignedTransaction>,
         committee: &[NodePublicKey],
     ) -> Result<()> {
-        debug!("Executing block: {:?}", block.header.hash);
+        debug!("Executing block: {:?}", block.header);
 
         let parent = self
             .get_block(&block.parent_hash())?
@@ -2739,9 +2741,9 @@ impl Consensus {
 
         if from.is_some_and(|peer_id| peer_id == self.peer_id()) {
             trace!(
+                "fast-forward self-proposal {} for view {}",
                 block.header.number,
-                block.header.view,
-                "fast-forward self-proposal"
+                block.header.view
             );
 
             for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
