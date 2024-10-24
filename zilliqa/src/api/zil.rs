@@ -19,6 +19,15 @@ use jsonrpsee::{
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
+use sha2::Sha256;
+use sha3::{
+    digest::generic_array::{
+        sequence::Split,
+        typenum::{U12, U20},
+        GenericArray,
+    },
+    Digest,
+};
 
 use super::{
     to_hex::ToHex,
@@ -162,6 +171,12 @@ where
     let s = String::deserialize(deserializer)?;
     s.parse().map_err(serde::de::Error::custom)
 }
+/// Helper function to extract signer address from a public key
+fn extract_signer_address(key: &schnorr::PublicKey) -> Address {
+    let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
+    let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
+    Address::new(bytes.into())
+}
 
 fn create_transaction(
     params: Params,
@@ -230,22 +245,23 @@ fn create_transaction(
         ))?;
     }
 
-    let transaction = SignedTransaction::Zilliqa {
-        tx: TxZilliqa {
-            chain_id: chain_id as u16,
-            nonce: transaction.nonce,
-            gas_price: transaction.gas_price,
-            gas_limit: transaction.gas_limit,
-            to_addr: transaction.to_addr,
-            amount: transaction.amount,
-            code: transaction.code.unwrap_or_default(),
-            data: transaction.data.unwrap_or_default(),
-        },
-        key,
+    let tx = TxZilliqa {
+        chain_id: chain_id as u16,
+        nonce: transaction.nonce,
+        gas_price: transaction.gas_price,
+        gas_limit: transaction.gas_limit,
+        to_addr: transaction.to_addr,
+        amount: transaction.amount,
+        code: transaction.code.unwrap_or_default(),
+        data: transaction.data.unwrap_or_default(),
+    };
+    let signed_transaction = SignedTransaction::Zilliqa {
+        tx: tx.clone(),
+        key: key.clone(),
         sig,
     };
 
-    let (transaction_hash, result) = node.create_transaction(transaction.clone())?;
+    let (transaction_hash, result) = node.create_transaction(signed_transaction.clone())?;
     let info = match result {
         TxAddResult::AddedToMempool => Ok("Txn processed".to_string()),
         TxAddResult::Duplicate(_) => Ok("Txn already present".to_string()),
@@ -279,9 +295,15 @@ fn create_transaction(
             Ok(format!("Nonce ({got}) lower than current ({expected})"))
         }
     }?;
+    let contract_address = if !tx.code.is_empty() {
+        let signer = extract_signer_address(&key);
+        Some(zil_contract_address(signer, tx.nonce - 1))
+    } else {
+        None
+    };
 
     let response = CreateTransactionResponse {
-        contract_address: None,
+        contract_address,
         info,
         tran_id: transaction_hash.0.into(),
     };
