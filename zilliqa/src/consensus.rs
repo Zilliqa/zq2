@@ -576,7 +576,7 @@ impl Consensus {
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
         self.cleanup_votes();
-        let (block, transactions) = proposal.into_parts();
+        let (block, transactions) = proposal.clone().into_parts();
         let head_block = self.head_block();
 
         trace!(
@@ -617,19 +617,7 @@ impl Consensus {
             Err((e, temporary)) => {
                 // If this block could become valid in the future, buffer it.
                 if temporary {
-                    self.block_store.buffer_proposal(
-                        from,
-                        Proposal::from_parts_with_hashes(
-                            block,
-                            transactions
-                                .into_iter()
-                                .map(|tx| {
-                                    let hash = tx.calculate_hash();
-                                    (tx, hash)
-                                })
-                                .collect(),
-                        ),
-                    )?;
+                    self.block_store.buffer_proposal(from, proposal)?;
                 } else {
                     warn!(?e, "invalid block proposal received!");
                 }
@@ -657,19 +645,7 @@ impl Consensus {
                     block.view(),
                     self.view.get_view()
                 );
-                self.block_store.buffer_proposal(
-                    from,
-                    Proposal::from_parts_with_hashes(
-                        block,
-                        transactions
-                            .into_iter()
-                            .map(|tx| {
-                                let hash = tx.calculate_hash();
-                                (tx, hash)
-                            })
-                            .collect(),
-                    ),
-                )?;
+                self.block_store.buffer_proposal(from, proposal)?;
                 return Ok(None);
             }
 
