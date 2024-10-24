@@ -1589,7 +1589,7 @@ impl Consensus {
             && self.early_proposal.is_some()
             && self.transaction_pool.has_txn_ready()
         {
-            info!("add transaction to early proposal {}", self.view.get_view());
+            trace!("add transaction to early proposal {}", self.view.get_view());
             self.early_proposal_apply_transactions()?;
         }
         Ok(inserted)
