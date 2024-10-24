@@ -266,8 +266,8 @@ impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
-            ExternalMessage::Vote(_) => write!(f, "Vote"),
-            ExternalMessage::NewView(_) => write!(f, "NewView"),
+            ExternalMessage::Vote(v) => write!(f, "Vote({})", v.view),
+            ExternalMessage::NewView(n) => write!(f, "NewView({})", n.view),
             ExternalMessage::BlockRequest(r) => {
                 write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
             }
