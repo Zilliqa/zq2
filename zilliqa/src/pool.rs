@@ -150,6 +150,8 @@ impl TransactionPool {
                 // We loop until we find a transaction that hasn't been made invalid.
                 continue;
             };
+            // Don't forget to pop the index too
+            self.hash_to_index.remove(&transaction.hash);
 
             return Some(transaction);
         }
