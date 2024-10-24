@@ -20,10 +20,6 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("depositTopup").unwrap().clone());
     pub static UNSTAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("unstake").unwrap().clone());
-    pub static WITHDRAW_FUNDS: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("withdrawFunds").unwrap().clone());
-    pub static EJECT: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("eject").unwrap().clone());
     pub static CURRENT_EPOCH: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("currentEpoch").unwrap().clone());
     pub static GET_STAKE: Lazy<Function> =
@@ -32,18 +28,12 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("getRewardAddress").unwrap().clone());
     pub static GET_PEER_ID: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getPeerId").unwrap().clone());
-    pub static GET_STAKERS_MAP: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("getStakersMap").unwrap().clone());
     pub static GET_STAKERS: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
-    pub static TOTAL_STAKE: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("totalStake").unwrap().clone());
     pub static MIN_DEPOSIT: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
     pub static COMMITTEE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
-    pub static INTERNAL_COMMITTEE: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("internalCommittee").unwrap().clone());
 }
 
 pub mod shard {
