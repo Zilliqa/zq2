@@ -647,7 +647,32 @@ impl Consensus {
         trace!("checking if block view {} is safe", block.view());
 
         // If the proposed block is safe, vote for it and advance to the next round.
-        if self.check_safe_block(&block, during_sync)? {
+        if self.check_safe_block(&block)? {
+            // If the proposed block is safe but outdated then add to block cache - we may need it later
+            let outdated = block.view() < self.view.get_view();
+            let process_immediately = !outdated || during_sync;
+            if !process_immediately {
+                trace!(
+                    "proposal is outdated: {} < {} but may be useful in the future, buffering",
+                    block.view(),
+                    self.view.get_view()
+                );
+                self.block_store.buffer_proposal(
+                    from,
+                    Proposal::from_parts_with_hashes(
+                        block,
+                        transactions
+                            .into_iter()
+                            .map(|tx| {
+                                let hash = tx.calculate_hash();
+                                (tx, hash)
+                            })
+                            .collect(),
+                    ),
+                )?;
+                return Ok(None);
+            }
+
             trace!(
                 "block view {} number {} aka {} is safe",
                 block.view(),
@@ -1947,20 +1972,17 @@ impl Consensus {
         Ok(current.view() == 0 || current.hash() == ancestor.hash())
     }
 
-    fn check_safe_block(&mut self, proposal: &Block, during_sync: bool) -> Result<bool> {
+    fn check_safe_block(&mut self, proposal: &Block) -> Result<bool> {
         let Some(qc_block) = self.get_block(&proposal.parent_hash())? else {
             trace!("could not get qc for block: {}", proposal.parent_hash());
             return Ok(false);
         };
-        // We don't vote on blocks older than our view
-        let outdated = proposal.view() < self.view.get_view();
         match proposal.agg {
             // we check elsewhere that qc is the highest among the qcs in the agg
             Some(_) => match self.block_extends_from(proposal, &qc_block) {
                 Ok(true) => {
                     self.check_and_commit(proposal)?;
-                    trace!("check block aggregate is outdated? {}", outdated);
-                    Ok(!outdated || during_sync)
+                    Ok(true)
                 }
                 Ok(false) => {
                     trace!("block does not extend from parent");
@@ -1974,18 +1996,7 @@ impl Consensus {
             None => {
                 if proposal.view() == 0 || proposal.view() == qc_block.view() + 1 {
                     self.check_and_commit(proposal)?;
-
-                    if outdated {
-                        trace!(
-                            "proposal is outdated: {} < {}",
-                            proposal.view(),
-                            self.view.get_view()
-                        );
-                    }
-
-                    trace!("check block is outdated? {}", outdated);
-
-                    Ok(!outdated || during_sync)
+                    Ok(true)
                 } else {
                     trace!(
                         "block does not extend from parent, {} != {} + 1",
