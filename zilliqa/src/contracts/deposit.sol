@@ -189,8 +189,9 @@ contract Deposit {
                 "control address cannot be zero"
             );
 
+            Committee storage currentCommittee = committee();
             require(
-                committee().stakerKeys.length < maximumStakers,
+                currentCommittee.stakerKeys.length < maximumStakers,
                 "too many stakers"
             );
 
@@ -210,7 +211,6 @@ contract Deposit {
             staker.rewardAddress = rewardAddress;
             staker.controlAddress = controlAddress;
 
-            Committee storage currentCommittee = _committee[currentEpoch() % 3];
             currentCommittee.totalStake += amount;
             currentCommittee.stakers[blsPubKey].balance = amount;
             currentCommittee.stakers[blsPubKey].index =
@@ -240,14 +240,15 @@ contract Deposit {
     function leaderFromRandomness(
         uint256 randomness
     ) private view returns (bytes memory) {
+        Committee storage currentCommittee = committee();
         // Get a random number in the inclusive range of 0 to (totalStake - 1)
-        uint256 position = randomness % committee().totalStake;
+        uint256 position = randomness % currentCommittee.totalStake;
         uint256 cummulative_stake = 0;
 
         // TODO: Consider binary search for performance. Or consider an alias method for O(1) performance.
-        for (uint256 i = 0; i < committee().stakerKeys.length; i++) {
-            bytes memory stakerKey = committee().stakerKeys[i];
-            uint256 stakedBalance = committee().stakers[stakerKey].balance;
+        for (uint256 i = 0; i < currentCommittee.stakerKeys.length; i++) {
+            bytes memory stakerKey = currentCommittee.stakerKeys[i];
+            uint256 stakedBalance = currentCommittee.stakers[stakerKey].balance;
 
             cummulative_stake += stakedBalance;
 

@@ -399,7 +399,7 @@ async fn validators_can_unstake(mut network: Network) {
         .unwrap()
         .as_u64();
 
-    // The validator should leave the committee exactly two epochs after the one in which the deposit was made.
+    // The validator should leave the committee exactly two epochs after the one in which the withdrawal was made.
     let unstake_epoch = current_epoch(&wallet, Some(unstake_block)).await;
     network
         .run_until_async(
