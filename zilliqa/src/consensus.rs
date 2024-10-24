@@ -1153,7 +1153,7 @@ impl Consensus {
             proposal.header.transactions_root_hash,
             proposal.header.receipts_root_hash,
             proposal.transactions,
-            SystemTime::max(SystemTime::now(), parent_block.timestamp()),
+            proposal.header.timestamp, // set block timestamp to **start** point of assembly.
             proposal.header.gas_used,
             proposal.header.gas_limit,
         );
@@ -1206,14 +1206,15 @@ impl Consensus {
         let executed_block_header = BlockHeader {
             view: self.view(),
             number: parent.header.number + 1,
-            timestamp: parent.header.timestamp, // will be overridden by `finish_early_proposal_at`
+            timestamp: SystemTime::max(SystemTime::now(), parent.timestamp()), // block timestamp at **start** of assembly, not end.
             gas_limit: self.config.consensus.eth_block_gas_limit,
             ..BlockHeader::default()
         };
 
-        info!(
+        trace!(
             "assemble early proposal {} in view {}",
-            executed_block_header.number, executed_block_header.view
+            executed_block_header.number,
+            executed_block_header.view
         );
 
         // Ensure sane state
