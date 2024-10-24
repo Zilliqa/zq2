@@ -253,6 +253,7 @@ impl Db {
                 PRIMARY KEY (address, tx_hash));
             CREATE TABLE IF NOT EXISTS tip_info (
                 latest_finalized_view INTEGER,
+                current_view INTEGER,
                 high_qc BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL);
@@ -497,6 +498,26 @@ impl Db {
             .query_row("SELECT latest_finalized_view FROM tip_info", (), |row| {
                 row.get(0)
             })
+            .optional()?)
+    }
+
+    pub fn set_current_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<()> {
+        sqlite_tx
+            .execute("INSERT INTO tip_info (current_view) VALUES (?1) ON CONFLICT DO UPDATE SET current_view = ?1",
+                     [view])?;
+        Ok(())
+    }
+
+    pub fn set_current_view(&self, view: u64) -> Result<()> {
+        self.set_current_view_with_db_tx(&self.db.lock().unwrap(), view)
+    }
+
+    pub fn get_current_view(&self) -> Result<Option<u64>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT current_view FROM tip_info", (), |row| row.get(0))
             .optional()?)
     }
 

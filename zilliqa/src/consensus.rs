@@ -187,8 +187,14 @@ impl View {
         self.view
     }
 
-    pub fn set_view(&mut self, view: u64) {
+    /// Set view and return true if value updated
+    pub fn set_view(&mut self, view: u64) -> bool {
         match view.cmp(&self.view) {
+            std::cmp::Ordering::Greater => {
+                self.view = view;
+                self.last_timeout = SystemTime::now();
+                return true;
+            }
             std::cmp::Ordering::Less => {
                 warn!(
                     "Tried to set view {} to lower view {} - this is incorrect",
@@ -198,11 +204,8 @@ impl View {
             std::cmp::Ordering::Equal => {
                 trace!("Tried to set view to same view - this is incorrect");
             }
-            std::cmp::Ordering::Greater => {
-                self.view = view;
-                self.last_timeout = SystemTime::now();
-            }
-        }
+        };
+        return false;
     }
 
     pub fn last_timeout(&self) -> SystemTime {
@@ -502,7 +505,7 @@ impl Consensus {
             next_exponential_backoff_timeout
         );
 
-        self.view.set_view(self.view.get_view() + 1);
+        self.set_view(self.view.get_view() + 1)?;
         let Some(leader) = self.leader_at_block(&block, self.view.get_view()) else {
             return Ok(None);
         };
@@ -664,8 +667,8 @@ impl Consensus {
             let from = (self.peer_id() != from).then_some(from);
             self.execute_block(from, &block, transactions, &stakers)?;
 
-            if self.view.get_view() != proposal_view + 1 {
-                self.view.set_view(proposal_view + 1);
+            if self.view() != proposal_view + 1 {
+                self.set_view(proposal_view + 1)?;
 
                 debug!(
                     "*** setting view to proposal view... view is now {}",
@@ -1701,12 +1704,12 @@ impl Consensus {
                 "storing vote for new view"
             );
             if supermajority {
-                if self.view.get_view() < new_view.view {
+                if self.view() < new_view.view {
                     info!(
                         "forcibly updating view to {} as majority is ahead",
                         new_view.view
                     );
-                    self.view.set_view(new_view.view);
+                    self.set_view(new_view.view)?;
                 }
 
                 // if we are already in the round in which the vote counts and have reached supermajority we can propose a block
@@ -1844,10 +1847,11 @@ impl Consensus {
                     new_high_qc_block_view + 1,
                     current_high_qc_view,
                 );
+                //TODO write high_qc and current_view in one db call
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
-                if new_high_qc_block_view >= self.view.get_view() {
-                    self.view.set_view(new_high_qc_block_view + 1);
+                if new_high_qc_block_view >= self.view() {
+                    self.set_view(new_high_qc_block_view + 1)?;
                 }
             }
         }
@@ -2387,6 +2391,14 @@ impl Consensus {
 
     pub fn view(&self) -> u64 {
         self.view.get_view()
+    }
+
+    /// Set view in memory and update tip_info.current_view in storage
+    pub fn set_view(&mut self, view: u64) -> Result<()> {
+        if self.view.set_view(view) {
+            self.db.set_current_view(view)?;
+        }
+        Ok(())
     }
 
     pub fn finalized_view(&self) -> u64 {
