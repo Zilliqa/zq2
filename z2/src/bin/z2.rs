@@ -14,7 +14,7 @@ use z2lib::{
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
-use zilliqa::crypto::{Hash, SecretKey};
+use zilliqa::crypto::SecretKey;
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -458,7 +458,10 @@ struct JoinNodeStruct {
     config_dir: String,
     /// The network to join (devnet, infratest, perftest, .. )
     network: String,
+
     #[clap(long)]
+    checkpoint: Option<String>,
+
     #[clap(default_value = "warn")]
     log_level: LogLevel,
 
@@ -541,12 +544,6 @@ fn nodespec_from_arg(arg: &Option<String>) -> Result<Option<NodeSpec>> {
     } else {
         Ok(None)
     }
-}
-
-fn hash_from_hex(in_str: &str) -> Result<Hash> {
-    let bytes = hex::decode(in_str)?;
-    let result = Hash::try_from(bytes.as_slice())?;
-    Ok(result)
 }
 
 #[tokio::main]
@@ -911,24 +908,12 @@ async fn main() -> Result<()> {
                 to_run.insert(Component::Scilla);
             }
             let checkpoints = if let Some(v) = &args.checkpoint {
-                let components = v.split(':').collect::<Vec<&str>>();
-                if components.len() != 2 {
-                    return Err(anyhow!(
-                        "Checkpoint spec is not in form <file>:<hash> - {v}"
-                    ));
-                } else {
-                    let mut c = HashMap::new();
-                    for id in spec.nodes.keys() {
-                        c.insert(
-                            *id,
-                            zilliqa::cfg::Checkpoint {
-                                file: components[0].to_string(),
-                                hash: hash_from_hex(components[1])?,
-                            },
-                        );
-                    }
-                    Some(c)
+                let mut c = HashMap::new();
+                let point = utils::parse_checkpoint_spec(v)?;
+                for id in spec.nodes.keys() {
+                    c.insert(*id, point.clone());
                 }
+                Some(c)
             } else {
                 None
             };
@@ -976,6 +961,13 @@ async fn main() -> Result<()> {
                 &arg.trace_modules,
             )?;
             let chain = chain::Chain::from_str(&arg.network)?;
+            let checkpoints = if let Some(v) = &arg.checkpoint {
+                let mut table = HashMap::new();
+                table.insert(0, utils::parse_checkpoint_spec(v)?);
+                Some(table)
+            } else {
+                None
+            };
             plumbing::run_net(
                 &plumbing::NetworkType::Deployed(chain),
                 &base_dir,
@@ -986,7 +978,7 @@ async fn main() -> Result<()> {
                 // Not relevant for joining existing networks.
                 false,
                 arg.watch,
-                &None,
+                &checkpoints,
                 Some(secret_key_hex),
             )
             .await?;
