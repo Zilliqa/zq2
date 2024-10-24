@@ -313,7 +313,7 @@ impl P2pNode {
                             // Route broadcasts to speed-up Proposal processing
                             match message {
                                 ExternalMessage::Proposal(_) => {
-                                    self.send_to(&topic_hash, |c| c.requests.send((source, message, ResponseChannel::Local)))?;
+                                    self.send_to(&topic_hash, |c| c.requests.send((source, String::from("broadcast"), message, ResponseChannel::Local)))?;
                                 }
                                 _ => {
                                     self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
@@ -430,7 +430,7 @@ impl P2pNode {
                             // Also route broadcasts to ourselves
                             match message {
                                 ExternalMessage::Proposal(_) => {
-                                    self.send_to(&topic.hash(), |c| c.requests.send((from, message, ResponseChannel::Local)))?;
+                                    self.send_to(&topic.hash(), |c| c.requests.send((from, String::from("broadcast"), message, ResponseChannel::Local)))?;
                                 }
                                 _ => {
                                     self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
