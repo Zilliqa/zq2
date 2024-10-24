@@ -296,7 +296,13 @@ impl Consensus {
                         .get_block_by_view(finalized_number)?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
-                    let start_view = std::cmp::max(high_block.view(), finalized_block.view()) + 1;
+                    let mut start_view =
+                        std::cmp::max(high_block.view(), finalized_block.view()) + 1;
+                    // If current_view was written then always start from there
+                    if let Some(current_view) = db.get_current_view()? {
+                        start_view = current_view;
+                    }
+
                     trace!(
                         "recovery: high_block view {0}, finalized_number {1} , start_view {2}",
                         high_block.view(),
