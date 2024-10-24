@@ -946,7 +946,7 @@ impl Node {
                 proposal.header.view
             );
             self.message_sender
-                .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
+                .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
         }
         Ok(())
     }
