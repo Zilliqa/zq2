@@ -1211,10 +1211,9 @@ impl Consensus {
             ..BlockHeader::default()
         };
 
-        trace!(
+        debug!(
             "assemble early proposal {} in view {}",
-            executed_block_header.number,
-            executed_block_header.view
+            executed_block_header.number, executed_block_header.view
         );
 
         // Ensure sane state
@@ -1289,6 +1288,14 @@ impl Consensus {
             if time_since_last_view_change + minimum_time_left_for_empty_block
                 >= exponential_backoff_timeout
             {
+                debug!(
+                    time_since_last_view_change,
+                    exponential_backoff_timeout,
+                    minimum_time_left_for_empty_block,
+                    "timeout proposal {} for view {}",
+                    proposal.header.number,
+                    proposal.header.view,
+                );
                 // don't have time, reinsert txn.
                 self.transaction_pool.insert_ready_transaction(tx);
                 break;
@@ -1314,11 +1321,15 @@ impl Consensus {
             gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
                 g
             } else {
-                // undo last transaction
-                info!(
-                    nonce = tx.tx.nonce(),
-                    "gas limit reached, returning last transaction to pool",
+                debug!(
+                    time_since_last_view_change,
+                    exponential_backoff_timeout,
+                    minimum_time_left_for_empty_block,
+                    "gasout proposal {} for view {}",
+                    proposal.header.number,
+                    proposal.header.view,
                 );
+                // out of gas, undo last transaction
                 self.transaction_pool.insert_ready_transaction(tx);
                 state.set_to_root(updated_root_hash.into());
                 break;
@@ -2741,10 +2752,9 @@ impl Consensus {
         let mut block_receipts: Vec<(TransactionReceipt, usize)> = Vec::new();
 
         if from.is_some_and(|peer_id| peer_id == self.peer_id()) {
-            trace!(
+            debug!(
                 "fast-forward self-proposal {} for view {}",
-                block.header.number,
-                block.header.view
+                block.header.number, block.header.view
             );
 
             for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
