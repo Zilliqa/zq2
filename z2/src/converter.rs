@@ -198,11 +198,18 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
             .map_err(|err| anyhow!("Unable to convert scilla initdata into string: {err}"))?,
         None => String::new(),
     };
+    let init_data_vec = if init_data.trim().is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str::<Vec<ParamValue>>(&init_data).map_err(|err| {
+            anyhow!("Unable to convert scilla init data into Vec<ParamValue>: {init_data} - {err}")
+        })?
+    };
 
     Ok(Code::Scilla {
         code: String::from_utf8(code)
             .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?,
-        init_data: serde_json::from_str(&init_data)?,
+        init_data: init_data_vec,
         types: BTreeMap::default(),
         transitions: vec![],
     })
