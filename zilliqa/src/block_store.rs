@@ -132,8 +132,10 @@ impl BlockCache {
     /// (note that this will be BLOCK_CACHE_HEAD_BUFFER_ENTRIES >> shift cached views, since the
     /// head cache is set associative)
     pub fn min_head_cache_key(&self, highest_known_view: u64) -> u128 {
+        let delta = u128::try_from(constants::BLOCK_CACHE_HEAD_BUFFER_ENTRIES).unwrap();
         let highest_key = u128::from(highest_known_view + 1) << self.shift;
-        highest_key - u128::try_from(constants::BLOCK_CACHE_HEAD_BUFFER_ENTRIES).unwrap()
+        highest_key // prevent underflowing for low views
+            .saturating_sub(delta)
     }
 
     pub fn destructive_proposals_from_parent_hashes(
