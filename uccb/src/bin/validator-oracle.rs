@@ -211,9 +211,8 @@ impl ValidatorOracle {
     async fn get_stakers(&self) -> Result<Vec<Address>> {
         debug!("Retreiving validators from the deposit contract");
 
-        let call_builder: DynCallBuilder<_, _, _> = self
-            .deposit_contract
-            .function("getStakerData", &[])?;
+        let call_builder: DynCallBuilder<_, _, _> =
+            self.deposit_contract.function("getStakerData", &[])?;
         let output = call_builder.call().await?;
         let validators = output[1]
             .as_array()
