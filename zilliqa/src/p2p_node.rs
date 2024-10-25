@@ -423,7 +423,7 @@ impl P2pNode {
                             debug!(%from, %message, "broadcasting");
                             match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 // Also route broadcasts to ourselves, with a faux request-id.
-                                Ok(msg_id) =>
+                                Ok(msg_id) => {
                                     match message {
                                         ExternalMessage::Proposal(_) => {
                                             self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
@@ -431,12 +431,16 @@ impl P2pNode {
                                         _ => {
                                             self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
                                         }
-                                    },
+                                    }
+                                },
+                                // still publish to self, even if no other peers.
+                                Err(gossipsub::PublishError::InsufficientPeers) => {
+                                    self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                }
                                 Err(e) => {
                                     trace!(%e, "failed to publish message");
                                 }
                             }
-
                         },
                     }
                 },
