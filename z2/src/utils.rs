@@ -1,5 +1,5 @@
 use core::convert::AsRef;
-use std::{env, path::Path};
+use std::{env, fs, os::unix::fs::PermissionsExt, path::Path};
 
 use anyhow::{anyhow, Result};
 use reqwest;
@@ -92,4 +92,11 @@ pub fn compute_log_string(
         }
     };
     Ok(log_spec)
+}
+
+pub fn make_executable<P: AsRef<Path>>(file_path: &P) -> Result<()> {
+    let mut perms = fs::metadata(file_path)?.permissions();
+    perms.set_mode(perms.mode() | 0o111);
+    fs::set_permissions(file_path, perms)?;
+    Ok(())
 }

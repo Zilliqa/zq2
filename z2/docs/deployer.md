@@ -505,3 +505,37 @@ Configuration file: zq2-prototestnet.yaml
 ```bash
 z2 deployer reset zq2-prototestnet.yaml
 ```
+
+## Restart network nodes
+
+```bash
+z2 deployer restart --help
+```
+
+```bash
+Restart a network stopping all the nodes and starting the service again
+
+Usage: z2 deployer restart [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+      --select      Enable nodes selection
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
+```
+
+### Usage example
+
+#### Scenario
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer restart zq2-prototestnet.yaml
+```

@@ -31,7 +31,7 @@ declare module "hardhat/types/config" {
 
 const loadFromSignersFile = (network_name: string): string[] => {
   try {
-    return JSON.parse(fs.readFileSync(`.signers/${network_name}.json`, "utf8"));
+    return JSON.parse(fs.readFileSync(process.env.SIGNERS_FILE ?? `.signers/${network_name}.json`, "utf8"));
   } catch (error) {
     return [];
   }
@@ -39,7 +39,7 @@ const loadFromSignersFile = (network_name: string): string[] => {
 
 const config: HardhatUserConfig = {
   solidity: "0.8.9",
-  defaultNetwork: "isolated_server",
+  defaultNetwork: process.env.DEFAULT_NETWORK ?? "isolated_server",
 
   networks: {
     from_env: {

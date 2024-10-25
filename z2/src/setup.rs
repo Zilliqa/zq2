@@ -1,14 +1,19 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
-use alloy::primitives::{address, Address};
+use alloy::{
+    primitives::{address, Address},
+    signers::local::LocalSigner,
+};
 use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
+use tera::Tera;
 use tokio::fs;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
@@ -29,16 +34,18 @@ use zilliqa::{
 };
 
 use crate::{
+    chain,
     collector::{self, Collector},
     components::{Component, Requirements},
     node_spec::Composition,
-    scilla, utils,
+    scilla, utils, validators,
 };
 
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
 const DATADIR_PREFIX: &str = "z2_node_";
 const NETWORK_CONFIG_FILE_NAME: &str = "network.yaml";
 const ZQ2_CONFIG_FILE_NAME: &str = "config.toml";
+const CHAIN_ID: u64 = 700;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeData {
@@ -55,6 +62,8 @@ pub struct Config {
     pub node_data: HashMap<u64, NodeData>,
     /// Base port
     pub base_port: u16,
+    /// Existing chain?
+    pub chain: Option<String>,
 }
 
 pub struct Setup {
@@ -72,6 +81,8 @@ pub struct Setup {
     pub keep_old_network: bool,
     /// Watch source
     pub watch: bool,
+    /// Existing chain?
+    pub chain_config: Option<validators::ChainConfig>,
 }
 
 impl Config {
@@ -122,12 +133,56 @@ impl Config {
             shape: network.clone(),
             node_data,
             base_port,
+            chain: None,
         };
         Ok(result)
     }
 }
 
 impl Setup {
+    // Set up a single node from a published network
+    #[allow(clippy::too_many_arguments)]
+    pub async fn from_named_network(
+        chain: &chain::Chain,
+        config_dir: &str,
+        base_port: u16,
+        log_spec: &str,
+        base_dir: &str,
+        watch: bool,
+        secret_key_hex: &str,
+        is_validator: bool,
+    ) -> Result<Self> {
+        let chain_config = validators::ChainConfig::new(chain).await?;
+        let mut node_data = HashMap::new();
+        let secret_key =
+            SecretKey::from_hex(secret_key_hex).map_err(|err| anyhow!(Box::new(err)))?;
+        let signing_key = SigningKey::from_slice(&hex::decode(secret_key_hex)?)?;
+        let address = TransactionPublicKey::Ecdsa(*signing_key.verifying_key(), true).into_addr();
+        node_data.insert(
+            0,
+            NodeData {
+                secret_key: secret_key.to_hex(),
+                address,
+            },
+        );
+        let chain_name = format!("{}", chain);
+        let config = Config {
+            shape: Composition::single_node(is_validator),
+            node_data,
+            base_port,
+            chain: Some(chain_name),
+        };
+        Ok(Self {
+            config,
+            collector: None,
+            config_dir: config_dir.to_string(),
+            log_spec: log_spec.to_string(),
+            base_dir: base_dir.to_string(),
+            keep_old_network: true,
+            watch,
+            chain_config: Some(chain_config),
+        })
+    }
     pub fn ephemeral(base_port: u16, base_dir: &str, config_dir: &str) -> Result<Self> {
         let config = Config::from_spec(&Composition::small_network(), base_port)?;
         Ok(Self {
@@ -138,6 +193,7 @@ impl Setup {
             base_dir: base_dir.to_string(),
             keep_old_network: true,
             watch: false,
+            chain_config: None,
         })
     }
 
@@ -150,6 +206,11 @@ impl Setup {
         let config = Config::from_config_dir(config_dir)
             .await?
             .ok_or(anyhow!("Couldn't load configuration from {config_dir}"))?;
+        let chain_config = if let Some(v) = &config.chain {
+            Some(validators::ChainConfig::new(&chain::Chain::from_str(v)?).await?)
+        } else {
+            None
+        };
         Ok(Self {
             config,
             collector: None,
@@ -158,6 +219,7 @@ impl Setup {
             base_dir: base_dir.to_string(),
             keep_old_network: true,
             watch,
+            chain_config,
         })
     }
 
@@ -199,6 +261,7 @@ impl Setup {
             base_dir: base_dir.to_string(),
             keep_old_network,
             watch,
+            chain_config: None,
         })
     }
 
@@ -275,6 +338,63 @@ impl Setup {
     }
 
     pub async fn generate_config(&self) -> Result<()> {
+        match &self.chain_config {
+            None => Ok(self.generate_standalone_config().await?),
+            Some(v) => Ok(self.generate_chain_config(v).await?),
+        }
+    }
+
+    pub fn get_node_dir(&self, node_idx: u64) -> Result<PathBuf> {
+        match self.chain_config {
+            None => Ok(PathBuf::from(format!(
+                "{0}/{1}{2}",
+                self.config_dir, DATADIR_PREFIX, node_idx
+            ))),
+            Some(_) => Ok(PathBuf::from(self.config_dir.to_string())),
+        }
+    }
+
+    pub fn get_data_dir(&self, node_idx: u64) -> Result<PathBuf> {
+        let mut result: PathBuf = self.get_node_dir(node_idx)?;
+        result.push("data");
+        Ok(result)
+    }
+
+    pub fn get_config_path(&self, node_idx: u64) -> Result<PathBuf> {
+        let mut result: PathBuf = self.get_node_dir(node_idx)?;
+        match self.chain_config {
+            None => {
+                result.push(ZQ2_CONFIG_FILE_NAME);
+            }
+            Some(ref v) => {
+                result.push(format!("{0}.toml", &v.get_name()));
+            }
+        }
+        Ok(result)
+    }
+
+    pub async fn generate_chain_config(&self, chain: &validators::ChainConfig) -> Result<()> {
+        // Generate the zilliqa config
+        let mut config_path = PathBuf::from(self.config_dir.clone());
+        config_path.push(format!("{0}.toml", chain.get_name()));
+        chain.write_to_path(&config_path).await?;
+
+        // Now we need to change the data directory, so load it again ..
+        let config_data = fs::read_to_string(&config_path).await?;
+        let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&config_data)?;
+        for (idx, node) in loaded_config.nodes.iter_mut().enumerate() {
+            let mut data_path = PathBuf::from(&self.config_dir);
+            data_path.push(format!("{idx}"));
+            data_path.push("data");
+            let data_path_as_string = data_path.to_string_lossy();
+            node.data_dir = Some(data_path_as_string.to_string());
+        }
+        let config_str = toml::to_string(&loaded_config)?;
+        fs::write(&config_path, config_str).await?;
+        Ok(())
+    }
+
+    pub async fn generate_standalone_config(&self) -> Result<()> {
         // The genesis deposits.
         let mut genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)> = Vec::new();
         for (node, desc) in self.config.shape.nodes.iter() {
@@ -295,7 +415,7 @@ impl Setup {
             }
         }
 
-        let genesis_accounts: Vec<(Address, Amount)> = vec![
+        let mut genesis_accounts: Vec<(Address, Amount)> = vec![
             (
                 address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
                 5000000000000000000000u128.into(),
@@ -305,7 +425,64 @@ impl Setup {
                 address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
                 5000000000000000000000u128.into(),
             ),
+            // e53d1c3edaffc7a7bab5418eb836cf75819a82872b4a1a0f1c7fcf5c3e020b89
+            (
+                address!("2ce2dbd623b3c277fae4074f0b2605e624510e20"),
+                5000000000000000000000u128.into(),
+            ),
+            // d96e9eb5b782a80ea153c937fa83e5948485fbfc8b7e7c069d7b914dbc350aba
+            (
+                address!("f0cb24ac66ba7375bf9b9c4fa91e208d9eaabd2e"),
+                5000000000000000000000u128.into(),
+            ),
+            // 589417286a3213dceb37f8f89bd164c3505a4cec9200c61f7c6db13a30a71b45
+            (
+                address!("cf671756a8238cbeb19bcb4d77fc9091e2fce1a3"),
+                5000000000000000000000u128.into(),
+            ),
         ];
+
+        // Generate signers - these are accounts with privkeys 0x10000 .. - push them to a
+        // signers file, and add genesis accounts for them.
+        let mut signer_private_keys: Vec<String> = Vec::new();
+
+        for idx in 0..32 {
+            let mut bytes: [u8; 32] = [0; 32];
+            bytes[29] = 0x01;
+            bytes[31] = idx;
+            let signer = LocalSigner::from_slice(&bytes)?;
+            println!("PrivKey = {0:?}", signer.to_bytes());
+            println!("Address[{idx}] = {0}", signer.address());
+            signer_private_keys.push(format!("{0:?}", signer.to_bytes()));
+            genesis_accounts.push((signer.address(), 5000000000000000000000u128.into()))
+        }
+
+        {
+            let mut signer_path = PathBuf::from(&self.config_dir);
+            signer_path.push("test.signers");
+            let signer_path_str = utils::string_from_path(&signer_path)?;
+            println!("🎷 Writing JSON test signers to {0}", &signer_path_str);
+            // Write the signers file
+            fs::write(signer_path, &serde_json::to_string(&signer_private_keys)?).await?;
+
+            // And the env file
+            let mut test_env_path = PathBuf::from(&self.config_dir);
+            test_env_path.push("test_env.sh");
+            let test_env_path_str = utils::string_from_path(&test_env_path)?;
+            println!("🎷 Writing test source file to {test_env_path_str} .. ");
+            let mut test_tera: Tera = Default::default();
+            let mut context = tera::Context::new();
+
+            context.insert("signers_file", &signer_path_str);
+            context.insert("chain_url", &self.get_json_rpc_url(true));
+            context.insert("chain_id", &format!("{CHAIN_ID}"));
+            test_tera
+                .add_raw_template("test_env", include_str!("../resources/test_env.tera.sh"))?;
+            let env_str = test_tera
+                .render("test_env", &context)
+                .context("whilst rendering test_env.tera.sh")?;
+            fs::write(test_env_path, &env_str).await?;
+        }
 
         // Node vector
         println!(
@@ -363,26 +540,22 @@ impl Setup {
                 node_config.json_rpc_port
             );
 
-            let data_dir_name = format!("{0}{1}", DATADIR_PREFIX, node_index);
-            let mut path = PathBuf::from(&self.config_dir);
-            path.push(&data_dir_name);
-            if utils::file_exists(&path).await? {
+            let node_dir_path = self.get_node_dir(*node_index)?;
+            if utils::file_exists(&node_dir_path).await? {
                 if self.keep_old_network {
                     continue;
                 } else {
                     // Kill it.
-                    tokio::fs::remove_dir_all(&path).await?;
+                    tokio::fs::remove_dir_all(&node_dir_path).await?;
                 }
             }
-            let _ = fs::create_dir(&path).await;
-            let mut full_node_data_path = PathBuf::from(&self.config_dir);
-            full_node_data_path.push(&data_dir_name);
-            full_node_data_path.push("data");
+            let _ = fs::create_dir(&node_dir_path).await;
             // Create if doesn't exist
-            tokio::fs::create_dir(&full_node_data_path).await?;
+            let data_dir_path = self.get_data_dir(*node_index)?;
+            tokio::fs::create_dir(&data_dir_path).await?;
             node_config.disable_rpc = false;
-            node_config.eth_chain_id = 700 | 0x8000;
-            node_config.data_dir = Some(utils::string_from_path(&full_node_data_path)?);
+            node_config.eth_chain_id = CHAIN_ID | 0x8000;
+            node_config.data_dir = Some(utils::string_from_path(&data_dir_path)?);
             node_config
                 .consensus
                 .genesis_deposits
@@ -403,12 +576,10 @@ impl Setup {
             cfg.nodes.push(node_config);
             cfg.p2p_port = 0;
             // Now write the config.
-            let mut path = PathBuf::from(&self.config_dir);
-            path.push(&data_dir_name);
-            path.push(ZQ2_CONFIG_FILE_NAME);
+            let config_path = self.get_config_path(*node_index)?;
             println!("🪅 Writing configuration file for node {0} .. ", node_index);
             let config_str = toml::to_string(&cfg)?;
-            fs::write(path, config_str).await?;
+            fs::write(config_path, config_str).await?;
         }
         Ok(())
     }
@@ -426,13 +597,13 @@ impl Setup {
     }
 
     pub async fn preprocess_config_file(
-        config_file: &str,
+        config_file: &Path,
         checkpoint: Option<&zilliqa::cfg::Checkpoint>,
     ) -> Result<()> {
         // Load the config file, modify it and save it back.
-        let loaded_config_str = fs::read_to_string(&config_file)
+        let loaded_config_str = fs::read_to_string(config_file)
             .await
-            .context(format!("Cannot read from {config_file} - are you sure you are trying to start a node that actually exists?"))?;
+            .context(format!("Cannot read from {0} - are you sure you are trying to start a node that actually exists?", config_file.to_string_lossy()))?;
         let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&loaded_config_str)?;
         for node in loaded_config.nodes.iter_mut() {
             if let Some(cp) = checkpoint {
@@ -476,10 +647,7 @@ impl Setup {
             }
             Component::ZQ2 => {
                 for idx in for_nodes.nodes.keys() {
-                    let config_file = format!(
-                        "{0}/{1}{2}/{ZQ2_CONFIG_FILE_NAME}",
-                        self.config_dir, DATADIR_PREFIX, idx
-                    );
+                    let config_file = self.get_config_path(*idx)?;
                     // Now, we need to rewrite the config file to take account of checkpoints...
                     Self::preprocess_config_file(
                         &config_file,
@@ -497,7 +665,7 @@ impl Setup {
                             &self.base_dir,
                             u64::try_into(*idx)?,
                             &secret_key,
-                            &config_file,
+                            &config_file.to_string_lossy(),
                             self.watch,
                         )
                         .await?;

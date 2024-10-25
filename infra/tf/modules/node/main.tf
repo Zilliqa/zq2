@@ -2,20 +2,17 @@
 # changes and any instance groups containing them are updated.
 
 resource "random_bytes" "generate_node_key" {
-  count  = !var.generate_node_key ? 0 : var.vm_num
+  for_each = var.generate_node_key ? local.instances_map : {}
+
   length = 32
 }
 
 resource "google_secret_manager_secret" "node_key" {
-  count     = !var.generate_node_key ? 0 : var.vm_num
-  secret_id = "${var.name}-${count.index}-${random_id.name_suffix.hex}-pk"
+  for_each = var.generate_node_key ? local.instances_map : {}
 
-  labels = merge(
-    { "zq2-network" = var.zq_network_name },
-    { "role" = var.role },
-    { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" },
-    var.labels
-  )
+  secret_id = "${each.value.resource_name}-pk"
+
+  labels = merge(local.labels, { "node-name" = each.value.resource_name })
 
   replication {
     auto {}
@@ -23,26 +20,27 @@ resource "google_secret_manager_secret" "node_key" {
 }
 
 resource "google_secret_manager_secret_version" "node_key_version" {
-  count       = !var.generate_node_key ? 0 : var.vm_num
-  secret      = google_secret_manager_secret.node_key[count.index].id
-  secret_data = random_bytes.generate_node_key[count.index].hex
+  for_each = var.generate_node_key ? local.instances_map : {}
+
+  secret      = google_secret_manager_secret.node_key[each.value.resource_id].id
+  secret_data = random_bytes.generate_node_key[each.value.resource_id].hex
 }
 
 resource "random_bytes" "generate_reward_wallet" {
-  count  = !var.generate_reward_wallet ? 0 : var.vm_num
+  for_each = var.generate_reward_wallet ? local.instances_map : {}
+
   length = 32
 }
 
 resource "google_secret_manager_secret" "reward_wallet" {
-  count     = !var.generate_reward_wallet ? 0 : var.vm_num
-  secret_id = "${var.name}-${count.index}-${random_id.name_suffix.hex}-wallet-pk"
+  for_each = var.generate_reward_wallet ? local.instances_map : {}
+
+  secret_id = "${each.value.resource_name}-wallet-pk"
 
   labels = merge(
-    { "zq2-network" = var.zq_network_name },
-    { "role" = var.role },
-    { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" },
+    local.labels,
+    { "node-name" = each.value.resource_name },
     { "is_reward_wallet" = true },
-    var.labels
   )
 
   replication {
@@ -51,43 +49,63 @@ resource "google_secret_manager_secret" "reward_wallet" {
 }
 
 resource "google_secret_manager_secret_version" "reward_wallet_version" {
-  count       = !var.generate_reward_wallet ? 0 : var.vm_num
-  secret      = google_secret_manager_secret.reward_wallet[count.index].id
-  secret_data = random_bytes.generate_reward_wallet[count.index].hex
+  for_each = var.generate_reward_wallet ? local.instances_map : {}
+
+  secret      = google_secret_manager_secret.reward_wallet[each.value.resource_id].id
+  secret_data = random_bytes.generate_reward_wallet[each.value.resource_id].hex
 }
 
 resource "random_id" "name_suffix" {
   byte_length = 2
 
-  keepers = {
-    name                  = var.name
-    service_account_email = var.service_account_email
-    network_name          = var.network_name
-    subnetwork_name       = var.subnetwork_name
-  }
+  # Enable keepers to force reprovisioning the module resources
+  # keepers = var.metadata
+}
+
+resource "google_service_account" "this" {
+  account_id = substr(local.resource_name, 0, 28)
+}
+
+resource "google_project_iam_member" "this" {
+  for_each = toset(var.service_account_iam)
+
+  project = split("=>", each.value)[1]
+  role    = split("=>", each.value)[0]
+  member  = "serviceAccount:${google_service_account.this.email}"
+}
+
+resource "google_compute_address" "external_regional" {
+  for_each = var.config.generate_external_ip ? local.instances_map : {}
+
+  project = data.google_project.current.project_id
+
+  name         = each.value.resource_name
+  region       = each.value.region
+  network_tier = "PREMIUM"
+
+  labels = merge(local.labels, { "node-name" = each.value.resource_name })
 }
 
 resource "google_compute_instance" "this" {
-  count = var.vm_num
+  for_each = local.instances_map
 
-  name                      = "${var.name}-${count.index}-${random_id.name_suffix.hex}"
-  machine_type              = var.node_type
+  name                      = each.value.resource_name
+  machine_type              = var.config.instance_type
   allow_stopping_for_update = true
-  zone                      = length(var.node_zones) > 1 ? sort(var.node_zones)[count.index % length(var.node_zones)] : var.node_zones[count.index % length(var.node_zones)]
+  zone                      = each.value.zone
 
   scheduling {
-    provisioning_model = var.provisioning_model
-    preemptible        = var.provisioning_model == "SPOT"
-    automatic_restart  = var.provisioning_model != "SPOT"
+    provisioning_model = var.config.provisioning_model
+    preemptible        = var.config.provisioning_model == "SPOT"
+    automatic_restart  = var.config.provisioning_model != "SPOT"
 
-    instance_termination_action = var.provisioning_model == "SPOT" ? "STOP" : null
+    instance_termination_action = var.config.provisioning_model == "SPOT" ? "STOP" : null
   }
 
-  labels = merge({ "zq2-network" = var.zq_network_name },
-  { "role" = var.role }, { "node-name" = "${var.name}-${count.index}-${random_id.name_suffix.hex}" }, var.labels)
+  labels = merge(local.labels, { "node-name" = each.value.resource_name })
 
   service_account {
-    email = var.service_account_email
+    email = google_service_account.this.email
     scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
       "https://www.googleapis.com/auth/devstorage.read_only",
@@ -99,36 +117,40 @@ resource "google_compute_instance" "this" {
 
   boot_disk {
     initialize_params {
-      size  = 256
+      size  = var.config.disk_size
       image = "ubuntu-os-cloud/ubuntu-2204-lts"
       type  = "pd-ssd"
     }
   }
 
   network_interface {
-    network    = var.network_name
-    subnetwork = var.subnetwork_name
+    network    = data.google_compute_subnetworks.default[each.value.region].subnetworks[0].network_self_link
+    subnetwork = data.google_compute_subnetworks.default[each.value.region].subnetworks[0].name
 
     dynamic "access_config" {
       for_each = [var.role == "validator" ? 1 : 0] # Always create the access_config block for validators
       content {
-        # Conditionally set nat_ip only if var.external_ip is not empty
-        nat_ip = var.external_ip != "" ? var.external_ip : null
+        nat_ip = var.config.generate_external_ip ? google_compute_address.external_regional[each.value.resource_id].address : null
       }
     }
   }
 
-  metadata = {
-    "enable-guest-attributes"   = "TRUE"
-    "enable-osconfig"           = "TRUE"
-    "genesis_key"               = base64encode(var.genesis_key)
-    "persistence_url"           = base64encode(var.persistence_url)
-    "subdomain"                 = base64encode(var.subdomain)
-    "secret_key"                = !var.generate_node_key ? "" : base64encode(google_secret_manager_secret_version.node_key_version[count.index].secret_data)
-    "secret_id"                 = !var.generate_node_key ? "" : google_secret_manager_secret_version.node_key_version[count.index].id
-    "reward_wallet_private_key" = !var.generate_reward_wallet ? "" : base64encode(google_secret_manager_secret_version.reward_wallet_version[count.index].secret_data)
-    "reward_wallet_secret_id"   = !var.generate_reward_wallet ? "" : google_secret_manager_secret_version.reward_wallet_version[count.index].id
+  shielded_instance_config {
+    enable_secure_boot          = true
+    enable_vtpm                 = true
+    enable_integrity_monitoring = true
   }
+
+  tags = local.network_tags
+
+  metadata = merge(
+    {
+      "enable-guest-attributes" = "TRUE"
+      "enable-osconfig"         = "TRUE"
+      "secret_key"              = !var.generate_node_key ? "" : base64encode(google_secret_manager_secret_version.node_key_version[each.value.resource_id].secret_data)
+    },
+    var.metadata,
+  )
 
   lifecycle {
     ignore_changes = [
@@ -138,13 +160,15 @@ resource "google_compute_instance" "this" {
 }
 
 resource "google_dns_record_set" "this" {
-  for_each = { for idx, instance in google_compute_instance.this : idx => instance }
+  for_each = local.instances_map
 
-  project      = var.dns_zone_project_id
-  managed_zone = local.nodes_domain_name
-  name         = each.key != "@" ? "${each.value.name}.${var.nodes_dns_zone_name}." : "${var.nodes_dns_zone_name}."
+  project      = var.node_dns_zone_project_id
+  managed_zone = local.node_dns_zone_name
+  name         = "${google_compute_instance.this[each.value.resource_id].name}.${var.node_dns_subdomain}."
   type         = "A"
-  ttl          = try(each.value.ttl, "60")
+  ttl          = "60"
 
-  rrdatas = [each.value.network_interface[0].access_config[0].nat_ip]
+  rrdatas = [google_compute_instance.this[each.value.resource_id].network_interface[0].access_config[0].nat_ip]
+
+  depends_on = [google_compute_instance.this]
 }
