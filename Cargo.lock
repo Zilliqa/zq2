@@ -9808,6 +9808,7 @@ dependencies = [
  "revm",
  "rs-leveldb",
  "rustls 0.23.14",
+ "scilla-parser",
  "serde",
  "serde_json",
  "serde_yaml",
