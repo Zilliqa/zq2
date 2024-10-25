@@ -2759,12 +2759,12 @@ impl Consensus {
             // If we don't have enough receipts, it may not be safe to fast-foward
             if self.receipts_cache.len() < block.transactions.len() {
                 warn!(
-                    "insufficient receipts for proposal {} for view {}",
+                    "flushing receipts for proposal {} for view {}",
                     block.header.number, block.header.view
                 );
                 self.receipts_cache.clear();
             } else {
-                let mut block_receipts: Vec<(TransactionReceipt, usize)> = Vec::new();
+                let mut block_receipts = Vec::new();
 
                 for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
                     let (receipt, addresses) = self
@@ -2813,7 +2813,7 @@ impl Consensus {
             verified_txns.push(txn);
         }
 
-        let mut block_receipts: Vec<(TransactionReceipt, usize)> = Vec::new();
+        let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
