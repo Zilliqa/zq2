@@ -321,6 +321,8 @@ impl Node {
                     "block_store::BlockRequest : received a block request - {}",
                     self.peer_id
                 );
+
+                let mut consensus = self.consensus.lock().unwrap();
                 // Note that it is very important that we limit this by number of blocks
                 // returned, _not_ by max view range returned. If we don't, then any
                 // view gap larger than block_request_limit will never be filliable
@@ -328,16 +330,14 @@ impl Node {
                 let proposals: Vec<Proposal> = (request.from_view..=request.to_view)
                     .take(self.config.block_request_limit)
                     .filter_map(|view| {
-                        self.consensus
-                            .lock()
-                            .unwrap()
+                        consensus
                             .get_block_by_view(view)
                             .transpose()
                             .map(|block| Ok(self.block_to_proposal(block?)))
                     })
                     .collect::<Result<_>>()?;
 
-                let availability = self.consensus.block_store.availability()?;
+                let availability = consensus.block_store.availability()?;
                 trace!("block_store::BlockRequest - responding to new blocks request {id:?} from {from:?} of {request:?} with props {0:?} availability {availability:?}",
                        proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
 
@@ -881,19 +881,13 @@ impl Node {
         let parent = self
             .get_block(header.qc.block_hash)?
             .ok_or_else(|| anyhow!("missing parent: {}", header.qc.block_hash))?;
-        let proposer = self
-            .consensus
-            .lock()
-            .unwrap()
+        let consensus = self.consensus.lock().unwrap();
+        let proposer = consensus
             .leader_at_block(&parent, header.view)
             .unwrap()
             .public_key;
 
-        self.consensus
-            .lock()
-            .unwrap()
-            .state()
-            .get_reward_address(proposer)
+        consensus.state().get_reward_address(proposer)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
@@ -993,13 +987,12 @@ impl Node {
     /// NOTE: Includes intershard transactions. Should only be used for syncing history,
     /// not for consensus messages regarding new blocks.
     fn block_to_proposal(&self, block: Block) -> Proposal {
+        let consensus = self.consensus.lock().unwrap();
         let txs: Vec<_> = block
             .transactions
             .iter()
             .map(|tx_hash| {
-                self.consensus
-                    .lock()
-                    .unwrap()
+                consensus
                     .get_transaction_by_hash(*tx_hash)
                     .unwrap()
                     .unwrap()
@@ -1032,31 +1025,28 @@ impl Node {
             "block_store::handle_block_response - received blocks response of length {}",
             response.proposals.len()
         );
-        self.consensus
-            .receive_block_availability(from, &response.availability)?;
+        let mut consensus = self.consensus.lock().unwrap();
+        consensus.receive_block_availability(from, &response.availability)?;
 
-        self.consensus
-            .buffer_lack_of_proposals(response.from_view, &response.proposals)?;
+        consensus.buffer_lack_of_proposals(response.from_view, &response.proposals)?;
 
         for block in response.proposals {
             // Buffer the block so that we know we have it - in fact, add it to the cache so
             // that we can include it in the chain if necessary.
-            self.consensus
-                .lock()
-                .unwrap()
-                .buffer_proposal(from, block)?;
+            consensus.buffer_proposal(from, block)?;
         }
         trace!("block_store::handle_block_response: finished handling response");
         Ok(())
     }
 
     fn handle_process_proposal(&mut self, from: PeerId, req: ProcessProposal) -> Result<()> {
-        if from != self.consensus.peer_id() {
+        let mut consensus = self.consensus.lock().unwrap();
+        if from != consensus.peer_id() {
             warn!("Someone ({from}) sent me a ProcessProposal; illegal- ignoring");
             return Ok(());
         }
         trace!("Handling proposal for view {0}", req.block.header.view);
-        let proposal = self.consensus.receive_block(from, req.block)?;
+        let proposal = consensus.receive_block(from, req.block)?;
         if let Some(proposal) = proposal {
             trace!(
                 " ... broadcasting proposal for view {0}",

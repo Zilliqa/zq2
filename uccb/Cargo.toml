@@ -30,16 +30,16 @@ alloy = { version = "0.4.2", default-features = false, features = [
   "signer-local",
   "signers",
   "sol-types"] }
-anyhow = { version = "1.0.89", features = ["backtrace"] }
-async-trait = "0.1.81"
-clap = {version = "4.5.17", features = ["derive"]}
-futures = "0.3.30"
+anyhow = { version = "1.0.90", features = ["backtrace"] }
+async-trait = "0.1.83"
+clap = { version = "4.5.20", features = ["derive"] }
+futures = "0.3.31"
 futures-util = "0.3"
 hex = "0.4.3"
 itertools = "0.13.0"
 primitive-types = "0.12.2"
 serde = { version = "1.0.210", features = ["derive"] }
-serde_json = { version = "1.0.124", features = ["raw_value"] }
+serde_json = { version = "1.0.132", features = ["raw_value"] }
 thiserror = "1.0.63"
 tokio = {version = "1.39.2", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
 tokio-stream = "0.1.16"
@@ -50,5 +50,5 @@ url = "2.5.2"
 zilliqa = {path = "../zilliqa"}
 
 [dev-dependencies]
-foundry-compilers = { version = "0.11.2", features = ["svm-solc"] }
+foundry-compilers = { version = "0.11.4", features = ["svm-solc"] }
 semver = "1.0.23"
