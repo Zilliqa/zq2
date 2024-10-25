@@ -2868,17 +2868,19 @@ impl Consensus {
 
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
         if block.header.receipts_root_hash != receipts_root_hash {
-            warn!("Block number: {}, Receipt root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                        block.number(), block.header.receipts_root_hash, receipts_root_hash, transaction_hashes
-                );
+            warn!(
+                "Block number: {}, Receipt root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
+                block.number(), block.header.receipts_root_hash, receipts_root_hash, transaction_hashes
+            );
             return Ok(());
         }
 
         let transactions_root_hash: Hash = transactions_trie.root_hash()?.into();
         if block.header.transactions_root_hash != transactions_root_hash {
-            warn!("Block number: {}, Transactions root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                  block.number(), block.header.transactions_root_hash, transactions_root_hash, transaction_hashes
-                  );
+            warn!(
+                "Block number: {}, Transactions root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
+                block.number(), block.header.transactions_root_hash, transactions_root_hash, transaction_hashes
+            );
             return Ok(());
         }
 
