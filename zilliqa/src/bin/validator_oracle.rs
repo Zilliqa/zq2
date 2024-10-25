@@ -1,0 +1,204 @@
+use std::{path::PathBuf, str::FromStr};
+
+use alloy::{
+    consensus::{SignableTransaction, TxEnvelope},
+    contract::{ContractInstance, DynCallBuilder, Interface, SolCallBuilder},
+    dyn_abi::DynSolValue,
+    network::{eip2718::Encodable2718, EthereumWallet, TransactionBuilder, TxSigner},
+    primitives::{Bytes, TxKind},
+    providers::{Provider, ProviderBuilder, WsConnect},
+    pubsub::PubSubFrontend,
+    eips::BlockNumberOrTag,
+    rpc::types::{Filter, eth::{TransactionInput, TransactionRequest}},
+    signers::{Signer, SignerSync},
+    signer_local::PrivateKeySigner,
+    sol_types::{sol, SolCall},
+};
+use anyhow::Result;
+use clap::Parser;
+use futures_util::stream::StreamExt;
+use std::path::PathBuf;
+use zilliqa::{crypto::SecretKey, state::contract_addr, uccb::cfg::ZQ2Config};
+
+#[derive(Parser, Debug)]
+struct Args {
+    #[arg(value_parser = SecretKey::from_hex)]
+    secret_key: SecretKey,
+    #[clap(long, short, default_value = "config.toml")]
+    config_file: PathBuf,
+}
+
+impl zilliqa::uccb::Args for Args {
+    fn secret_key(&self) -> &SecretKey {
+        &self.secret_key
+    }
+
+    fn config_file(&self) -> &PathBuf {
+        &self.config_file
+    }
+}
+
+async fn listen_to_staker_updates(zq2_config: &ZQ2Config) -> Result<()> {
+    let filter = Filter::new()
+        .address(contract_addr::DEPOSIT)
+        // Must be the same signature as the event in deposit.sol
+        .event("StakerAdded(bytes)")
+        .from_block(BlockNumberOrTag::Latest);
+
+    let ws = WsConnect::new(&zq2_config.rpc_url);
+    let provider = ProviderBuilder::new().on_ws(ws).await?;
+
+    let subscription = provider.subscribe_logs(&filter).await?;
+    let mut stream = subscription.into_stream();
+    while let Some(log) = stream.next().await {
+        // TODO: update validator manager(s) only if leader
+        println!("Subscription log: {log:?}");
+    }
+
+    pub async fn start(&mut self) -> Result<()> {
+        /*
+        info!(
+            "Starting validator oracle with wallet address {}",
+            self.wallet.address()
+        );
+        */
+
+        let validators = self.get_stakers().await?;
+        info!("Current validator set is: {validators:?}");
+
+        let (sender, receiver) = watch::channel(validators);
+
+        let mut handles = vec![];
+        for chain_client in &self.chain_clients {
+            let mut receiver = receiver.clone();
+            let chain_client = chain_client.clone();
+            let handle = tokio::spawn(async move {
+                loop {
+                    let validators = receiver.borrow_and_update().clone();
+                    if Self::update_validator_manager(&chain_client, &validators)
+                        .await
+                        .is_err()
+                    {
+                        error!(
+                            "Failed updating the validator manager on {}",
+                            chain_client.rpc_url
+                        );
+                    }
+
+                    if receiver.changed().await.is_err() {
+                        break;
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        let result = self.listen_to_staker_updates(sender).await;
+
+        for handle in handles {
+            handle.await?;
+        }
+
+        result
+    }
+
+    async fn listen_to_staker_updates(
+        &mut self,
+        sender: watch::Sender<Vec<NodePublicKey>>,
+    ) -> Result<()> {
+        let filter = Filter::new()
+            .address(contract_addr::DEPOSIT)
+            // Must be the same signature as the event in deposit.sol
+            .event("StakerAdded(bytes)")
+            .from_block(BlockNumberOrTag::Finalized);
+
+        let ws = WsConnect::new(&self.zq2_config.rpc_url);
+        let provider = ProviderBuilder::new().on_ws(ws).await?;
+
+        let subscription = provider.subscribe_logs(&filter).await?;
+        let mut stream = subscription.into_stream();
+        while let Some(log) = stream.next().await {
+            // TODO: infer if staker added or removed
+            info!("Received validator update: {log:?}");
+
+            let validators = self.get_stakers().await?;
+            info!("Updating chains to the current validator set to: {validators:?}");
+
+            sender.send(validators)?;
+        }
+
+        Ok(())
+    }
+
+    async fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
+        debug!("Retreiving validators from the deposit contract");
+
+        println!("Deposit contract address: {}", contract_addr::DEPOSIT);
+        let zq2_chain_client = &self.chain_clients[0];
+
+        let contract: ContractInstance<PubSubFrontend, _> = ContractInstance::new(
+            contract_addr::DEPOSIT,
+            zq2_chain_client.client.as_ref(),
+            Interface::new(Deposit::abi::contract()),
+        );
+
+        let call_builder: DynCallBuilder<_, _, _> = contract.function("getStakers", &vec![])?;
+        let value = call_builder.call().await?;
+        let validators = if value.len() == 1 {
+            value[0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| NodePublicKey::from_bytes(&k.as_bytes().unwrap()).unwrap())
+                .collect()
+        } else {
+            vec![]
+        };
+
+        Ok(validators)
+    }
+
+    async fn update_validator_manager(
+        chain_client: &ChainClient,
+        validators: &[NodePublicKey],
+    ) -> Result<()> {
+        /*
+        let validator_manager = ValidatorManager::new(
+            chain_client.validator_manager_address,
+            chain_client.client.clone(),
+        );
+        */
+
+        /*
+        let validators = validators
+            .iter()
+            .map(|validator| H160(**validator.into_addr()))
+            .collect();
+        let call = validator_manager.set_validators(validators);
+        let pending_tx = call.send().await?;
+        if let Some(receipt) = pending_tx.await? {
+            info!(
+                "Updated {}: {}",
+                &chain_client.rpc_url,
+                serde_json::to_string(&receipt)?
+            );
+        } else {
+            error!(
+                "No receipt received when updating {}...",
+                &chain_client.rpc_url
+            );
+        }
+        */
+
+        Ok(())
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Args::parse();
+    let config = zilliqa::uccb::read_config(&args)?;
+    let zq2_config = &config.zq2;
+
+    listen_to_staker_updates(&config.zq2).await
+}

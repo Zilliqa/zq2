@@ -22,9 +22,6 @@ use uccb::{
     cfg::{ChainConfig, Config},
     client::ChainClient,
 };
-use zilliqa::{contracts, crypto::SecretKey, state::contract_addr};
-
-const VALIDATOR_MANAGER_ABI_JSON: &str = include_str!("../../contracts/compiled.json");
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -89,7 +86,7 @@ impl ValidatorOracle {
         );
 
         let validators = self.get_stakers().await?;
-        info!("Current validator set is: {validators:?}");
+        info!("Current validator set is: {}", Display(&validators));
 
         let (sender, receiver) = watch::channel(validators);
 
@@ -211,16 +208,19 @@ impl ValidatorOracle {
     async fn get_stakers(&self) -> Result<Vec<Address>> {
         debug!("Retreiving validators from the deposit contract");
 
-        let call_builder: DynCallBuilder<_, _, _> = self
-            .deposit_contract
-            .function("getStakerData", &[])?;
+        let call_builder: DynCallBuilder<_, _, _> =
+            self.deposit_contract.function("getStakerData", &[])?;
         let output = call_builder.call().await?;
-        let validators = output[1]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|k| k.as_address().unwrap())
-            .collect();
+        let validators = if output.len() == 1 {
+            output[0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| k.as_address().unwrap() /*NodePublicKey::from_bytes(k.as_bytes().unwrap()).unwrap()*/)
+                .collect()
+        } else {
+            vec![]
+        };
 
         Ok(validators)
     }
