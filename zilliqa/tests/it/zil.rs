@@ -10,7 +10,7 @@ use ethers::{
     utils::keccak256,
 };
 use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U128};
 use prost::Message;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -23,6 +23,13 @@ use zilliqa::{
 use crate::{deploy_contract, Network, Wallet};
 
 pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
+    zilliqa_account_with_funds(network, 1000 * 10u128.pow(18)).await
+}
+
+pub async fn zilliqa_account_with_funds(
+    network: &mut Network,
+    funds: u128,
+) -> (schnorr::SecretKey, H160) {
     let wallet = network.genesis_wallet().await;
 
     // Generate a Zilliqa account.
@@ -32,7 +39,7 @@ pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160
     let address = H160::from_slice(&hashed[12..]);
 
     // Send the Zilliqa account some funds.
-    let tx = TransactionRequest::pay(address, 1000 * 10u128.pow(18));
+    let tx = TransactionRequest::pay(address, funds);
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     network
         .run_until_async(
@@ -54,7 +61,37 @@ pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160
         .request("GetBalance", [address])
         .await
         .unwrap();
-    assert_eq!(response["balance"].as_str().unwrap(), "1000000000000000");
+    println!(
+        "balance {} funds {}",
+        response["balance"].as_str().unwrap(),
+        funds
+    );
+    // Check the EVM balance
+    println!(
+        "address {0}",
+        Address::new(*address.as_fixed_bytes()).to_checksum(None)
+    );
+    let resp_eth = wallet
+        .provider()
+        .request::<[&str; 2], String>(
+            "eth_getBalance",
+            [
+                &Address::new(*address.as_fixed_bytes()).to_checksum(None),
+                "latest",
+            ],
+        )
+        .await
+        .unwrap();
+    let eth_balance: U128 =
+        U128::from_str_radix(resp_eth.strip_prefix("0x").unwrap_or(&resp_eth), 16).unwrap();
+
+    println!("raw zil {:?}", response["balance"].as_str());
+    // This is in decimal!
+    let zil_balance = U128::from_str_radix(response["balance"].as_str().unwrap(), 10).unwrap();
+    println!("eth_balance {eth_balance} zil_balance {zil_balance}");
+
+    assert_eq!(zil_balance * U128::from(10u128.pow(6)), funds.into());
+    assert_eq!(eth_balance, funds.into());
     assert_eq!(response["nonce"].as_u64().unwrap(), 0);
 
     (secret_key, address)
@@ -377,6 +414,8 @@ async fn run_create_transaction_api_for_error(
         .provider()
         .request("CreateTransaction", [request])
         .await;
+
+    println!("resp {:?}", response);
     if let Err(ProviderError::JsonRpcClientError(rpc_error)) = response {
         if let Some(json_error) = rpc_error.as_error_response() {
             return Some((json_error.code, json_error.message.to_string()));
@@ -675,6 +714,71 @@ async fn get_transaction(mut network: Network) {
         .expect("Failed to call GetTransaction API");
 
     assert_eq!(response, response_soft_confirmed);
+}
+
+async fn create_transaction_high_gas_limit(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, address) = zilliqa_account_with_funds(&mut network, 60 * 10u128.pow(18)).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+
+    println!("gas_price {gas_price}");
+
+    // Exceeds block gas
+    // send_transaction(
+    //     &mut network,
+    //     &secret_key,
+    //     1,
+    //     to_addr,
+    //     200u128 * 10u128.pow(12),
+    //     500_000,
+    //     None,
+    //     None,
+    // )
+    // .await;
+
+    // how much we can actually pay for.
+    // 50 = 60-10 (we're transferring 10)
+    let max_gas_we_can_pay_for = (50u128 * 10u128.pow(12)) / gas_price;
+    println!("max_gas {max_gas_we_can_pay_for}");
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        10 * 10u128.pow(12),
+        u128::try_into(max_gas_we_can_pay_for * 2).unwrap(),
+        None,
+        None,
+    )
+    .await;
+
+    // Verify the sender's nonce has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [address])
+        .await
+        .unwrap();
+    println!("GetBalance() after transfer = {response:?}");
+    assert_eq!(response["nonce"].as_u64().unwrap(), 1);
+
+    // Verify the receiver's balance has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [to_addr])
+        .await
+        .unwrap();
+    assert_eq!(response["balance"].as_str().unwrap(), "200000000000000");
 }
 
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener

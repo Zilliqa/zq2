@@ -200,7 +200,7 @@ pub struct ScillaResult {
     pub contract_address: Option<Address>,
     /// The logs emitted by the transaction execution.
     pub logs: Vec<ScillaLog>,
-    /// The gas paid by the transaction
+    /// The gas paid by the transaction (in EVM gas units)
     pub gas_used: EvmGas,
     /// Scilla transitions executed by the transaction execution.
     pub transitions: Vec<ScillaTransition>,
@@ -506,6 +506,18 @@ impl State {
         Ok((e, state.finalize(), cfg.env))
     }
 
+    // The rules here are somewhat odd, and inherited from ZQ1
+    //
+    // - Initially, we deduct the minimum cost from the account. If this fails, abort and deduct nothing.
+    // - At the end of the txn, work out how much more to charge, and try to charge it
+    //    * If this succeeds, we charge and reflect the results of the txn.
+    //    * If it doesn't, we charge nothing (?!) and the state doesn't reflect the results of the txn.
+    // - Failed scilla transactions don't count towards the block gas limit.
+    // - Failed scilla transactions don't increment the nonce.
+    //
+    // gas_used in the return value is used only for accounting towards the block gas limit - we need
+    // to deduct gas charged to the user ourselves. Since our txns don't count towards block gas,
+    // gas_used is always 0.
     fn apply_transaction_scilla(
         &mut self,
         from_addr: Address,
@@ -515,15 +527,22 @@ impl State {
     ) -> Result<ScillaResultAndState> {
         let mut state = PendingState::new(self.try_clone()?);
 
-        let deposit = total_scilla_gas_price(txn.gas_limit, txn.gas_price);
-        if let Some(result) = state.deduct_from_account(from_addr, deposit)? {
+        // Issue 1509 - for Scilla transitions, follow the legacy ZQ1 behaviour of deducting a small amount
+        // of gas for the invocation and the rest of the gas once the txn has run.
+
+        // let gas_limit = txn.gas_limit;
+        let gas_price = txn.gas_price;
+
+        let deposit_gas = txn.get_deposit_gas()?;
+        let deposit = total_scilla_gas_price(deposit_gas, gas_price);
+        trace!("gas_price {gas_price} deposit_gas {deposit_gas} deposit {deposit}");
+
+        if let Some(result) = state.deduct_from_account(from_addr, deposit, EvmGas(0))? {
+            trace!("Could not deduct deposit");
             return Ok((result, state.finalize()));
         }
 
-        let gas_limit = txn.gas_limit;
-        let gas_price = txn.gas_price;
-
-        let (result, mut state) = if txn.to_addr.is_zero() {
+        let (result, mut new_state) = if txn.to_addr.is_zero() {
             scilla_create(
                 state,
                 self.scilla(),
@@ -534,6 +553,7 @@ impl State {
                 &self.scilla_ext_libs_path,
             )
         } else {
+            trace!("Invoking scilla_call");
             scilla_call(
                 state,
                 self.scilla(),
@@ -548,13 +568,30 @@ impl State {
             )
         }?;
 
-        let from = state.load_account(from_addr)?;
-        let refund =
-            total_scilla_gas_price(gas_limit - ScillaGas::from(result.gas_used), gas_price);
-        from.account.balance += refund.get();
+        trace!("actual_gas_used = {0}", result.gas_used);
+        let actual_gas_charged =
+            total_scilla_gas_price(ScillaGas::from(result.gas_used), gas_price);
+        let to_charge = actual_gas_charged.checked_sub(&deposit);
+        trace!("to_charge = {to_charge:?}");
+        match to_charge {
+            Some(extra_charge) => {
+                // Deduct the remaining gas.
+                // If we fail, Zilliqa 1 deducts nothing at all
+                // @todo check that this is really desired behaviour.
+                if let Some(result) =
+                    new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
+                {
+                    let mut failed_state = PendingState::new(self.try_clone()?);
+                    return Ok((result, failed_state.finalize()));
+                }
+            }
+            None => (), // We already charged the minimum
+        }
+        // If the txn doesn't fail, increment the nonce.
+        let from = new_state.load_account(from_addr)?;
         from.account.nonce += 1;
 
-        Ok((result, state.finalize()))
+        Ok((result, new_state.finalize()))
     }
 
     /// Apply a transaction to the account state.
@@ -1212,16 +1249,22 @@ impl PendingState {
         &mut self,
         address: Address,
         amount: ZilAmount,
+        gas_used: EvmGas,
     ) -> Result<Option<ScillaResult>> {
         let caller = std::panic::Location::caller();
         let account = self.load_account(address)?;
+        trace!(
+            "account balance = {0} sub {1}",
+            account.account.balance,
+            amount.get()
+        );
         let Some(balance) = account.account.balance.checked_sub(amount.get()) else {
             info!("insufficient balance: {caller}");
             return Ok(Some(ScillaResult {
                 success: false,
                 contract_address: None,
                 logs: vec![],
-                gas_used: ScillaGas(0).into(),
+                gas_used,
                 transitions: vec![],
                 accepted: None,
                 errors: [(0, vec![ScillaError::InsufficientBalance])]
@@ -1336,7 +1379,7 @@ fn scilla_create(
         return Err(anyhow!("contract creation without init data"));
     }
 
-    if let Some(result) = state.deduct_from_account(from_addr, txn.amount)? {
+    if let Some(result) = state.deduct_from_account(from_addr, txn.amount, EvmGas(0))? {
         return Ok((result, state));
     }
 
@@ -1652,7 +1695,7 @@ pub fn scilla_call(
             gas = gas.min(output.gas_remaining);
 
             if output.accepted {
-                if let Some(result) = new_state.deduct_from_account(sender, amount)? {
+                if let Some(result) = new_state.deduct_from_account(sender, amount, EvmGas(0))? {
                     return Ok((result, new_state));
                 }
 
@@ -1723,7 +1766,7 @@ pub fn scilla_call(
             };
             gas = g;
 
-            if let Some(result) = current_state.deduct_from_account(from_addr, amount)? {
+            if let Some(result) = current_state.deduct_from_account(from_addr, amount, EvmGas(0))? {
                 return Ok((result, current_state));
             }
 

@@ -512,28 +512,7 @@ impl SignedTransaction {
 
         // The following logic is taken from ZQ1
         if let SignedTransaction::Zilliqa { tx, .. } = self {
-            let required_gas: ScillaGas = {
-                // Contract call
-                if !tx.to_addr.is_zero() && !tx.data.is_empty() && tx.code.is_empty() {
-                    ScillaGas(max(ZIL_CONTRACT_INVOKE_GAS, tx.data.len()).try_into()?)
-                }
-                // Contract creation
-                else if tx.to_addr.is_zero() && !tx.code.is_empty() {
-                    ScillaGas(
-                        max(ZIL_CONTRACT_CREATE_GAS, tx.data.len() + tx.code.len()).try_into()?,
-                    )
-                }
-                // Transfer
-                else if !tx.to_addr.is_zero() && tx.data.is_empty() && tx.code.is_empty() {
-                    ScillaGas(ZIL_NORMAL_TXN_GAS.try_into()?)
-                } else {
-                    warn!(
-                        "transaction is none of: contract invocation, contract creation, transfer"
-                    );
-                    return Ok(ValidationOutcome::UnknownTransactionType);
-                }
-            };
-
+            let required_gas = tx.get_deposit_gas()?;
             if tx.gas_limit < required_gas {
                 warn!("Insufficient gas give for zil transaction, given: {}, required: {required_gas}!", tx.gas_limit);
                 return Ok(ValidationOutcome::InsufficientGasZil(
@@ -800,6 +779,30 @@ pub struct TxZilliqa {
     pub data: String,
 }
 
+impl TxZilliqa {
+    pub fn get_deposit_gas(&self) -> Result<ScillaGas> {
+        // Contract call
+        if !self.to_addr.is_zero() && !self.data.is_empty() && self.code.is_empty() {
+            Ok(ScillaGas(
+                max(ZIL_CONTRACT_INVOKE_GAS, self.data.len()).try_into()?,
+            ))
+        }
+        // Contract creation
+        else if self.to_addr.is_zero() && !self.code.is_empty() {
+            Ok(ScillaGas(
+                max(ZIL_CONTRACT_CREATE_GAS, self.data.len() + self.code.len()).try_into()?,
+            ))
+        }
+        // Transfer
+        else if !self.to_addr.is_zero() && self.data.is_empty() && self.code.is_empty() {
+            Ok(ScillaGas(ZIL_NORMAL_TXN_GAS.try_into()?))
+        } else {
+            warn!("transaction is none of: contract invocation, contract creation, transfer");
+            Err(anyhow!("Unknown transaction type"))
+        }
+    }
+}
+
 /// A wrapper for ZIL amounts in the Zilliqa API. These are represented in units of (10^-12) ZILs, rather than (10^-18)
 /// like in the rest of our code. The implementations of [Serialize], [Deserialize], [Display] and [FromStr] represent
 /// the amount in units of (10^-12) ZILs, so this type can be used in the Zilliqa API layer.
@@ -828,6 +831,14 @@ impl ZilAmount {
     /// Return the memory representation of this amount as a big-endian byte array.
     pub fn to_be_bytes(self) -> [u8; 16] {
         self.0.to_be_bytes()
+    }
+
+    pub fn checked_sub(&self, v: &Self) -> Option<Self> {
+        if v.0 < self.0 {
+            Some(ZilAmount(self.0 - v.0))
+        } else {
+            None
+        }
     }
 }
 
