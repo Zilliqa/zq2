@@ -214,7 +214,7 @@ impl NodeLauncher {
                 }
                 () = &mut sleep => {
                     // Send any missing blocks.
-                    self.node.lock().unwrap().consensus.tick().unwrap();
+                    self.node.lock().unwrap().consensus.lock().unwrap().tick().unwrap();
                     // No messages for a while, so check if consensus wants to timeout
                     self.node.lock().unwrap().handle_timeout().unwrap();
                     sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));

@@ -26,12 +26,16 @@ pub struct CheckpointResponse {
 fn checkpoint(params: Params, node: &Arc<Mutex<Node>>) -> Result<CheckpointResponse> {
     let mut params = params.sequence();
     let block_number: BlockNumberOrTag = params.next()?;
-    let mut node = node.lock().unwrap();
+    let node = node.lock().unwrap();
     let block = node
         .get_block(block_number)?
         .ok_or(anyhow!("Block {block_number} does not exist"))?;
 
-    let (file_name, hash) = node.consensus.checkpoint_at(block.number())?;
+    let (file_name, hash) = node
+        .consensus
+        .lock()
+        .unwrap()
+        .checkpoint_at(block.number())?;
     Ok(CheckpointResponse {
         file_name,
         hash,

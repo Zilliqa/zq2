@@ -607,8 +607,9 @@ impl Network {
         loop {
             for node in &self.nodes {
                 // Trigger a tick so that block fetching can operate.
-                node.inner.lock().unwrap().consensus.tick().unwrap();
-                if node.inner.lock().unwrap().handle_timeout().unwrap() {
+                let mut node = node.inner.lock().unwrap();
+                node.consensus.lock().unwrap().tick().unwrap();
+                if node.handle_timeout().unwrap() {
                     return;
                 }
                 zilliqa::time::advance(Duration::from_millis(500));
@@ -770,7 +771,14 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
 
                 span.in_scope(|| {
-                    node.inner.lock().unwrap().consensus.tick().unwrap();
+                    node.inner
+                        .lock()
+                        .unwrap()
+                        .consensus
+                        .lock()
+                        .unwrap()
+                        .tick()
+                        .unwrap();
                 });
             }
             self.consensus_tick_countdown = 10;
