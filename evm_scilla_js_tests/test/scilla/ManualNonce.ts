@@ -24,6 +24,7 @@ describe("Manual nonce #parallel", function () {
   it("Should be possible to set nonce manually @block-1", async function () {
     let result = await hre.zilliqaSetup.zilliqa.blockchain.getBalance(signer.address);
     const nextNonce = result.result.nonce + 1;
+    console.log("nonce1:", nextNonce);
     await contract.set(VALUE, {nonce: nextNonce});
     expect(await contract.value()).to.be.eq(VALUE);
   });
@@ -32,6 +33,8 @@ describe("Manual nonce #parallel", function () {
     let result = await hre.zilliqaSetup.zilliqa.blockchain.getBalance(signer.address);
 
     const NONCE = result.result.nonce;
+
+    console.log("nonce2:", NONCE);
 
     let txPromises = [];
     for (let i = 1; i <= 10; ++i) {

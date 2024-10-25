@@ -675,7 +675,7 @@ impl Consensus {
 
             // It is possible to source Proposals from own storage during sync, which alters the source of the Proposal.
             // Only allow from == self, for fast-forwarding, in normal case but not during sync
-            let from = (!(self.peer_id() == from && during_sync)).then_some(from);
+            let from = (self.peer_id() != from || !during_sync).then_some(from);
             self.execute_block(from, &block, transactions, &stakers)?;
 
             if self.view.get_view() != proposal_view + 1 {
@@ -1214,7 +1214,7 @@ impl Consensus {
             ..BlockHeader::default()
         };
 
-        debug!(
+        info!(
             "assemble early proposal {} in view {}",
             executed_block_header.number, executed_block_header.view
         );
@@ -1793,7 +1793,13 @@ impl Consensus {
             return Ok(TxAddResult::Duplicate(txn.hash));
         }
 
-        let account = self.state.get_account(txn.signer)?;
+        let mut state = self.state.clone();
+        if self.early_proposal.is_some() {
+            let proposal = self.early_proposal.as_ref().unwrap().0.clone();
+            state.set_to_root(proposal.state_root_hash().into());
+        }
+
+        let account = state.get_account(txn.signer)?;
         let eth_chain_id = self.config.eth_chain_id;
 
         let validation_result = txn.tx.validate(
@@ -2761,13 +2767,12 @@ impl Consensus {
         if self.receipts_cache_hash == block.receipts_root_hash()
             && from.is_some_and(|peer_id| peer_id == self.peer_id())
         {
-            debug!(
+            info!(
                 "fast-forward self-proposal {} for view {}",
                 block.header.number, block.header.view
             );
 
             let mut block_receipts = Vec::new();
-
             for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
                 let (receipt, addresses) = self
                     .receipts_cache
@@ -2782,11 +2787,12 @@ impl Consensus {
                     self.db.add_touched_address(address, *txn_hash)?;
                 }
             }
+
             // fast-forward state
             self.state.set_to_root(block.state_root_hash().into());
 
             // broadcast/commit receipts
-            return self.broadcast_commit_receipts(from, block, block_receipts);
+            return self.broadcast_commit_receipts(None, block, block_receipts);
         };
 
         let mut verified_txns = Vec::new();

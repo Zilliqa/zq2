@@ -438,7 +438,8 @@ impl P2pNode {
                                     self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
                                 }
                                 Err(e) => {
-                                    trace!(%e, "failed to publish message");
+                                    error!(%e, "failed to publish message");
+                                    self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
                                 }
                             }
                         },
