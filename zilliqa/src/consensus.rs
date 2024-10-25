@@ -163,6 +163,7 @@ pub struct Consensus {
     db: Arc<Db>,
     /// Receipts cache
     receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
+    receipts_cache_hash: Hash,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
@@ -360,6 +361,7 @@ impl Consensus {
             state,
             db,
             receipts_cache: HashMap::new(),
+            receipts_cache_hash: Hash::ZERO,
             transaction_pool: Default::default(),
             early_proposal: None,
             create_next_block_on_timeout: false,
@@ -1157,6 +1159,7 @@ impl Consensus {
             proposal.header.gas_used,
             proposal.header.gas_limit,
         );
+        self.receipts_cache_hash = proposal.header.receipts_root_hash;
 
         // Restore the state to previous
         state.set_to_root(previous_state_root_hash.into());
@@ -1224,6 +1227,11 @@ impl Consensus {
                 self.state.root_hash()?
             );
         }
+
+        // Clear internal receipt cache.
+        // Since this is a speed enhancement, we're ignoring scenarios where the receipts cache may hold receipts for more than one proposal.
+        self.receipts_cache.clear();
+        self.receipts_cache_hash = Hash::ZERO;
 
         // Internal states
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -2750,42 +2758,35 @@ impl Consensus {
         }
 
         // Early return if it is safe to fast-forward
-        if from.is_some_and(|peer_id| peer_id == self.peer_id()) {
+        if self.receipts_cache_hash == block.receipts_root_hash()
+            && from.is_some_and(|peer_id| peer_id == self.peer_id())
+        {
             debug!(
                 "fast-forward self-proposal {} for view {}",
                 block.header.number, block.header.view
             );
 
-            // If we don't have enough receipts, it may not be safe to fast-foward
-            if self.receipts_cache.len() < block.transactions.len() {
-                warn!(
-                    "flushing receipts for proposal {} for view {}",
-                    block.header.number, block.header.view
-                );
-                self.receipts_cache.clear();
-            } else {
-                let mut block_receipts = Vec::new();
+            let mut block_receipts = Vec::new();
 
-                for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
-                    let (receipt, addresses) = self
-                        .receipts_cache
-                        .remove(txn_hash)
-                        .expect("receipt cached during proposal assembly");
+            for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
+                let (receipt, addresses) = self
+                    .receipts_cache
+                    .remove(txn_hash)
+                    .expect("receipt cached during proposal assembly");
 
-                    // Recover set of receipts
-                    block_receipts.push((receipt, tx_index));
+                // Recover set of receipts
+                block_receipts.push((receipt, tx_index));
 
-                    // Apply 'touched-address' from cache
-                    for address in addresses {
-                        self.db.add_touched_address(address, *txn_hash)?;
-                    }
+                // Apply 'touched-address' from cache
+                for address in addresses {
+                    self.db.add_touched_address(address, *txn_hash)?;
                 }
-                // fast-forward state
-                self.state.set_to_root(block.state_root_hash().into());
-
-                // broadcast/commit receipts
-                return self.broadcast_commit_receipts(from, block, block_receipts);
             }
+            // fast-forward state
+            self.state.set_to_root(block.state_root_hash().into());
+
+            // broadcast/commit receipts
+            return self.broadcast_commit_receipts(from, block, block_receipts);
         };
 
         let mut verified_txns = Vec::new();
