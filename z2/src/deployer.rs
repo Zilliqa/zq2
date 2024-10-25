@@ -40,8 +40,7 @@ pub async fn install_or_upgrade(
     node_selection: bool,
     max_parallel: usize,
 ) -> Result<()> {
-    let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let mut chain_nodes = chain.nodes().await?;
     let node_names = chain_nodes
@@ -144,8 +143,7 @@ pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
         return Ok(());
     }
 
-    let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let mut chain_nodes = chain.nodes().await?;
 
@@ -154,7 +152,7 @@ pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
     if let Some(node) = chain_nodes.first() {
         println!("Config file for a node role {} in {}", role, chain.name());
         println!("---");
-        println!("{}", node.get_config_toml()?);
+        println!("{}", node.get_config_toml().await?);
         println!("---");
     } else {
         log::error!(
@@ -171,8 +169,7 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
     let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
     let mut futures = vec![];
 
-    let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let mut validators = chain.nodes().await?;
     validators.retain(|node| node.role == NodeRole::Validator);
@@ -201,10 +198,12 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
         chain.name()
     );
 
+    let genesis_private_key = chain.genesis_wallet_private_key().await?;
     for node in validators {
         let permit = semaphore.clone().acquire_owned().await?;
+        let genesis_key = genesis_private_key.clone();
         let future = task::spawn(async move {
-            let result = get_node_deposit_commands(&node).await;
+            let result = get_node_deposit_commands(&genesis_key, &node).await;
             drop(permit); // Release the permit when the task is done
             (node, result)
         });
@@ -222,14 +221,13 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
     Ok(())
 }
 
-pub async fn get_node_deposit_commands(node: &ChainNode) -> Result<()> {
-    let genesis_private_key = node.get_genesis_key();
+pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNode) -> Result<()> {
     let private_keys = node.get_private_key().await?;
     let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
     let reward_private_keys = node.get_wallet_private_key().await?;
     let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
 
-    println!("Validator {}:", node.get_node_name());
+    println!("Validator {}:", node.name());
     println!("z2 deposit --chain {} \\", node.chain()?);
     println!("\t--peer-id {} \\", node_ethereum_address.peer_id);
     println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
@@ -248,8 +246,7 @@ pub async fn get_node_deposit_commands(node: &ChainNode) -> Result<()> {
 }
 
 pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> {
-    let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config.clone()).await?;
     let mut validators = chain.nodes().await?;
     validators.retain(|node| node.role == NodeRole::Validator);
@@ -282,13 +279,13 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
     let mut failures = vec![];
 
     for node in validators {
-        let genesis_private_key = node.get_genesis_key();
+        let genesis_private_key = chain.genesis_wallet_private_key().await?;
         let private_keys = node.get_private_key().await?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
         let reward_private_keys = node.get_wallet_private_key().await?;
         let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
 
-        println!("Validator {}:", node.get_node_name());
+        println!("Validator {}:", node.name());
 
         let validator = validators::Validator::new(
             &node_ethereum_address.peer_id,
@@ -337,8 +334,7 @@ pub async fn run_rpc_call(
     let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
     let mut futures = vec![];
 
-    let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
 
     // Create a list of chain instances
@@ -440,8 +436,7 @@ async fn run_node_rpc_call(
 }
 
 pub async fn run_backup(config_file: &str, filename: &str) -> Result<()> {
-    let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let chain_nodes = chain.nodes().await?;
     let node_names = chain_nodes
@@ -467,8 +462,7 @@ pub async fn run_backup(config_file: &str, filename: &str) -> Result<()> {
 }
 
 pub async fn run_restore(config_file: &str, filename: &str, max_parallel: usize) -> Result<()> {
-    let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let chain_nodes = chain.nodes().await?;
     let node_names = chain_nodes
@@ -528,8 +522,7 @@ pub async fn run_restore(config_file: &str, filename: &str, max_parallel: usize)
 }
 
 pub async fn run_reset(config_file: &str, node_selection: bool) -> Result<()> {
-    let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let mut chain_nodes = chain.nodes().await?;
     chain_nodes.retain(|node| node.role != NodeRole::Apps);
@@ -592,8 +585,7 @@ pub async fn run_reset(config_file: &str, node_selection: bool) -> Result<()> {
 }
 
 pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> {
-    let config = fs::read_to_string(config_file).await?;
-    let config: NetworkConfig = serde_yaml::from_str(&config.clone())?;
+    let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let mut chain_nodes = chain.nodes().await?;
     chain_nodes.retain(|node| node.role != NodeRole::Apps);

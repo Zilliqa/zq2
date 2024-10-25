@@ -45,6 +45,12 @@ impl ChainInstance {
         machines
     }
 
+    pub fn get_version(&self, key: &str) -> String {
+        let default_value = &String::from("latest");
+        let version = self.config.versions.get(key).unwrap_or(default_value);
+        version.to_owned()
+    }
+
     async fn import_machines(chain_name: &str, project_id: &str) -> Result<Vec<Machine>> {
         println!("Create the instance list for {chain_name}");
 
@@ -121,61 +127,27 @@ impl ChainInstance {
         let mut node_roles = self.config.roles.clone();
         node_roles.sort();
 
-        let eth_chain_id = self.config.eth_chain_id;
-        let app_versions = self.config.versions.clone();
-        let bootstrap_public_ip = self.bootstrap_public_ip()?;
-        let bootstrap_private_key = self.bootstrap_private_key().await?;
-        let genesis_wallet_private_key = self.genesis_wallet_private_key().await?;
-
         for node_role in node_roles {
-            let instances = self.machines_by_role(node_role.clone());
-            let chain_nodes = instances
-                .into_iter()
-                .map(|m| {
-                    ChainNode::new(
-                        self.name(),
-                        eth_chain_id,
-                        node_role.clone(),
-                        m,
-                        app_versions.clone(),
-                        bootstrap_public_ip.clone(),
-                        bootstrap_private_key.clone(),
-                        genesis_wallet_private_key.clone(),
-                    )
-                })
-                .collect::<Vec<_>>();
+            let chain_nodes = self.nodes_by_role(node_role).await?;
             nodes.extend(chain_nodes);
         }
 
         Ok(nodes)
     }
 
-    pub fn bootstrap_public_ip(&self) -> Result<String> {
-        let instances = self.machines_by_role(NodeRole::Bootstrap);
+    pub async fn nodes_by_role(&self, role: NodeRole) -> Result<Vec<ChainNode>> {
+        let mut nodes = Vec::<ChainNode>::new();
 
-        if let Some(instance) = instances.first() {
-            Ok(instance.external_address.clone())
-        } else {
-            Err(anyhow!(
-                "No bootstrap instances found in the network {}",
-                &self.name()
-            ))
-        }
-    }
+        let eth_chain_id = self.config.eth_chain_id;
 
-    pub async fn bootstrap_private_key(&self) -> Result<String> {
-        let private_keys =
-            retrieve_secret_by_role(&self.config.name, &self.config.project_id, "bootstrap")
-                .await?;
+        let instances = self.machines_by_role(role.clone());
+        let chain_nodes = instances
+            .into_iter()
+            .map(|m| ChainNode::new(self.clone(), eth_chain_id, role.clone(), m))
+            .collect::<Vec<_>>();
+        nodes.extend(chain_nodes);
 
-        if let Some(private_key) = private_keys.first() {
-            Ok(private_key.to_owned())
-        } else {
-            Err(anyhow!(
-                "No secrets with role bootstrap found in the network {}",
-                &self.name()
-            ))
-        }
+        Ok(nodes)
     }
 
     pub async fn genesis_wallet_private_key(&self) -> Result<String> {
