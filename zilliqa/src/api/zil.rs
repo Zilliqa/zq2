@@ -257,7 +257,7 @@ fn create_transaction(
     };
     let signed_transaction = SignedTransaction::Zilliqa {
         tx: tx.clone(),
-        key: key.clone(),
+        key,
         sig,
     };
 
