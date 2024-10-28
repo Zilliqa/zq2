@@ -240,7 +240,7 @@ impl View {
             .checked_ilog2()
             .unwrap_or(0);
         info!(
-            "Based on elapsed clock time of {} seconds since last view update jump ahead {} views",
+            "Based on elapsed clock time of {} seconds since lastest view update, jump ahead {} views",
             time_difference.as_secs(),
             view_difference
         );
@@ -323,7 +323,7 @@ impl Consensus {
                         .get_block_by_view(finalized_number)?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
-                    // If current_view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
+                    // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
                     let start_view = db
                         .get_latest_view()?
                         .or_else(|| {
@@ -2589,7 +2589,7 @@ impl Consensus {
         self.view.get_view()
     }
 
-    /// Set view in memory and update tip_info.current_view in storage
+    /// Set view in memory and update tip_info.latest_view in storage
     pub fn set_view(&mut self, view: u64) -> Result<()> {
         if self.view.set_view(view) {
             self.db.set_latest_view(view)?;
@@ -3256,7 +3256,7 @@ mod tests {
     #[test]
     fn test_view_backout_timeout() {
         let mut view = View::new(10);
-        assert_eq!(view.exponential_backoff_timeout(view.get_view() - 0, 1), 1);
+        assert_eq!(view.exponential_backoff_timeout(view.get_view(), 1), 1);
         assert_eq!(view.exponential_backoff_timeout(view.get_view() - 1, 1), 1);
         assert_eq!(view.exponential_backoff_timeout(view.get_view() - 2, 1), 1);
         assert_eq!(view.exponential_backoff_timeout(view.get_view() - 3, 1), 2);
