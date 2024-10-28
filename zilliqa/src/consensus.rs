@@ -1,5 +1,10 @@
 use std::{
-    cell::RefCell, collections::BTreeMap, error::Error, fmt::Display, sync::Arc, time::Duration,
+    cell::RefCell,
+    collections::{BTreeMap, HashMap},
+    error::Error,
+    fmt::Display,
+    sync::Arc,
+    time::Duration,
 };
 
 use alloy::primitives::{Address, U256};
@@ -156,6 +161,9 @@ pub struct Consensus {
     state: State,
     /// The persistence database
     db: Arc<Db>,
+    /// Receipts cache
+    receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
+    receipts_cache_hash: Hash,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
@@ -163,7 +171,7 @@ pub struct Consensus {
     /// Flag indicating that block creation should be postponed at least until empty_block_timeout is reached
     create_next_block_on_timeout: bool,
     pub new_blocks: broadcast::Sender<BlockHeader>,
-    pub receipts: broadcast::Sender<(TransactionReceipt, usize)>,
+    pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
 }
@@ -352,11 +360,13 @@ impl Consensus {
             finalized_view: start_view.saturating_sub(1),
             state,
             db,
+            receipts_cache: HashMap::new(),
+            receipts_cache_hash: Hash::ZERO,
             transaction_pool: Default::default(),
             early_proposal: None,
             create_next_block_on_timeout: false,
             new_blocks: broadcast::Sender::new(4),
-            receipts: broadcast::Sender::new(128),
+            new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
         };
@@ -456,9 +466,12 @@ impl Consensus {
                     )));
                 };
             } else {
-                self.reset_timeout.send(Duration::from_millis(
-                    empty_block_timeout_ms - time_since_last_view_change + 1,
-                ))?;
+                self.reset_timeout.send(
+                    self.config
+                        .consensus
+                        .empty_block_timeout
+                        .saturating_sub(Duration::from_millis(time_since_last_view_change)),
+                )?;
                 return Ok(None);
             }
         }
@@ -660,8 +673,9 @@ impl Consensus {
             }
             let stakers: Vec<_> = self.state.get_stakers()?;
 
-            // Only tell the block store where this block came from if it wasn't from ourselves.
-            let from = (self.peer_id() != from).then_some(from);
+            // It is possible to source Proposals from own storage during sync, which alters the source of the Proposal.
+            // Only allow from == self, for fast-forwarding, in normal case but not during sync
+            let from = (self.peer_id() != from || !during_sync).then_some(from);
             self.execute_block(from, &block, transactions, &stakers)?;
 
             if self.view.get_view() != proposal_view + 1 {
@@ -1141,10 +1155,11 @@ impl Consensus {
             proposal.header.transactions_root_hash,
             proposal.header.receipts_root_hash,
             proposal.transactions,
-            proposal.header.timestamp,
+            proposal.header.timestamp, // set block timestamp to **start** point of assembly.
             proposal.header.gas_used,
             proposal.header.gas_limit,
         );
+        self.receipts_cache_hash = proposal.header.receipts_root_hash;
 
         // Restore the state to previous
         state.set_to_root(previous_state_root_hash.into());
@@ -1163,7 +1178,6 @@ impl Consensus {
         {
             return Ok(());
         }
-        info!("assemble early proposal for view {}", self.view.get_view());
 
         let (qc, parent) = match agg {
             // Create dummy QC for now if aggQC not provided
@@ -1190,7 +1204,20 @@ impl Consensus {
             }
         };
 
-        info!("parent block number: {}", parent.header.number);
+        // This is a partial header of a block that will be proposed with some transactions executed below.
+        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
+        let executed_block_header = BlockHeader {
+            view: self.view(),
+            number: parent.header.number + 1,
+            timestamp: SystemTime::max(SystemTime::now(), parent.timestamp()), // block timestamp at **start** of assembly, not end.
+            gas_limit: self.config.consensus.eth_block_gas_limit,
+            ..BlockHeader::default()
+        };
+
+        debug!(
+            "assemble early proposal {} in view {}",
+            executed_block_header.number, executed_block_header.view
+        );
 
         // Ensure sane state
         if self.state.root_hash()? != parent.state_root_hash() {
@@ -1201,21 +1228,16 @@ impl Consensus {
             );
         }
 
+        // Clear internal receipt cache.
+        // Since this is a speed enhancement, we're ignoring scenarios where the receipts cache may hold receipts for more than one proposal.
+        self.receipts_cache.clear();
+        self.receipts_cache_hash = Hash::ZERO;
+
         // Internal states
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie: EthTrie<MemoryDB> =
             eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
         let applied_txs = Vec::<VerifiedTransaction>::new();
-
-        // This is a partial header of a block that will be proposed with some transactions executed below.
-        // It is needed so that each transaction is executed within proper block context (the block it belongs to)
-        let executed_block_header = BlockHeader {
-            view: self.view(),
-            number: parent.header.number + 1,
-            timestamp: SystemTime::max(SystemTime::now(), parent.header.timestamp),
-            gas_limit: self.config.consensus.eth_block_gas_limit,
-            ..BlockHeader::default()
-        };
 
         // Generate the early proposal
         // Some critical parts are dummy/missing:
@@ -1274,18 +1296,27 @@ impl Consensus {
             if time_since_last_view_change + minimum_time_left_for_empty_block
                 >= exponential_backoff_timeout
             {
+                debug!(
+                    time_since_last_view_change,
+                    exponential_backoff_timeout,
+                    minimum_time_left_for_empty_block,
+                    "timeout proposal {} for view {}",
+                    proposal.header.number,
+                    proposal.header.view,
+                );
                 // don't have time, reinsert txn.
                 self.transaction_pool.insert_ready_transaction(tx);
                 break;
             }
 
             // Apply specific txn
+            let mut inspector = TouchedAddressInspector::default();
             let result = Self::apply_transaction_at(
                 &mut state,
                 self.db.clone(),
                 tx.clone(),
                 proposal.header,
-                inspector::noop(),
+                &mut inspector,
             )?;
 
             // Skip transactions whose execution resulted in an error and drop them.
@@ -1298,11 +1329,15 @@ impl Consensus {
             gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
                 g
             } else {
-                // undo last transaction
-                info!(
-                    nonce = tx.tx.nonce(),
-                    "gas limit reached, returning last transaction to pool",
+                debug!(
+                    time_since_last_view_change,
+                    exponential_backoff_timeout,
+                    minimum_time_left_for_empty_block,
+                    "gasout proposal {} for view {}",
+                    proposal.header.number,
+                    proposal.header.view,
                 );
+                // out of gas, undo last transaction
                 self.transaction_pool.insert_ready_transaction(tx);
                 state.set_to_root(updated_root_hash.into());
                 break;
@@ -1328,6 +1363,10 @@ impl Consensus {
                 let receipt_hash = receipt.compute_hash();
                 debug!("During assembly in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.view.get_view(), tx.hash, receipt, receipt_hash);
                 receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
+
+                // Forwarding cache
+                let addresses = inspector.touched.into_iter().collect_vec();
+                self.receipts_cache.insert(tx.hash, (receipt, addresses));
 
                 tx_index_in_block += 1;
                 updated_root_hash = state.root_hash()?;
@@ -1560,17 +1599,17 @@ impl Consensus {
 
     /// Insert transaction and add to early_proposal if possible.
     pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<TxAddResult> {
-        let verified = if let Ok(val) = txn.verify() {
-            val
-        } else {
+        let Ok(verified) = txn.verify() else {
             return Ok(TxAddResult::CannotVerifySignature);
         };
         let inserted = self.new_transaction(verified)?;
-        if let TxAddResult::AddedToMempool = &inserted {
-            if self.create_next_block_on_timeout && self.early_proposal.is_some() {
-                info!("add transaction to early proposal {}", self.view.get_view());
-                self.early_proposal_apply_transactions()?;
-            }
+        if inserted.was_added()
+            && self.create_next_block_on_timeout
+            && self.early_proposal.is_some()
+            && self.transaction_pool.has_txn_ready()
+        {
+            trace!("add transaction to early proposal {}", self.view.get_view());
+            self.early_proposal_apply_transactions()?;
         }
         Ok(inserted)
     }
@@ -1754,11 +1793,19 @@ impl Consensus {
             return Ok(TxAddResult::Duplicate(txn.hash));
         }
 
-        let account = self.state.get_account(txn.signer)?;
+        // Perform insertion under early state, if available
+        let early_account = match self.early_proposal.as_ref() {
+            Some((block, _, _, _)) => {
+                let state = self.state.at_root(block.state_root_hash().into());
+                state.get_account(txn.signer)?
+            }
+            _ => self.state.get_account(txn.signer)?,
+        };
+
         let eth_chain_id = self.config.eth_chain_id;
 
         let validation_result = txn.tx.validate(
-            &account,
+            &early_account,
             self.config.consensus.eth_block_gas_limit,
             eth_chain_id,
         )?;
@@ -1775,7 +1822,9 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = self.transaction_pool.insert_transaction(txn, account.nonce);
+        let insert_result = self
+            .transaction_pool
+            .insert_transaction(txn, early_account.nonce);
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -2708,7 +2757,7 @@ impl Consensus {
         transactions: Vec<SignedTransaction>,
         committee: &[NodePublicKey],
     ) -> Result<()> {
-        debug!("Executing block: {:?}", block.header.hash);
+        debug!("Executing block: {:?}", block.header);
 
         let parent = self
             .get_block(&block.parent_hash())?
@@ -2717,6 +2766,38 @@ impl Consensus {
         if !transactions.is_empty() {
             trace!("applying {} transactions to state", transactions.len());
         }
+
+        // Early return if it is safe to fast-forward
+        if self.receipts_cache_hash == block.receipts_root_hash()
+            && from.is_some_and(|peer_id| peer_id == self.peer_id())
+        {
+            debug!(
+                "fast-forward self-proposal {} for view {}",
+                block.header.number, block.header.view
+            );
+
+            let mut block_receipts = Vec::new();
+
+            for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
+                let (receipt, addresses) = self
+                    .receipts_cache
+                    .remove(txn_hash)
+                    .expect("receipt cached during proposal assembly");
+
+                // Recover set of receipts
+                block_receipts.push((receipt, tx_index));
+
+                // Apply 'touched-address' from cache
+                for address in addresses {
+                    self.db.add_touched_address(address, *txn_hash)?;
+                }
+            }
+            // fast-forward state
+            self.state.set_to_root(block.state_root_hash().into());
+
+            // broadcast/commit receipts
+            return self.broadcast_commit_receipts(from, block, block_receipts);
+        };
 
         let mut verified_txns = Vec::new();
 
@@ -2815,11 +2896,10 @@ impl Consensus {
 
         // Apply rewards after executing transactions but with the committee members from the previous block
         let proposer = self.leader_at_block(&parent, block.view()).unwrap();
-        let config = &self.config.consensus;
         Self::apply_rewards_late_at(
             parent.state_root_hash(),
             &mut self.state,
-            config,
+            &self.config.consensus,
             committee,
             proposer.public_key,
             block.view(),
@@ -2837,11 +2917,10 @@ impl Consensus {
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
-                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}, txn_hashes: {}",
+                "State root hash mismatch! Our state hash: {}, block hash: {:?} block prop: {:?}",
                 self.state.root_hash()?,
                 block.state_root_hash(),
                 block,
-                transaction_hashes
             );
             return Err(anyhow!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",
@@ -2850,11 +2929,21 @@ impl Consensus {
             ));
         }
 
+        self.broadcast_commit_receipts(from, block, block_receipts)
+    }
+
+    fn broadcast_commit_receipts(
+        &mut self,
+        from: Option<PeerId>,
+        block: &Block,
+        mut block_receipts: Vec<(TransactionReceipt, usize)>,
+    ) -> Result<()> {
+        // Broadcast receipts
         for (receipt, tx_index) in &mut block_receipts {
             receipt.block_hash = block.hash();
             // Avoid cloning the receipt if there are no subscriptions to send it to.
-            if self.receipts.receiver_count() != 0 {
-                let _ = self.receipts.send((receipt.clone(), *tx_index));
+            if self.new_receipts.receiver_count() != 0 {
+                let _ = self.new_receipts.send((receipt.clone(), *tx_index));
             }
         }
 
@@ -2862,6 +2951,8 @@ impl Consensus {
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
         if !self.db.contains_block(&block.hash())? {
+            // Only tell the block store where this block came from if it wasn't from ourselves.
+            let from = from.filter(|peer_id| *peer_id != self.peer_id());
             // If we were the proposer we would've already processed the block, hence the check
             self.add_block(from, block.clone())?;
         }
