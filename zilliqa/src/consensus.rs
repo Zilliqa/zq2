@@ -325,7 +325,7 @@ impl Consensus {
 
                     // If current_view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
                     let start_view = db
-                        .get_current_view()?
+                        .get_latest_view()?
                         .or_else(|| {
                             Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
                         })
@@ -334,9 +334,9 @@ impl Consensus {
                     let mut view = View::new(start_view);
 
                     // If timestamp of when current view was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
-                    if let Some(current_view_timestamp) = db.get_current_view_timestamp()? {
+                    if let Some(latest_view_timestamp) = db.get_latest_view_timestamp()? {
                         view.update_view_after_being_inactive(
-                            current_view_timestamp.elapsed()?,
+                            latest_view_timestamp.elapsed()?,
                             config.consensus.consensus_timeout.as_millis() as u64,
                         );
                     }
@@ -2592,7 +2592,7 @@ impl Consensus {
     /// Set view in memory and update tip_info.current_view in storage
     pub fn set_view(&mut self, view: u64) -> Result<()> {
         if self.view.set_view(view) {
-            self.db.set_current_view(view)?;
+            self.db.set_latest_view(view)?;
         }
         Ok(())
     }

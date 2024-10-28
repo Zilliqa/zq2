@@ -81,7 +81,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
     let last_block = inner.get_block(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
-    let current_view = inner.get_currnet_view();
+    let current_view = inner.get_current_view();
     let finalized_view = inner.get_finalized_height();
     // sanity check
     assert_eq!(tx.hash, hash);
@@ -172,7 +172,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     );
 
     // ensure were back on the same view
-    assert_eq!(current_view, inner.get_currnet_view());
+    assert_eq!(current_view, inner.get_current_view());
     assert_eq!(finalized_view, inner.get_finalized_height());
 }
 

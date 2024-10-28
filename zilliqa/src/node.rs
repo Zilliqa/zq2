@@ -865,7 +865,7 @@ impl Node {
         self.consensus.finalized_view()
     }
 
-    pub fn get_currnet_view(&self) -> u64 {
+    pub fn get_current_view(&self) -> u64 {
         self.consensus.view()
     }
 
