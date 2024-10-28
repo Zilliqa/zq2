@@ -1,0 +1,14 @@
+# Note: all rpc_url values must have the ws:// scheme to support subscriptions.
+max_dispatch_attempts = 3
+
+[zq2]
+
+rpc_url = "ws://127.0.0.1:4201"
+chain_gateway_address = "0xb2A26Feb8abFf33E5b077FED70308274d57535A2"
+validator_manager_address = "0x406ea20c4EdFE519F71e0Ea8Ba777941234599F6"
+
+[[chain_configs]]
+rpc_url = "ws://localhost:8545"
+
+[[chain_configs]]
+rpc_url = "ws://localhost:8546"
