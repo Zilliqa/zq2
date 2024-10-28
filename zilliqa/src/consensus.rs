@@ -213,11 +213,38 @@ impl View {
                 trace!("Tried to set view to same view - this is incorrect");
             }
         };
-        return false;
+        false
     }
 
     pub fn last_timeout(&self) -> SystemTime {
         self.last_timeout
+    }
+
+    /// Calculate how long we should wait before timing out for this view
+    pub fn exponential_backoff_timeout(&self, high_qc_view: u64, consensus_timeout: u64) -> u64 {
+        let view_difference = self.get_view().saturating_sub(high_qc_view);
+        // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
+        // in other words, the current view is always at least 2 views ahead of the highQC's view
+        // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
+        consensus_timeout * 2u64.pow((view_difference as u32).saturating_sub(2))
+    }
+
+    /// Jump ahead view counter based on an estimate of how long the node has been inactive.
+    /// We jump ahead assuming that no valid proposals have been finalised in this time.
+    pub fn update_view_after_being_inactive(
+        &mut self,
+        time_difference: Duration,
+        consensus_timeout: u64,
+    ) {
+        let view_difference = (time_difference.as_millis() as u64 / consensus_timeout)
+            .checked_ilog2()
+            .unwrap_or(0);
+        info!(
+            "Based on elapsed clock time of {} seconds since last view update jump ahead {} views",
+            time_difference.as_secs(),
+            view_difference
+        );
+        self.set_view(self.get_view() + view_difference as u64);
     }
 }
 
@@ -282,7 +309,7 @@ impl Consensus {
             }
         };
 
-        let (start_view, finalized_view, high_qc) = {
+        let (view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
                     let high_block = block_store
@@ -304,11 +331,21 @@ impl Consensus {
                         })
                         .unwrap();
 
+                    let mut view = View::new(start_view);
+
+                    // If timestamp of when current view was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
+                    if let Some(current_view_timestamp) = db.get_current_view_timestamp()? {
+                        view.update_view_after_being_inactive(
+                            current_view_timestamp.elapsed()?,
+                            config.consensus.consensus_timeout.as_millis() as u64,
+                        );
+                    }
+
                     trace!(
                         "recovery: high_block view {0}, finalized_number {1} , start_view {2}",
                         high_block.view(),
                         finalized_number,
-                        start_view
+                        view.get_view()
                     );
 
                     if finalized_number > high_block.view() {
@@ -347,14 +384,19 @@ impl Consensus {
 
                     info!(
                         "During recovery, starting consensus at view {}, finalised view {}",
-                        start_view, finalized_number
+                        view.get_view(),
+                        finalized_number
                     );
-                    (start_view, finalized_number, qc)
+                    (view, finalized_number, qc)
                 }
                 None => {
                     let start_view = 1;
                     let finalized_view = 0;
-                    (start_view, finalized_view, QuorumCertificate::genesis())
+                    (
+                        View::new(start_view),
+                        finalized_view,
+                        QuorumCertificate::genesis(),
+                    )
                 }
             }
         };
@@ -370,7 +412,7 @@ impl Consensus {
             buffered_votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc,
-            view: View::new(start_view),
+            view,
             finalized_view,
             state,
             db,
@@ -574,12 +616,9 @@ impl Consensus {
             .duration_since(self.view.last_timeout())
             .unwrap_or_default()
             .as_millis() as u64;
-        let view_difference = self.view.get_view().saturating_sub(self.high_qc.view);
-        // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
-        // in other words, the current view is always at least 2 views ahead of the highQC's view
-        // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
-        let exponential_backoff_timeout =
-            consensus_timeout_ms * 2u64.pow((view_difference as u32).saturating_sub(2));
+        let exponential_backoff_timeout = self
+            .view
+            .exponential_backoff_timeout(self.high_qc.view, consensus_timeout_ms);
 
         let minimum_time_left_for_empty_block = self
             .config
@@ -3207,5 +3246,32 @@ impl Consensus {
     ) -> Result<()> {
         self.block_store
             .buffer_lack_of_proposals(from_view, proposals)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_view_backout_timeout() {
+        let mut view = View::new(10);
+        assert_eq!(view.exponential_backoff_timeout(view.get_view() - 0, 1), 1);
+        assert_eq!(view.exponential_backoff_timeout(view.get_view() - 1, 1), 1);
+        assert_eq!(view.exponential_backoff_timeout(view.get_view() - 2, 1), 1);
+        assert_eq!(view.exponential_backoff_timeout(view.get_view() - 3, 1), 2);
+        assert_eq!(view.exponential_backoff_timeout(view.get_view() - 4, 1), 4);
+
+        view.update_view_after_being_inactive(Duration::from_millis(0), 1);
+        assert_eq!(view.get_view(), 10);
+        view.update_view_after_being_inactive(Duration::from_millis(1), 1);
+        assert_eq!(view.get_view(), 10);
+        view.update_view_after_being_inactive(Duration::from_millis(2), 1);
+        assert_eq!(view.get_view(), 11);
+        // should round down
+        view.update_view_after_being_inactive(Duration::from_millis(3), 1);
+        assert_eq!(view.get_view(), 12);
+        view.update_view_after_being_inactive(Duration::from_millis(4), 1);
+        assert_eq!(view.get_view(), 14);
     }
 }
