@@ -675,7 +675,7 @@ impl Consensus {
 
             // It is possible to source Proposals from own storage during sync, which alters the source of the Proposal.
             // Only allow from == self, for fast-forwarding, in normal case but not during sync
-            let from = (!(self.peer_id() == from && during_sync)).then_some(from);
+            let from = (self.peer_id() != from || !during_sync).then_some(from);
             self.execute_block(from, &block, transactions, &stakers)?;
 
             if self.view.get_view() != proposal_view + 1 {
@@ -1793,11 +1793,21 @@ impl Consensus {
             return Ok(TxAddResult::Duplicate(txn.hash));
         }
 
-        let account = self.state.get_account(txn.signer)?;
+        // Perform insertion under early state, if available
+        let early_account = match self.early_proposal.as_ref() {
+            Some((block, _, _, _)) => {
+                // let mut state = self.state.clone();
+                // state.set_to_root(block.state_root_hash().into());
+                let state = self.state.at_root(block.state_root_hash().into());
+                state.get_account(txn.signer)?
+            }
+            _ => self.state.get_account(txn.signer)?,
+        };
+
         let eth_chain_id = self.config.eth_chain_id;
 
         let validation_result = txn.tx.validate(
-            &account,
+            &early_account,
             self.config.consensus.eth_block_gas_limit,
             eth_chain_id,
         )?;
@@ -1814,7 +1824,9 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = self.transaction_pool.insert_transaction(txn, account.nonce);
+        let insert_result = self
+            .transaction_pool
+            .insert_transaction(txn, early_account.nonce);
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
