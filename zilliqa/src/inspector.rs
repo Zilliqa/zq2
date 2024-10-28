@@ -1,9 +1,12 @@
 use std::collections::HashSet;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, Log, U256};
 use revm::{
     inspectors::NoOpInspector,
-    interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},
+    interpreter::{
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
+        Interpreter,
+    },
     primitives::CreateScheme,
     Database, EvmContext, Inspector,
 };
@@ -11,7 +14,10 @@ use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector,
 };
 
-use crate::api::types::ots::{Operation, OperationType, TraceEntry, TraceEntryType};
+use crate::{
+    api::types::ots::{Operation, OperationType, TraceEntry, TraceEntryType},
+    exec::PendingState,
+};
 
 /// Provides callbacks from the Scilla interpreter.
 pub trait ScillaInspector {
@@ -47,6 +53,49 @@ impl<T: ScillaInspector> ScillaInspector for &mut T {
         (*self).call(from, to, amount, depth)
     }
 }
+
+// impl<T: Inspector<PendingState>> Inspector<PendingState> for RefMut<'_, T> {
+//     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>) {
+//         self.borrow().initialize_interp(interp, context);
+//     }
+//     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>) {
+//         self.borrow().step(interp, context);
+//     }
+//
+//     fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>) {
+//         self.borrow().step_end(interp, context);
+//     }
+//
+//     fn log(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>, log: &Log) {
+//         self.borrow().log(interp, context, log);
+//     }
+//     fn call(&mut self, context: &mut EvmContext<PendingState>, inputs: &mut CallInputs) -> Option<CallOutcome> {
+//         self.borrow().call(context, inputs)
+//     }
+//     fn call_end(&mut self, context: &mut EvmContext<PendingState>, inputs: &CallInputs, outcome: CallOutcome) -> CallOutcome {
+//         self.borrow().call_end(context, inputs, outcome)
+//     }
+//
+//     fn create(&mut self, context: &mut EvmContext<PendingState>, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
+//         self.borrow().create(context, inputs)
+//     }
+//
+//     fn create_end(&mut self, context: &mut EvmContext<PendingState>, inputs: &CreateInputs, outcome: CreateOutcome) -> CreateOutcome {
+//         self.borrow().create_end(context, inputs, outcome)
+//     }
+//
+//     fn eofcreate(&mut self, context: &mut EvmContext<PendingState>, inputs: &mut EOFCreateInputs) -> Option<CreateOutcome> {
+//         self.borrow().eofcreate(context, inputs)
+//     }
+//
+//     fn eofcreate_end(&mut self, context: &mut EvmContext<PendingState>, inputs: &EOFCreateInputs, outcome: CreateOutcome) -> CreateOutcome {
+//         self.borrow().eofcreate_end(context, inputs, outcome)
+//     }
+//
+//     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+//         self.borrow().selfdestruct(contract, target, value);
+//     }
+// }
 
 pub fn noop() -> NoOpInspector {
     NoOpInspector
@@ -226,17 +275,6 @@ impl<DB: Database> Inspector<DB> for OtterscanTraceInspector {
 }
 
 impl ScillaInspector for OtterscanTraceInspector {
-    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
-        self.entries.push(TraceEntry {
-            ty: TraceEntryType::Call,
-            depth,
-            from,
-            to,
-            value: Some(amount),
-            input: vec![],
-        })
-    }
-
     fn create(&mut self, creator: Address, contract_address: Address, amount: u128) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Create,
@@ -249,6 +287,17 @@ impl ScillaInspector for OtterscanTraceInspector {
     }
 
     fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+        self.entries.push(TraceEntry {
+            ty: TraceEntryType::Call,
+            depth,
+            from,
+            to,
+            value: Some(amount),
+            input: vec![],
+        })
+    }
+
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         self.entries.push(TraceEntry {
             ty: TraceEntryType::Call,
             depth,
@@ -324,7 +373,7 @@ impl<DB: Database> Inspector<DB> for OtterscanOperationInspector {
 }
 
 impl ScillaInspector for OtterscanOperationInspector {
-    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         if depth != 0 && amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
@@ -335,7 +384,7 @@ impl ScillaInspector for OtterscanOperationInspector {
         }
     }
 
-    fn transfer(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
+    fn call(&mut self, from: Address, to: Address, amount: u128, depth: u64) {
         if depth != 0 && amount != 0 {
             self.entries.push(Operation {
                 ty: OperationType::Transfer,
@@ -350,3 +399,91 @@ impl ScillaInspector for OtterscanOperationInspector {
 }
 
 impl ScillaInspector for TracingInspector {}
+
+impl<I: Inspector<PendingState> + ScillaInspector> ScillaInspector for ZQ2Inspector<'_, I> {}
+
+pub struct ZQ2Inspector<'a, I: Inspector<PendingState> + ScillaInspector> {
+    inner: &'a mut I,
+}
+
+impl<'a, I: Inspector<PendingState> + ScillaInspector> ZQ2Inspector<'a, I> {
+    pub fn new(inner: &'a mut I) -> Self {
+        Self { inner }
+    }
+}
+
+impl<I: Inspector<PendingState> + ScillaInspector> Inspector<PendingState> for ZQ2Inspector<'_, I> {
+    fn initialize_interp(
+        &mut self,
+        interp: &mut Interpreter,
+        context: &mut EvmContext<PendingState>,
+    ) {
+        context.db.gas_left = interp.gas;
+        self.inner.initialize_interp(interp, context);
+    }
+    fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>) {
+        context.db.gas_left = interp.gas;
+        self.inner.step(interp, context);
+    }
+
+    fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>) {
+        self.inner.step_end(interp, context);
+    }
+
+    fn log(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>, log: &Log) {
+        self.inner.log(interp, context, log);
+    }
+    fn call(
+        &mut self,
+        context: &mut EvmContext<PendingState>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
+        Inspector::call(&mut self.inner, context, inputs)
+    }
+    fn call_end(
+        &mut self,
+        context: &mut EvmContext<PendingState>,
+        inputs: &CallInputs,
+        outcome: CallOutcome,
+    ) -> CallOutcome {
+        self.inner.call_end(context, inputs, outcome)
+    }
+
+    fn create(
+        &mut self,
+        context: &mut EvmContext<PendingState>,
+        inputs: &mut CreateInputs,
+    ) -> Option<CreateOutcome> {
+        Inspector::create(&mut self.inner, context, inputs)
+    }
+
+    fn create_end(
+        &mut self,
+        context: &mut EvmContext<PendingState>,
+        inputs: &CreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        self.inner.create_end(context, inputs, outcome)
+    }
+
+    fn eofcreate(
+        &mut self,
+        context: &mut EvmContext<PendingState>,
+        inputs: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
+        self.inner.eofcreate(context, inputs)
+    }
+
+    fn eofcreate_end(
+        &mut self,
+        context: &mut EvmContext<PendingState>,
+        inputs: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        self.inner.eofcreate_end(context, inputs, outcome)
+    }
+
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        self.inner.selfdestruct(contract, target, value);
+    }
+}

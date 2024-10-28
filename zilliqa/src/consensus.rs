@@ -25,7 +25,7 @@ use crate::{
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
-    inspector::{self, ScillaInspector, TouchedAddressInspector},
+    inspector::{self, ScillaInspector, TouchedAddressInspector, ZQ2Inspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
         ExternalMessage, InternalMessage, NewView, ProcessProposal, Proposal, QuorumCertificate,
@@ -2837,13 +2837,16 @@ impl Consensus {
         for (tx_index, txn) in verified_txns.into_iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
-            let mut inspector = TouchedAddressInspector::default();
+
+            let mut touched_inspector = TouchedAddressInspector::default();
+            let mut inspector = ZQ2Inspector::new(&mut touched_inspector);
             let result = self
                 .apply_transaction(txn.clone(), block.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
             self.transaction_pool.mark_executed(&txn);
-            for address in inspector.touched {
-                self.db.add_touched_address(address, tx_hash)?;
+
+            for address in &touched_inspector.touched {
+                self.db.add_touched_address(*address, tx_hash)?;
             }
 
             let gas_used = result.gas_used();

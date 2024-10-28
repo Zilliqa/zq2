@@ -18,6 +18,7 @@ use ethabi::Token;
 use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
+    interpreter::Gas,
     primitives::{
         map::FxBuildHasher, AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason,
         HandlerCfg, Output, ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
@@ -1008,6 +1009,7 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 pub struct PendingState {
     pub pre_state: State,
     pub new_state: HashMap<Address, PendingAccount>,
+    pub gas_left: Gas,
 }
 
 /// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
@@ -1032,6 +1034,7 @@ impl PendingState {
         PendingState {
             pre_state: state,
             new_state: HashMap::new(),
+            gas_left: Gas::default(),
         }
     }
 
