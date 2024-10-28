@@ -425,29 +425,16 @@ impl Consensus {
             return Ok(None);
         }
 
-        let (
-            time_since_last_view_change,
-            exponential_backoff_timeout,
-            minimum_time_left_for_empty_block,
-        ) = self.get_consensus_timeout_params();
+        let (time_since_last_view_change, exponential_backoff_timeout, empty_block_timeout) =
+            self.get_consensus_timeout_params();
 
         trace!(
             "timeout reached create_next_block_on_timeout: {}",
             self.create_next_block_on_timeout
         );
         if self.create_next_block_on_timeout {
-            let empty_block_timeout_ms =
-                self.config.consensus.empty_block_timeout.as_millis() as u64;
-
-            let has_txns_for_next_block = self.transaction_pool.has_txn_ready();
-
-            // Check if enough time elapsed or there's something in mempool or we don't have enough
-            // time but let's try at least until new view can happen
-            if time_since_last_view_change > empty_block_timeout_ms
-                || has_txns_for_next_block
-                || (time_since_last_view_change + minimum_time_left_for_empty_block
-                    >= exponential_backoff_timeout)
-            {
+            // Check if enough time elapsed to propse block
+            if time_since_last_view_change > empty_block_timeout {
                 if let Ok(Some((block, transactions))) = self.propose_new_block() {
                     self.create_next_block_on_timeout = false;
                     return Ok(Some((
@@ -457,7 +444,7 @@ impl Consensus {
                 };
             } else {
                 self.reset_timeout.send(Duration::from_millis(
-                    empty_block_timeout_ms - time_since_last_view_change + 1,
+                    empty_block_timeout - time_since_last_view_change + 1,
                 ))?;
                 return Ok(None);
             }
@@ -465,7 +452,6 @@ impl Consensus {
 
         // Now consider whether we want to timeout - the timeout duration doubles every time, so it
         // Should eventually have all nodes on the same view
-
         if time_since_last_view_change < exponential_backoff_timeout {
             trace!(
                 "Not proceeding with view change. Current view: {} - time since last: {}, timeout requires: {}",
@@ -532,23 +518,18 @@ impl Consensus {
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
         let exponential_backoff_timeout =
             consensus_timeout_ms * 2u64.pow((view_difference as u32).saturating_sub(2));
-
-        let minimum_time_left_for_empty_block = self
-            .config
-            .consensus
-            .minimum_time_left_for_empty_block
-            .as_millis() as u64;
+        let empty_block_timeout = self.config.consensus.empty_block_timeout.as_millis() as u64;
 
         trace!(
             time_since_last_view_change,
             exponential_backoff_timeout,
-            minimum_time_left_for_empty_block,
+            empty_block_timeout
         );
 
         (
             time_since_last_view_change,
             exponential_backoff_timeout,
-            minimum_time_left_for_empty_block,
+            empty_block_timeout,
         )
     }
 
@@ -1265,15 +1246,10 @@ impl Consensus {
         // Assemble new block with whatever is in the mempool
         while let Some(tx) = self.transaction_pool.best_transaction() {
             // First - check if we have time left to process txns and give enough time for block propagation
-            let (
-                time_since_last_view_change,
-                exponential_backoff_timeout,
-                minimum_time_left_for_empty_block,
-            ) = self.get_consensus_timeout_params();
+            let (time_since_last_view_change, _, empty_block_timeout) =
+                self.get_consensus_timeout_params();
 
-            if time_since_last_view_change + minimum_time_left_for_empty_block
-                >= exponential_backoff_timeout
-            {
+            if time_since_last_view_change > empty_block_timeout {
                 // don't have time, reinsert txn.
                 self.transaction_pool.insert_ready_transaction(tx);
                 break;
@@ -1367,15 +1343,10 @@ impl Consensus {
     /// Either propose now or set timeout to allow for txs to come in.
     fn ready_for_block_proposal(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
-        let (
-            time_since_last_view_change,
-            exponential_backoff_timeout,
-            minimum_time_left_for_empty_block,
-        ) = self.get_consensus_timeout_params();
+        let (time_since_last_view_change, _, empty_block_timeout) =
+            self.get_consensus_timeout_params();
 
-        if time_since_last_view_change + minimum_time_left_for_empty_block
-            >= exponential_backoff_timeout
-        {
+        if time_since_last_view_change > empty_block_timeout {
             return self.propose_new_block();
         }
 
@@ -1445,16 +1416,11 @@ impl Consensus {
         let pending = self.transaction_pool.pending_hashes();
 
         for hash in pending.into_iter() {
-            // First - check for time
-            let (
-                time_since_last_view_change,
-                exponential_backoff_timeout,
-                minimum_time_left_for_empty_block,
-            ) = self.get_consensus_timeout_params();
+            // First - check if there is time
+            let (time_since_last_view_change, _, empty_block_timeout) =
+                self.get_consensus_timeout_params();
 
-            if time_since_last_view_change + minimum_time_left_for_empty_block
-                >= exponential_backoff_timeout
-            {
+            if time_since_last_view_change > empty_block_timeout {
                 break;
             }
 

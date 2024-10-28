@@ -382,7 +382,6 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
             scilla_stdlib_dir: scilla_stdlib_dir_default(),
             scilla_ext_libs_path: scilla_ext_libs_path_default(),
             main_shard_id: None,
-            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
             scilla_address: scilla_address_default(),
             blocks_per_epoch: 3600,
             epochs_per_checkpoint: 24,

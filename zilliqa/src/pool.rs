@@ -340,21 +340,6 @@ impl TransactionPool {
         self.hash_to_index.clear();
         std::mem::take(&mut self.transactions).into_values()
     }
-
-    /// Check the ready transactions in arbitrary order, for one that is Ready
-    pub fn has_txn_ready(&self) -> bool {
-        for ReadyItem { tx_index, .. } in self.ready.iter() {
-            // A transaction might have been ready, but it might have gotten popped
-            // or the sender's nonce might have increased, making it invalid. In this case,
-            // we will have a stale reference would still exist in the heap.
-            let Some(_) = self.transactions.get(tx_index) else {
-                continue;
-            };
-
-            return true;
-        }
-        false
-    }
 }
 
 #[cfg(test)]
