@@ -1796,8 +1796,6 @@ impl Consensus {
         // Perform insertion under early state, if available
         let early_account = match self.early_proposal.as_ref() {
             Some((block, _, _, _)) => {
-                // let mut state = self.state.clone();
-                // state.set_to_root(block.state_root_hash().into());
                 let state = self.state.at_root(block.state_root_hash().into());
                 state.get_account(txn.signer)?
             }
