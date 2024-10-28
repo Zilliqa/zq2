@@ -5,6 +5,7 @@ use std::{
     fs,
     path::PathBuf,
     process::{self, Stdio},
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -12,6 +13,7 @@ use std::{
 use alloy::{
     consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH},
     primitives::{Address, Parity, Signature, TxKind, B256, U256},
+    signers::local::PrivateKeySigner,
 };
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, bitvec, order::Msb0};
@@ -319,6 +321,8 @@ pub async fn convert_persistence(
         }
     }
 
+    let signer = PrivateKeySigner::from_str(secret_key.to_hex().as_str())?;
+
     // Add stake for this validator. For now, we just assume they've always had 64 ZIL staked.
     // This assumptions will need to change for the actual testnet and mainnet launches, where we cannot invent ZIL
     // out of thin air (like we do below).
@@ -332,6 +336,7 @@ pub async fn convert_persistence(
                 .to_bytes(),
         ),
         Token::Address(ethabi::Address::from_low_u64_be(1)),
+        Token::Address(ethabi::Address::from_slice(signer.address().as_slice())),
         Token::Uint((64 * 10u128.pow(18)).into()),
     ])?;
     let (

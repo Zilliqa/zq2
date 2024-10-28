@@ -1,0 +1,19 @@
+{
+  "errors": [
+    {
+      "sourceLocation": {
+        "file": "contracts/src/ValidatorManager.sol",
+        "start": 829,
+        "end": 844
+      },
+      "type": "TypeError",
+      "component": "general",
+      "severity": "error",
+      "errorCode": "2973",
+      "message": "Wrong argument count for modifier invocation: 1 arguments given but expected 0.",
+      "formattedMessage": "TypeError: Wrong argument count for modifier invocation: 1 arguments given but expected 0.\n  --> contracts/src/ValidatorManager.sol:25:33:\n   |\n25 |     constructor(address _owner) Ownable(_owner) {}\n   |                                 ^^^^^^^^^^^^^^^\n\n"
+    }
+  ],
+  "sources": {},
+  "contracts": {}
+}

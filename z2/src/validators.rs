@@ -184,6 +184,8 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
         .parse::<LocalWallet>()?
         .with_chain_id(chain_id.as_u64());
 
+    let wallet_address = wallet.address();
+    println!("Signer address is {}", wallet_address);
     let client = SignerMiddleware::new(provider, wallet);
 
     // Stake the new validator's funds.
@@ -197,6 +199,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
                     Token::Bytes(stake.validator.peer_id.to_bytes()),
                     Token::Bytes(stake.validator.pop.0.to_compressed().to_vec()),
                     Token::Address(stake.reward_address),
+                    Token::Address(wallet_address),
                 ])
                 .unwrap(),
         );

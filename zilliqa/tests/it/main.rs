@@ -1,4 +1,4 @@
-use alloy::primitives::Address;
+use alloy::{primitives::Address, signers::local::PrivateKeySigner};
 use ethers::{
     abi::Tokenize,
     providers::{Middleware, PubsubClient},
@@ -25,6 +25,7 @@ use std::{
     path::Path,
     pin::Pin,
     rc::Rc,
+    str::FromStr,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, MutexGuard,
@@ -210,7 +211,7 @@ struct TestNode {
 }
 
 struct Network {
-    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)>,
+    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address, Address)>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     pub shard_id: u64,
@@ -304,6 +305,9 @@ impl Network {
                     k.0.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
                     TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                    PrivateKeySigner::from_str(k.0.to_hex().as_str())
+                        .unwrap()
+                        .address(),
                 )
             })
             .collect();
@@ -502,6 +506,9 @@ impl Network {
                     k.0.to_libp2p_keypair().public().to_peer_id(),
                     stake.into(),
                     TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                    PrivateKeySigner::from_str(k.0.to_hex().as_str())
+                        .unwrap()
+                        .address(),
                 )
             })
             .collect();

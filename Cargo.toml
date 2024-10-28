@@ -3,6 +3,7 @@ resolver = "2"
 
 members = [
     "eth-trie.rs",
+    "uccb",
     "zilliqa",
     "zilliqa-macros",
     "z2",

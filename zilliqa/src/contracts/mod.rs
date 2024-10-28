@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 pub mod deposit {
-    use ethabi::{Constructor, Function};
+    use ethabi::{Constructor, Event, Function};
     use once_cell::sync::Lazy;
 
     use super::{contract, Contract};
@@ -12,6 +12,7 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
 
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static ABI: Lazy<ethabi::Contract> = Lazy::new(|| CONTRACT.abi.clone());
     pub static LEADER_AT_VIEW: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("leaderAtView").unwrap().clone());
     pub static TEMP_REMOVE_STAKER: Lazy<Function> =
@@ -32,6 +33,10 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("totalStake").unwrap().clone());
     pub static MIN_DEPOSIT: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("_minimumStake").unwrap().clone());
+    pub static STAKER_ADDED_EVT: Lazy<Event> =
+        Lazy::new(|| CONTRACT.abi.event("StakerAdded").unwrap().clone());
+    pub static STAKER_REMOVED_EVT: Lazy<Event> =
+        Lazy::new(|| CONTRACT.abi.event("StakerRemoved").unwrap().clone());
 }
 
 pub mod shard {

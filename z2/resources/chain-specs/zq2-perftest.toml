@@ -6,7 +6,7 @@ eth_chain_id = 33469
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 consensus.genesis_accounts = [ ["0xd4b13a10f43be60F8DF150C0996F6dE377cD770c", "20_800_000_000_000_000_000_000_000_000"] ]
-consensus.genesis_deposits = [ ["9035ec5c84568bdc05d0f50c95f4e7898eaac5806e12c150c1723cb82cbc57881fbc5dff032b879522415c7acebe1aef", "12D3KooWEhXxYZtu2FyDNQCJL4wff525Gj8knCdRvE7gcNMDVp9V", "100_000_000_000_000_000_000_000_000", "0xd4b13a10f43be60F8DF150C0996F6dE377cD770c"] ]
+consensus.genesis_deposits = [ ["9035ec5c84568bdc05d0f50c95f4e7898eaac5806e12c150c1723cb82cbc57881fbc5dff032b879522415c7acebe1aef", "12D3KooWEhXxYZtu2FyDNQCJL4wff525Gj8knCdRvE7gcNMDVp9V", "100_000_000_000_000_000_000_000_000", "0xd4b13a10f43be60F8DF150C0996F6dE377cD770c", "0000000000000000000000000000000000000000"] ]
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
