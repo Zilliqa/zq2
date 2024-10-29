@@ -30,8 +30,9 @@ use tracing::warn;
 
 use crate::{
     constants::{
-        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_CONTRACT_CREATE_GAS,
-        ZIL_CONTRACT_INVOKE_GAS, ZIL_MAX_CODE_SIZE, ZIL_NORMAL_TXN_GAS,
+        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, SCILLA_INVOKE_RUNNER,
+        SCILLA_TRANSFER, ZIL_CONTRACT_CREATE_GAS, ZIL_CONTRACT_INVOKE_GAS, ZIL_MAX_CODE_SIZE,
+        ZIL_NORMAL_TXN_GAS,
     },
     crypto::{self, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
@@ -346,7 +347,9 @@ impl SignedTransaction {
         }
     }
 
-    fn maximum_cost(&self) -> Result<u128> {
+    // We don't validate Zilliqa txns against their maximum cost, but against
+    // the deposit size.
+    fn maximum_validation_cost(&self) -> Result<u128> {
         match self {
             SignedTransaction::Legacy { tx, .. } => {
                 Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)
@@ -358,7 +361,23 @@ impl SignedTransaction {
                 Ok(tx.gas_limit as u128 * tx.max_fee_per_gas + u128::try_from(tx.value)?)
             }
             SignedTransaction::Zilliqa { tx, .. } => {
-                Ok(total_scilla_gas_price(tx.gas_limit, tx.gas_price).0)
+                // This is a copy of Transaction.h::GetTransactionType()
+                // We validate against slightly different thresholds since we don't have the
+                // mainnet constants to hand in Rust in zq2.
+                Ok(total_scilla_gas_price(
+                    if !tx.to_addr.is_zero() && !tx.data.is_empty() && tx.code.is_empty() {
+                        // It's a contract call (erm, probably)
+                        SCILLA_INVOKE_RUNNER
+                    } else if !tx.code.is_empty() && tx.to_addr.is_zero() {
+                        // create
+                        SCILLA_INVOKE_RUNNER
+                    } else {
+                        // Validate as an EOA
+                        SCILLA_TRANSFER
+                    },
+                    tx.gas_price,
+                )
+                .0)
             }
             SignedTransaction::Intershard { tx, .. } => Ok(tx.gas_price * tx.gas_limit.0 as u128),
         }
@@ -558,7 +577,7 @@ impl SignedTransaction {
     }
 
     fn validate_sender_account(&self, account: &Account) -> Result<ValidationOutcome> {
-        let txn_cost = self.maximum_cost()?;
+        let txn_cost = self.maximum_validation_cost()?;
         if txn_cost > account.balance {
             warn!("Insufficient funds");
             return Ok(ValidationOutcome::InsufficientFunds(
