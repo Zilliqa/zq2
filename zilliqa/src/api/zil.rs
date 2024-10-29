@@ -449,6 +449,12 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
 
     let state = node.get_state(&block)?;
     let account = state.get_account(address)?;
+    if account == Account::default() {
+        return Err(anyhow!(
+            "Address does not exist: {}",
+            hex::encode(address.0)
+        ));
+    }
 
     let result = json!({
         "_balance": ZilAmount::from_amount(account.balance).to_string(),
