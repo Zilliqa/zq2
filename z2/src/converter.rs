@@ -306,11 +306,13 @@ pub async fn convert_persistence(
                 _ => (code, EMPTY_ROOT_HASH),
             };
 
+            let created_at_block = None;
             let account = Account {
                 nonce: zq1_account.nonce,
                 balance: zq1_account.balance * 10u128.pow(6),
                 code,
                 storage_root,
+                created_at_block,
             };
 
             state.save_account(address, account)?;
@@ -355,7 +357,8 @@ pub async fn convert_persistence(
     if !result.is_success() {
         return Err(anyhow!("setting stake failed: {result:?}"));
     }
-    state.apply_delta_evm(&result_state)?;
+    let block_number = 1;
+    state.apply_delta_evm(&result_state, block_number)?;
 
     // Flush any pending changes to db
     let _ = state.root_hash()?;

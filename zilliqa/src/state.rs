@@ -189,7 +189,8 @@ impl State {
             if !result.is_success() {
                 return Err(anyhow!("setting stake failed: {result:?}"));
             }
-            state.apply_delta_evm(&result_state)?;
+            let block_number = 1;
+            state.apply_delta_evm(&result_state, block_number)?;
         }
 
         Ok(state)
@@ -321,6 +322,8 @@ pub struct Account {
     pub balance: u128,
     pub code: Code,
     pub storage_root: B256,
+    // None -> created by ZQ1. Some(0) -> pending, Some(x) -> created at block x
+    pub created_at_block: Option<u64>,
 }
 
 impl Default for Account {
@@ -330,6 +333,7 @@ impl Default for Account {
             balance: 0,
             code: Code::default(),
             storage_root: EMPTY_ROOT_HASH,
+            created_at_block: Some(0),
         }
     }
 }

@@ -36,7 +36,7 @@ use crate::{
     crypto::{Hash, NodePublicKey},
     db::TrieStorage,
     eth_helpers::extract_revert_msg,
-    inspector::{self, ScillaInspector},
+    inspector::{self, noop, ScillaInspector, ZQ2Inspector},
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, ParamValue, Scilla},
@@ -391,6 +391,8 @@ impl State {
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
     ) -> Result<Address> {
+        let mut noop_inspector = noop();
+        let zq2_inspector = ZQ2Inspector::new(&mut noop_inspector);
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
@@ -400,7 +402,7 @@ impl State {
             creation_bytecode,
             None,
             BlockHeader::genesis(Hash::ZERO),
-            inspector::noop(),
+            zq2_inspector,
             BaseFeeCheck::Ignore,
         )?;
 
@@ -419,8 +421,8 @@ impl State {
                 } else {
                     addr
                 };
-
-                self.apply_delta_evm(&state)?;
+                let block_number = 1u64;
+                self.apply_delta_evm(&state, block_number)?;
                 Ok(addr)
             }
             ExecutionResult::Success { .. } => {
@@ -577,7 +579,7 @@ impl State {
             let (result, state) =
                 self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 
-            self.apply_delta_scilla(&state)?;
+            self.apply_delta_scilla(&state, current_block.number)?;
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {
@@ -599,8 +601,8 @@ impl State {
                     },
                 )?;
 
-            self.apply_delta_evm(&state)?;
-            self.apply_delta_scilla(&scilla_state)?;
+            self.apply_delta_evm(&state, current_block.number)?;
+            self.apply_delta_scilla(&scilla_state, current_block.number)?;
 
             Ok(TransactionApplyResult::Evm(
                 ResultAndState { result, state },
@@ -610,7 +612,11 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
+    fn apply_delta_scilla(
+        &mut self,
+        state: &HashMap<Address, PendingAccount>,
+        block_number: u64,
+    ) -> Result<()> {
         for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
 
@@ -656,11 +662,18 @@ impl State {
                 handle(&mut storage, var, value, &mut vec![])?;
             }
 
+            let created_at_block = match account.account.created_at_block {
+                Some(val) if val > 0 => Some(val),
+                Some(_) => Some(block_number),
+                _ => None,
+            };
+
             let account = Account {
                 nonce: account.account.nonce,
                 balance: account.account.balance,
                 code: account.account.code.clone(),
                 storage_root: storage.root_hash()?,
+                created_at_block,
             };
 
             self.save_account(address, account)?;
@@ -673,6 +686,7 @@ impl State {
     pub fn apply_delta_evm(
         &mut self,
         state: &HashMap<Address, revm::primitives::Account, FxBuildHasher>,
+        block_number: u64,
     ) -> Result<()> {
         for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
@@ -703,11 +717,20 @@ impl State {
                     .to_vec()
             };
 
+            let created_at_block = match account.is_created() {
+                true => Some(block_number),
+                _ => {
+                    let existing_account = self.get_account(address)?;
+                    existing_account.created_at_block
+                }
+            };
+
             let account = Account {
                 nonce: account.info.nonce,
                 balance: account.info.balance.try_into()?,
                 code: Code::Evm(code),
                 storage_root: storage.root_hash()?,
+                created_at_block,
             };
             trace!(?address, ?account, "update account");
             self.save_account(address, account)?;

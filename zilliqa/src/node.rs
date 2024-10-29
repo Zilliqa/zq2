@@ -32,7 +32,7 @@ use crate::{
     crypto::{Hash, SecretKey},
     db::Db,
     exec::{PendingState, TransactionApplyResult},
-    inspector::{self, ScillaInspector},
+    inspector::{self, ScillaInspector, ZQ2Inspector},
     message::{
         Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
         ProcessProposal, Proposal,
@@ -509,11 +509,13 @@ impl Node {
             .at_root(parent.state_root_hash().into());
 
         for other_txn_hash in block.transactions {
+            let mut noop_inspector = inspector::noop();
+            let zq2_inspector = ZQ2Inspector::new(&mut noop_inspector);
             if txn_hash != other_txn_hash {
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(other_txn, block.header, inspector::noop())?;
+                state.apply_transaction(other_txn, block.header, zq2_inspector)?;
             } else {
                 let config = TracingInspectorConfig::from_parity_config(trace_types);
                 let mut inspector = TracingInspector::new(config);
@@ -561,10 +563,12 @@ impl Node {
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
+                let mut noop_inspector = inspector::noop();
+                let zq2_inspector = ZQ2Inspector::new(&mut noop_inspector);
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(other_txn, parent.header, inspector::noop())?;
+                state.apply_transaction(other_txn, parent.header, zq2_inspector)?;
             } else {
                 let result = state.apply_transaction(txn, block.header, inspector)?;
 
@@ -631,7 +635,9 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+            let zq2_inspector = ZQ2Inspector::new(&mut inspector);
+
+            let result = state.apply_transaction(txn, block.header, zq2_inspector)?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
@@ -657,7 +663,9 @@ impl Node {
                         TracingInspectorConfig::from_geth_call_config(&call_config),
                     );
 
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let zq2_inspector = ZQ2Inspector::new(&mut inspector);
+
+                    let result = state.apply_transaction(txn, block.header, zq2_inspector)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -677,7 +685,8 @@ impl Node {
                 }
                 GethDebugBuiltInTracerType::FourByteTracer => {
                     let mut inspector = FourByteInspector::default();
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let zq2_inspector = ZQ2Inspector::new(&mut inspector);
+                    let result = state.apply_transaction(txn, block.header, zq2_inspector)?;
 
                     let TransactionApplyResult::Evm(_, _) = result else {
                         return Ok(None);
@@ -692,7 +701,8 @@ impl Node {
                     let mux_config = tracer_config.into_mux_config()?;
 
                     let mut inspector = MuxInspector::try_from_config(mux_config)?;
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let zq2_inspector = ZQ2Inspector::new(&mut inspector);
+                    let result = state.apply_transaction(txn, block.header, zq2_inspector)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -714,7 +724,8 @@ impl Node {
                     let mut inspector = TracingInspector::new(
                         TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
                     );
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let zq2_inspector = ZQ2Inspector::new(&mut inspector);
+                    let result = state.apply_transaction(txn, block.header, zq2_inspector)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -744,7 +755,9 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                let zq2_inspector = ZQ2Inspector::new(&mut inspector);
+
+                let result = state.apply_transaction(txn, block.header, zq2_inspector)?;
 
                 let TransactionApplyResult::Evm(result, env) = result else {
                     return Ok(None);
