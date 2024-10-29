@@ -490,6 +490,12 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
         .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
 
     let state = node.get_state(&block)?;
+    if !state.has_account(address)? {
+        return Err(anyhow!(
+            "Address does not exist: {}",
+            hex::encode(address.0)
+        ));
+    }
     let account = state.get_account(address)?;
 
     let result = json!({
@@ -539,7 +545,15 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node.get_state(&block)?.get_account(address)?;
+    let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(anyhow!(
+            "Address does not exist: {}",
+            hex::encode(address.0)
+        ));
+    }
+    let account = state.get_account(address)?;
 
     let (code, type_) = match account.code {
         Code::Evm(ref bytes) => (hex::encode(bytes), "evm"),
