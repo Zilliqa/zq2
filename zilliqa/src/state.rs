@@ -315,7 +315,7 @@ pub mod contract_addr {
     pub const DEPOSIT: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0ZILDEPOSIT");
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub nonce: u64,
     pub balance: u128,
@@ -410,7 +410,7 @@ impl Display for ContractInit {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 
 pub enum Code {
     Evm(#[serde(with = "serde_bytes")] Vec<u8>),

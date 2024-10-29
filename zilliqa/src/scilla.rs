@@ -495,7 +495,7 @@ pub struct ContractInfo {
     pub transitions: Vec<Transition>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 
 pub struct Transition {
     #[serde(rename = "vname")]
@@ -503,7 +503,7 @@ pub struct Transition {
     pub params: Vec<TransitionParam>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 
 pub struct TransitionParam {
     #[serde(rename = "vname")]
