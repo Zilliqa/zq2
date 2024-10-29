@@ -495,14 +495,16 @@ pub struct ContractInfo {
     pub transitions: Vec<Transition>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default, PartialEq)]
+
 pub struct Transition {
     #[serde(rename = "vname")]
     pub name: String,
     pub params: Vec<TransitionParam>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default, PartialEq)]
+
 pub struct TransitionParam {
     #[serde(rename = "vname")]
     pub name: String,

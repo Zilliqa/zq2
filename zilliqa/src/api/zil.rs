@@ -39,6 +39,7 @@ use crate::{
     pool::TxAddResult,
     schnorr,
     scilla::{split_storage_key, ParamValue},
+    state::Account,
     state::Code,
     time::SystemTime,
     transaction::{
@@ -496,6 +497,13 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
     let account = node.get_state(&block)?.get_account(address)?;
+
+    if account == Account::default() {
+        return Err(anyhow!(
+            "Address does not exist: {}",
+            hex::encode(address.0)
+        ));
+    }
 
     let (code, type_) = match account.code {
         Code::Evm(ref bytes) => (hex::encode(bytes), "evm"),
