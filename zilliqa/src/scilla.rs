@@ -496,7 +496,6 @@ pub struct ContractInfo {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
-
 pub struct Transition {
     #[serde(rename = "vname")]
     pub name: String,
@@ -504,7 +503,6 @@ pub struct Transition {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
-
 pub struct TransitionParam {
     #[serde(rename = "vname")]
     pub name: String,

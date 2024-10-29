@@ -411,7 +411,6 @@ impl Display for ContractInit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 pub enum Code {
     Evm(#[serde(with = "serde_bytes")] Vec<u8>),
     Scilla {
