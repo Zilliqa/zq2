@@ -54,49 +54,6 @@ impl<T: ScillaInspector> ScillaInspector for &mut T {
     }
 }
 
-// impl<T: Inspector<PendingState>> Inspector<PendingState> for RefMut<'_, T> {
-//     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>) {
-//         self.borrow().initialize_interp(interp, context);
-//     }
-//     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>) {
-//         self.borrow().step(interp, context);
-//     }
-//
-//     fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>) {
-//         self.borrow().step_end(interp, context);
-//     }
-//
-//     fn log(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>, log: &Log) {
-//         self.borrow().log(interp, context, log);
-//     }
-//     fn call(&mut self, context: &mut EvmContext<PendingState>, inputs: &mut CallInputs) -> Option<CallOutcome> {
-//         self.borrow().call(context, inputs)
-//     }
-//     fn call_end(&mut self, context: &mut EvmContext<PendingState>, inputs: &CallInputs, outcome: CallOutcome) -> CallOutcome {
-//         self.borrow().call_end(context, inputs, outcome)
-//     }
-//
-//     fn create(&mut self, context: &mut EvmContext<PendingState>, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
-//         self.borrow().create(context, inputs)
-//     }
-//
-//     fn create_end(&mut self, context: &mut EvmContext<PendingState>, inputs: &CreateInputs, outcome: CreateOutcome) -> CreateOutcome {
-//         self.borrow().create_end(context, inputs, outcome)
-//     }
-//
-//     fn eofcreate(&mut self, context: &mut EvmContext<PendingState>, inputs: &mut EOFCreateInputs) -> Option<CreateOutcome> {
-//         self.borrow().eofcreate(context, inputs)
-//     }
-//
-//     fn eofcreate_end(&mut self, context: &mut EvmContext<PendingState>, inputs: &EOFCreateInputs, outcome: CreateOutcome) -> CreateOutcome {
-//         self.borrow().eofcreate_end(context, inputs, outcome)
-//     }
-//
-//     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-//         self.borrow().selfdestruct(contract, target, value);
-//     }
-// }
-
 pub fn noop() -> NoOpInspector {
     NoOpInspector
 }
