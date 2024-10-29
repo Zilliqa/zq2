@@ -1,0 +1,68 @@
+rpc_url: http://localhost:4204
+chainid: 700
+attempts: 1200
+sleep_ms: 10
+source_of_funds:
+  from_env: PRIV_KEY
+  kind: eth
+seed: 0
+gas:
+  gas_price: 2000000000
+  gas_limit: 10000
+steps:
+  - name: 0
+    modules:
+      - !async_transfer
+        nr_transfers: 2000
+        gap_min: 1
+        gap_max: 1
+        amount_min: 1
+        amount_max: 102
+      - !async_transfer
+        nr_transfers: 2000
+        gap_min: 1
+        gap_max: 1
+        amount_min: 1
+        amount_max: 2
+      - !async_transfer
+        nr_transfers: 2000
+        gap_min: 1
+        gap_max: 1
+        amount_min: 1
+        amount_max: 2
+      - !async_transfer
+        nr_transfers: 2000
+        gap_min: 1
+        gap_max: 1
+        amount_min: 1
+        amount_max: 2
+      - !async_transfer
+        nr_transfers: 2000
+        gap_min: 1
+        gap_max: 1
+        amount_min: 1
+        amount_max: 2
+      - !async_transfer
+        nr_transfers: 2000
+        gap_min: 1
+        gap_max: 1
+        amount_min: 1
+        amount_max: 2
+      - !async_transfer
+        nr_transfers: 2000
+        gap_min: 1
+        gap_max: 1
+        amount_min: 1
+        amount_max: 2
+      - !async_transfer
+        nr_transfers: 2000
+        gap_min: 1
+        gap_max: 1
+        amount_min: 1
+        amount_max: 2
+      - !async_transfer
+        nr_transfers: 2000
+        gap_min: 1
+        gap_max: 1
+        amount_min: 1
+        amount_max: 2

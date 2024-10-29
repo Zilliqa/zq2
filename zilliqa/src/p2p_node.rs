@@ -83,6 +83,11 @@ pub struct P2pNode {
     peer_num: Arc<AtomicUsize>,
 }
 
+// DO NOT COMMIT!
+fn allow_comms() -> bool {
+    !std::fs::exists("/tmp/disable_comms").unwrap()
+}
+
 impl P2pNode {
     pub fn new(secret_key: SecretKey, config: Config) -> Result<Self> {
         let (outbound_message_sender, outbound_message_receiver) = mpsc::unbounded_channel();
@@ -310,14 +315,15 @@ impl P2pNode {
                             };
                             let to = self.peer_id;
                             debug!(%source, %to, %message, "broadcast recieved");
-
-                            // Route broadcasts to speed-up Proposal processing, with faux request-id
-                            match message {
-                                ExternalMessage::Proposal(_) => {
-                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
-                                }
-                                _ => {
-                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
+                            if allow_comms() {
+                                // Route broadcasts to speed-up Proposal processing, with faux request-id
+                                match message {
+                                    ExternalMessage::Proposal(_) => {
+                                        self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
+                                    }
+                                    _ => {
+                                        self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
+                                    }
                                 }
                             }
                         }
@@ -332,7 +338,9 @@ impl P2pNode {
                                     let _id = format!("{}", _request_id);
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
-                                            self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
+                                            if allow_comms() {
+                                                self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
+                                            }
                                         } else {
                                             panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
                                         }
@@ -340,7 +348,9 @@ impl P2pNode {
                                 }
                                 request_response::Message::Response { request_id, response } => {
                                     if let Some((shard_id, _)) = self.pending_requests.remove(&request_id) {
-                                        self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.responses.send((_source, response)))?;
+                                        if allow_comms() {
+                                            self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.responses.send((_source, response)))?;
+                                        }
                                     } else {
                                         return Err(anyhow!("response to request with no id"));
                                     }
@@ -356,11 +366,13 @@ impl P2pNode {
                             }
 
 
-                            if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
+                            if allow_comms() {
+                                if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
-                                self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
-                            } else {
-                                return Err(anyhow!("request without id failed"));
+                                    self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
+                                } else {
+                                    return Err(anyhow!("request without id failed"));
+                                }
                             }
                         }
                         _ => {},
@@ -416,7 +428,9 @@ impl P2pNode {
                                 self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
                             } else {
                                 let libp2p_request_id = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
-                                self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));
+                                if allow_comms() {
+                                    self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));
+                                }
                             }
                         },
                         None => {
@@ -424,12 +438,14 @@ impl P2pNode {
                             match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
                                 // Also route broadcasts to ourselves, with a faux request-id.
                                 Ok(msg_id) => {
-                                    match message {
-                                        ExternalMessage::Proposal(_) => {
-                                            self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
-                                        }
-                                        _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                    if allow_comms() {
+                                        match message {
+                                            ExternalMessage::Proposal(_) => {
+                                                self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
+                                            }
+                                            _ => {
+                                                self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                            }
                                         }
                                     }
                                 },

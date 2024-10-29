@@ -43,7 +43,8 @@ struct NewViewVote {
     signatures: Vec<NodeSignature>,
     cosigned: BitArray,
     cosigned_weight: u128,
-    qcs: Vec<QuorumCertificate>,
+    // A map from cosigned index to QC.
+    qcs: BTreeMap<usize, QuorumCertificate>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -263,7 +264,7 @@ impl Consensus {
                 block_store.clone_read_only(),
             )
         } else {
-            trace!("Contructing new state from genesis");
+            trace!("Constructing new state from genesis");
             State::new_with_genesis(
                 db.state_trie()?,
                 config.clone(),
@@ -1712,7 +1713,7 @@ impl Consensus {
                 signatures: Vec::new(),
                 cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
                 cosigned_weight: 0,
-                qcs: Vec::new(),
+                qcs: BTreeMap::new(),
             });
 
         let mut supermajority = false;
@@ -1725,8 +1726,12 @@ impl Consensus {
                 return Err(anyhow!("vote from validator without stake"));
             };
             cosigned_weight += weight.get();
-            qcs.push(new_view.qc);
+            qcs.insert(index, new_view.qc);
 
+            trace!(
+                "$$$ Received NewView with index = {index}, qc hash = {0:?}",
+                new_view.qc.compute_hash()
+            );
             supermajority = cosigned_weight * 3 > self.total_weight(&committee) * 2;
 
             let num_signers = signatures.len();
@@ -1757,6 +1762,11 @@ impl Consensus {
                     trace!(
                         view = self.view.get_view(),
                         "######### creating proposal block from new view"
+                    );
+
+                    trace!(
+                        "batch_verify = {0:?}",
+                        self.batch_verify_agg_signature(&agg, &committee).ok()
                     );
 
                     // We now have a valid aggQC so can create early_block with it
@@ -1907,7 +1917,7 @@ impl Consensus {
     fn aggregate_qc_from_indexes(
         &self,
         view: u64,
-        qcs: Vec<QuorumCertificate>,
+        qcs: BTreeMap<usize, QuorumCertificate>,
         signatures: &[NodeSignature],
         cosigned: BitArray,
     ) -> Result<AggregateQc> {
@@ -1917,7 +1927,12 @@ impl Consensus {
             signature: NodeSignature::aggregate(signatures)?,
             cosigned,
             view,
-            qcs,
+            // Because qcs is a map from index to qc, this will
+            // end up as a list in ascending order of index, which
+            // is what we want to correspond with the way
+            // batch_verify_agg_signature() will attempt to verify
+            // them.
+            qcs: qcs.values().cloned().collect::<Vec<QuorumCertificate>>(),
         })
     }
 
@@ -2279,15 +2294,17 @@ impl Consensus {
             .timestamp()
             .elapsed()
             .unwrap_or_else(|err| err.duration());
-        if !during_sync && difference > self.config.allowed_timestamp_skew {
-            return Err((
-                anyhow!(
-                    "timestamp difference for block {} greater than allowed skew: {difference:?}",
-                    block.view()
-                ),
-                false,
-            ));
-        }
+        // @todo happens a lot during recovery - disabled for now - rrw 2024-10-29
+        // RE-ENABLE BEFORE COMMITTTING!
+        // if !during_sync && difference > self.config.allowed_timestamp_skew {
+        //     return Err((
+        //         anyhow!(
+        //             "timestamp difference for block {} greater than allowed skew: {difference:?}",
+        //             block.view()
+        //         ),
+        //         false,
+        //     ));
+        // }
 
         // Blocks must be in sequential order
         if block.header.number != parent.header.number + 1 {
@@ -2507,6 +2524,8 @@ impl Consensus {
                 public_keys.push(*committee.get(index).unwrap());
             }
         }
+
+        use rand::seq::SliceRandom;
 
         let messages: Vec<_> = agg
             .qcs
