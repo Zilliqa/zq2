@@ -43,7 +43,7 @@ struct NewViewVote {
     signatures: Vec<NodeSignature>,
     cosigned: BitArray,
     cosigned_weight: u128,
-    qcs: Vec<QuorumCertificate>,
+    qcs: BTreeMap<usize, QuorumCertificate>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -1712,7 +1712,7 @@ impl Consensus {
                 signatures: Vec::new(),
                 cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
                 cosigned_weight: 0,
-                qcs: Vec::new(),
+                qcs: BTreeMap::new(),
             });
 
         let mut supermajority = false;
@@ -1725,7 +1725,7 @@ impl Consensus {
                 return Err(anyhow!("vote from validator without stake"));
             };
             cosigned_weight += weight.get();
-            qcs.push(new_view.qc);
+            qcs.insert(index, new_view.qc);
 
             supermajority = cosigned_weight * 3 > self.total_weight(&committee) * 2;
 
@@ -1907,7 +1907,7 @@ impl Consensus {
     fn aggregate_qc_from_indexes(
         &self,
         view: u64,
-        qcs: Vec<QuorumCertificate>,
+        qcs: BTreeMap<usize, QuorumCertificate>,
         signatures: &[NodeSignature],
         cosigned: BitArray,
     ) -> Result<AggregateQc> {
@@ -1917,7 +1917,12 @@ impl Consensus {
             signature: NodeSignature::aggregate(signatures)?,
             cosigned,
             view,
-            qcs,
+            // Because qcs is a map from index to qc, this will
+            // end up as a list in ascending order of index, which
+            // is what we want to correspond with the way
+            // batch_verify_agg_signature() will attempt to verify
+            // them.
+            qcs: qcs.values().cloned().collect::<Vec<QuorumCertificate>>(),
         })
     }
 
