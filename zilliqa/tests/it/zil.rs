@@ -872,7 +872,11 @@ async fn create_transaction_high_gas_limit(mut network: Network) {
         .await
         .unwrap();
     assert_eq!(
-        u128::from_str_radix(response["balance"].as_str().unwrap(), 10).unwrap(),
+        response["balance"]
+            .as_str()
+            .unwrap()
+            .parse::<u128>()
+            .unwrap(),
         (10u128 * 10u128.pow(12))
     );
 }
@@ -936,7 +940,11 @@ async fn zil_with_insufficient_gas_should_fail(mut network: Network) {
     // Or charge you the deposit - node that this is 10^6 smaller than the amt
     // we requested because we requested in eth and are reading in zil.
     assert_eq!(
-        u128::from_str_radix(response["balance"].as_str().unwrap(), 10).unwrap(),
+        response["balance"]
+            .as_str()
+            .unwrap()
+            .parse::<u128>()
+            .unwrap(),
         zil_value
     );
 }
@@ -979,7 +987,11 @@ async fn create_contract(mut network: Network) {
             .request("GetBalance", [address])
             .await
             .unwrap();
-        u128::from_str_radix(bal_resp["balance"].as_str().unwrap(), 10).unwrap()
+        bal_resp["balance"]
+            .as_str()
+            .unwrap()
+            .parse::<u128>()
+            .unwrap()
     };
 
     let call = r#"{

@@ -533,10 +533,10 @@ impl State {
 
         let deposit_gas = txn.get_deposit_gas()?;
         let deposit = total_scilla_gas_price(deposit_gas, gas_price);
-        trace!("gas_price {gas_price} deposit_gas {deposit_gas} deposit {deposit}");
+        trace!("scilla_txn: gas_price {gas_price} deposit_gas {deposit_gas} deposit {deposit}");
 
         if let Some(result) = state.deduct_from_account(from_addr, deposit, EvmGas(0))? {
-            trace!("Could not deduct deposit");
+            trace!("scilla_txn: Could not deduct deposit");
             return Ok((result, state.finalize()));
         }
 
@@ -551,7 +551,6 @@ impl State {
                 &self.scilla_ext_libs_path,
             )
         } else {
-            trace!("Invoking scilla_call");
             scilla_call(
                 state,
                 self.scilla(),
@@ -566,18 +565,17 @@ impl State {
             )
         }?;
 
-        trace!("zz actual_gas_used = {0}", result.gas_used);
         let actual_gas_charged =
             total_scilla_gas_price(ScillaGas::from(result.gas_used), gas_price);
         let to_charge = actual_gas_charged.checked_sub(&deposit);
-        trace!("to_charge = {to_charge:?}");
+        trace!("scilla_txn: actual_gas_used {actual_gas_charged} to_charge = {to_charge:?}");
         if let Some(extra_charge) = to_charge {
             // Deduct the remaining gas.
             // If we fail, Zilliqa 1 deducts nothing at all, and neither do we.
-            trace!("deduct remaining price");
             if let Some(result) =
                 new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
             {
+                trace!("scilla_txn: cannot deduct remaining gas - txn failed");
                 let mut failed_state = PendingState::new(self.try_clone()?);
                 return Ok((result, failed_state.finalize()));
             }
@@ -586,7 +584,7 @@ impl State {
         let from = new_state.load_account(from_addr)?;
         from.account.nonce += 1;
 
-        trace!("txn completed successfully");
+        trace!("scilla_txn completed successfully");
         Ok((result, new_state.finalize()))
     }
 
