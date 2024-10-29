@@ -503,17 +503,18 @@ impl Db {
             .optional()?)
     }
 
-    pub fn set_latest_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<()> {
-        sqlite_tx
-            .execute("INSERT INTO tip_info (latest_view, latest_view_timestamp) VALUES (:view, :timestamp) ON CONFLICT DO UPDATE SET latest_view = :view, latest_view_timestamp = :timestamp",
+    /// Write view and timestamp to table if view is larger than current. Return true if write was successful
+    pub fn set_latest_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
+        let res = sqlite_tx
+            .execute("INSERT INTO tip_info (latest_view, latest_view_timestamp) VALUES (:view, :timestamp) ON CONFLICT(_single_row) DO UPDATE SET latest_view = :view, latest_view_timestamp = :timestamp WHERE tip_info.latest_view < :view",
                     named_params! {
                         ":view": view,
                         ":timestamp": SystemTimeSqlable(SystemTime::now())
                     })?;
-        Ok(())
+        Ok(res != 0)
     }
 
-    pub fn set_latest_view(&self, view: u64) -> Result<()> {
+    pub fn set_latest_view(&self, view: u64) -> Result<bool> {
         self.set_latest_view_with_db_tx(&self.db.lock().unwrap(), view)
     }
 
