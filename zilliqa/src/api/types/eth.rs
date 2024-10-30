@@ -448,6 +448,14 @@ pub struct TxPoolContent {
     pub queued: HashMap<Address, HashMap<u64, Transaction>>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncingResult {
+    pub starting_block: u64,
+    pub current_block: u64,
+    pub highest_block: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use alloy::primitives::B256;

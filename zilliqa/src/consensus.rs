@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, U256, BlockNumber};
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
@@ -3078,5 +3078,9 @@ impl Consensus {
     ) -> Result<()> {
         self.block_store
             .buffer_lack_of_proposals(from_view, proposals)
+    }
+
+    pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
+        self.block_store.get_sync_data()
     }
 }
