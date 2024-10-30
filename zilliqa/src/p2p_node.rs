@@ -113,6 +113,7 @@ impl P2pNode {
                         gossipsub::ConfigBuilder::default()
                             .max_transmit_size(524288)
                             .flood_publish(false) // flood publishing slows things down
+                            .gossip_lazy(8) // 8-peers
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
                             .duplicate_cache_time(Duration::from_secs(300))
