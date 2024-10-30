@@ -1243,7 +1243,7 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     .evm_version(EvmVersion::Shanghai); // ensure compatible with EVM version in exec.rs
 
     // compile .sol file
-    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 26)).expect("solc missing");
+    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 28)).expect("solc missing");
     let output = solc.compile_exact(&solc_input).expect("solc compile_exact");
 
     if output.has_error() {
