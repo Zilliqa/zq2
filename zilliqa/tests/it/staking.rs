@@ -71,7 +71,8 @@ async fn deposit_stake(
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(control_wallet, hash, 80).await;
+    let receipt = network.run_until_receipt(control_wallet, hash, 80).await;
+    assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
 
@@ -243,6 +244,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         .block_number
         .unwrap()
         .as_u64();
+    info!(deposit_block);
 
     // The new validator should become part of the committee exactly two epochs after the one in which the deposit was
     // made.
@@ -289,7 +291,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     check_miner_got_reward(&wallet, BlockNumber::Latest).await;
 }
 
-#[zilliqa_macros::test]
+#[zilliqa_macros::test(blocks_per_epoch = 2)]
 async fn block_proposers_are_selected_proportionally_to_their_stake(mut network: Network) {
     // The starting configuration is 4 nodes with a stake of 32 ZIL each. We'll add a 5th node with a stake of 1024 ZIL
     // and check that it produces a statistically significant proportion of the subsequent blocks.
