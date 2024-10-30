@@ -508,9 +508,7 @@ impl Consensus {
         let next_exponential_backoff_timeout = self.exponential_backoff_timeout(next_view);
         info!(
             "***** TIMEOUT: View is now {} -> {}. Next view change in {}ms",
-            view,
-            next_view,
-            next_exponential_backoff_timeout
+            view, next_view, next_exponential_backoff_timeout
         );
 
         self.set_view(next_view)?;
@@ -1722,7 +1720,7 @@ impl Consensus {
         new_view: NewView,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         trace!("Received new view for height: {:?}", new_view.view);
-        let current_view = self.get_view()?;
+        let mut current_view = self.get_view()?;
 
         // The leader for this view should be chosen according to the parent of the highest QC
         // What happens when there are multiple QCs with different parents?
@@ -1753,6 +1751,7 @@ impl Consensus {
 
         // check if the sender's qc is higher than our high_qc or even higher than our view
         self.update_high_qc_and_view(false, new_view.qc)?;
+        current_view = self.get_view()?;
 
         let NewViewVote {
             mut signatures,
@@ -1819,7 +1818,8 @@ impl Consensus {
                         "forcibly updating view to {} as majority is ahead",
                         new_view.view
                     );
-                    self.set_view(new_view.view)?;
+                    current_view = new_view.view;
+                    self.set_view(current_view)?;
                 }
 
                 // if we are already in the round in which the vote counts and have reached supermajority we can propose a block
