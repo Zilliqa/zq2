@@ -29,7 +29,9 @@ use tracing::*;
 
 use super::{
     to_hex::ToHex,
-    types::eth::{self, CallParams, ErrorCode, HashOrTransaction, OneOrMany, SyncingResult},
+    types::eth::{
+        self, CallParams, ErrorCode, HashOrTransaction, OneOrMany, SyncingResult, SyncingStruct,
+    },
 };
 use crate::{
     crypto::Hash,
@@ -852,18 +854,18 @@ fn protocol_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok("0x41".to_string())
 }
 
-fn syncing(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<SyncingResult>> {
+fn syncing(params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingResult> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
     if let Some((starting_block, current_block, highest_block)) =
         node.lock().unwrap().consensus.get_sync_data()?
     {
-        Ok(Some(SyncingResult {
+        Ok(SyncingResult::Struct(SyncingStruct {
             starting_block,
             current_block,
             highest_block,
         }))
     } else {
-        Ok(None)
+        Ok(SyncingResult::Bool(false))
     }
 }
 

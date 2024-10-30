@@ -1359,12 +1359,19 @@ async fn test_send_transaction_errors(mut network: Network) {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct SyncingResult {
+pub struct SyncingStruct {
     pub starting_block: u64,
     pub current_block: u64,
     pub highest_block: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum SyncingResult {
+    Bool(bool),
+    Struct(SyncingStruct),
 }
 
 #[zilliqa_macros::test]
@@ -1379,8 +1386,8 @@ async fn test_eth_syncing(mut network: Network) {
         .await
         .unwrap();
     let result = client
-        .request_optional::<(), Option<SyncingResult>>("eth_syncing", None)
+        .request_optional::<(), SyncingResult>("eth_syncing", None)
         .await
         .unwrap();
-    assert!(result.is_none())
+    assert_eq!(result, SyncingResult::Bool(false))
 }

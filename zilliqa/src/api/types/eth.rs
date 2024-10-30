@@ -450,10 +450,17 @@ pub struct TxPoolContent {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SyncingResult {
+pub struct SyncingStruct {
     pub starting_block: u64,
     pub current_block: u64,
     pub highest_block: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(untagged)]
+pub enum SyncingResult {
+    Bool(bool),
+    Struct(SyncingStruct),
 }
 
 #[cfg(test)]
