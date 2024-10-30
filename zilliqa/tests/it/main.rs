@@ -6,6 +6,7 @@ use ethers::{
 };
 use primitive_types::U256;
 use serde_json::{value::RawValue, Value};
+mod admin;
 mod consensus;
 mod eth;
 mod ots;
@@ -239,6 +240,7 @@ struct Network {
     scilla_stdlib_dir: String,
     do_checkpoints: bool,
     blocks_per_epoch: u64,
+    consensus_tick_countdown: u64,
 }
 
 impl Network {
@@ -406,6 +408,7 @@ impl Network {
             do_checkpoints,
             blocks_per_epoch,
             scilla_stdlib_dir,
+            consensus_tick_countdown: 10,
         }
     }
 
@@ -602,6 +605,8 @@ impl Network {
         // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
+                // Trigger a tick so that block fetching can operate.
+                node.inner.lock().unwrap().consensus.tick().unwrap();
                 if node.inner.lock().unwrap().handle_timeout().unwrap() {
                     return;
                 }
@@ -756,6 +761,19 @@ impl Network {
         // Advance time.
         zilliqa::time::advance(Duration::from_millis(1));
 
+        // Every 10ms send a consensus tick, since most of our tests are too short to otherwise
+        // be able to sync.
+        self.consensus_tick_countdown -= 1;
+        if self.consensus_tick_countdown == 0 {
+            for (index, node) in self.nodes.iter().enumerate() {
+                let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
+
+                span.in_scope(|| {
+                    node.inner.lock().unwrap().consensus.tick().unwrap();
+                });
+            }
+            self.consensus_tick_countdown = 10;
+        }
         // Take all the currently ready messages from the stream.
         let mut messages = self.collect_messages();
 
@@ -962,6 +980,7 @@ impl Network {
                                     inner
                                         .handle_request(
                                             source,
+                                            "(synthetic_id)",
                                             external_message.clone(),
                                             response_channel,
                                         )

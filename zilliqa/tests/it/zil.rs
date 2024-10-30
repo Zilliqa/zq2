@@ -19,7 +19,7 @@ use zilliqa::{
 
 use crate::{deploy_contract, Network};
 
-async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
+pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
     let wallet = network.genesis_wallet().await;
 
     // Generate a Zilliqa account.
@@ -149,6 +149,101 @@ async fn send_transaction(
             .await
             .unwrap(),
     )
+}
+
+pub fn scilla_test_contract_code() -> String {
+    String::from(
+        r#"
+        scilla_version 0
+
+        library HelloWorld
+
+        let one = Uint32 1
+        let two = Uint32 2
+
+        contract HelloWorld
+        (owner: ByStr20)
+
+        field welcome_msg : String = "default"
+        field welcome_map : Map Uint32 (Map Uint32 String) = Emp Uint32 (Map Uint32 String)
+
+        transition setHello (msg : String)
+        is_owner = builtin eq owner _sender;
+        match is_owner with
+        | False =>
+            e = {_eventname : "setHello"; code : "1"};
+            event e
+        | True =>
+            welcome_msg := msg;
+            welcome_map[one][two] := msg;
+            e = {_eventname : "setHello"; code : "2"};
+            event e
+        end
+        end
+
+        transition getHello ()
+        r <- welcome_msg;
+        e = {_eventname: "getHello"; msg: r};
+        event e;
+        maybe_s <- welcome_map[one][two];
+        match maybe_s with
+        | None =>
+            e = {_eventname: "getHello"; msg: "failed"};
+            event e
+        | Some s =>
+            e = {_eventname: "getHello"; msg: s};
+            event e
+        end
+        end
+    "#,
+    )
+}
+
+pub fn scilla_test_contract_data(address: H160) -> String {
+    format!(
+        r#"[
+            {{
+                "vname": "_scilla_version",
+                "type": "Uint32",
+                "value": "0"
+            }},
+            {{
+                "vname": "owner",
+                "type": "ByStr20",
+                "value": "{address:#x}"
+            }}
+        ]"#
+    )
+}
+
+pub async fn deploy_scilla_contract(
+    network: &mut Network,
+    sender_secret_key: &schnorr::SecretKey,
+    code: &str,
+    data: &str,
+) -> H160 {
+    let (contract_address, txn) = send_transaction(
+        network,
+        sender_secret_key,
+        1,
+        H160::zero(),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+
+    let api_contract_address = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetContractAddressFromTransactionID", [&txn["ID"]])
+        .await
+        .unwrap();
+    assert_eq!(contract_address, api_contract_address);
+
+    contract_address.unwrap()
 }
 
 // Returns a pair (code, message) if there was one.
@@ -336,87 +431,9 @@ async fn create_transaction_errors(mut network: Network) {
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn create_contract(mut network: Network) {
     let (secret_key, address) = zilliqa_account(&mut network).await;
-
-    let code = r#"
-        scilla_version 0
-
-        library HelloWorld
-
-        let one = Uint32 1
-        let two = Uint32 2
-
-        contract HelloWorld
-        (owner: ByStr20)
-
-        field welcome_msg : String = ""
-        field welcome_map : Map Uint32 (Map Uint32 String) = Emp Uint32 (Map Uint32 String)
-
-        transition setHello (msg : String)
-        is_owner = builtin eq owner _sender;
-        match is_owner with
-        | False =>
-            e = {_eventname : "setHello"; code : "1"};
-            event e
-        | True =>
-            welcome_msg := msg;
-            welcome_map[one][two] := msg;
-            e = {_eventname : "setHello"; code : "2"};
-            event e
-        end
-        end
-
-        transition getHello ()
-        r <- welcome_msg;
-        e = {_eventname: "getHello"; msg: r};
-        event e;
-        maybe_s <- welcome_map[one][two];
-        match maybe_s with
-        | None =>
-            e = {_eventname: "getHello"; msg: "failed"};
-            event e
-        | Some s =>
-            e = {_eventname: "getHello"; msg: s};
-            event e
-        end
-        end
-    "#;
-
-    let data = format!(
-        r#"[
-            {{
-                "vname": "_scilla_version",
-                "type": "Uint32",
-                "value": "0"
-            }},
-            {{
-                "vname": "owner",
-                "type": "ByStr20",
-                "value": "{address:#x}"
-            }}
-        ]"#
-    );
-
-    let (contract_address, txn) = send_transaction(
-        &mut network,
-        &secret_key,
-        1,
-        H160::zero(),
-        0,
-        50_000,
-        Some(code),
-        Some(&data),
-    )
-    .await;
-    let contract_address = contract_address.unwrap();
-
-    let api_contract_address = network
-        .random_wallet()
-        .await
-        .provider()
-        .request("GetContractAddressFromTransactionID", [&txn["ID"]])
-        .await
-        .unwrap();
-    assert_eq!(contract_address, api_contract_address);
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
 
     let api_code: Value = network
         .random_wallet()
@@ -1644,4 +1661,104 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
         .expect("Failed to parse response as u64");
 
     assert_eq!(response_num, 1);
+}
+
+#[zilliqa_macros::test]
+async fn combined_total_coin_supply_test(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response_str: Value = wallet
+        .provider()
+        .request("GetTotalCoinSupply", [""])
+        .await
+        .expect("Failed to call GetTotalCoinSupply API");
+
+    assert!(
+        response_str.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response_str
+    );
+
+    let total_coin_supply_str = response_str.as_str().expect("Expected string conversion");
+    let total_coin_supply_as_int_from_str: u128 = total_coin_supply_str
+        .parse()
+        .expect("Expected string to be parsed as an integer");
+
+    assert!(
+        total_coin_supply_as_int_from_str > 0,
+        "Total coin supply should be greater than 0"
+    );
+
+    let response_int: Value = wallet
+        .provider()
+        .request("GetTotalCoinSupplyAsInt", [""])
+        .await
+        .expect("Failed to call GetTotalCoinSupplyAsInt API");
+
+    assert!(
+        response_int.is_number(),
+        "Expected response to be a number, got: {:?}",
+        response_int
+    );
+
+    let total_coin_supply_as_int: u128 = response_int
+        .as_number()
+        .expect("Expected number conversion")
+        .as_u128()
+        .expect("Expected u128 conversion");
+
+    assert!(
+        total_coin_supply_as_int > 0,
+        "Total coin supply should be greater than 0"
+    );
+
+    assert_eq!(
+        total_coin_supply_as_int_from_str, total_coin_supply_as_int,
+        "Total coin supply from string and int APIs should be the same"
+    );
+}
+
+#[allow(dead_code)]
+async fn getminerinfo(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getnodetype(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getprevdifficulty(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getprevdsdifficulty(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getshardingstructure(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getsmartcontractsubstate(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getsoftconfirmedtransaction(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getstateproof(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn gettransactionstatus(mut _network: Network) {
+    todo!();
 }

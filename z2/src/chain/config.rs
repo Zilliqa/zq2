@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::node::NodeRole;
@@ -46,5 +46,15 @@ impl NetworkConfig {
             roles,
             versions,
         })
+    }
+
+    pub async fn from_file(file: &str) -> Result<Self> {
+        let config = tokio::fs::read_to_string(file)
+            .await
+            .context(format!("Cannot read {file}"))?;
+        let config: Self = serde_yaml::from_str(&config).context(format!(
+            "{file} does not contain a valid YAML network config object"
+        ))?;
+        Ok(config)
     }
 }
