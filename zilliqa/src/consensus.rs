@@ -727,6 +727,14 @@ impl Consensus {
                             ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
                         )));
                     }
+                    // A bit hacky: processing of our buffered votes may have resulted in an early_proposal be created and awaiting empty block timeout for broadcast. In this case we must return now
+                    if self.create_next_block_on_timeout
+                        && self.early_proposal.is_some()
+                        && self.early_proposal.as_ref().unwrap().0.view() == proposal_view + 1
+                    {
+                        trace!("supermajority reached, early proposal awaiting broadcast");
+                        return Ok(None);
+                    }
                 }
 
                 // If we reach this point, we had some buffered votes but they were not sufficient to reach a
@@ -745,8 +753,12 @@ impl Consensus {
             } else {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, self.view.get_view());
-                self.create_next_block_on_timeout = false;
-                self.early_proposal = None;
+
+                if self.create_next_block_on_timeout || self.early_proposal.is_some() {
+                    warn!("Early proposal exists but we are not leader. Clearing proposal");
+                    self.create_next_block_on_timeout = false;
+                    self.early_proposal = None;
+                }
 
                 let Some(next_leader) = next_leader else {
                     warn!("Next leader is currently not reachable, has it joined committee yet?");
