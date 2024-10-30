@@ -253,8 +253,8 @@ impl Db {
                 PRIMARY KEY (address, tx_hash));
             CREATE TABLE IF NOT EXISTS tip_info (
                 latest_finalized_view INTEGER,
-                latest_view INTEGER,
-                latest_view_timestamp BLOB,
+                view INTEGER,
+                view_updated_at BLOB,
                 high_qc BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL);
@@ -442,7 +442,7 @@ impl Db {
             self.insert_block_with_db_tx(tx, parent_ref)?;
             self.set_latest_finalized_view_with_db_tx(tx, parent_ref.view())?;
             self.set_high_qc_with_db_tx(tx, block.header.qc)?;
-            self.set_latest_view_with_db_tx(tx, parent_ref.view() + 1)?;
+            self.set_view_with_db_tx(tx, parent_ref.view() + 1)?;
             Ok(())
         })?;
 
@@ -504,9 +504,9 @@ impl Db {
     }
 
     /// Write view and timestamp to table if view is larger than current. Return true if write was successful
-    pub fn set_latest_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
+    pub fn set_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
         let res = sqlite_tx
-            .execute("INSERT INTO tip_info (latest_view, latest_view_timestamp) VALUES (:view, :timestamp) ON CONFLICT(_single_row) DO UPDATE SET latest_view = :view, latest_view_timestamp = :timestamp WHERE tip_info.latest_view < :view",
+            .execute("INSERT INTO tip_info (view, view_updated_at) VALUES (:view, :timestamp) ON CONFLICT(_single_row) DO UPDATE SET view = :view, view_updated_at = :timestamp WHERE tip_info.view < :view",
                     named_params! {
                         ":view": view,
                         ":timestamp": SystemTimeSqlable(SystemTime::now())
@@ -514,26 +514,26 @@ impl Db {
         Ok(res != 0)
     }
 
-    pub fn set_latest_view(&self, view: u64) -> Result<bool> {
-        self.set_latest_view_with_db_tx(&self.db.lock().unwrap(), view)
+    pub fn set_view(&self, view: u64) -> Result<bool> {
+        self.set_view_with_db_tx(&self.db.lock().unwrap(), view)
     }
 
-    pub fn get_latest_view(&self) -> Result<Option<u64>> {
+    pub fn get_view(&self) -> Result<Option<u64>> {
         Ok(self
             .db
             .lock()
             .unwrap()
-            .query_row("SELECT latest_view FROM tip_info", (), |row| row.get(0))
+            .query_row("SELECT view FROM tip_info", (), |row| row.get(0))
             .optional()
             .unwrap_or(None))
     }
 
-    pub fn get_latest_view_timestamp(&self) -> Result<Option<SystemTime>> {
+    pub fn get_view_updated_at(&self) -> Result<Option<SystemTime>> {
         Ok(self
             .db
             .lock()
             .unwrap()
-            .query_row("SELECT latest_view_timestamp FROM tip_info", (), |row| {
+            .query_row("SELECT view_updated_at FROM tip_info", (), |row| {
                 row.get::<_, SystemTimeSqlable>(0)
             })
             .optional()

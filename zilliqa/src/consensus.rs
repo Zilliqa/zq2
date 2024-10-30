@@ -252,7 +252,7 @@ impl Consensus {
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
                     let mut start_view = db
-                        .get_latest_view()?
+                        .get_view()?
                         .or_else(|| {
                             Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
                         })
@@ -266,7 +266,7 @@ impl Consensus {
                     );
 
                     // If timestamp of when current view was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
-                    if let Some(latest_view_timestamp) = db.get_latest_view_timestamp()? {
+                    if let Some(latest_view_timestamp) = db.get_view_updated_at()? {
                         let view_diff = Consensus::minimum_views_in_time_difference(
                             latest_view_timestamp.elapsed()?,
                             config.consensus.consensus_timeout,
@@ -395,7 +395,7 @@ impl Consensus {
     }
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
-        let mut view = self.get_view()?;
+        let view = self.get_view()?;
         // We never want to timeout while on view 1
         if view == 1 {
             let block = self
@@ -504,24 +504,24 @@ impl Consensus {
             return Ok(None);
         }
 
-        let next_exponential_backoff_timeout = self.exponential_backoff_timeout(view + 1);
+        let next_view = view + 1;
+        let next_exponential_backoff_timeout = self.exponential_backoff_timeout(next_view);
         info!(
             "***** TIMEOUT: View is now {} -> {}. Next view change in {}ms",
             view,
-            view + 1,
+            next_view,
             next_exponential_backoff_timeout
         );
 
-        view += 1;
-        self.set_view(view)?;
-        let Some(leader) = self.leader_at_block(&block, view) else {
+        self.set_view(next_view)?;
+        let Some(leader) = self.leader_at_block(&block, next_view) else {
             return Ok(None);
         };
 
         let new_view = NewView::new(
             self.secret_key,
             self.high_qc,
-            view,
+            next_view,
             self.secret_key.node_public_key(),
         );
 
@@ -533,7 +533,7 @@ impl Consensus {
 
     fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
         let time_since_last_view_change = SystemTime::now()
-            .duration_since(self.get_view_timestamp()?)
+            .duration_since(self.get_view_updated_at()?)
             .unwrap_or_default()
             .as_millis() as u64;
         let exponential_backoff_timeout = self.exponential_backoff_timeout(self.get_view()?);
@@ -697,9 +697,8 @@ impl Consensus {
             self.execute_block(from, &block, transactions, &stakers)?;
 
             if view != proposal_view + 1 {
-                view += 1;
+                view = proposal_view + 1;
                 self.set_view(view)?;
-
                 debug!("*** setting view to proposal view... view is now {}", view);
             }
 
@@ -2509,7 +2508,7 @@ impl Consensus {
     }
 
     pub fn set_view(&mut self, view: u64) -> Result<()> {
-        if !self.db.set_latest_view(view)? {
+        if !self.db.set_view(view)? {
             warn!(
                 "Tried to set view to lower or same value - this is incorrect. value: {}",
                 view
@@ -2519,14 +2518,14 @@ impl Consensus {
     }
 
     pub fn get_view(&self) -> Result<u64> {
-        Ok(self.db.get_latest_view()?.unwrap_or_else(|| {
+        Ok(self.db.get_view()?.unwrap_or_else(|| {
             warn!("no view found in table. Defaulting to 0");
             0
         }))
     }
 
-    pub fn get_view_timestamp(&self) -> Result<SystemTime> {
-        Ok(self.db.get_latest_view_timestamp()?.unwrap_or_else(|| {
+    pub fn get_view_updated_at(&self) -> Result<SystemTime> {
+        Ok(self.db.get_view_updated_at()?.unwrap_or_else(|| {
             warn!("no view timestamp found. Defaulting to now");
             SystemTime::now()
         }))
