@@ -158,6 +158,12 @@ mod tests {
             .unwrap();
 
         let output = solc.compile_exact(&input).unwrap();
+        if output.has_error() {
+            for error in output.errors {
+                eprintln!("{error}");
+            }
+            panic!("compilation failed");
+        }
         let output_file = root.join("src").join("contracts").join("compiled.json");
 
         if std::env::var_os("ZQ_CONTRACT_TEST_BLESS").is_some() {

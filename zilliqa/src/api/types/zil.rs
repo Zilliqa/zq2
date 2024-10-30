@@ -624,3 +624,15 @@ pub struct RecentTransactionsResponse {
     pub txn_hashes: Vec<String>,
     pub number: u64,
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MinerInfo {
+    pub dscommittee: Vec<String>,
+    pub shards: Vec<ShardInfo>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ShardInfo {
+    pub nodes: Vec<String>,
+    pub size: u64,
+}

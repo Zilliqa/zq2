@@ -5,7 +5,7 @@ bootstrap_address = [ "12D3KooWEpeCSbza6zYXJ8PY8v6iEZYzYD4mhk4QbmHGbjx186dS", "/
 eth_chain_id = 33103
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [ ["0x3b5cf50bb3ed8d77d1895084092156c7549be7df", "21_000_000_000_000_000_000_000_000_000"] ]
+consensus.genesis_accounts = [ ["0x3b5cf50bb3ed8d77d1895084092156c7549be7df", "20_800_000_000_000_000_000_000_000_000"] ]
 consensus.genesis_deposits = [ ["b95bb5b3669baa33ebedd784bcab7e281deba89537ccabbe2bbb81c7bdbbd11c8a8118dfc3fd8af17077c4636c52b508", "12D3KooWEpeCSbza6zYXJ8PY8v6iEZYzYD4mhk4QbmHGbjx186dS", "100_000_000_000_000_000_000_000_000", "0x3b5cf50bb3ed8d77d1895084092156c7549be7df"] ]
 
 # Reward parameters
