@@ -375,10 +375,16 @@ impl<I: Inspector<PendingState> + ScillaInspector> Inspector<PendingState> for Z
         interp: &mut Interpreter,
         context: &mut EvmContext<PendingState>,
     ) {
+        // if interp.contract.caller != Address::ZERO {
+        //     println!("INIT GAS LEFT with interp: {}, address: {:p}", interp.gas.remaining(), &context.db);
+        // }
         context.db.gas_left = interp.gas;
         self.inner.initialize_interp(interp, context);
     }
     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<PendingState>) {
+        if interp.contract.caller != Address::ZERO {
+            println!("STEP GAS LEFT with interp: {}", interp.gas.remaining());
+        }
         context.db.gas_left = interp.gas;
         self.inner.step(interp, context);
     }

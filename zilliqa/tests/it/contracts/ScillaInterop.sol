@@ -31,7 +31,7 @@ library ScillaConnector {
 
         assembly {
             let alwaysSuccessForThisPrecompile := call(
-                gas(),
+                21000,
                 SCILLA_CALL_PRECOMPILE_ADDRESS,
                 0,
                 add(encodedArgs, 0x20),

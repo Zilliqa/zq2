@@ -918,6 +918,9 @@ impl State {
             }
             let mid = (min + max) / 2;
 
+            let mut inspector = inspector::noop();
+            let zq2_inspector = ZQ2Inspector::new(&mut inspector);
+
             let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
                 from_addr,
                 to_addr,
@@ -927,7 +930,7 @@ impl State {
                 data.clone(),
                 None,
                 current_block,
-                inspector::noop(),
+                zq2_inspector,
                 BaseFeeCheck::Validate,
             )?;
 
@@ -954,6 +957,8 @@ impl State {
         gas_price: u128,
         value: u128,
     ) -> Result<u64> {
+        let mut inspector = inspector::noop();
+        let zq2_inspector = ZQ2Inspector::new(&mut inspector);
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -963,7 +968,7 @@ impl State {
             data.clone(),
             None,
             current_block,
-            inspector::noop(),
+            zq2_inspector,
             BaseFeeCheck::Validate,
         )?;
 
@@ -997,6 +1002,8 @@ impl State {
         amount: u128,
         current_block: BlockHeader,
     ) -> Result<Vec<u8>> {
+        let mut inspector = inspector::noop();
+        let zq2_inspector = ZQ2Inspector::new(&mut inspector);
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1006,7 +1013,7 @@ impl State {
             data,
             None,
             current_block,
-            inspector::noop(),
+            zq2_inspector,
             BaseFeeCheck::Ignore,
         )?;
 
@@ -1057,7 +1064,7 @@ impl PendingState {
         PendingState {
             pre_state: state,
             new_state: HashMap::new(),
-            gas_left: Gas::default(),
+            gas_left: Gas::new(0),
         }
     }
 

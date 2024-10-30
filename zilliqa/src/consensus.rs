@@ -1311,12 +1311,13 @@ impl Consensus {
 
             // Apply specific txn
             let mut inspector = TouchedAddressInspector::default();
+            let zq2_inspector = ZQ2Inspector::new(&mut inspector);
             let result = Self::apply_transaction_at(
                 &mut state,
                 self.db.clone(),
                 tx.clone(),
                 proposal.header,
-                &mut inspector,
+                zq2_inspector,
             )?;
 
             // Skip transactions whose execution resulted in an error and drop them.

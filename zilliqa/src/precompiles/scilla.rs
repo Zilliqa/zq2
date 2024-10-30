@@ -29,6 +29,8 @@ use crate::{
     state::Code,
     transaction::{EvmGas, ZilAmount},
 };
+use crate::constants::ZIL_CONTRACT_INVOKE_GAS;
+use crate::transaction::ScillaGas;
 
 /// Internal representation of Scilla types. This is a greatly simplified version of [NodeScillaType] (which comes
 /// directly from the Scilla parser) and only supports the types we currently care about. Raw parsed types can be
@@ -332,24 +334,56 @@ pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>
     // Call handler
     let prev_handle = handler.execution.call.clone();
     handler.execution.call = Arc::new(move |ctx, inputs| {
+        let _gas_limit = ctx.evm.db.gas_left.remaining();
+        if inputs.caller != Address::ZERO {
+            println!("GAS LEFT IS: {}, addr: {:p}", _gas_limit, &ctx.evm.db);
+        }
         if inputs.bytecode_address != Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53") {
             return prev_handle(ctx, inputs);
         }
 
-        let gas = Gas::new(inputs.gas_limit);
+
+        let zq1_gas_rule = {
+            let account = ctx.evm.db.load_account(inputs.caller).unwrap();
+            account.account.created_at_block.is_some()
+        };
+
+        let gas_limit = {
+            if zq1_gas_rule {
+                let total_gas_left = ctx.evm.db.gas_left.remaining();
+                let gas_cost = EvmGas::from(SCILLA_INVOKE_RUNNER).0 + EvmGas::from(ScillaGas(ZIL_CONTRACT_INVOKE_GAS as u64)).0;
+                    match total_gas_left.checked_sub(gas_cost) {
+                        Some(result) => result,
+                        _ => return Ok(FrameOrResult::new_call_result(
+                            InterpreterResult {
+                                result: InstructionResult::PrecompileOOG,
+                                output: Bytes::new(),
+                                gas: Default::default(),
+                            }, inputs.return_memory_offset.clone()))
+                    }
+            } else {
+                inputs.gas_limit
+            }
+        };
+
+
+        let gas = Gas::new(gas_limit);
+        println!("GIVEN evm gas to precompile: {}", inputs.gas_limit);
         let outcome =
             scilla_call_precompile(&inputs, gas.limit(), &mut ctx.evm.inner, &mut ctx.external);
 
+        let result_gas = { if zq1_gas_rule { Gas::new(0) } else { gas } };
         // Copied from `EvmContext::call_precompile`
         let mut result = InterpreterResult {
             result: InstructionResult::Return,
-            gas,
+            gas: result_gas,
             output: Bytes::new(),
         };
 
         match outcome {
             Ok(output) => {
-                if result.gas.record_cost(output.gas_used) {
+                let gas_used = if zq1_gas_rule { 0 } else { output.gas_used };
+                if result.gas.record_cost(gas_used) {
                     result.result = InstructionResult::Return;
                     result.output = output.bytes;
                 } else {
