@@ -20,8 +20,8 @@ pub enum Chain {
     Zq2Devnet,
     #[value(name = "zq2-prototestnet")]
     Zq2ProtoTestnet,
-    // #[value(name = "zq2-protomainnet")]
-    // Zq2ProtoMainnet,
+    #[value(name = "zq2-protomainnet")]
+    Zq2ProtoMainnet,
     // #[value(name = "zq2-testnet")]
     // Zq2Testnet,
     // #[value(name = "zq2-mainnet")]
@@ -36,7 +36,7 @@ impl Chain {
             Self::Zq2PerfTest => Some("https://api.zq2-perftest.zilstg.dev"),
             Self::Zq2Devnet => Some("https://api.zq2-devnet.zilliqa.com"),
             Self::Zq2ProtoTestnet => Some("https://api.zq2-prototestnet.zilliqa.com"),
-            // Self::Zq2ProtoMainnet => None,
+            Self::Zq2ProtoMainnet => Some("https://api.zq2-protomainnet.zilliqa.com"),
             // Self::Zq2Testnet => None,
             // Self::Zq2Mainnet => None,
         }
@@ -50,6 +50,9 @@ impl Chain {
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
             "zq2-prototestnet" => Ok(include_str!(
                 "../resources/chain-specs/zq2-prototestnet.toml"
+            )),
+            "zq2-protomainnet" => Ok(include_str!(
+                "../resources/chain-specs/zq2-protomainnet.toml"
             )),
             _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
         }
@@ -66,7 +69,7 @@ impl FromStr for Chain {
             "zq2-perftest" => Ok(Self::Zq2PerfTest),
             "zq2-devnet" => Ok(Self::Zq2Devnet),
             "zq2-prototestnet" => Ok(Self::Zq2ProtoTestnet),
-            // "zq2-protomainnet" => Ok(Self::Zq2ProtoMainnet),
+            "zq2-protomainnet" => Ok(Self::Zq2ProtoMainnet),
             // "zq2-testnet" => Ok(Self::Zq2Testnet),
             // "zq2-mainnet" => Ok(Self::Zq2Mainnet),
             _ => Err(anyhow!("Chain not supported")),
@@ -82,9 +85,9 @@ impl fmt::Display for Chain {
             Self::Zq2PerfTest => write!(f, "zq2-perftest"),
             Self::Zq2Devnet => write!(f, "zq2-devnet"),
             Self::Zq2ProtoTestnet => write!(f, "zq2-prototestnet"),
-            // Self::Zq2ProtoMainnet => "zq2-protomainnet",
-            // Self::Zq2Testnet => "zq2-testnet",
-            // Self::Zq2Mainnet => "zq2-mainnet",
+            Self::Zq2ProtoMainnet => write!(f, "zq2-protomainnet"),
+            // Self::Zq2Testnet => write!(f, "zq2-testnet"),
+            // Self::Zq2Mainnet => write!(f, "zq2-mainnet"),
         }
     }
 }
