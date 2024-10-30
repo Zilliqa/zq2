@@ -1265,7 +1265,7 @@ impl BlockStore {
             Ok(None)
         } else {
             // Compute the highest block. We're going to do this by taking the difference between
-            // view and number of the current block, and subtracting it from the highest known view to
+
             // get an estimated block number if no more views were skipped.
             let skipped_views = highest_block.view() - highest_block.number();
             let expected_highest_block_number = self.highest_known_view - skipped_views;

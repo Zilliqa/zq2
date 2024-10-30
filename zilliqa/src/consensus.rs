@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::{Address, U256, BlockNumber};
+use alloy::primitives::{Address, BlockNumber, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
