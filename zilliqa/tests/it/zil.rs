@@ -1717,3 +1717,48 @@ async fn combined_total_coin_supply_test(mut network: Network) {
         "Total coin supply from string and int APIs should be the same"
     );
 }
+
+#[allow(dead_code)]
+async fn getminerinfo(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getnodetype(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getprevdifficulty(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getprevdsdifficulty(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getshardingstructure(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getsmartcontractsubstate(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getsoftconfirmedtransaction(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn getstateproof(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn gettransactionstatus(mut _network: Network) {
+    todo!();
+}
