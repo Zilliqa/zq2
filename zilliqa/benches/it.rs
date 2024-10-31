@@ -58,6 +58,7 @@ pub fn process_blocks(c: &mut Criterion) {
                         "12D3KooWF4Zba8M8gkXS6aUe8oPa3stW5N17aX3eknSjW6bGAefe",
                         "1",
                         "0x0000000000000000000000000000000000000001",
+                        "0x0000000000000000000000000000000000000001",
                     ],
                 ]
             "#,
