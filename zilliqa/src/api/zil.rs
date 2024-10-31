@@ -20,13 +20,10 @@ use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use sha3::{
-    digest::generic_array::{
-        sequence::Split,
-        typenum::{U12, U20},
-        GenericArray,
-    },
-    Digest,
+use sha3::digest::generic_array::{
+    sequence::Split,
+    typenum::{U12, U20},
+    GenericArray,
 };
 
 use super::{
@@ -308,7 +305,7 @@ fn create_transaction(
         nonce: transaction.nonce,
         gas_price: transaction.gas_price,
         gas_limit: transaction.gas_limit,
-        to_addr: transaction.to_addr,
+        to_addr,
         amount: transaction.amount,
         code: transaction.code.unwrap_or_default(),
         data: transaction.data.unwrap_or_default(),
