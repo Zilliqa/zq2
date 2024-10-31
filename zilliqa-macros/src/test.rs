@@ -101,6 +101,8 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
             // Spawn a Scilla container for this group of tests.
             let mut child = std::process::Command::new("docker")
                 .arg("run")
+                .arg("--platform")
+                .arg("linux/x86_64")
                 .arg("--name")
                 .arg(&name)
                 .arg("--add-host")

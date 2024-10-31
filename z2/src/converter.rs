@@ -306,7 +306,7 @@ pub async fn convert_persistence(
                 _ => (code, EMPTY_ROOT_HASH),
             };
 
-            let created_at_block = None;
+            let created_at_block = 0u64;
             let account = Account {
                 nonce: zq1_account.nonce,
                 balance: zq1_account.balance * 10u128.pow(6),

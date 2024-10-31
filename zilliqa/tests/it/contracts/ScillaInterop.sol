@@ -18,7 +18,8 @@ library ScillaConnector {
         address target,
         string memory tran_name,
         address arg1,
-        uint128 arg2
+        uint128 arg2,
+        uint128 gasLimit
     ) internal {
         bytes memory encodedArgs = abi.encode(
             target,
@@ -31,7 +32,7 @@ library ScillaConnector {
 
         assembly {
             let alwaysSuccessForThisPrecompile := call(
-                21000,
+                gasLimit,
                 SCILLA_CALL_PRECOMPILE_ADDRESS,
                 0,
                 add(encodedArgs, 0x20),
@@ -274,14 +275,15 @@ contract ScillaInterop {
         return scillaContract.readNestedMapUint128(varName, key1, key2);
     }
 
-    function callScilla(
+    function callScillaWithGasLimit(
         address scillaContract,
         string memory transitionName,
         string memory varName,
         address arg1,
-        uint128 arg2
+        uint128 arg2,
+        uint128 gasLimit
     ) public returns (uint128) {
-        scillaContract.call(transitionName, arg1, arg2);
+        scillaContract.call(transitionName, arg1, arg2, gasLimit);
 
         return readMapUint128(scillaContract, varName, arg1);
     }

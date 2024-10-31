@@ -279,6 +279,9 @@ pub struct ConsensusConfig {
     /// The total supply of native token in the network in Wei. Any funds which are not immediately assigned to an account (via genesis_accounts and genesis_deposits env vars) will be assigned to the zero account (0x0).
     #[serde(default = "total_native_token_supply_default")]
     pub total_native_token_supply: Amount,
+    /// Zq1 interop gas rules are allowed before this block number
+    #[serde(default = "default_zq1_interop_gas_rules_before_block")]
+    pub zq1_interop_gas_rules_before_block: u64,
 }
 
 pub fn consensus_timeout_default() -> Duration {
@@ -327,4 +330,8 @@ fn default_true() -> bool {
 
 pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
+}
+
+fn default_zq1_interop_gas_rules_before_block() -> u64 {
+    0
 }

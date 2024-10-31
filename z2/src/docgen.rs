@@ -387,6 +387,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
             blocks_per_epoch: 3600,
             epochs_per_checkpoint: 24,
             total_native_token_supply: total_native_token_supply_default(),
+            zq1_interop_gas_rules_before_block: 4_200_220,
         },
         data_dir: None,
         load_checkpoint: None,

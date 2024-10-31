@@ -24,13 +24,12 @@ use scilla_parser::{
 
 use crate::{
     cfg::scilla_ext_libs_path_default,
+    constants::ZIL_CONTRACT_INVOKE_GAS,
     exec::{scilla_call, PendingState, ScillaError, SCILLA_INVOKE_RUNNER},
     inspector::ScillaInspector,
     state::Code,
-    transaction::{EvmGas, ZilAmount},
+    transaction::{EvmGas, ScillaGas, ZilAmount},
 };
-use crate::constants::ZIL_CONTRACT_INVOKE_GAS;
-use crate::transaction::ScillaGas;
 
 /// Internal representation of Scilla types. This is a greatly simplified version of [NodeScillaType] (which comes
 /// directly from the Scilla parser) and only supports the types we currently care about. Raw parsed types can be
@@ -342,37 +341,53 @@ pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>
             return prev_handle(ctx, inputs);
         }
 
+        let zq1_interop_gas_rules_before_block = ctx.evm.db.zq1_interop_gas_rules_before_block;
 
         let zq1_gas_rule = {
             let account = ctx.evm.db.load_account(inputs.caller).unwrap();
-            account.account.created_at_block.is_some()
+            account.account.created_at_block < zq1_interop_gas_rules_before_block
         };
 
         let gas_limit = {
             if zq1_gas_rule {
                 let total_gas_left = ctx.evm.db.gas_left.remaining();
-                let gas_cost = EvmGas::from(SCILLA_INVOKE_RUNNER).0 + EvmGas::from(ScillaGas(ZIL_CONTRACT_INVOKE_GAS as u64)).0;
-                    match total_gas_left.checked_sub(gas_cost) {
-                        Some(result) => result,
-                        _ => return Ok(FrameOrResult::new_call_result(
+                let gas_cost = EvmGas::from(SCILLA_INVOKE_RUNNER).0
+                    + EvmGas::from(ScillaGas(ZIL_CONTRACT_INVOKE_GAS as u64)).0;
+                match total_gas_left.checked_sub(gas_cost) {
+                    Some(result) => result,
+                    _ => {
+                        return Ok(FrameOrResult::new_call_result(
                             InterpreterResult {
                                 result: InstructionResult::PrecompileOOG,
                                 output: Bytes::new(),
                                 gas: Default::default(),
-                            }, inputs.return_memory_offset.clone()))
+                            },
+                            inputs.return_memory_offset.clone(),
+                        ))
                     }
+                }
             } else {
                 inputs.gas_limit
             }
         };
 
-
         let gas = Gas::new(gas_limit);
         println!("GIVEN evm gas to precompile: {}", inputs.gas_limit);
-        let outcome =
-            scilla_call_precompile(&inputs, gas.limit(), &mut ctx.evm.inner, &mut ctx.external);
+        let outcome = scilla_call_precompile(
+            &inputs,
+            gas.limit(),
+            &mut ctx.evm.inner,
+            &mut ctx.external,
+            zq1_interop_gas_rules_before_block,
+        );
 
-        let result_gas = { if zq1_gas_rule { Gas::new(0) } else { gas } };
+        let result_gas = {
+            if zq1_gas_rule {
+                Gas::new(0)
+            } else {
+                gas
+            }
+        };
         // Copied from `EvmContext::call_precompile`
         let mut result = InterpreterResult {
             result: InstructionResult::Return,
@@ -412,6 +427,7 @@ fn scilla_call_precompile(
     gas_limit: u64,
     evmctx: &mut InnerEvmContext<PendingState>,
     inspector: &mut (impl Inspector<PendingState> + ScillaInspector),
+    zq1_interop_gas_rules_before_block: u64,
 ) -> PrecompileResult {
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
@@ -479,7 +495,10 @@ fn scilla_call_precompile(
 
     let message = serde_json::json!({"_tag": transition.name, "params": params });
 
-    let empty_state = PendingState::new(evmctx.db.pre_state.clone());
+    let empty_state = PendingState::new(
+        evmctx.db.pre_state.clone(),
+        zq1_interop_gas_rules_before_block,
+    );
     // Temporarily move the `PendingState` out of `evmctx`, replacing it with an empty state.
     let state = std::mem::replace(&mut evmctx.db, empty_state);
     let scilla = evmctx.db.pre_state.scilla();

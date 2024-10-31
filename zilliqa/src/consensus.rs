@@ -2447,6 +2447,10 @@ impl Consensus {
         &self.state
     }
 
+    pub fn state_mut(&mut self) -> &mut State {
+        &mut self.state
+    }
+
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
             .block_store

@@ -216,6 +216,42 @@ pub fn scilla_test_contract_data(address: H160) -> String {
     )
 }
 
+pub fn scilla_test_precompile_contract_code() -> String {
+    String::from(
+        r#"
+        scilla_version 0
+
+        library HelloWorld
+
+        let one = Uint128 1
+        let two = Uint128 2
+
+        let big_number = Uint128 1234
+        let addr = 0x0123456789012345678901234567890123456789
+
+        contract Hello
+        ()
+
+        field num : Uint128 = big_number
+        field str : String = "foobar"
+        field addr_to_int : Map ByStr20 Uint128 =
+          let emp = Emp ByStr20 Uint128 in
+          builtin put emp addr one
+        field addr_to_addr_to_int : Map ByStr20 (Map ByStr20 Uint128) =
+          let emp1 = Emp ByStr20 Uint128 in
+          let inner = builtin put emp1 addr one in
+          let emp2 = Emp ByStr20 (Map ByStr20 Uint128) in
+          builtin put emp2 addr inner
+
+        transition InsertIntoMap(a: ByStr20, b: Uint128)
+          addr_to_int[a] := b;
+          e = {_eventname : "Inserted"; a : a; b : b};
+          event e
+        end
+    "#,
+    )
+}
+
 pub async fn deploy_scilla_contract(
     network: &mut Network,
     sender_secret_key: &schnorr::SecretKey,
@@ -517,36 +553,7 @@ async fn scilla_precompiles(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network).await;
 
-    let code = r#"
-        scilla_version 0
-
-        library HelloWorld
-
-        let one = Uint128 1
-        let two = Uint128 2
-        let big_number = Uint128 1234
-        let addr = 0x0123456789012345678901234567890123456789
-
-        contract Hello
-        ()
-
-        field num : Uint128 = big_number
-        field str : String = "foobar"
-        field addr_to_int : Map ByStr20 Uint128 =
-          let emp = Emp ByStr20 Uint128 in
-          builtin put emp addr one
-        field addr_to_addr_to_int : Map ByStr20 (Map ByStr20 Uint128) =
-          let emp1 = Emp ByStr20 Uint128 in
-          let inner = builtin put emp1 addr one in
-          let emp2 = Emp ByStr20 (Map ByStr20 Uint128) in
-          builtin put emp2 addr inner
-
-        transition InsertIntoMap(a: ByStr20, b: Uint128)
-          addr_to_int[a] := b;
-          e = {_eventname : "Inserted"; a : a; b : b};
-          event e
-        end
-    "#;
+    let code = scilla_test_precompile_contract_code();
 
     let data = r#"[
         {
@@ -563,7 +570,7 @@ async fn scilla_precompiles(mut network: Network) {
         H160::zero(),
         0,
         50_000,
-        Some(code),
+        Some(&code),
         Some(data),
     )
     .await;
@@ -640,13 +647,14 @@ async fn scilla_precompiles(mut network: Network) {
     assert_eq!(val, 1.into());
 
     // Construct a transaction which uses the scilla_call precompile.
-    let function = abi.function("callScilla").unwrap();
+    let function = abi.function("callScillaWithGasLimit").unwrap();
     let input = &[
         Token::Address(scilla_contract_address),
         Token::String("InsertIntoMap".to_owned()),
         Token::String("addr_to_int".to_owned()),
         Token::Address(key),
         Token::Uint(5.into()),
+        Token::Uint(1_000_000.into()),
     ];
     let tx = TransactionRequest::new()
         .to(receipt.contract_address.unwrap())
@@ -710,6 +718,89 @@ async fn scilla_precompiles(mut network: Network) {
     .into_uint()
     .unwrap();
     assert_eq!(val, 5.into());
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn scilla_precompiles_zq1(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let code = scilla_test_precompile_contract_code();
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        H160::zero(),
+        0,
+        50_000,
+        Some(&code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    let key = "0x0123456789012345678901234567890123456789"
+        .parse()
+        .unwrap();
+
+    // Construct a transaction which uses the scilla_call precompile.
+    let function = abi.function("callScillaWithGasLimit").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("InsertIntoMap".to_owned()),
+        Token::String("addr_to_int".to_owned()),
+        Token::Address(key),
+        Token::Uint(5.into()),
+        Token::Uint(21_000.into()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    {
+        // Send txn with insufficient gas limit for interop call - this should fail (no logs emitted)
+        let tx_hash = wallet
+            .send_transaction(tx.clone(), None)
+            .await
+            .unwrap()
+            .tx_hash();
+        let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+        assert_eq!(receipt.logs.len(), 0);
+    }
+
+    let current_block = wallet.get_block_number().await.unwrap().as_u64();
+    // Set zq1_interop_gas_rules_before_block to point to some block in the future so that zq1 rules become effective
+    {
+        for node in network.nodes.iter_mut() {
+            let mut node = node.inner.lock().unwrap();
+            node.consensus
+                .state_mut()
+                .zq1_interop_gas_rules_before_block = current_block + 100;
+        }
+    }
+    // Send txn with sufficient gas per zq1 rules (there should be receipt)
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.logs.len(), 1);
 }
 
 #[zilliqa_macros::test]
