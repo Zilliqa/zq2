@@ -128,7 +128,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
             use std::time::{Duration, Instant};
             let seeds_number = seeds.len();
 
-            let mut name = "scilla-server-".to_owned();
+            let mut name = format!("scilla-server-{}-", stringify!(#test_name));
             let rng = <rand::rngs::SmallRng as rand_core::SeedableRng>::from_entropy();
 
             name.extend(rand::Rng::sample_iter(rng, &rand::distributions::Alphanumeric).map(char::from).take(8));
