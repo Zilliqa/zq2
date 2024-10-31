@@ -328,7 +328,7 @@ pub async fn convert_persistence(
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();
 
-    let current_block = zq2_db.get_latest_finalized_view()?.unwrap_or(1);
+    let current_block = zq2_db.get_finalized_view()?.unwrap_or(1);
 
     let progress = ProgressBar::new(max_block)
         .with_style(style.clone())
@@ -451,7 +451,7 @@ pub async fn convert_persistence(
         zq2_db.with_sqlite_tx(|sqlite_tx| {
             zq2_db.insert_block_with_db_tx(sqlite_tx, &block)?;
             zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.header.qc)?;
-            zq2_db.set_latest_finalized_view_with_db_tx(sqlite_tx, block.view())?;
+            zq2_db.set_finalized_view_with_db_tx(sqlite_tx, block.view())?;
             trace!("{} block inserted", block.number());
 
             for (hash, transaction) in &transactions {

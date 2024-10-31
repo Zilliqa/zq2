@@ -155,7 +155,6 @@ pub struct Consensus {
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,
     pub high_qc: QuorumCertificate,
-    finalized_view: u64,
     /// The account store.
     state: State,
     /// The persistence database
@@ -203,7 +202,7 @@ impl Consensus {
         }
 
         let latest_block = db
-            .get_latest_finalized_view()?
+            .get_finalized_view()?
             .map(|view| {
                 block_store
                     .get_block_by_view(view)?
@@ -244,7 +243,7 @@ impl Consensus {
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
 
                     let finalized_number = db
-                        .get_latest_finalized_view()?
+                        .get_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
                     let finalized_block = db
                         .get_block_by_view(finalized_number)?
@@ -334,7 +333,6 @@ impl Consensus {
             buffered_votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             high_qc,
-            finalized_view,
             state,
             db,
             receipts_cache: HashMap::new(),
@@ -347,7 +345,8 @@ impl Consensus {
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
         };
-        consensus.set_view(start_view)?;
+        consensus.db.set_view(start_view)?;
+        consensus.set_finalized_view(finalized_view)?;
 
         // If we're at genesis, add the genesis block.
         if latest_block_view == 0 {
@@ -359,7 +358,7 @@ impl Consensus {
                 }
             }
             // treat genesis as finalized
-            consensus.finalize_view(latest_block_view)?;
+            consensus.set_finalized_view(latest_block_view)?;
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
@@ -962,7 +961,7 @@ impl Consensus {
                 // have a chance of being mined. It is possible this is unnecessary, since `self.finalized_view` is
                 // already at least 2 views behind the head of the chain, but keeping one extra vote in memory doesn't
                 // cost much and does make us more confident that we won't dispose of valid votes.
-                if block.view() < self.finalized_view.saturating_sub(1) {
+                if block.view() < self.get_finalized_view()?.saturating_sub(1) {
                     trace!(block_view = %block.view(), block_hash = %key, "cleaning vote");
                     self.votes.remove(&key);
                 }
@@ -2105,11 +2104,6 @@ impl Consensus {
         Ok(())
     }
 
-    fn finalize_view(&mut self, view: u64) -> Result<()> {
-        self.finalized_view = view;
-        self.db.set_latest_finalized_view(view)
-    }
-
     /// Saves the finalized tip view, and runs all hooks for the newly finalized block
     fn finalize_block(&mut self, block: Block) -> Result<()> {
         trace!(
@@ -2118,7 +2112,7 @@ impl Consensus {
             block.view(),
             block.number()
         );
-        self.finalize_view(block.view())?;
+        self.set_finalized_view(block.view())?;
 
         let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;
 
@@ -2248,11 +2242,12 @@ impl Consensus {
             return Err((MissingBlockError::from(block.parent_hash()).into(), true));
         };
 
+        let finalized_view = self.get_finalized_view().map_err(|e| (e, false))?;
         let Some(finalized_block) = self
-            .get_block_by_view(self.finalized_view)
+            .get_block_by_view(finalized_view)
             .map_err(|e| (e, false))?
         else {
-            return Err((MissingBlockError::from(self.finalized_view).into(), false));
+            return Err((MissingBlockError::from(finalized_view).into(), false));
         };
         if block.view() < finalized_block.view() {
             return Err((
@@ -2507,7 +2502,18 @@ impl Consensus {
         self.block_store.get_canonical_block_by_number(number)
     }
 
-    pub fn set_view(&mut self, view: u64) -> Result<()> {
+    fn set_finalized_view(&mut self, view: u64) -> Result<()> {
+        self.db.set_finalized_view(view)
+    }
+
+    pub fn get_finalized_view(&self) -> Result<u64> {
+        Ok(self.db.get_finalized_view()?.unwrap_or_else(|| {
+            warn!("no finalised view found in table. Defaulting to 0");
+            0
+        }))
+    }
+
+    fn set_view(&mut self, view: u64) -> Result<()> {
         if !self.db.set_view(view)? {
             warn!(
                 "Tried to set view to lower or same value - this is incorrect. value: {}",
@@ -2556,10 +2562,6 @@ impl Consensus {
             view_difference
         );
         view_difference as u64
-    }
-
-    pub fn finalized_view(&self) -> u64 {
-        self.finalized_view
     }
 
     pub fn state(&self) -> &State {

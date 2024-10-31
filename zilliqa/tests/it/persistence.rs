@@ -82,7 +82,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let last_block = inner.get_block(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
     let current_view = inner.get_current_view().unwrap();
-    let finalized_view = inner.get_finalized_height();
+    let finalized_view = inner.get_finalized_height().unwrap();
     // sanity check
     assert_eq!(tx.hash, hash);
     assert_eq!(block_with_tx.transactions.len(), 1);
@@ -173,7 +173,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
 
     // ensure were back on the same view
     assert_eq!(current_view, inner.get_current_view().unwrap());
-    assert_eq!(finalized_view, inner.get_finalized_height());
+    assert_eq!(finalized_view, inner.get_finalized_height().unwrap());
 }
 
 #[zilliqa_macros::test(do_checkpoints)]
