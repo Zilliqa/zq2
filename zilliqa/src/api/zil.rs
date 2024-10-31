@@ -19,14 +19,11 @@ use jsonrpsee::{
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
-use sha2::Sha256;
-use sha3::{
-    digest::generic_array::{
-        sequence::Split,
-        typenum::{U12, U20},
-        GenericArray,
-    },
-    Digest,
+use sha2::{Digest, Sha256};
+use sha3::digest::generic_array::{
+    sequence::Split,
+    typenum::{U12, U20},
+    GenericArray,
 };
 
 use super::{
@@ -118,6 +115,37 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     )
 }
 
+/// Take an Address and produce a checksummed hex representation of it.
+/// No initial 0x will be added.
+/// Public because some of the tests require it.
+pub fn to_zil_checksum_string(address: &Address) -> String {
+    const UPPER_CHARS: [char; 6] = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const LOWER_CHARS: [char; 16] = [
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+    ];
+    let bytes = address.into_array();
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut result = String::new();
+    // You could do this with iterators, but it's horrid.
+    for (idx, byte) in bytes.iter().enumerate() {
+        for nibble in 0..2 {
+            let shift = (1 - nibble) << 2;
+            let val = (byte >> shift) & 0xf;
+            // Should this be uppercase?
+            let bit_num = 6 * ((idx << 1) + nibble);
+            let bit = digest[bit_num >> 3] & (1 << (7 - (bit_num & 7)));
+            if bit != 0 && val > 9 {
+                result.push(UPPER_CHARS[usize::from(val - 10)])
+            } else {
+                result.push(LOWER_CHARS[usize::from(val)])
+            }
+        }
+    }
+    result
+}
+
 #[derive(Deserialize)]
 #[serde(transparent)]
 struct ZilAddress {
@@ -156,7 +184,7 @@ where
 struct TransactionParams {
     version: u32,
     nonce: u64,
-    to_addr: Address,
+    to_addr: String,
     #[serde(deserialize_with = "from_str")]
     amount: ZilAmount,
     pub_key: String,
@@ -224,17 +252,36 @@ fn create_transaction(
         ))?;
     }
 
-    let key = hex::decode(transaction.pub_key).map_err(|_|
+    let pre_key = hex::decode(transaction.pub_key).map_err(|_|
                 // This is apparently what ZQ1 does.
                 ErrorObject::owned::<String>(RPCErrorCode::RpcVerifyRejected as i32,
                                    "Cannot parse public key".to_string(),
                                    None))?;
 
-    let key = schnorr::PublicKey::from_sec1_bytes(&key).map_err(|_|
+    let key = schnorr::PublicKey::from_sec1_bytes(&pre_key).map_err(|_|
                  // This is apparently what ZQ1 does.
                  ErrorObject::owned::<String>(RPCErrorCode::RpcVerifyRejected as i32,
                                               "Invalid public key".to_string(),
                                               None))?;
+
+    // Addresses without an 0x prefix are legal.
+    let corrected_addr = if transaction.to_addr.starts_with("0x") {
+        transaction.to_addr
+    } else {
+        format!("0x{0}", transaction.to_addr)
+    };
+    let to_addr = Address::parse_checksummed(&corrected_addr, None).or_else(|_| {
+        // Not eth checksummed. How about Zilliqa?
+        let addr = Address::from_str(&corrected_addr)?;
+        let summed = format!("0x{0}", to_zil_checksum_string(&addr));
+        if summed == corrected_addr {
+            Ok(addr)
+        } else {
+            // Copied from ZQ1
+            Err(anyhow!("To Addr checksum wrong"))
+        }
+    })?;
+
     let sig = schnorr::Signature::from_str(&transaction.signature).map_err(|err| {
         ErrorObject::owned::<String>(
             RPCErrorCode::RpcVerifyRejected as i32,
@@ -242,8 +289,6 @@ fn create_transaction(
             None,
         )
     })?;
-
-    // TODO: Perform some initial validation of the transaction
 
     // If we don't trap this here, it will later cause the -1 in
     // transaction::get_nonce() to pan1ic.
@@ -260,7 +305,7 @@ fn create_transaction(
         nonce: transaction.nonce,
         gas_price: transaction.gas_price,
         gas_limit: transaction.gas_limit,
-        to_addr: transaction.to_addr,
+        to_addr,
         amount: transaction.amount,
         code: transaction.code.unwrap_or_default(),
         data: transaction.data.unwrap_or_default(),
@@ -1212,4 +1257,46 @@ fn getstateproof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 // GetTransactionStatus
 fn gettransactionstatus(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("API gettransactionstatus is not implemented yet");
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_hex_checksum() {
+        use alloy::primitives::{address, Address};
+
+        use crate::api::zil::to_zil_checksum_string;
+
+        let cases: Vec<(Address, &str)> = vec![
+            (
+                address!("0000000000000000000000000000000000000002"),
+                "0000000000000000000000000000000000000002",
+            ),
+            (
+                address!("1234567890123456789012345678901234567890"),
+                "1234567890123456789012345678901234567890",
+            ),
+            (
+                address!("12a45b789d1f345c789def456789012be3467890"),
+                "12a45b789D1F345c789dEf456789012bE3467890",
+            ),
+            (
+                address!("f61477d7919478e5affe1fbd9a0cdceee9fde42d"),
+                "f61477D7919478e5AfFe1fbd9A0CDCeee9fdE42d",
+            ),
+            (
+                address!("4d76f701e16d7d481de292499718db36450d6a18"),
+                "4d76f701E16D7d481dE292499718db36450d6A18",
+            ),
+            (
+                address!("6e1757590ce532ff0f0e100139e36b7ee8049ce1"),
+                "6e1757590ce532Ff0F0e100139e36b7eE8049ce1",
+            ),
+        ];
+        for (address, good) in cases.iter() {
+            let summed = to_zil_checksum_string(address);
+            assert_eq!(&summed, good)
+        }
+    }
 }
