@@ -422,9 +422,7 @@ impl State {
                 self.apply_delta_evm(&state)?;
                 Ok(addr)
             }
-            ExecutionResult::Success { .. } => {
-                Err(anyhow!("deployment did not create a transaction"))
-            }
+            ExecutionResult::Success { .. } => Err(anyhow!("deployment did not create a contract")),
             ExecutionResult::Revert { .. } => Err(anyhow!("deployment reverted")),
             ExecutionResult::Halt { reason, .. } => Err(anyhow!("deployment halted: {reason:?}")),
         }
@@ -715,7 +713,7 @@ impl State {
         Ok(())
     }
 
-    pub fn leader(&self, view: u64) -> Result<NodePublicKey> {
+    pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
         let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
 
         let leader = self.call_contract(
@@ -723,7 +721,7 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            BlockHeader::default(),
+            current_block,
         )?;
 
         NodePublicKey::from_bytes(
@@ -736,15 +734,7 @@ impl State {
         )
     }
 
-    pub fn get_stakers_at_block(&self, block: &Block) -> Result<Vec<NodePublicKey>> {
-        let block_root_hash = block.state_root_hash();
-
-        let state = self.at_root(block_root_hash.into());
-
-        state.get_stakers()
-    }
-
-    pub fn get_stakers(&self) -> Result<Vec<NodePublicKey>> {
+    pub fn get_stakers(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
         let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
         let stakers = self.call_contract(
@@ -752,9 +742,7 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The current block is not accessed when the native balance is read, so we just pass in some
-            // dummy values.
-            BlockHeader::default(),
+            current_block,
         )?;
 
         let stakers = contracts::deposit::GET_STAKERS
@@ -770,7 +758,27 @@ impl State {
             .collect()
     }
 
-    pub fn get_stake(&self, public_key: NodePublicKey) -> Result<Option<NonZeroU128>> {
+    pub fn committee(&self) -> Result<()> {
+        let data = contracts::deposit::COMMITTEE.encode_input(&[])?;
+
+        let committee = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT),
+            data,
+            0,
+            BlockHeader::default(),
+        )?;
+        let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
+        info!("committee: {committee:?}");
+
+        Ok(())
+    }
+
+    pub fn get_stake(
+        &self,
+        public_key: NodePublicKey,
+        current_block: BlockHeader,
+    ) -> Result<Option<NonZeroU128>> {
         let data =
             contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
@@ -779,9 +787,7 @@ impl State {
             Some(contract_addr::DEPOSIT),
             data,
             0,
-            // The current block is not accessed when the native balance is read, so we just pass in some
-            // dummy values.
-            BlockHeader::default(),
+            current_block,
         )?;
 
         let stake = NonZeroU128::new(U256::from_be_slice(&stake).to());
@@ -832,27 +838,6 @@ impl State {
             .unwrap();
 
         Ok(Some(PeerId::from_bytes(&data)?))
-    }
-
-    pub fn get_total_stake(&self) -> Result<u128> {
-        let data = contracts::deposit::TOTAL_STAKE.encode_input(&[])?;
-
-        let return_value = self.call_contract(
-            Address::ZERO,
-            Some(contract_addr::DEPOSIT),
-            data,
-            0,
-            // The current block is not accessed when the native balance is read, so we just pass in some
-            // dummy values.
-            BlockHeader::default(),
-        )?;
-
-        let amount = contracts::deposit::TOTAL_STAKE.decode_output(&return_value)?[0]
-            .clone()
-            .into_uint()
-            .unwrap();
-
-        Ok(amount.as_u128())
     }
 
     #[allow(clippy::too_many_arguments)]
