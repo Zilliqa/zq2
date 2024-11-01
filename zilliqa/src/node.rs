@@ -40,7 +40,7 @@ use crate::{
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::{TxAddResult, TxPoolContent},
-    state::State,
+    state::{State, StateProvider},
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
@@ -478,11 +478,8 @@ impl Node {
         }
     }
 
-    pub fn get_state(&self, block: &Block) -> Result<State> {
-        Ok(self
-            .consensus
-            .state()
-            .at_root(block.state_root_hash().into()))
+    pub fn get_state(&self, block: &Block) -> Result<StateProvider> {
+        Ok(self.consensus.state().at_block(block.header))
     }
 
     pub fn trace_evm_transaction(
@@ -503,10 +500,7 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
-        let mut state = self
-            .consensus
-            .state()
-            .at_root(parent.state_root_hash().into());
+        let mut state = self.get_state(&parent)?;
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
@@ -517,7 +511,7 @@ impl Node {
             } else {
                 let config = TracingInspectorConfig::from_parity_config(trace_types);
                 let mut inspector = TracingInspector::new(config);
-                let pre_state = state.try_clone()?;
+                let pre_state = state.clone();
 
                 let result = state.apply_transaction(txn, block.header, &mut inspector)?;
 
@@ -554,10 +548,7 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
-        let mut state = self
-            .consensus
-            .state()
-            .at_root(parent.state_root_hash().into());
+        let mut state = self.get_state(&parent)?;
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
@@ -586,10 +577,7 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
-        let mut state = self
-            .consensus
-            .state()
-            .at_root(parent.state_root_hash().into());
+        let mut state = self.get_state(&parent)?;
 
         let mut traces: Vec<TraceResult> = Vec::new();
 
@@ -610,7 +598,7 @@ impl Node {
 
     fn debug_trace_transaction(
         &self,
-        state: &mut State,
+        state: &mut StateProvider,
         txn_hash: Hash,
         txn_index: usize,
         block: &Block,
@@ -772,10 +760,7 @@ impl Node {
     ) -> Result<Vec<u8>> {
         trace!("call_contract: block={:?}", block);
 
-        let state = self
-            .consensus
-            .state()
-            .at_root(block.state_root_hash().into());
+        let state = self.get_state(block)?;
 
         state.call_contract(from_addr, to_addr, data, amount, block.header)
     }
@@ -789,13 +774,10 @@ impl Node {
         let parent = self
             .get_block(header.qc.block_hash)?
             .ok_or_else(|| anyhow!("missing parent: {}", header.qc.block_hash))?;
-        let proposer = self
-            .consensus
-            .leader_at_block(&parent, header.view)
-            .unwrap()
-            .public_key;
 
-        self.consensus.state().get_reward_address(proposer)
+        let state = self.get_state(&parent)?;
+        let proposer = state.leader(header.view, header)?;
+        state.get_reward_address(proposer)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {

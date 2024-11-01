@@ -39,7 +39,10 @@ use crate::{
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, ParamValue, Scilla},
-    state::{contract_addr, Account, Code, ContractInit, ExternalLibrary, State},
+    state::{
+        account_storage_key, contract_addr, Account, Code, ContractInit, ExternalLibrary, State,
+        StateProvider,
+    },
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, Transaction, TxZilliqa,
@@ -305,7 +308,7 @@ impl DatabaseRef for PendingState {
     }
 }
 
-impl Database for &State {
+impl Database for &StateProvider {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -325,7 +328,7 @@ impl Database for &State {
     }
 }
 
-impl DatabaseRef for &State {
+impl DatabaseRef for &StateProvider {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -382,7 +385,7 @@ pub enum BaseFeeCheck {
     Ignore,
 }
 
-impl State {
+impl StateProvider {
     /// Used primarily during genesis to set up contracts for chain functionality.
     /// If override_address address is set, forces contract deployment to that addess.
     pub(crate) fn force_deploy_contract_evm(
@@ -512,7 +515,7 @@ impl State {
         current_block: BlockHeader,
         inspector: impl ScillaInspector,
     ) -> Result<ScillaResultAndState> {
-        let mut state = PendingState::new(self.try_clone()?);
+        let mut state = PendingState::new(self.clone());
 
         let deposit = total_scilla_gas_price(txn.gas_limit, txn.gas_price);
         if let Some(result) = state.deduct_from_account(from_addr, deposit)? {
@@ -653,14 +656,15 @@ impl State {
                 handle(&mut storage, var, value, &mut vec![])?;
             }
 
-            let account = Account {
-                nonce: account.account.nonce,
-                balance: account.account.balance,
-                code: account.account.code.clone(),
-                storage_root: storage.root_hash()?,
-            };
-
-            self.save_account(address, account)?;
+            self.mutate_account(address, |acc| {
+                *acc = Account {
+                    nonce: account.account.nonce,
+                    balance: account.account.balance,
+                    code: account.account.code.clone(),
+                    storage_root: storage.root_hash()?,
+                };
+                Ok(())
+            })?;
         }
 
         Ok(())
@@ -679,10 +683,7 @@ impl State {
                 let value = B256::new(value.present_value().to_be_bytes());
                 trace!(?address, ?index, ?value, "update storage");
 
-                storage.insert(
-                    &Self::account_storage_key(address, index).0,
-                    value.as_slice(),
-                )?;
+                storage.insert(&account_storage_key(address, index).0, value.as_slice())?;
             }
 
             // `account.info.code` might be `None`, even though we always return `Some` for the account code in our
@@ -700,14 +701,16 @@ impl State {
                     .to_vec()
             };
 
-            let account = Account {
-                nonce: account.info.nonce,
-                balance: account.info.balance.try_into()?,
-                code: Code::Evm(code),
-                storage_root: storage.root_hash()?,
-            };
             trace!(?address, ?account, "update account");
-            self.save_account(address, account)?;
+            self.mutate_account(address, |acc| {
+                *acc = Account {
+                    nonce: account.info.nonce,
+                    balance: account.info.balance.try_into()?,
+                    code: Code::Evm(code),
+                    storage_root: storage.root_hash()?,
+                };
+                Ok(())
+            })?;
         }
 
         Ok(())
@@ -991,7 +994,7 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 /// The account state during the execution of a Scilla transaction. Changes to the original state are kept in memory.
 #[derive(Debug)]
 pub struct PendingState {
-    pub pre_state: State,
+    pub pre_state: StateProvider,
     pub new_state: HashMap<Address, PendingAccount>,
 }
 
@@ -999,7 +1002,7 @@ pub struct PendingState {
 /// are passed explicitly. This means the borrow-checker can see the reference we return only borrows from the
 /// `new_state` field and thus we can later use `pre_state` without an error.
 fn load_account<'a>(
-    pre_state: &State,
+    pre_state: &StateProvider,
     new_state: &'a mut HashMap<Address, PendingAccount>,
     address: Address,
 ) -> Result<&'a mut PendingAccount> {
@@ -1013,7 +1016,7 @@ fn load_account<'a>(
 }
 
 impl PendingState {
-    pub fn new(state: State) -> Self {
+    pub fn new(state: StateProvider) -> Self {
         PendingState {
             pre_state: state,
             new_state: HashMap::new(),
@@ -1295,7 +1298,7 @@ impl From<Account> for PendingAccount {
 }
 
 fn store_external_libraries(
-    state: &State,
+    state: &StateProvider,
     scilla_ext_libs_path: &ScillaExtLibsPath,
     ext_libraries: Vec<ExternalLibrary>,
 ) -> Result<(ScillaExtLibsPathInZq2, ScillaExtLibsPathInScilla)> {

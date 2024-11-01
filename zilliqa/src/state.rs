@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fmt::Display,
+    ops::Deref,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
@@ -19,7 +20,7 @@ use crate::{
     cfg::{Amount, NodeConfig, ScillaExtLibsPath},
     contracts, crypto,
     db::TrieStorage,
-    message::MAX_COMMITTEE_SIZE,
+    message::{BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
     scilla::{ParamValue, Scilla, Transition},
     serde_util::vec_param_value,
@@ -49,6 +50,20 @@ pub struct State {
     pub gas_price: u128,
     pub chain_id: ChainId,
     pub block_store: Arc<BlockStore>,
+}
+
+/// Obtained from [State] with [State::at_block]. Allows you to query accounts from the state and execute transactions.
+#[derive(Clone, Debug)]
+pub struct StateProvider {
+    state: State,
+}
+
+impl Deref for StateProvider {
+    type Target = State;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
 }
 
 impl State {
@@ -83,21 +98,14 @@ impl State {
             .unwrap()
     }
 
-    pub fn new_at_root(
+    /// Creates a new [State] and deploys the genesis contracts. The root hash of the state with these contracts is
+    /// also returned.
+    pub fn new_with_genesis_contracts(
         trie: TrieStorage,
-        root_hash: B256,
-        config: NodeConfig,
+        config: &NodeConfig,
         block_store: Arc<BlockStore>,
-    ) -> Self {
-        Self::new(trie, &config, block_store).at_root(root_hash)
-    }
-
-    pub fn new_with_genesis(
-        trie: TrieStorage,
-        config: NodeConfig,
-        block_store: Arc<BlockStore>,
-    ) -> Result<State> {
-        let mut state = State::new(trie, &config, block_store);
+    ) -> Result<(State, B256)> {
+        let mut state = State::new(trie, config, block_store).at_block(BlockHeader::default());
 
         if config.consensus.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
@@ -142,9 +150,9 @@ impl State {
             Ok(())
         })?;
 
-        for (address, balance) in config.consensus.genesis_accounts {
-            state.mutate_account(address, |a| {
-                a.balance = *balance;
+        for (address, balance) in &config.consensus.genesis_accounts {
+            state.mutate_account(*address, |a| {
+                a.balance = **balance;
                 Ok(())
             })?;
         }
@@ -152,7 +160,7 @@ impl State {
         let initial_stakers: Vec<_> = config
             .consensus
             .genesis_deposits
-            .into_iter()
+            .iter()
             .map(|deposit| {
                 Token::Tuple(vec![
                     Token::Bytes(deposit.public_key.as_bytes()),
@@ -174,49 +182,12 @@ impl State {
         )?;
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
-        //for GenesisDeposit {
-        //    public_key,
-        //    peer_id,
-        //    stake,
-        //    reward_address,
-        //    control_address,
-        //} in config.consensus.genesis_deposits
-        //{
-        //    let data = contracts::deposit::SET_STAKE.encode_input(&[
-        //        Token::Bytes(public_key.as_bytes()),
-        //        Token::Bytes(peer_id.to_bytes()),
-        //        Token::Address(ethabi::Address::from(reward_address.into_array())),
-        //        Token::Address(ethabi::Address::from(control_address.into_array())),
-        //        Token::Uint((*stake).into()),
-        //    ])?;
-        //    let (
-        //        ResultAndState {
-        //            result,
-        //            state: result_state,
-        //        },
-        //        ..,
-        //    ) = state.apply_transaction_evm(
-        //        Address::ZERO,
-        //        Some(contract_addr::DEPOSIT),
-        //        0,
-        //        config.consensus.eth_block_gas_limit,
-        //        0,
-        //        data,
-        //        None,
-        //        BlockHeader::default(),
-        //        inspector::noop(),
-        //        BaseFeeCheck::Ignore,
-        //    )?;
-        //    if !result.is_success() {
-        //        return Err(anyhow!("setting stake failed: {result:?}"));
-        //    }
-        //    state.apply_delta_evm(&result_state)?;
-        //}
+        let root_hash = state.root_hash()?;
 
-        Ok(state)
+        Ok((state.state, root_hash.into()))
     }
 
-    pub fn at_root(&self, root_hash: B256) -> Self {
+    fn at_root(&self, root_hash: B256) -> Self {
         Self {
             db: self.db.clone(),
             accounts: self.accounts.at_root(root_hash),
@@ -232,30 +203,41 @@ impl State {
         }
     }
 
-    pub fn set_to_root(&mut self, root_hash: B256) {
-        self.accounts = self.accounts.at_root(root_hash);
+    pub fn at_block(&self, block: BlockHeader) -> StateProvider {
+        StateProvider {
+            state: State {
+                db: self.db.clone(),
+                accounts: self.accounts.at_root(block.state_root_hash.into()),
+                scilla: self.scilla.clone(),
+                scilla_address: self.scilla_address.clone(),
+                local_address: self.local_address.clone(),
+                scilla_lib_dir: self.scilla_lib_dir.clone(),
+                scilla_ext_libs_path: self.scilla_ext_libs_path.clone(),
+                block_gas_limit: self.block_gas_limit,
+                gas_price: self.gas_price,
+                chain_id: self.chain_id,
+                block_store: self.block_store.clone(),
+            },
+        }
     }
+}
 
-    pub fn try_clone(&mut self) -> Result<Self> {
-        let root_hash = self.accounts.root_hash()?;
-        Ok(self.at_root(root_hash))
-    }
+/// Calculate the trie key for an account
+fn account_key(address: Address) -> B256 {
+    <[u8; 32]>::from(Keccak256::digest(address)).into()
+}
 
+/// Calculate the trie key an EVM storage slot
+pub fn account_storage_key(address: Address, index: B256) -> B256 {
+    let mut h = Keccak256::new();
+    h.update(address);
+    h.update(index);
+    <[u8; 32]>::from(h.finalize()).into()
+}
+
+impl StateProvider {
     pub fn root_hash(&mut self) -> Result<crypto::Hash> {
-        Ok(crypto::Hash(self.accounts.root_hash()?.into()))
-    }
-
-    /// Canonical method to obtain trie key for an account node
-    pub fn account_key(address: Address) -> B256 {
-        <[u8; 32]>::from(Keccak256::digest(address)).into()
-    }
-
-    /// Canonical method to obtain trie key for an account's storage trie's storage node
-    pub fn account_storage_key(address: Address, index: B256) -> B256 {
-        let mut h = Keccak256::new();
-        h.update(address);
-        h.update(index);
-        <[u8; 32]>::from(h.finalize()).into()
+        Ok(crypto::Hash(self.state.accounts.root_hash()?.into()))
     }
 
     /// Fetch an Account struct.
@@ -265,17 +247,11 @@ impl State {
     /// account if one didn't exist yet
     pub fn get_account(&self, address: Address) -> Result<Account> {
         Ok(self
+            .state
             .accounts
-            .get(&Self::account_key(address).0)?
+            .get(&account_key(address).0)?
             .map(|bytes| bincode::deserialize::<Account>(&bytes))
             .unwrap_or(Ok(Account::default()))?)
-    }
-
-    /// As get_account, but panics if account cannot be read.
-    pub fn must_get_account(&self, address: Address) -> Account {
-        self.get_account(address).unwrap_or_else(|e| {
-            panic!("Failed to read account {address:?} from state storage: {e:?}")
-        })
     }
 
     pub fn mutate_account<F: FnOnce(&mut Account) -> Result<R>, R>(
@@ -289,16 +265,13 @@ impl State {
         Ok(result)
     }
 
-    /// If using this to modify the account, ensure save_account gets called
     pub fn get_account_trie(&self, address: Address) -> Result<PatriciaTrie<TrieStorage>> {
         let account = self.get_account(address)?;
-        Ok(PatriciaTrie::new(self.db.clone()).at_root(account.storage_root))
+        Ok(PatriciaTrie::new(self.state.db.clone()).at_root(account.storage_root))
     }
 
-    /// Returns an error if there are any issues fetching the account from the state trie
     pub fn get_account_storage(&self, address: Address, index: B256) -> Result<B256> {
-        match self.get_account_trie(address)?.get(&Self::account_storage_key(address, index).0) {
-            // from_slice will only panic if vec.len != B256::len_bytes, i.e. 32
+        match self.get_account_trie(address)?.get(&account_storage_key(address, index).0) {
             Ok(Some(vec)) if vec.len() == 32 => Ok(B256::from_slice(&vec)),
             // empty storage location
             Ok(None) => Ok(B256::ZERO),
@@ -313,16 +286,15 @@ impl State {
         }
     }
 
-    /// Returns an error if there are any issues accessing the storage trie
     pub fn has_account(&self, address: Address) -> Result<bool> {
-        Ok(self.accounts.contains(&Self::account_key(address).0)?)
+        Ok(self.state.accounts.contains(&account_key(address).0)?)
     }
 
-    pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
-        Ok(self.accounts.insert(
-            &Self::account_key(address).0,
-            &bincode::serialize(&account)?,
-        )?)
+    fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
+        Ok(self
+            .state
+            .accounts
+            .insert(&account_key(address).0, &bincode::serialize(&account)?)?)
     }
 }
 

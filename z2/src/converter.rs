@@ -238,7 +238,7 @@ pub async fn convert_persistence(
         zq2_db.clone(),
         message_sender.clone(),
     )?);
-    let mut state = State::new_with_genesis(
+    let mut state = State::new_with_genesis_contracts(
         zq2_db.clone().state_trie()?,
         node_config.clone(),
         block_store,
