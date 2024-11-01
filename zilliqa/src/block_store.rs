@@ -2,7 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     num::NonZeroUsize,
-    ops::Range,
+    ops::{Bound, Range},
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -122,6 +122,26 @@ impl BlockCache {
 
     pub fn received_process_proposal(&mut self, view: u64) {
         self.views_expecting_proposals.remove(&view);
+    }
+
+    /// Useful for finding gaps in view numbers. Returns the next (view_number, block number)
+    /// we know of, >= the given view.
+    pub fn get_next_block_number_ge_view(&mut self, view: u64) -> Option<(u64, u64)> {
+        let key = self.min_key_for_view(view);
+        let mut cache_iter = self
+            .cache
+            .range::<u128, _>((Bound::Included(key), Bound::Unbounded));
+        if let Some((_, v)) = cache_iter.next() {
+            return Some((v.proposal.view(), v.proposal.number()));
+        }
+        let mut head_iter = self
+            .head_cache
+            .range::<u128, _>((Bound::Included(key), Bound::Unbounded));
+        if let Some((_, v)) = head_iter.next() {
+            return Some((v.proposal.view(), v.proposal.number()));
+        } else {
+            None
+        }
     }
 
     /// returns the minimum key (view << shift) that we are prepared to store in the head cache.
@@ -981,10 +1001,10 @@ impl BlockStore {
                             request,
                             requests
                         );
-                        // Yay!
+                        // Yay! Note that to_view is inclusive, not exclusive, so we need to subtract 1.
                         let message = ExternalMessage::BlockRequest(BlockRequest {
                             from_view: request.start,
-                            to_view: request.end,
+                            to_view: request.end - 1,
                         });
                         let request_id =
                             self.message_sender.send_external_message(*peer, message)?;
@@ -1229,7 +1249,32 @@ impl BlockStore {
             }
             gap_start = gap_end + 1;
         }
-        // There's never a gap at the end, because we don't know at which view we stopped.
+        // Now, if we have the next block in our cache, we know its view number and there therefore must be
+        // a gap between the end here and the start of it - this allows us to infer single-view gaps and
+        // thus avoid repeatedly re-requesting them.
+        if let Some(v) = proposals.last() {
+            if let Some((next_view, next_block)) =
+                self.buffered.get_next_block_number_ge_view(gap_start + 1)
+            {
+                let (last_view, last_block) = (v.view(), v.number());
+                trace!(
+                    "buffer_lack(): last proposal in this response was {last_view}, {last_block}, first in cache is {next_view}, {next_block}"
+                );
+                if next_block == last_block + 1 && next_view > last_view + 1 {
+                    // There's a gap.
+                    trace!(
+                        "buffer_lack(): found a gap between {0} and {1}",
+                        last_view + 1,
+                        next_view
+                    );
+                    self.buffered.no_blocks_at(&Range {
+                        start: last_view + 1,
+                        end: next_view,
+                    });
+                }
+            }
+        }
+
         Ok(())
     }
 
