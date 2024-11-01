@@ -252,7 +252,9 @@ impl Db {
                 tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
                 PRIMARY KEY (address, tx_hash));
             CREATE TABLE IF NOT EXISTS tip_info (
-                latest_finalized_view INTEGER,
+                finalized_view INTEGER,
+                view INTEGER,
+                view_updated_at BLOB,
                 high_qc BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL);
@@ -438,8 +440,9 @@ impl Db {
         let parent_ref: &Block = &parent; // for moving into the closure
         self.with_sqlite_tx(move |tx| {
             self.insert_block_with_db_tx(tx, parent_ref)?;
-            self.set_latest_finalized_view_with_db_tx(tx, parent_ref.view())?;
+            self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
             self.set_high_qc_with_db_tx(tx, block.header.qc)?;
+            self.set_view_with_db_tx(tx, parent_ref.view() + 1)?;
             Ok(())
         })?;
 
@@ -474,30 +477,63 @@ impl Db {
             .optional()?)
     }
 
-    pub fn set_latest_finalized_view_with_db_tx(
-        &self,
-        sqlite_tx: &Connection,
-        view: u64,
-    ) -> Result<()> {
+    pub fn set_finalized_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<()> {
         sqlite_tx
-            .execute("INSERT INTO tip_info (latest_finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET latest_finalized_view = ?1",
+            .execute("INSERT INTO tip_info (finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET finalized_view = ?1",
                      [view])?;
         Ok(())
     }
 
-    pub fn set_latest_finalized_view(&self, view: u64) -> Result<()> {
-        self.set_latest_finalized_view_with_db_tx(&self.db.lock().unwrap(), view)
+    pub fn set_finalized_view(&self, view: u64) -> Result<()> {
+        self.set_finalized_view_with_db_tx(&self.db.lock().unwrap(), view)
     }
 
-    pub fn get_latest_finalized_view(&self) -> Result<Option<u64>> {
+    pub fn get_finalized_view(&self) -> Result<Option<u64>> {
         Ok(self
             .db
             .lock()
             .unwrap()
-            .query_row("SELECT latest_finalized_view FROM tip_info", (), |row| {
-                row.get(0)
+            .query_row("SELECT finalized_view FROM tip_info", (), |row| row.get(0))
+            .optional()
+            .unwrap_or(None))
+    }
+
+    /// Write view and timestamp to table if view is larger than current. Return true if write was successful
+    pub fn set_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
+        let res = sqlite_tx
+            .execute("INSERT INTO tip_info (view, view_updated_at) VALUES (:view, :timestamp) ON CONFLICT(_single_row) DO UPDATE SET view = :view, view_updated_at = :timestamp WHERE tip_info.view < :view",
+                    named_params! {
+                        ":view": view,
+                        ":timestamp": SystemTimeSqlable(SystemTime::now())
+                    })?;
+        Ok(res != 0)
+    }
+
+    pub fn set_view(&self, view: u64) -> Result<bool> {
+        self.set_view_with_db_tx(&self.db.lock().unwrap(), view)
+    }
+
+    pub fn get_view(&self) -> Result<Option<u64>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT view FROM tip_info", (), |row| row.get(0))
+            .optional()
+            .unwrap_or(None))
+    }
+
+    pub fn get_view_updated_at(&self) -> Result<Option<SystemTime>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT view_updated_at FROM tip_info", (), |row| {
+                row.get::<_, SystemTimeSqlable>(0)
             })
-            .optional()?)
+            .optional()
+            .unwrap_or(None)
+            .map(Into::<SystemTime>::into))
     }
 
     // Deliberately not named get_highest_block_number() because there used to be one
@@ -903,7 +939,7 @@ impl Db {
     pub fn forget_block_range(&self, blocks: Range<u64>) -> Result<()> {
         self.with_sqlite_tx(move |tx| {
             // Remove everything!
-            tx.execute("DELETE FROM tip_info WHERE latest_finalized_view IN (SELECT view FROM blocks WHERE height >= :low AND height < :high)",
+            tx.execute("DELETE FROM tip_info WHERE finalized_view IN (SELECT view FROM blocks WHERE height >= :low AND height < :high)",
                        named_params! {
                            ":low" : blocks.start,
                            ":high" : blocks.end } )?;
