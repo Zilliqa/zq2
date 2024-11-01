@@ -21,7 +21,7 @@ async fn network_can_die_restart(mut network: Network) {
         .run_until(
             |n| {
                 let index = n.random_index();
-                n.get_node(index).get_finalized_height() >= start_block
+                n.get_node(index).get_finalized_height().unwrap() >= start_block
             },
             100,
         )
@@ -36,7 +36,7 @@ async fn network_can_die_restart(mut network: Network) {
         .run_until(
             |n| {
                 let index = n.random_index();
-                n.get_node(index).get_finalized_height() >= finish_block
+                n.get_node(index).get_finalized_height().unwrap() >= finish_block
             },
             1000,
         )
@@ -46,7 +46,7 @@ async fn network_can_die_restart(mut network: Network) {
 
 fn get_block_number(n: &mut Network) -> u64 {
     let index = n.random_index();
-    n.get_node(index).get_finalized_height()
+    n.get_node(index).get_finalized_height().unwrap()
 }
 
 // test that even with some consensus messages being dropped, the network can still proceed
@@ -63,7 +63,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
         .run_until(
             |n| {
                 let index = n.random_index();
-                n.get_node(index).get_finalized_height() >= start_block
+                n.get_node(index).get_finalized_height().unwrap() >= start_block
             },
             100,
         )
@@ -136,7 +136,7 @@ async fn handle_forking_correctly(mut network: Network) {
         .run_until(
             |n| {
                 let index = n.random_index();
-                n.get_node(index).get_finalized_height() >= start_block
+                n.get_node(index).get_finalized_height().unwrap() >= start_block
             },
             100,
         )
