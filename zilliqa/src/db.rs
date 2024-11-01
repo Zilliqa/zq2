@@ -524,7 +524,8 @@ impl Db {
             .lock()
             .unwrap()
             .query_row("SELECT latest_view FROM tip_info", (), |row| row.get(0))
-            .optional()?)
+            .optional()
+            .unwrap_or(None))
     }
 
     pub fn get_latest_view_timestamp(&self) -> Result<Option<SystemTime>> {
@@ -535,7 +536,8 @@ impl Db {
             .query_row("SELECT latest_view_timestamp FROM tip_info", (), |row| {
                 row.get::<_, SystemTimeSqlable>(0)
             })
-            .optional()?
+            .optional()
+            .unwrap_or(None)
             .map(Into::<SystemTime>::into))
     }
 

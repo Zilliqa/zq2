@@ -865,8 +865,8 @@ impl Node {
         self.consensus.finalized_view()
     }
 
-    pub fn get_current_view(&self) -> u64 {
-        self.consensus.view()
+    pub fn get_current_view(&self) -> Result<u64> {
+        self.consensus.get_view()
     }
 
     pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {
