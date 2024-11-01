@@ -2553,15 +2553,24 @@ impl Consensus {
         time_difference: Duration,
         consensus_timeout: Duration,
     ) -> u64 {
-        let view_difference = (time_difference.as_millis() / consensus_timeout.as_millis())
-            .checked_ilog2()
-            .unwrap_or(0);
+        let normalised_time_difference =
+            (time_difference.as_millis() / consensus_timeout.as_millis()) as u64;
+        let mut views = 0;
+        let mut total = 0;
+        loop {
+            total += 2u64.pow(views);
+            if total > normalised_time_difference {
+                break;
+            }
+            views += 1;
+        }
+
         info!(
             "Based on elapsed clock time of {} seconds since lastest view update, jump ahead {} views",
             time_difference.as_secs(),
-            view_difference
+            views
         );
-        view_difference as u64
+        return views as u64;
     }
 
     pub fn state(&self) -> &State {
@@ -3209,5 +3218,55 @@ impl Consensus {
     ) -> Result<()> {
         self.block_store
             .buffer_lack_of_proposals(from_view, proposals)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_minimum_views_in_time_difference() {
+        assert_eq!(
+            Consensus::minimum_views_in_time_difference(
+                Duration::from_secs(4),
+                Duration::from_secs(5)
+            ),
+            0
+        );
+        assert_eq!(
+            Consensus::minimum_views_in_time_difference(
+                Duration::from_secs(5),
+                Duration::from_secs(5)
+            ),
+            1
+        );
+        assert_eq!(
+            Consensus::minimum_views_in_time_difference(
+                Duration::from_secs(14),
+                Duration::from_secs(5)
+            ),
+            1
+        );
+        assert_eq!(
+            Consensus::minimum_views_in_time_difference(
+                Duration::from_secs(15),
+                Duration::from_secs(5)
+            ),
+            2
+        );
+        assert_eq!(
+            Consensus::minimum_views_in_time_difference(
+                Duration::from_secs(34),
+                Duration::from_secs(5)
+            ),
+            2
+        );
+        assert_eq!(
+            Consensus::minimum_views_in_time_difference(
+                Duration::from_secs(35),
+                Duration::from_secs(5)
+            ),
+            3
+        );
     }
 }
