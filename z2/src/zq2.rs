@@ -43,7 +43,6 @@ impl Runner {
         let mut args = Vec::<&str>::new();
         let cargo_cmd = &[
             "run",
-            "--release",
             "--bin",
             "zilliqa",
             "--",
