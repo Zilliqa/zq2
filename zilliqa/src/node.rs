@@ -929,6 +929,7 @@ impl Node {
             "block_store::handle_block_response - received blocks response of length {}",
             response.proposals.len()
         );
+
         self.consensus
             .receive_block_availability(from, &response.availability)?;
 

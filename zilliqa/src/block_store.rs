@@ -124,6 +124,72 @@ impl BlockCache {
         self.views_expecting_proposals.remove(&view);
     }
 
+    /// Find any view gaps known to exist in the cache and add them to the known view gap
+    /// array so that we don't keep re-requesting them.
+    pub fn find_known_view_gaps(&mut self) {
+        // Iterate through the list of blocks we have. If we are ever in the situation where
+        // the next block has the next number, but not the next view, there must be a gap.
+        // We can safely allow peers to mislead us here, because we will eventually notice
+        // (when the sync point gets to the gap) and remove the gap.
+        let mut last_block: u64 = 0;
+        let mut max_view_for_current_block: u64 = 0;
+
+        // This measures the maximum received view for the next block, based on the intuition that
+        // view gaps happen with forks. When a fork happens, it will lead to two blocks at the same
+        // block number but different view numbers (probably missing a view number in the middle).
+        // we will see that missing view number as a place where we could have a block and attempt to
+        // fetch the block in it - except that there isn't one.
+        // the "max_view_for_next_block" heuristic used here effectively means that if a peer advertises
+        // block N+1 at view V1, we assume that there are no blocks in the views between block N with
+        // view V0 and block N+1 with view V1. This may not be true, but it is efficient and prevents
+        // us rerequesting missing views that aren't really missing - it will also slow down sync
+        // if the peer was lying, because we will not fetch those views ahead, thinking they don't
+        // exist, until we realise that the N+1/V1 block we thought we had was invalid and we in
+        // fact needed the "other" fork, which contains blocks in views we never fetched.
+        // This seems the lesser of the evils at the moment. It may change later!
+        // - rrw 2024-11-01
+        let mut max_view_for_next_block: Option<u64> = None;
+        //trace!("find_known_view_gaps: finding");
+        // Avoids a borrow conflict in the loop...
+        let mut empty_view_ranges = self.empty_view_ranges.clone();
+        for (k, v) in self.cache.iter().chain(self.head_cache.iter()) {
+            let view = self.view_from_key(*k);
+            let block = v.proposal.number();
+            //trace!("find_known_view_gaps: view#{view} blk#{block}");
+            if block <= last_block {
+                // The view at last_block must be at least the view in this entry.
+                max_view_for_current_block = std::cmp::max(max_view_for_current_block, view)
+            } else if block == last_block + 1 {
+                // The view at the next block must be at least the view in this entry
+                // trace!("there is a_view_for_next_block @ blk#{block} with view#{view}");
+                max_view_for_next_block =
+                    Some(max_view_for_next_block.map_or(view, |x| std::cmp::max(x, view)));
+            } else {
+                //trace!("block blk#{last_block}/view#{max_view_for_current_block} .. blk#{0} view#{max_view_for_next_block:?}", last_block+1);
+                // We're at a higher block now.
+                if last_block != 0
+                    && max_view_for_next_block.map_or(false, |x| x > max_view_for_current_block + 1)
+                {
+                    // There's a gap.
+                    //trace!(
+                    //   "find_known_view_gaps: view gap detected in cache from {0}..{1} (excl)",
+                    //   max_view_for_current_block + 1,
+                    //   max_view_for_next_block.unwrap()
+                    //);
+                    empty_view_ranges.with_range(&Range {
+                        start: max_view_for_current_block + 1,
+                        // Safe because the if stmt above would have failed if this had not been ok.
+                        end: max_view_for_next_block.unwrap(),
+                    });
+                }
+                last_block = block;
+                max_view_for_current_block = view;
+                max_view_for_next_block = None;
+            }
+        }
+        self.empty_view_ranges = empty_view_ranges;
+    }
+
     /// Useful for finding gaps in view numbers. Returns the next (view_number, block number)
     /// we know of, >= the given view.
     pub fn get_next_block_number_ge_view(&mut self, view: u64) -> Option<(u64, u64)> {
@@ -375,6 +441,8 @@ impl BlockCache {
         }
         // Zero the fork counter.
         self.fork_counter = 0;
+        // Find known view gaps
+        self.find_known_view_gaps();
         // Now evict the worst entry
         self.trim(highest_confirmed_view);
         Ok(())
@@ -491,6 +559,30 @@ impl PeerInfo {
             pending_requests: HashMap::new(),
             last_request_failed_at: None,
         }
+    }
+
+    /// Clear any pending requests that contain this view.
+    /// Note that this is only legitimate because there is exactly one
+    /// BlockResponse per BlockRequest - otherwise, we would rerequest
+    /// blocks the peer was about to send us and end up in an awful mess.
+    fn clear_pending_requests_with_view(&mut self, view: u64) -> Result<()> {
+        let ids = self
+            .pending_requests
+            .iter()
+            .filter_map(|(k, (_, from, to))| {
+                if view >= *from && view <= *to {
+                    Some(k)
+                } else {
+                    None
+                }
+            })
+            .cloned()
+            .collect::<Vec<RequestId>>();
+        trace!("clear_pending_requests_with_view(): remove pending requests for {ids:?}");
+        ids.iter().for_each(|v| {
+            self.pending_requests.remove(v);
+        });
+        Ok(())
     }
 
     /// Do we have availability, or should we get it again?
@@ -709,11 +801,16 @@ impl BlockStore {
             self.highest_known_view,
         )?;
 
-        let peer = self.peer_info(from);
+        let mut peer = self.peer_info(from);
         if view > peer.availability.highest_known_view {
             trace!(%from, view, "block_store:: new highest known view for peer");
             peer.availability.highest_known_view = view;
         }
+
+        // Ack any pending requests with this proposal
+        // (it's fine that other proposals from this response may still be in the queue -
+        // our accounting for pending proposals will ensure that we don't request them again)
+        peer.clear_pending_requests_with_view(view)?;
 
         Ok(())
     }
@@ -1240,31 +1337,8 @@ impl BlockStore {
             }
             gap_start = gap_end + 1;
         }
-        // Now, if we have the next block in our cache, we know its view number and there therefore must be
-        // a gap between the end here and the start of it - this allows us to infer single-view gaps and
-        // thus avoid repeatedly re-requesting them.
-        if let Some(v) = proposals.last() {
-            if let Some((next_view, next_block)) =
-                self.buffered.get_next_block_number_ge_view(gap_start + 1)
-            {
-                let (last_view, last_block) = (v.view(), v.number());
-                trace!(
-                    "buffer_lack(): last proposal in this response was {last_view}, {last_block}, first in cache is {next_view}, {next_block}"
-                );
-                if next_block == last_block + 1 && next_view > last_view + 1 {
-                    // There's a gap.
-                    trace!(
-                        "buffer_lack(): found a gap between {0} and {1}",
-                        last_view + 1,
-                        next_view
-                    );
-                    self.buffered.no_blocks_at(&Range {
-                        start: last_view + 1,
-                        end: next_view,
-                    });
-                }
-            }
-        }
+
+        // There are various other cases, but find_known_view_gaps() will deal with them.
 
         Ok(())
     }
