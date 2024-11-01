@@ -2570,7 +2570,7 @@ impl Consensus {
             time_difference.as_secs(),
             views
         );
-        return views as u64;
+        views as u64
     }
 
     pub fn state(&self) -> &State {
