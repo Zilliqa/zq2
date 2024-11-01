@@ -282,7 +282,7 @@ impl Consensus {
             }
         };
 
-        let (start_view, high_qc) = {
+        let (start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
                     let high_block = block_store
@@ -296,12 +296,13 @@ impl Consensus {
                         .get_block_by_view(finalized_number)?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
-                    let mut start_view =
-                        std::cmp::max(high_block.view(), finalized_block.view()) + 1;
-                    // If current_view was written then always start from there
-                    if let Some(current_view) = db.get_current_view()? {
-                        start_view = current_view;
-                    }
+                    // If current_view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
+                    let start_view = db
+                        .get_current_view()?
+                        .or_else(|| {
+                            Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
+                        })
+                        .unwrap();
 
                     trace!(
                         "recovery: high_block view {0}, finalized_number {1} , start_view {2}",
@@ -344,12 +345,16 @@ impl Consensus {
                         }
                     }
 
-                    info!("During recovery, starting consensus at view {}", start_view);
-                    (start_view, qc)
+                    info!(
+                        "During recovery, starting consensus at view {}, finalised view {}",
+                        start_view, finalized_number
+                    );
+                    (start_view, finalized_number, qc)
                 }
                 None => {
                     let start_view = 1;
-                    (start_view, QuorumCertificate::genesis())
+                    let finalized_view = 0;
+                    (start_view, finalized_view, QuorumCertificate::genesis())
                 }
             }
         };
@@ -366,7 +371,7 @@ impl Consensus {
             new_views: BTreeMap::new(),
             high_qc,
             view: View::new(start_view),
-            finalized_view: start_view.saturating_sub(1),
+            finalized_view,
             state,
             db,
             receipts_cache: HashMap::new(),

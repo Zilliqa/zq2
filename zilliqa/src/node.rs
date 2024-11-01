@@ -865,6 +865,10 @@ impl Node {
         self.consensus.finalized_view()
     }
 
+    pub fn get_currnet_view(&self) -> u64 {
+        self.consensus.view()
+    }
+
     pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {
         self.consensus.get_transaction_receipt(&tx_hash)
     }

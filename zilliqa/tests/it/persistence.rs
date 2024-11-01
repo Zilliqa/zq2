@@ -78,14 +78,15 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let inner = node.inner.lock().unwrap();
     let last_number = inner.number() - 1;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
-    let _finalized_number = inner.get_finalized_height();
     let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
     let last_block = inner.get_block(last_number).unwrap().unwrap();
     let tx = inner.get_transaction_by_hash(hash).unwrap().unwrap();
-
+    let current_view = inner.get_currnet_view();
+    let finalized_view = inner.get_finalized_height();
     // sanity check
     assert_eq!(tx.hash, hash);
     assert_eq!(block_with_tx.transactions.len(), 1);
+    assert_ne!(current_view, finalized_view);
 
     // drop and re-create the node using the same datadir:
     drop(inner);
@@ -169,6 +170,10 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             .payload(),
         tx.tx.into_transaction().payload()
     );
+
+    // ensure were back on the same view
+    assert_eq!(current_view, inner.get_currnet_view());
+    assert_eq!(finalized_view, inner.get_finalized_height());
 }
 
 #[zilliqa_macros::test(do_checkpoints)]
