@@ -21,7 +21,7 @@ use zilliqa::{
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
-use crate::{compile_contract,deploy_contract, Network, Wallet};
+use crate::{compile_contract, deploy_contract, Network, Wallet};
 
 pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
     let wallet = network.genesis_wallet().await;
