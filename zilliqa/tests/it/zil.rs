@@ -351,7 +351,7 @@ async fn run_create_transaction_api_for_error(
     let mut signature = schnorr::sign(&txn_data, secret_key).to_bytes();
     if bad_signature {
         if let Some(x) = signature.first_mut() {
-            *x += 1;
+            *x = x.wrapping_add(1);
         }
     }
     let mut request = json!({
