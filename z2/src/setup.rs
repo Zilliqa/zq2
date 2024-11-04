@@ -10,7 +10,6 @@ use alloy::{
 };
 use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
-use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use tera::Tera;
@@ -27,9 +26,8 @@ use zilliqa::{
         local_address_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default,
         scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_rpc_limit_default,
-        total_native_token_supply_default, Amount, ConsensusConfig,
+        total_native_token_supply_default, Amount, ConsensusConfig, GenesisDeposit,
     },
-    crypto::NodePublicKey,
     transaction::EvmGas,
 };
 
@@ -46,6 +44,9 @@ const DATADIR_PREFIX: &str = "z2_node_";
 const NETWORK_CONFIG_FILE_NAME: &str = "network.yaml";
 const ZQ2_CONFIG_FILE_NAME: &str = "config.toml";
 const CHAIN_ID: u64 = 700;
+const ONE_MILLION: u128 = 1_000_000u128;
+const ONE_ETH: u128 = ONE_MILLION * ONE_MILLION * ONE_MILLION;
+const ONE_BILLION: u128 = 1_000u128 * ONE_MILLION;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeData {
@@ -396,7 +397,7 @@ impl Setup {
 
     pub async fn generate_standalone_config(&self) -> Result<()> {
         // The genesis deposits.
-        let mut genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)> = Vec::new();
+        let mut genesis_deposits: Vec<GenesisDeposit> = Vec::new();
         for (node, desc) in self.config.shape.nodes.iter() {
             if desc.is_validator {
                 let data = self
@@ -406,39 +407,40 @@ impl Setup {
                     .ok_or(anyhow!("no node data for {node}"))?;
                 // Better have a genesis deposit.
                 let secret_key = SecretKey::from_hex(&data.secret_key)?;
-                genesis_deposits.push((
-                    secret_key.node_public_key(),
-                    secret_key.to_libp2p_keypair().public().to_peer_id(),
-                    GENESIS_DEPOSIT.into(),
-                    data.address,
-                ))
+                genesis_deposits.push(GenesisDeposit {
+                    public_key: secret_key.node_public_key(),
+                    peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
+                    stake: GENESIS_DEPOSIT.into(),
+                    reward_address: data.address,
+                    control_address: data.address,
+                });
             }
         }
 
         let mut genesis_accounts: Vec<(Address, Amount)> = vec![
             (
                 address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
-                5000000000000000000000u128.into(),
+                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
             ),
             // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
             (
                 address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
-                5000000000000000000000u128.into(),
+                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
             ),
             // e53d1c3edaffc7a7bab5418eb836cf75819a82872b4a1a0f1c7fcf5c3e020b89
             (
                 address!("2ce2dbd623b3c277fae4074f0b2605e624510e20"),
-                5000000000000000000000u128.into(),
+                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
             ),
             // d96e9eb5b782a80ea153c937fa83e5948485fbfc8b7e7c069d7b914dbc350aba
             (
                 address!("f0cb24ac66ba7375bf9b9c4fa91e208d9eaabd2e"),
-                5000000000000000000000u128.into(),
+                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
             ),
             // 589417286a3213dceb37f8f89bd164c3505a4cec9200c61f7c6db13a30a71b45
             (
                 address!("cf671756a8238cbeb19bcb4d77fc9091e2fce1a3"),
-                5000000000000000000000u128.into(),
+                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
             ),
         ];
 

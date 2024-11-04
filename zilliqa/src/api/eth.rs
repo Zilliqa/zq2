@@ -178,7 +178,6 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let mut node = node.lock().unwrap();
     let block = node.get_block(block_id)?;
-
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
     let ret = node.call_contract(
@@ -498,7 +497,10 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             Ok(receipt
                 .logs
                 .into_iter()
-                .filter_map(|l| l.into_evm())
+                .map(|log| match log {
+                    Log::Evm(log) => log,
+                    Log::Scilla(log) => log.into_evm(),
+                })
                 .enumerate()
                 .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
         })
@@ -641,8 +643,10 @@ pub(super) fn get_transaction_receipt_inner(
     let logs = receipt
         .logs
         .into_iter()
-        // Filter non-EVM logs out. TODO: Encode Scilla logs and don't filter them.
-        .filter_map(|log| log.into_evm())
+        .map(|log| match log {
+            Log::Evm(log) => log,
+            Log::Scilla(log) => log.into_evm(),
+        })
         .enumerate()
         .map(|(log_index, log)| {
             let log = eth::Log::new(

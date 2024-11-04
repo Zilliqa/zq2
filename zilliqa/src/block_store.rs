@@ -690,9 +690,9 @@ impl BlockStore {
 
     /// This function:
     ///
-    ///     - Looks through the blocks we have
-    ///     - Finds the next blocks it thinks we need
-    ///     - Iterates through our known peers.
+    /// * Looks through the blocks we have
+    /// * Finds the next blocks it thinks we need
+    /// * Iterates through our known peers.
     ///
     /// If we don't have availability for a peer, we will request it by
     /// sending an empty block request.
