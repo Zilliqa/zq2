@@ -103,5 +103,4 @@ Of the currently undocumented APIs, the following are partially implemented:
 
   * `eth_getBlockByHash` (issue #79)
   * `eth_getBlockByNumber` (issue #79)
-  * `eth_syncing`
   * `net_peerCount`
