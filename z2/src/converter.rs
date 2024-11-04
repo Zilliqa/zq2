@@ -319,47 +319,6 @@ pub async fn convert_persistence(
         }
     }
 
-    // Add stake for this validator. For now, we just assume they've always had 64 ZIL staked.
-    // This assumptions will need to change for the actual testnet and mainnet launches, where we cannot invent ZIL
-    // out of thin air (like we do below).
-    let data = contracts::deposit::SET_STAKE.encode_input(&[
-        Token::Bytes(secret_key.node_public_key().as_bytes()),
-        Token::Bytes(
-            secret_key
-                .to_libp2p_keypair()
-                .public()
-                .to_peer_id()
-                .to_bytes(),
-        ),
-        Token::Address(ethabi::Address::from_low_u64_be(1)),
-        Token::Uint((64 * 10u128.pow(18)).into()),
-    ])?;
-    let (
-        ResultAndState {
-            result,
-            state: result_state,
-        },
-        ..,
-    ) = state.apply_transaction_evm(
-        Address::ZERO,
-        Some(contract_addr::DEPOSIT),
-        0,
-        node_config.consensus.eth_block_gas_limit,
-        0,
-        data,
-        None,
-        BlockHeader::default(),
-        inspector::noop(),
-        BaseFeeCheck::Ignore,
-    )?;
-    if !result.is_success() {
-        return Err(anyhow!("setting stake failed: {result:?}"));
-    }
-    state.apply_delta_evm(&result_state)?;
-
-    // Flush any pending changes to db
-    let _ = state.root_hash()?;
-
     if !convert_blocks {
         println!("Accounts converted. Skipping blocks.");
         return Ok(());
@@ -369,7 +328,7 @@ pub async fn convert_persistence(
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();
 
-    let current_block = zq2_db.get_latest_finalized_view()?.unwrap_or(1);
+    let current_block = zq2_db.get_finalized_view()?.unwrap_or(1);
 
     let progress = ProgressBar::new(max_block)
         .with_style(style.clone())
@@ -492,7 +451,7 @@ pub async fn convert_persistence(
         zq2_db.with_sqlite_tx(|sqlite_tx| {
             zq2_db.insert_block_with_db_tx(sqlite_tx, &block)?;
             zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.header.qc)?;
-            zq2_db.set_latest_finalized_view_with_db_tx(sqlite_tx, block.view())?;
+            zq2_db.set_finalized_view_with_db_tx(sqlite_tx, block.view())?;
             trace!("{} block inserted", block.number());
 
             for (hash, transaction) in &transactions {

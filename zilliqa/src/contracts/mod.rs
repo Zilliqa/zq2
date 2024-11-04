@@ -14,12 +14,14 @@ pub mod deposit {
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
     pub static LEADER_AT_VIEW: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("leaderAtView").unwrap().clone());
-    pub static TEMP_REMOVE_STAKER: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("tempRemoveStaker").unwrap().clone());
     pub static DEPOSIT: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("deposit").unwrap().clone());
-    pub static SET_STAKE: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("setStake").unwrap().clone());
+    pub static DEPOSIT_TOPUP: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("depositTopup").unwrap().clone());
+    pub static UNSTAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("unstake").unwrap().clone());
+    pub static CURRENT_EPOCH: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("currentEpoch").unwrap().clone());
     pub static GET_STAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getStake").unwrap().clone());
     pub static GET_REWARD_ADDRESS: Lazy<Function> =
@@ -28,10 +30,10 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("getPeerId").unwrap().clone());
     pub static GET_STAKERS: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
-    pub static TOTAL_STAKE: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("totalStake").unwrap().clone());
     pub static MIN_DEPOSIT: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("_minimumStake").unwrap().clone());
+        Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
+    pub static COMMITTEE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
 }
 
 pub mod shard {
@@ -154,7 +156,7 @@ mod tests {
             },
         };
 
-        let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 26))
+        let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 28))
             .unwrap();
 
         let output = solc.compile_exact(&input).unwrap();
