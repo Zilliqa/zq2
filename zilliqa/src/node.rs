@@ -430,7 +430,7 @@ impl Node {
             BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
             BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
             BlockNumberOrTag::Finalized => {
-                let Some(view) = self.db.get_latest_finalized_view()? else {
+                let Some(view) = self.db.get_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
                 let Some(block) = self.db.get_block_by_view(view)? else {
@@ -861,8 +861,12 @@ impl Node {
         self.db.get_transaction_receipts_in_block(&block_hash)
     }
 
-    pub fn get_finalized_height(&self) -> u64 {
-        self.consensus.finalized_view()
+    pub fn get_finalized_height(&self) -> Result<u64> {
+        self.consensus.get_finalized_view()
+    }
+
+    pub fn get_current_view(&self) -> Result<u64> {
+        self.consensus.get_view()
     }
 
     pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {
