@@ -730,6 +730,8 @@ async fn scilla_precompiles_zq1(mut network: Network) {
 
     let scilla_interop_bridge_addr =
         Address::from_str("0x0123456789012345678901234567890123456788").unwrap();
+
+    // Deploy and change created_at_block to ZQ1 (genesis block has to be changed)
     for test_node in network.nodes.iter_mut() {
         let mut node = test_node.inner.lock().unwrap();
         let new_state_root = {
@@ -779,15 +781,6 @@ async fn scilla_precompiles_zq1(mut network: Network) {
     .await;
     let scilla_contract_address = contract_address.unwrap();
 
-    // let (hash, abi) = deploy_contract(
-    //     "tests/it/contracts/ScillaInterop.sol",
-    //     "ScillaInterop",
-    //     &wallet,
-    //     &mut network,
-    // )
-    // .await;
-    // let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
-
     let key = "0x0123456789012345678901234567890123456789"
         .parse()
         .unwrap();
@@ -807,28 +800,6 @@ async fn scilla_precompiles_zq1(mut network: Network) {
         .data(function.encode_input(input).unwrap())
         .gas(84_000_000);
 
-    // info!("INTEROP ADDRES IS: {:?}", scilla_interop_bridge_addr);
-    // {
-    //     // Send txn with insufficient gas limit for interop call - this should fail (no logs emitted)
-    //     let tx_hash = wallet
-    //         .send_transaction(tx.clone(), None)
-    //         .await
-    //         .unwrap()
-    //         .tx_hash();
-    //     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
-    //     assert_eq!(receipt.logs.len(), 0);
-    // }
-    //
-    // let current_block = wallet.get_block_number().await.unwrap().as_u64();
-    // // Set zq1_interop_gas_rules_before_block to point to some block in the future so that zq1 rules become effective
-    // {
-    //     for node in network.nodes.iter_mut() {
-    //         let mut node = node.inner.lock().unwrap();
-    //         node.consensus
-    //             .state_mut()
-    //             .zq1_interop_gas_rules_before_block = current_block + 100;
-    //     }
-    // }
     // Send txn with sufficient gas per zq1 rules (there should be receipt)
     let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
