@@ -179,7 +179,6 @@ struct GetTxResponseReceipt {
     epoch_num: u64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     transitions: Vec<Transition>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     event_logs: Vec<EventLog>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     errors: BTreeMap<u64, Vec<u64>>,
@@ -198,52 +197,73 @@ impl GetTxResponse {
         let amount = tx.tx.zil_amount();
         let gas_price = tx.tx.gas_price_per_scilla_gas();
         let gas_limit = tx.tx.gas_limit_scilla();
+        // ZQ1 returns keys, signature and data in all caps here so we do the same
         let (version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
-                key.to_encoded_point(true).as_bytes().to_hex(),
-                <[u8; 64]>::from(sig.to_bytes()).to_hex(),
+                key.to_encoded_point(true)
+                    .as_bytes()
+                    .to_hex()
+                    .to_uppercase(),
+                <[u8; 64]>::from(sig.to_bytes()).to_hex().to_uppercase(),
                 (!tx.code.is_empty()).then_some(tx.code),
-                (!tx.data.is_empty()).then_some(tx.data),
+                (!tx.data.is_empty())
+                    .then_some(tx.data)
+                    .map(|x| x.to_uppercase()),
             ),
             SignedTransaction::Legacy { tx, sig } => (
                 ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
                     .to_sec1_bytes()
-                    .to_hex(),
-                sig.as_bytes().to_hex(),
+                    .to_hex()
+                    .to_uppercase(),
+                sig.as_bytes().to_hex().to_uppercase(),
                 tx.to.is_create().then(|| hex::encode(&tx.input)),
-                tx.to.is_call().then(|| hex::encode(&tx.input)),
+                tx.to
+                    .is_call()
+                    .then(|| hex::encode(&tx.input))
+                    .map(|x| x.to_uppercase()),
             ),
             SignedTransaction::Eip2930 { tx, sig } => (
                 ((tx.chain_id as u32) << 16) | 3,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
                     .to_sec1_bytes()
-                    .to_hex(),
-                sig.as_bytes().to_hex(),
+                    .to_hex()
+                    .to_uppercase(),
+                sig.as_bytes().to_hex().to_uppercase(),
                 tx.to.is_create().then(|| hex::encode(&tx.input)),
-                tx.to.is_call().then(|| hex::encode(&tx.input)),
+                tx.to
+                    .is_call()
+                    .then(|| hex::encode(&tx.input))
+                    .map(|x| x.to_uppercase()),
             ),
             SignedTransaction::Eip1559 { tx, sig } => (
                 ((tx.chain_id as u32) << 16) | 4,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
                     .to_sec1_bytes()
-                    .to_hex(),
-                sig.as_bytes().to_hex(),
+                    .to_hex()
+                    .to_uppercase(),
+                sig.as_bytes().to_hex().to_uppercase(),
                 tx.to.is_create().then(|| hex::encode(&tx.input)),
-                tx.to.is_call().then(|| hex::encode(&tx.input)),
+                tx.to
+                    .is_call()
+                    .then(|| hex::encode(&tx.input))
+                    .map(|x| x.to_uppercase()),
             ),
             SignedTransaction::Intershard { tx, .. } => (
                 ((tx.chain_id as u32) << 16) | 20,
                 tx.to_addr.unwrap_or_default(),
-                String::new(),
-                String::new(),
+                String::new().to_uppercase(),
+                String::new().to_uppercase(),
                 tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
-                tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
+                tx.to_addr
+                    .is_some()
+                    .then(|| hex::encode(&tx.payload))
+                    .map(|x| x.to_uppercase()),
             ),
         };
 
