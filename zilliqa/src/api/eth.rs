@@ -644,7 +644,6 @@ pub(super) fn get_transaction_receipt_inner(
     let logs = receipt
         .logs
         .into_iter()
-        // Filter non-EVM logs out. TODO: Encode Scilla logs and don't filter them.
         .map(|log| match log {
             Log::Evm(log) => log,
             Log::Scilla(log) => log.into_evm(),
