@@ -165,7 +165,10 @@ contract Deposit {
 
     modifier onlyControlAddress(bytes calldata blsPubKey) {
         require(blsPubKey.length == 48);
-        require(_stakersMap[blsPubKey].controlAddress == msg.sender, "sender is not the control address");
+        require(
+            _stakersMap[blsPubKey].controlAddress == msg.sender,
+            "sender is not the control address"
+        );
         _;
     }
 
