@@ -27,7 +27,7 @@ use crate::{
     constants::ZIL_CONTRACT_INVOKE_GAS,
     exec::{scilla_call, PendingState, ScillaError, SCILLA_INVOKE_RUNNER},
     inspector::ScillaInspector,
-    state::Code,
+    state::{Code, CreatedAtBlock},
     transaction::{EvmGas, ScillaGas, ZilAmount},
 };
 
@@ -334,18 +334,13 @@ pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>
     let prev_handle = handler.execution.call.clone();
     handler.execution.call = Arc::new(move |ctx, inputs| {
         let _gas_limit = ctx.evm.db.gas_left.remaining();
-        if inputs.caller != Address::ZERO {
-            println!("GAS LEFT IS: {}, addr: {:p}", _gas_limit, &ctx.evm.db);
-        }
         if inputs.bytecode_address != Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53") {
             return prev_handle(ctx, inputs);
         }
 
-        let zq1_interop_gas_rules_before_block = ctx.evm.db.zq1_interop_gas_rules_before_block;
-
         let zq1_gas_rule = {
             let account = ctx.evm.db.load_account(inputs.caller).unwrap();
-            account.account.created_at_block < zq1_interop_gas_rules_before_block
+            matches!(account.account.created_at_block, CreatedAtBlock::ZQ1)
         };
 
         let gas_limit = {
@@ -373,13 +368,8 @@ pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>
 
         let gas = Gas::new(gas_limit);
         println!("GIVEN evm gas to precompile: {}", inputs.gas_limit);
-        let outcome = scilla_call_precompile(
-            &inputs,
-            gas.limit(),
-            &mut ctx.evm.inner,
-            &mut ctx.external,
-            zq1_interop_gas_rules_before_block,
-        );
+        let outcome =
+            scilla_call_precompile(&inputs, gas.limit(), &mut ctx.evm.inner, &mut ctx.external);
 
         let result_gas = {
             if zq1_gas_rule {
@@ -427,7 +417,6 @@ fn scilla_call_precompile(
     gas_limit: u64,
     evmctx: &mut InnerEvmContext<PendingState>,
     inspector: &mut (impl Inspector<PendingState> + ScillaInspector),
-    zq1_interop_gas_rules_before_block: u64,
 ) -> PrecompileResult {
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
@@ -495,10 +484,7 @@ fn scilla_call_precompile(
 
     let message = serde_json::json!({"_tag": transition.name, "params": params });
 
-    let empty_state = PendingState::new(
-        evmctx.db.pre_state.clone(),
-        zq1_interop_gas_rules_before_block,
-    );
+    let empty_state = PendingState::new(evmctx.db.pre_state.clone());
     // Temporarily move the `PendingState` out of `evmctx`, replacing it with an empty state.
     let state = std::mem::replace(&mut evmctx.db, empty_state);
     let scilla = evmctx.db.pre_state.scilla();

@@ -43,7 +43,7 @@ use zilliqa::{
     node::{MessageSender, RequestId},
     schnorr,
     scilla::{storage_key, ParamValue},
-    state::{contract_addr, Account, Code, State},
+    state::{contract_addr, Account, Code, CreatedAtBlock, State},
     time::SystemTime,
     transaction::{
         EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
@@ -306,13 +306,12 @@ pub async fn convert_persistence(
                 _ => (code, EMPTY_ROOT_HASH),
             };
 
-            let created_at_block = 0u64;
             let account = Account {
                 nonce: zq1_account.nonce,
                 balance: zq1_account.balance * 10u128.pow(6),
                 code,
                 storage_root,
-                created_at_block,
+                created_at_block: CreatedAtBlock::ZQ1,
             };
 
             state.save_account(address, account)?;

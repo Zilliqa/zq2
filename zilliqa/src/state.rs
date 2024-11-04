@@ -26,6 +26,7 @@ use crate::{
     node::ChainId,
     scilla::{ParamValue, Scilla, Transition},
     serde_util::vec_param_value,
+    state::CreatedAtBlock::ZQ2,
     transaction::EvmGas,
 };
 
@@ -51,7 +52,6 @@ pub struct State {
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
     pub chain_id: ChainId,
-    pub zq1_interop_gas_rules_before_block: u64,
     pub block_store: Arc<BlockStore>,
 }
 
@@ -70,7 +70,6 @@ impl State {
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
             chain_id: ChainId::new(config.eth_chain_id),
-            zq1_interop_gas_rules_before_block: config.consensus.zq1_interop_gas_rules_before_block,
             block_store,
         }
     }
@@ -211,7 +210,6 @@ impl State {
             gas_price: self.gas_price,
             chain_id: self.chain_id,
             block_store: self.block_store.clone(),
-            zq1_interop_gas_rules_before_block: self.zq1_interop_gas_rules_before_block,
         }
     }
 
@@ -319,14 +317,19 @@ pub mod contract_addr {
     pub const DEPOSIT: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0ZILDEPOSIT");
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum CreatedAtBlock {
+    ZQ1,
+    ZQ2(u64),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub nonce: u64,
     pub balance: u128,
     pub code: Code,
     pub storage_root: B256,
-    /// 0 => zq1, > 0 => zq2
-    pub created_at_block: u64,
+    pub created_at_block: CreatedAtBlock,
 }
 
 impl Default for Account {
@@ -336,7 +339,7 @@ impl Default for Account {
             balance: 0,
             code: Code::default(),
             storage_root: EMPTY_ROOT_HASH,
-            created_at_block: 1,
+            created_at_block: ZQ2(0),
         }
     }
 }

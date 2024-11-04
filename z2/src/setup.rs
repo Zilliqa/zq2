@@ -528,7 +528,6 @@ impl Setup {
                     epochs_per_checkpoint: 24,
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
                     total_native_token_supply: total_native_token_supply_default(),
-                    zq1_interop_gas_rules_before_block: 4_200_220,
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),

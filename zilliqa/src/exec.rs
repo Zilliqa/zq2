@@ -40,7 +40,7 @@ use crate::{
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
     scilla::{self, split_storage_key, storage_key, ParamValue, Scilla},
-    state::{contract_addr, Account, Code, ContractInit, ExternalLibrary, State},
+    state::{contract_addr, Account, Code, ContractInit, CreatedAtBlock, ExternalLibrary, State},
     time::SystemTime,
     transaction::{
         total_scilla_gas_price, EvmGas, EvmLog, Log, ScillaGas, ScillaLog, Transaction, TxZilliqa,
@@ -386,7 +386,7 @@ pub enum BaseFeeCheck {
 impl State {
     /// Used primarily during genesis to set up contracts for chain functionality.
     /// If override_address address is set, forces contract deployment to that addess.
-    pub(crate) fn force_deploy_contract_evm(
+    pub fn force_deploy_contract_evm(
         &mut self,
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
@@ -450,8 +450,7 @@ impl State {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
-        let pending_state =
-            PendingState::new(self.clone(), self.zq1_interop_gas_rules_before_block);
+        let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
             .with_db(pending_state)
             .with_block_env(BlockEnv {
@@ -518,8 +517,7 @@ impl State {
         current_block: BlockHeader,
         inspector: impl ScillaInspector,
     ) -> Result<ScillaResultAndState> {
-        let mut state =
-            PendingState::new(self.try_clone()?, self.zq1_interop_gas_rules_before_block);
+        let mut state = PendingState::new(self.try_clone()?);
 
         let deposit = total_scilla_gas_price(txn.gas_limit, txn.gas_price);
         if let Some(result) = state.deduct_from_account(from_addr, deposit)? {
@@ -664,10 +662,10 @@ impl State {
                 handle(&mut storage, var, value, &mut vec![])?;
             }
 
-            let created_at_block = match account.account.created_at_block {
-                0 => 0,
-                1 => block_number,
-                x => x,
+            let created_at_block = match &account.account.created_at_block {
+                CreatedAtBlock::ZQ2(0) => CreatedAtBlock::ZQ2(block_number),
+                CreatedAtBlock::ZQ2(val) => CreatedAtBlock::ZQ2(*val),
+                other => *other,
             };
 
             let account = Account {
@@ -720,7 +718,7 @@ impl State {
             };
 
             let created_at_block = match account.is_created() {
-                true => block_number,
+                true => CreatedAtBlock::ZQ2(block_number),
                 _ => {
                     let existing_account = self.get_account(address)?;
                     existing_account.created_at_block
@@ -1042,7 +1040,6 @@ pub struct PendingState {
     pub pre_state: State,
     pub new_state: HashMap<Address, PendingAccount>,
     pub gas_left: Gas,
-    pub zq1_interop_gas_rules_before_block: u64,
 }
 
 /// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
@@ -1063,12 +1060,11 @@ fn load_account<'a>(
 }
 
 impl PendingState {
-    pub fn new(state: State, zq1_interop_gas_rules_before_block: u64) -> Self {
+    pub fn new(state: State) -> Self {
         PendingState {
             pre_state: state,
             new_state: HashMap::new(),
             gas_left: Gas::new(0),
-            zq1_interop_gas_rules_before_block,
         }
     }
 

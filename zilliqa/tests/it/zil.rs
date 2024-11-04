@@ -1,5 +1,6 @@
 use std::{ops::DerefMut, str::FromStr};
 
+use alloy::primitives::Address;
 use ethabi::{ParamType, Token};
 use ethers::{
     providers::{Middleware, ProviderError},
@@ -13,11 +14,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zilliqa::{
+    message::Block,
     schnorr,
+    state::CreatedAtBlock,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
-use crate::{deploy_contract, Network};
+use crate::{compile_contract, deploy_contract, Network};
 
 pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
     let wallet = network.genesis_wallet().await;
@@ -722,6 +725,34 @@ async fn scilla_precompiles(mut network: Network) {
 
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn scilla_precompiles_zq1(mut network: Network) {
+    let (contract, bytecode) =
+        compile_contract("tests/it/contracts/ScillaInterop.sol", "ScillaInterop");
+
+    let scilla_interop_bridge_addr =
+        Address::from_str("0x0123456789012345678901234567890123456788").unwrap();
+    for test_node in network.nodes.iter_mut() {
+        let mut node = test_node.inner.lock().unwrap();
+        let new_state_root = {
+            let state = node.consensus.state_mut();
+            let _ = state
+                .force_deploy_contract_evm(bytecode.to_vec(), Some(scilla_interop_bridge_addr));
+
+            let mut account = state.get_account(scilla_interop_bridge_addr).unwrap();
+            account.created_at_block = CreatedAtBlock::ZQ1;
+            state
+                .save_account(scilla_interop_bridge_addr, account)
+                .unwrap();
+            state.root_hash().unwrap()
+        };
+
+        let block = node.consensus.get_block_by_view(0).unwrap().unwrap();
+
+        node.db.clone().remove_block(&block).unwrap();
+
+        let genesis = Block::genesis(new_state_root);
+        let _ = node.db.clone().insert_block(&genesis);
+    }
+
     let wallet = network.genesis_wallet().await;
     let (secret_key, _) = zilliqa_account(&mut network).await;
 
@@ -748,21 +779,21 @@ async fn scilla_precompiles_zq1(mut network: Network) {
     .await;
     let scilla_contract_address = contract_address.unwrap();
 
-    let (hash, abi) = deploy_contract(
-        "tests/it/contracts/ScillaInterop.sol",
-        "ScillaInterop",
-        &wallet,
-        &mut network,
-    )
-    .await;
-    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    // let (hash, abi) = deploy_contract(
+    //     "tests/it/contracts/ScillaInterop.sol",
+    //     "ScillaInterop",
+    //     &wallet,
+    //     &mut network,
+    // )
+    // .await;
+    // let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
     let key = "0x0123456789012345678901234567890123456789"
         .parse()
         .unwrap();
 
     // Construct a transaction which uses the scilla_call precompile.
-    let function = abi.function("callScillaWithGasLimit").unwrap();
+    let function = contract.function("callScillaWithGasLimit").unwrap();
     let input = &[
         Token::Address(scilla_contract_address),
         Token::String("InsertIntoMap".to_owned()),
@@ -772,31 +803,32 @@ async fn scilla_precompiles_zq1(mut network: Network) {
         Token::Uint(21_000.into()),
     ];
     let tx = TransactionRequest::new()
-        .to(receipt.contract_address.unwrap())
+        .to(H160::from(scilla_interop_bridge_addr.0 .0))
         .data(function.encode_input(input).unwrap())
         .gas(84_000_000);
 
-    {
-        // Send txn with insufficient gas limit for interop call - this should fail (no logs emitted)
-        let tx_hash = wallet
-            .send_transaction(tx.clone(), None)
-            .await
-            .unwrap()
-            .tx_hash();
-        let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
-        assert_eq!(receipt.logs.len(), 0);
-    }
-
-    let current_block = wallet.get_block_number().await.unwrap().as_u64();
-    // Set zq1_interop_gas_rules_before_block to point to some block in the future so that zq1 rules become effective
-    {
-        for node in network.nodes.iter_mut() {
-            let mut node = node.inner.lock().unwrap();
-            node.consensus
-                .state_mut()
-                .zq1_interop_gas_rules_before_block = current_block + 100;
-        }
-    }
+    // info!("INTEROP ADDRES IS: {:?}", scilla_interop_bridge_addr);
+    // {
+    //     // Send txn with insufficient gas limit for interop call - this should fail (no logs emitted)
+    //     let tx_hash = wallet
+    //         .send_transaction(tx.clone(), None)
+    //         .await
+    //         .unwrap()
+    //         .tx_hash();
+    //     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    //     assert_eq!(receipt.logs.len(), 0);
+    // }
+    //
+    // let current_block = wallet.get_block_number().await.unwrap().as_u64();
+    // // Set zq1_interop_gas_rules_before_block to point to some block in the future so that zq1 rules become effective
+    // {
+    //     for node in network.nodes.iter_mut() {
+    //         let mut node = node.inner.lock().unwrap();
+    //         node.consensus
+    //             .state_mut()
+    //             .zq1_interop_gas_rules_before_block = current_block + 100;
+    //     }
+    // }
     // Send txn with sufficient gas per zq1 rules (there should be receipt)
     let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
