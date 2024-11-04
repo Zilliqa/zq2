@@ -75,8 +75,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNetworkId", get_network_id),
             ("GetVersion", get_version),
             ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
-            ("GetTxBlock", |p, n| get_tx_block(p, n, false)),
-            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n, true)),
+            ("GetTxBlock", |p, n| get_tx_block(p, n)),
+            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n)),
             ("GetSmartContracts", get_smart_contracts),
             ("GetDSBlock", get_ds_block),
             ("GetDSBlockVerbose", get_ds_block_verbose),
@@ -464,7 +464,12 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
-    Ok((&block).into())
+    let proposer = node
+        .get_proposer_reward_address(block.header)?
+        .expect("No proposer");
+
+    let tx_block = zil::TxBlock::new(&block, proposer);
+    Ok(tx_block)
 }
 
 // GetMinimumGasPrice
@@ -653,11 +658,7 @@ pub const TRANSACTIONS_PER_PAGE: usize = 2500;
 pub const TX_BLOCKS_PER_DS_BLOCK: u64 = 100;
 
 // GetTxBlock
-fn get_tx_block(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-    verbose: bool,
-) -> Result<Option<zil::TxBlock>> {
+fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::TxBlock>> {
     let block_number: String = params.one()?;
     let block_number: u64 = block_number.parse()?;
 
@@ -665,16 +666,10 @@ fn get_tx_block(
     let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
-    let mut block: zil::TxBlock = (&block).into();
-
-    if verbose {
-        block.header.committee_hash = Some(B256::ZERO);
-        block.body.cosig_bitmap_1 = vec![true; 8];
-        block.body.cosig_bitmap_2 = vec![true; 8];
-        let mut scalar = [0; 32];
-        scalar[31] = 1;
-        block.body.cosig_1 = Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap());
-    }
+    let proposer = node
+        .get_proposer_reward_address(block.header)?
+        .expect("No proposer");
+    let block: zil::TxBlock = zil::TxBlock::new(&block, proposer);
 
     Ok(Some(block))
 }

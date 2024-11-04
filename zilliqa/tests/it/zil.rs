@@ -846,6 +846,50 @@ async fn scilla_precompiles(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn get_tx_block(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Ensure there is at least one block in the chain
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    // Request the first block
+    let block_number = "1";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlock", [block_number])
+        .await
+        .expect("Failed to call GetTxBlock API");
+
+    dbg!(&response);
+
+    // Ensure the response is an object
+    assert!(response.is_object(), "Expected response to be an object");
+
+    // Verify the block number
+    let block_num = response["header"]["BlockNum"]
+        .as_str()
+        .expect("Expected BlockNum to be a string")
+        .parse::<u64>()
+        .expect("Failed to parse BlockNum as u64");
+    assert_eq!(
+        block_num,
+        block_number.parse::<u64>().unwrap(),
+        "Block number mismatch"
+    );
+
+    // Verify the DS block number
+    let _ds_block_num = response["header"]["DSBlockNum"]
+        .as_u64()
+        .expect("Failed to parse DsBlockNum as u64");
+
+    let block_hash = response["body"]["BlockHash"]
+        .as_str()
+        .expect("Expected BlockHash to be a string");
+    assert!(!block_hash.is_empty(), "Expected BlockHash to be non-empty");
+}
+
+#[zilliqa_macros::test]
 async fn get_ds_block(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
