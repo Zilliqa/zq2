@@ -1248,10 +1248,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
         Some(varname) => varname,
         None => return get_smart_contract_state(params, node),
     };
-    let requested_indices: HashSet<String> = match seq.optional_next()? {
-        Some(indices) => indices,
-        None => HashSet::new(),
-    };
+    let requested_indices: HashSet<String> = seq.optional_next()?.unwrap_or_default();
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
