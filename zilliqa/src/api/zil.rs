@@ -1244,8 +1244,14 @@ fn getshardingstructure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()>
 fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let mut seq = params.sequence();
     let address: Address = seq.next()?;
-    let requested_varname: String = seq.next()?;
-    let requested_indices: HashSet<String> = seq.next()?;
+    let requested_varname: String = match seq.optional_next()? {
+        Some(varname) => varname,
+        None => return get_smart_contract_state(params, node),
+    };
+    let requested_indices: HashSet<String> = match seq.optional_next()? {
+        Some(indices) => indices,
+        None => HashSet::new(),
+    };
     let node = node.lock().unwrap();
 
     // First get the account and check that its a scilla account
