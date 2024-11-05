@@ -18,7 +18,7 @@ use ethers::{
 };
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
 
@@ -1357,4 +1357,37 @@ async fn test_send_transaction_errors(mut network: Network) {
         assert_eq!(code, -32603);
         assert!(msg.to_lowercase().contains("funds"));
     }
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncingStruct {
+    pub starting_block: u64,
+    pub current_block: u64,
+    pub highest_block: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum SyncingResult {
+    Bool(bool),
+    Struct(SyncingStruct),
+}
+
+#[zilliqa_macros::test]
+async fn test_eth_syncing(mut network: Network) {
+    let client = network.rpc_client(0).await.unwrap();
+    let wallet = network.random_wallet().await;
+    network
+        .run_until_async(
+            || async { wallet.get_block_number().await.unwrap().as_u64() > 4 },
+            50,
+        )
+        .await
+        .unwrap();
+    let result = client
+        .request_optional::<(), SyncingResult>("eth_syncing", None)
+        .await
+        .unwrap();
+    assert_eq!(result, SyncingResult::Bool(false))
 }
