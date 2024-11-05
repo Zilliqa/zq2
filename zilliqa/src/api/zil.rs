@@ -625,7 +625,7 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
     let account = node.get_state(&block)?.get_account(address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
-        return Err(anyhow!("Address not contract address"));
+        return Err(anyhow!("Address does not exist"));
     };
 
     Ok(init_data)

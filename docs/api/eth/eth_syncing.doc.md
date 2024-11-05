@@ -8,7 +8,7 @@ eth,mining
 
 # Description
 
-Returns if the node is mining. zq2 nodes always return `false`.
+Returns if the node is synchronising with the main chain.
 
 # Curl
 
@@ -23,9 +23,21 @@ Returns if the node is mining. zq2 nodes always return `false`.
 
 # Response
 
+If the node is synchronised,
+
 ```
 {"jsonrpc":"2.0","result":false,"id":"1"}
 ```
+
+If the node is not synchronised:
+
+```
+{"jsonrpc":"2.0","id":"1","result":{"startingBlock":0,"currentBlock":24,"highestBlock":1781}}
+```
+
+This tells you that this node started syncing at 0 (we started at
+genesis), has validated and committed block 24 and believes that the
+highest block in the chain is somewhere near block 1781.
 
 # Arguments
 

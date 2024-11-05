@@ -890,6 +890,56 @@ async fn get_tx_block(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn get_smart_contract_init(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    // Deploy a Scilla contract
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+
+    // Test the success case
+    let response: Value = wallet
+        .provider()
+        .request("GetSmartContractInit", [contract_address])
+        .await
+        .expect("Failed to call GetSmartContractInit API");
+
+    let init_data: Vec<zilliqa::scilla::ParamValue> =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    // Assert the data returned from the API is a superset of the init data we passed.
+    let expected_data: Vec<Value> = serde_json::from_str(&data).unwrap();
+    for expected in expected_data {
+        assert!(init_data
+            .iter()
+            .any(|d| serde_json::to_value(d).unwrap() == expected));
+    }
+
+    // Test the error case with an invalid contract address
+    let invalid_contract_address: H160 = "0x0000000000000000000000000000000000000000"
+        .parse()
+        .unwrap();
+    let response: Result<Value, ProviderError> = wallet
+        .provider()
+        .request("GetSmartContractInit", [invalid_contract_address])
+        .await;
+
+    assert!(response.is_err());
+    if let Err(ProviderError::JsonRpcClientError(rpc_error)) = response {
+        if let Some(json_error) = rpc_error.as_error_response() {
+            assert_eq!(json_error.code, -32603); // Invalid params error code
+            assert!(json_error.message.contains("Address does not exist"));
+        } else {
+            panic!("Expected JSON-RPC error response");
+        }
+    } else {
+        panic!("Expected ProviderError::JsonRpcClientError");
+    }
+}
+
+#[zilliqa_macros::test]
 async fn get_ds_block(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
