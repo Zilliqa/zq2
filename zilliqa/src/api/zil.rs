@@ -32,8 +32,8 @@ use super::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
         RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, TXBlockRateResult,
-        TransactionBody, TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
-        TxnsForTxBlockExResponse,
+        TransactionBody, TransactionStatusResponse, TxBlockListing, TxBlockListingResult,
+        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -102,15 +102,18 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNumTxnsDSEpoch", get_num_txns_ds_epoch),
             ("GetTotalCoinSupply", get_total_coin_supply),
             ("GetTotalCoinSupplyAsInt", get_total_coin_supply_as_int),
-            ("GetMinerInfo", getminerinfo),
-            ("GetNodeType", getnodetype),
-            ("GetPrevDifficulty", getprevdifficulty),
-            ("GetPrevDSDifficulty", getprevdsdifficulty),
-            ("GetShardingStructure", getshardingstructure),
-            ("GetSmartContractSubState", getsmartcontractsubstate),
-            ("GetSoftConfirmedTransaction", getsoftconfirmedtransaction),
-            ("GetStateProof", getstateproof),
-            ("GetTransactionStatus", gettransactionstatus),
+            ("GetMinerInfo", get_miner_info),
+            ("GetNodeType", get_node_type),
+            ("GetPrevDifficulty", get_prev_difficulty),
+            ("GetPrevDSDifficulty", get_prev_ds_difficulty),
+            ("GetShardingStructure", get_sharding_structure),
+            ("GetSmartContractSubState", get_smart_contract_substate),
+            (
+                "GetSoftConfirmedTransaction",
+                get_soft_confirmed_transaction
+            ),
+            ("GetStateProof", get_state_proof),
+            ("GetTransactionStatus", get_transaction_status),
         ],
     )
 }
@@ -1215,48 +1218,82 @@ fn get_total_coin_supply_as_int(_params: Params, node: &Arc<Mutex<Node>>) -> Res
 }
 
 // GetMinerInfo
-fn getminerinfo(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo> {
+fn get_miner_info(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo> {
     todo!("API getminerinfo is not implemented yet");
 }
 
 // GetNodeType
-fn getnodetype(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<String> {
+fn get_node_type(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<String> {
     todo!("API getnodetype is not implemented yet");
 }
 
 // GetPrevDifficulty
-fn getprevdifficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
+fn get_prev_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
     todo!("API getprevdifficulty is not implemented yet");
 }
 
 // GetPrevDSDifficulty
-fn getprevdsdifficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
+fn get_prev_ds_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
     todo!("API getprevdsdifficulty is not implemented yet");
 }
 
 // GetShardingStructure
-fn getshardingstructure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+fn get_sharding_structure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("API getshardingstructure is not implemented yet");
 }
 
 // GetSmartContractSubState
-fn getsmartcontractsubstate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+fn get_smart_contract_substate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("API getsmartcontractsubstate is not implemented yet");
 }
 
 // GetSoftConfirmedTransaction
-fn getsoftconfirmedtransaction(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<GetTxResponse> {
+fn get_soft_confirmed_transaction(
+    _params: Params,
+    _node: &Arc<Mutex<Node>>,
+) -> Result<GetTxResponse> {
     todo!("API getsoftconfirmedtransaction is not implemented yet");
 }
 
 // GetStateProof
-fn getstateproof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+fn get_state_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("API getstateproof is not implemented yet");
 }
 
 // GetTransactionStatus
-fn gettransactionstatus(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("API gettransactionstatus is not implemented yet");
+fn get_transaction_status(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TransactionStatusResponse> {
+    let jsonrpc_error_data: Option<String> = None;
+    let hash: B256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+
+    let node = node.lock().unwrap();
+    let transaction =
+        node.get_transaction_by_hash(hash)?
+            .ok_or(jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn Hash not found".to_string(),
+                jsonrpc_error_data.clone(),
+            ))?;
+    let receipt =
+        node.get_transaction_receipt(hash)?
+            .ok_or(jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn receipt not found".to_string(),
+                jsonrpc_error_data.clone(),
+            ))?;
+    let block = node
+        .get_block(receipt.block_hash)?
+        .ok_or(jsonrpsee::types::ErrorObject::owned(
+            RPCErrorCode::RpcDatabaseError as i32,
+            "Block not found".to_string(),
+            jsonrpc_error_data.clone(),
+        ))?;
+
+    let res = TransactionStatusResponse::new(transaction, receipt, block)?;
+    Ok(res)
 }
 
 #[cfg(test)]
