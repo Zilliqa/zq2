@@ -108,7 +108,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetPrevDifficulty", get_prev_difficulty),
             ("GetPrevDSDifficulty", get_prev_ds_difficulty),
             ("GetShardingStructure", get_sharding_structure),
-            ("GetSmartContractSubState", get_smart_contract_substate),
+            ("GetSmartContractSubState", get_smart_contract_sub_state),
             (
                 "GetSoftConfirmedTransaction",
                 get_soft_confirmed_transaction
