@@ -1902,27 +1902,27 @@ async fn combined_total_coin_supply_test(mut network: Network) {
 }
 
 #[allow(dead_code)]
-async fn getminerinfo(mut _network: Network) {
+async fn get_miner_info(mut _network: Network) {
     todo!();
 }
 
 #[allow(dead_code)]
-async fn getnodetype(mut _network: Network) {
+async fn get_node_type(mut _network: Network) {
     todo!();
 }
 
 #[allow(dead_code)]
-async fn getprevdifficulty(mut _network: Network) {
+async fn get_prev_difficulty(mut _network: Network) {
     todo!();
 }
 
 #[allow(dead_code)]
-async fn getprevdsdifficulty(mut _network: Network) {
+async fn get_prev_ds_difficulty(mut _network: Network) {
     todo!();
 }
 
 #[allow(dead_code)]
-async fn getshardingstructure(mut _network: Network) {
+async fn get_sharding_structure(mut _network: Network) {
     todo!();
 }
 
@@ -1963,16 +1963,116 @@ async fn get_smart_contract_sub_state(mut network: Network) {
 }
 
 #[allow(dead_code)]
-async fn getsoftconfirmedtransaction(mut _network: Network) {
+async fn get_soft_confirmed_transaction(mut _network: Network) {
     todo!();
 }
 
 #[allow(dead_code)]
-async fn getstateproof(mut _network: Network) {
+async fn get_state_proof(mut _network: Network) {
     todo!();
 }
 
-#[allow(dead_code)]
-async fn gettransactionstatus(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_transaction_status(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    let (_contract_address_1, returned_transaction_1) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let returned_transaction_1_id = returned_transaction_1["ID"]
+        .as_str()
+        .expect("Failed to get ID from response");
+
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    let (_contract_address_2, returned_transaction_2) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let returned_transaction_2_id = returned_transaction_2["ID"]
+        .as_str()
+        .expect("Failed to get ID from response");
+
+    //    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let response_1: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [returned_transaction_1_id])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_1: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_1).expect("Failed to deserialize response");
+
+    assert_eq!(tx_status_1.id.to_string(), returned_transaction_1_id);
+    assert!(
+        tx_status_1.amount.parse::<f64>().is_ok(),
+        "Invalid amount format"
+    );
+    assert!(
+        tx_status_1.gas_limit.parse::<u64>().is_ok(),
+        "Invalid gasLimit format"
+    );
+    assert!(
+        tx_status_1.gas_price.parse::<u64>().is_ok(),
+        "Invalid gasPrice format"
+    );
+    assert!(
+        tx_status_1.nonce.parse::<u64>().is_ok(),
+        "Invalid nonce format"
+    );
+
+    let response_2: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [returned_transaction_2_id])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_2: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_2).expect("Failed to deserialize response");
+
+    assert_eq!(tx_status_2.id.to_string(), returned_transaction_2_id);
+    assert!(
+        tx_status_2.amount.parse::<f64>().is_ok(),
+        "Invalid amount format"
+    );
+    assert!(
+        tx_status_2.gas_limit.parse::<u64>().is_ok(),
+        "Invalid gasLimit format"
+    );
+    assert!(
+        tx_status_2.gas_price.parse::<u64>().is_ok(),
+        "Invalid gasPrice format"
+    );
+    assert!(
+        tx_status_2.nonce.parse::<u64>().is_ok(),
+        "Invalid nonce format"
+    );
 }
