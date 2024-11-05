@@ -26,6 +26,7 @@ allow = [
     "Unicode-DFS-2016",
     "Unicode-3.0",
     "Unlicense",
+    "Zlib",
 ]
 
 # See https://github.com/briansmith/ring/issues/1487#issuecomment-1102733762.

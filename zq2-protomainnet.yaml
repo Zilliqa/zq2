@@ -1,0 +1,13 @@
+name: zq2-protomainnet
+eth_chain_id: 32770
+project_id: prj-p-zq2-mainnet-sn5n8wfl
+roles:
+- bootstrap
+- validator
+- api
+- apps
+- checkpoint
+versions:
+  zq2: b3ede8fa
+  otterscan: develop
+  spout: main

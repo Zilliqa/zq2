@@ -292,6 +292,7 @@ impl P2pNode {
                             };
                         },
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
+                            message_id: msg_id,
                             message: gossipsub::Message {
                                 source,
                                 data,
@@ -309,7 +310,16 @@ impl P2pNode {
                             };
                             let to = self.peer_id;
                             debug!(%source, %to, %message, "broadcast recieved");
-                            self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
+
+                            // Route broadcasts to speed-up Proposal processing, with faux request-id
+                            match message {
+                                ExternalMessage::Proposal(_) => {
+                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
+                                }
+                                _ => {
+                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
+                                }
+                            }
                         }
 
                         SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source })) => {
@@ -412,13 +422,25 @@ impl P2pNode {
                         None => {
                             debug!(%from, %message, "broadcasting");
                             match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
-                                Ok(_) => {},
+                                // Also route broadcasts to ourselves, with a faux request-id.
+                                Ok(msg_id) => {
+                                    match message {
+                                        ExternalMessage::Proposal(_) => {
+                                            self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
+                                        }
+                                        _ => {
+                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                        }
+                                    }
+                                },
+                                // still publish to self, even if no other peers.
+                                Err(gossipsub::PublishError::InsufficientPeers) => {
+                                    self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                }
                                 Err(e) => {
                                     trace!(%e, "failed to publish message");
                                 }
                             }
-                            // Also broadcast the message to ourselves.
-                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
                         },
                     }
                 },

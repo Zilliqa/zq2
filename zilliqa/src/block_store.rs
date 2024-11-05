@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use alloy::primitives::BlockNumber;
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use lru::LruCache;
@@ -132,8 +133,10 @@ impl BlockCache {
     /// (note that this will be BLOCK_CACHE_HEAD_BUFFER_ENTRIES >> shift cached views, since the
     /// head cache is set associative)
     pub fn min_head_cache_key(&self, highest_known_view: u64) -> u128 {
+        let delta = u128::try_from(constants::BLOCK_CACHE_HEAD_BUFFER_ENTRIES).unwrap();
         let highest_key = u128::from(highest_known_view + 1) << self.shift;
-        highest_key - u128::try_from(constants::BLOCK_CACHE_HEAD_BUFFER_ENTRIES).unwrap()
+        highest_key // prevent underflowing for low views
+            .saturating_sub(delta)
     }
 
     pub fn destructive_proposals_from_parent_hashes(
@@ -429,6 +432,11 @@ pub struct BlockStore {
 
     /// Clock pointer - see request_blocks()
     clock: usize,
+
+    /// Where we last started syncing, so we can report it in get_sync_data()
+    started_syncing_at: BlockNumber,
+    /// Previous sync flag, so we can tell when it changes.
+    last_sync_flag: bool,
 }
 
 /// Data about block availability sent between peers
@@ -594,6 +602,8 @@ impl BlockStore {
             unserviceable_requests: None,
             message_sender,
             clock: 0,
+            started_syncing_at: 0,
+            last_sync_flag: false,
         })
     }
 
@@ -615,6 +625,8 @@ impl BlockStore {
             unserviceable_requests: None,
             message_sender: self.message_sender.clone(),
             clock: 0,
+            started_syncing_at: self.started_syncing_at,
+            last_sync_flag: self.last_sync_flag,
         })
     }
 
@@ -688,9 +700,9 @@ impl BlockStore {
 
     /// This function:
     ///
-    ///     - Looks through the blocks we have
-    ///     - Finds the next blocks it thinks we need
-    ///     - Iterates through our known peers.
+    /// * Looks through the blocks we have
+    /// * Finds the next blocks it thinks we need
+    /// * Iterates through our known peers.
     ///
     /// If we don't have availability for a peer, we will request it by
     /// sending an empty block request.
@@ -715,20 +727,13 @@ impl BlockStore {
         // when we discover that they are ahead of what we think the rest of the chain
         // has committed to - if we don't roll back here, we won't then fetch the canonical
         // versions of those blocks (thinking we already have them).
-        let current_view = self
-            .db
-            .get_canonical_block_by_number(
-                self.db
-                    .get_highest_canonical_block_number()?
-                    .ok_or_else(|| anyhow!("no highest block"))?,
-            )?
-            .ok_or_else(|| anyhow!("missing highest block"))?
-            .view();
-        // Take this opportunity to update the highest confirmed view.
-        self.highest_confirmed_view = current_view;
+        let (syncing, current_block) = self.am_syncing()?;
+        self.highest_confirmed_view = current_block.view();
+        let current_view = current_block.view();
         trace!(
-            "block_store::request_missing_blocks() : set highest_confirmed_view {0} (current = {current_view})",
-            self.highest_confirmed_view
+            "block_store::request_missing_blocks() : set highest_confirmed_view {0} (current = {1})",
+            self.highest_confirmed_view,
+            current_view,
         );
 
         // First off, let's load up the unserviceable requests.
@@ -743,7 +748,6 @@ impl BlockStore {
         // end up evicting the critical part of the chain..
         // @todo I can't think of a more elegant way than this, but it's horrid - we want to exclude views which
         // we might still be voting on.
-        let syncing = (self.highest_known_view + 2) > current_view;
         if syncing {
             trace!(
                 current_view,
@@ -781,6 +785,12 @@ impl BlockStore {
             );
             self.buffered.reset_fork_counter();
         }
+
+        if syncing && !self.last_sync_flag {
+            // We didn't used to be syncing; remember when we started.
+            self.started_syncing_at = current_block.number();
+        }
+        self.last_sync_flag = syncing;
 
         Ok(syncing)
     }
@@ -1229,5 +1239,41 @@ impl BlockStore {
 
     pub fn received_process_proposal(&mut self, view: u64) {
         self.buffered.received_process_proposal(view);
+    }
+
+    /// Returns (am_syncing, current_highest_block)
+    pub fn am_syncing(&self) -> Result<(bool, Block)> {
+        let current_block = self
+            .db
+            .get_canonical_block_by_number(
+                self.db
+                    .get_highest_canonical_block_number()?
+                    .ok_or_else(|| anyhow!("no highest block"))?,
+            )?
+            .ok_or_else(|| anyhow!("missing highest block"))?;
+        Ok((
+            (self.highest_known_view + 2) > current_block.view(),
+            current_block,
+        ))
+    }
+
+    // Returns (starting_block, current_block,  highest_block) if we're syncing,
+    // None if we're not.
+    pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
+        let (flag, highest_block) = self.am_syncing()?;
+        if !flag {
+            Ok(None)
+        } else {
+            // Compute the highest block. We're going to do this by taking the difference between
+
+            // get an estimated block number if no more views were skipped.
+            let skipped_views = highest_block.view() - highest_block.number();
+            let expected_highest_block_number = self.highest_known_view - skipped_views;
+            Ok(Some((
+                self.started_syncing_at,
+                highest_block.number(),
+                expected_highest_block_number,
+            )))
+        }
     }
 }
