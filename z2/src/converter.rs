@@ -206,8 +206,8 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
 
     let contract = Contract::from_str(&code)?;
 
-    Ok(Code::Scilla {
-        code,
+    let scilla_code = Code::Scilla {
+        code: code.clone(),
         init_data: serde_json::from_str(&init_data)?,
         types: BTreeMap::default(),
         transitions: contract
@@ -225,7 +225,32 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
                     .collect(),
             })
             .collect(),
-    })
+    };
+    // Print all fields of Code::Scilla by matching on scilla_code
+    match &scilla_code {
+        Code::Scilla {
+            code,
+            init_data,
+            types,
+            transitions,
+        } => {
+            println!("Code::Scilla parameters:");
+            println!("Address: {:?}", address);
+
+            println!("Code: {}", code);
+            println!("Init Data: {:?}", init_data);
+            println!("Types: {:?}", types);
+            println!("Transitions:");
+            for transition in transitions {
+                println!("  Transition Name: {}", transition.name);
+                for param in &transition.params {
+                    println!("    Param Name: {}, Type: {}", param.name, param.ty);
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(scilla_code)
 }
 
 pub async fn convert_persistence(
