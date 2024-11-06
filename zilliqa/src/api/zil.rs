@@ -1,6 +1,7 @@
 //! The Zilliqa API, as documented at <https://dev.zilliqa.com/api/introduction/api-introduction>.
 
 use std::{
+    collections::HashSet,
     fmt::Display,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -107,7 +108,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetPrevDifficulty", get_prev_difficulty),
             ("GetPrevDSDifficulty", get_prev_ds_difficulty),
             ("GetShardingStructure", get_sharding_structure),
-            ("GetSmartContractSubState", get_smart_contract_substate),
+            ("GetSmartContractSubState", get_smart_contract_sub_state),
             (
                 "GetSoftConfirmedTransaction",
                 get_soft_confirmed_transaction
@@ -527,61 +528,9 @@ fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 // GetSmartContractState
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: ZilAddress = params.one()?;
-    let address: Address = address.into();
-
-    let node = node.lock().unwrap();
-
-    // First get the account and check that its a scilla account
-    let block = node
-        .get_block(BlockId::latest())?
-        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
-
-    let state = node.get_state(&block)?;
-    if !state.has_account(address)? {
-        return Err(anyhow!(
-            "Address does not exist: {}",
-            hex::encode(address.0)
-        ));
-    }
-    let account = state.get_account(address)?;
-
-    let result = json!({
-        "_balance": ZilAmount::from_amount(account.balance).to_string(),
-    });
-    let Value::Object(mut result) = result else {
-        unreachable!()
-    };
-
-    let is_scilla = account.code.scilla_code_and_init_data().is_some();
-    if is_scilla {
-        let limit = node.config.state_rpc_limit;
-
-        let trie = state.get_account_trie(address)?;
-        for (i, (k, v)) in trie.iter().enumerate() {
-            if i >= limit {
-                return Err(anyhow!(
-                    "State of contract returned has size greater than the allowed maximum"
-                ));
-            }
-
-            let (var_name, indices) = split_storage_key(&k)?;
-            let mut var = result.entry(var_name.clone());
-
-            for index in indices {
-                let next = var.or_insert_with(|| Value::Object(Default::default()));
-                let Value::Object(next) = next else {
-                    unreachable!()
-                };
-                let key: String = serde_json::from_slice(&index)?;
-                var = next.entry(key.clone());
-            }
-
-            var.or_insert(serde_json::from_slice(&v)?);
-        }
-    }
-
-    Ok(result.into())
+    let mut seq = params.sequence();
+    let address: Address = seq.next()?;
+    get_smart_contract_state_internal(address, None, None, node)
 }
 
 // GetSmartContractCode
@@ -1242,9 +1191,77 @@ fn get_sharding_structure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<(
     todo!("API getshardingstructure is not implemented yet");
 }
 
+fn get_smart_contract_state_internal(
+    address: Address,
+    requested_varname: Option<String>,
+    requested_indices: Option<HashSet<String>>,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Value> {
+    let node = node.lock().unwrap();
+
+    // First get the account and check that its a scilla account
+    let block = node
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
+
+    let state = node.get_state(&block)?;
+    let account = state.get_account(address)?;
+
+    let result = json!({
+        "_balance": ZilAmount::from_amount(account.balance).to_string(),
+    });
+    let Value::Object(mut result) = result else {
+        unreachable!()
+    };
+
+    let is_scilla = account.code.scilla_code_and_init_data().is_some();
+    if is_scilla {
+        let limit = node.config.state_rpc_limit;
+
+        let trie = state.get_account_trie(address)?;
+        for (i, (k, v)) in trie.iter().enumerate() {
+            if i >= limit {
+                return Err(anyhow!(
+                    "State of contract returned has size greater than the allowed maximum"
+                ));
+            }
+
+            let (var_name, indices) = split_storage_key(&k)?;
+            if let Some(ref x) = requested_varname {
+                if *x != var_name {
+                    continue;
+                }
+            }
+            let mut var = result.entry(var_name.clone());
+
+            for index in indices {
+                if let Some(ref x) = requested_indices {
+                    if !x.contains(&index.to_hex()) {
+                        continue;
+                    }
+                }
+                let next = var.or_insert_with(|| Value::Object(Default::default()));
+                let Value::Object(next) = next else {
+                    unreachable!()
+                };
+                let key: String = serde_json::from_slice(&index)?;
+                var = next.entry(key.clone());
+            }
+
+            var.or_insert(serde_json::from_slice(&v)?);
+        }
+    }
+
+    Ok(result.into())
+}
+
 // GetSmartContractSubState
-fn get_smart_contract_substate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("API getsmartcontractsubstate is not implemented yet");
+fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
+    let mut seq = params.sequence();
+    let address: Address = seq.next()?;
+    let requested_varname: Option<String> = seq.optional_next()?;
+    let requested_indices: Option<HashSet<String>> = seq.optional_next()?;
+    get_smart_contract_state_internal(address, requested_varname, requested_indices, node)
 }
 
 // GetSoftConfirmedTransaction

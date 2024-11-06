@@ -1926,9 +1926,40 @@ async fn get_sharding_structure(mut _network: Network) {
     todo!();
 }
 
-#[allow(dead_code)]
-async fn get_smart_contract_substate(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_smart_contract_sub_state(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let contract_address = "fe001824823b12b58708bf24edd94d8b5e1cfcf7";
+    let variable_name = "admins";
+    let indices: Vec<Value> = vec![];
+
+    let response: Value = wallet
+        .provider()
+        .request(
+            "GetSmartContractSubState",
+            (contract_address, variable_name, indices),
+        )
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+
+    // Verify the balance format
+    assert!(
+        response["_balance"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .is_ok(),
+        "Invalid balance format"
+    );
+
+    // Verify the admins field if it exists
+    if let Some(admins) = response.get("admins") {
+        assert!(
+            admins.is_object(),
+            "Expected admins to be an object, got: {:?}",
+            admins
+        );
+    }
 }
 
 #[allow(dead_code)]
