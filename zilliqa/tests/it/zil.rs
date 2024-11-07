@@ -599,6 +599,11 @@ async fn get_transaction(mut network: Network) {
         .await
         .expect("Failed to call GetTransaction API");
 
+    // Check for keys
+    assert!(response["receipt"]["success"].is_boolean());
+    assert!(response["receipt"]["event_logs"].is_array());
+    assert!(response["receipt"]["transitions"].is_array());
+
     // Check the string formats
     assert!(!response["ID"].as_str().unwrap().starts_with("0x"));
     assert!(!response["toAddr"].as_str().unwrap().starts_with("0x"));

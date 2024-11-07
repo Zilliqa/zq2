@@ -174,13 +174,11 @@ pub struct EventLog {
 
 #[derive(Clone, Serialize, Debug)]
 struct GetTxResponseReceipt {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    accepted: Option<bool>,
+    accepted: bool,
     #[serde(with = "num_as_str")]
     cumulative_gas: ScillaGas,
     #[serde(with = "num_as_str")]
     epoch_num: u64,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     transitions: Vec<Transition>,
     event_logs: Vec<EventLog>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -200,7 +198,6 @@ impl GetTxResponse {
         let amount = tx.tx.zil_amount();
         let gas_price = tx.tx.gas_price_per_scilla_gas();
         let gas_limit = tx.tx.gas_limit_scilla();
-        // ZQ1 returns keys, signature and data in all caps here so we do the same
         let (version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 ((tx.chain_id as u32) << 16) | 1,
@@ -291,7 +288,7 @@ impl GetTxResponse {
                     })
                     .collect(),
                 success: receipt.success,
-                accepted: receipt.accepted,
+                accepted: receipt.accepted.unwrap_or(false),
                 errors: receipt
                     .errors
                     .into_iter()
