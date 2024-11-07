@@ -559,6 +559,63 @@ async fn create_transaction_errors(mut network: Network) {
     }
 }
 
+#[zilliqa_macros::test]
+async fn get_transaction(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    // Create a Zilliqa account and get its secret key and address
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    // Define the recipient address
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    // Send a transaction
+    let (_contract_address, returned_transaction) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    // Get the transaction ID from the returned transaction
+    let transaction_id = returned_transaction["ID"]
+        .as_str()
+        .expect("Failed to get ID from response");
+
+    // Wait for the transaction to be mined
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    // Use the GetTransaction API to retrieve the transaction details
+    let response: Value = wallet
+        .provider()
+        .request("GetTransaction", [transaction_id])
+        .await
+        .expect("Failed to call GetTransaction API");
+
+    // Check the string formats
+    assert!(!response["ID"].as_str().unwrap().starts_with("0x"));
+    assert!(!response["toAddr"].as_str().unwrap().starts_with("0x"));
+    assert!(response["senderPubKey"].as_str().unwrap().starts_with("0x"));
+    assert!(response["signature"].as_str().unwrap().starts_with("0x"));
+
+    // Verify the transaction details
+    assert_eq!(response["ID"].as_str().unwrap(), transaction_id);
+    assert_eq!(response["toAddr"].as_str().unwrap(), hex::encode(to_addr),);
+    assert_eq!(response["amount"].as_str().unwrap(), "200000000000000");
+    assert_eq!(response["gasLimit"].as_str().unwrap(), "50000");
+    assert_eq!(
+        response["senderPubKey"].as_str().unwrap(),
+        format!("0x{}", hex::encode(secret_key.public_key().to_sec1_bytes()))
+    );
+}
+
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
 // once it invokes Scilla. When many tests are run in parallel, this results in "Too many open files" errors.
 #[zilliqa_macros::test(restrict_concurrency)]
