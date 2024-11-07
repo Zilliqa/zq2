@@ -3,6 +3,8 @@ use std::{collections::BTreeMap, sync::Arc};
 use anyhow::{anyhow, Result};
 use cliclack::MultiProgress;
 use colored::Colorize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use tokio::{fs, sync::Semaphore, task};
 
 use crate::{
@@ -10,11 +12,28 @@ use crate::{
     chain::{
         config::NetworkConfig,
         instance::ChainInstance,
-        node::{ChainNode, NodeRole},
+        node::{self, ChainNode, NodeRole},
     },
     secret::Secret,
     validators,
 };
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MachineChainInfo {
+    pub zone: String,
+    pub name: String,
+    pub external_address: String,
+    pub peer_id: String,
+    pub endpoint: String,
+    pub labels: BTreeMap<String, String>,
+}
+
+// Serializable for easy printing.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChainInfo {
+    pub config: NetworkConfig,
+    pub machines: Vec<MachineChainInfo>,
+}
 
 pub async fn new(
     network_name: &str,
@@ -886,4 +905,29 @@ async fn generate_secret(
     progress_bar.stop(format!("{} {}: Secret created", "✔".green(), name));
 
     Ok(())
+}
+
+pub async fn info(config_file: &str) -> Result<ChainInfo> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let instance = ChainInstance::new(config.clone()).await?;
+    let mut info = ChainInfo {
+        config: config.clone(),
+        machines: Vec::new(),
+    };
+    for m in instance.machines().iter() {
+        let private_keys =
+            node::retrieve_secret_by_node_name(&config.name, &config.project_id, &m.name).await?;
+        if let Some(key) = private_keys.first() {
+            let address = EthereumAddress::from_private_key(key)?;
+            info.machines.push(MachineChainInfo {
+                zone: m.zone.to_string(),
+                name: m.name.to_string(),
+                external_address: m.external_address.to_string(),
+                peer_id: address.peer_id,
+                endpoint: format!("/ip4/{0}/udp/3333/quic-v1", m.external_address),
+                labels: m.labels.clone(),
+            })
+        }
+    }
+    Ok(info)
 }

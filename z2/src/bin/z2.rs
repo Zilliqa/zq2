@@ -104,6 +104,8 @@ enum DeployerCommands {
     GeneratePrivateKeys(DeployerGenerateActionsArgs),
     /// Generate the genesis key. --force to replace if already existing
     GenerateGenesisKey(DeployerGenerateGenesisArgs),
+    /// Get info
+    Info(DeployerInfoArgs),
 }
 
 #[derive(Args, Debug)]
@@ -222,6 +224,10 @@ pub struct DeployerGenerateGenesisArgs {
     /// Generate and replace the existing key
     #[clap(long)]
     force: bool,
+}
+
+pub struct DeployerInfoArgs {
+    config_file: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -917,6 +923,14 @@ async fn main() -> Result<()> {
                             "Failed to run deployer generate-reward-wallets command: {}",
                             err
                         )
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Info(ref arg) => {
+                plumbing::run_deployer_info(&arg.config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer info command: {}", err)
                     })?;
                 Ok(())
             }

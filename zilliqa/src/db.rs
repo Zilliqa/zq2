@@ -570,13 +570,14 @@ impl Db {
     }
 
     pub fn get_highest_block_hashes(&self, how_many: usize) -> Result<Vec<Hash>> {
+        // Deliberately don't test for is_canonical - we want to include forks.
         Ok(self
             .db
             .lock()
-           .unwrap()
-           .prepare_cached(
-               "select block_hash from blocks where is_canonical = true order by height desc limit ?1")?
-           .query_map([how_many], |row| row.get(0))?.collect::<Result<Vec<Hash>, _>>()?)
+            .unwrap()
+            .prepare_cached("select block_hash from blocks order by height desc limit ?1")?
+            .query_map([how_many], |row| row.get(0))?
+            .collect::<Result<Vec<Hash>, _>>()?)
     }
 
     pub fn set_high_qc_with_db_tx(

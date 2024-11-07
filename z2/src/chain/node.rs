@@ -111,7 +111,7 @@ impl fmt::Display for NodeRole {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Machine {
     pub project_id: String,
     pub zone: String,
@@ -764,7 +764,7 @@ pub async fn retrieve_secret_by_role(
     .await
 }
 
-async fn retrieve_secret_by_node_name(
+pub async fn retrieve_secret_by_node_name(
     chain_name: &str,
     project_id: &str,
     node_name: &str,

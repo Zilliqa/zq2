@@ -352,6 +352,7 @@ impl P2pNode {
                                 // We failed to send a message to a peer. The likely reason is that we don't know their
                                 // address. Someone else in the network must know it, because we learnt their peer ID.
                                 // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
+                                trace!("OutboundFailure - Issuing Kademlia bootstrap ...");
                                 let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
                             }
 
@@ -367,6 +368,7 @@ impl P2pNode {
                     }
                 },
                 _ = bootstrap.tick() => {
+                    trace!("Bootstrap tick() - Issuing Kademlia bootstrap ...");
                     let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
                 }
                 message = self.local_message_receiver.next() => {

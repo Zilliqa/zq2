@@ -87,6 +87,8 @@ pub struct BlockCache {
     /// to rerequest in order to get the right view (there will only ever be one legitimate view with a given number,
     /// but peers may lie to us about what it is)
     pub views_expecting_proposals: BTreeSet<u64>,
+
+    pub tick: u64,
 }
 
 impl BlockCache {
@@ -100,7 +102,60 @@ impl BlockCache {
             fork_counter: 0,
             max_blocks_in_flight,
             views_expecting_proposals: BTreeSet::new(),
+            tick: 0,
         }
+    }
+
+    // Dump out a graphviz dotfile fragment containing the cache with links.
+    pub fn illustrate(&self, from_db: &Vec<Hash>) -> Result<String> {
+        // Print out the structure of the cache (fairly slowly!).
+        let mut by_hash: HashMap<Hash, HashSet<u128>> = HashMap::new();
+        let mut result = String::new();
+        fn represent_entry(k: u128, v: &BlockCacheEntry) -> String {
+            format!(
+                "v#{0}/b#{1}/k#{2} {3}",
+                v.proposal.view(),
+                v.proposal.number(),
+                k,
+                v.proposal.hash()
+            )
+        }
+
+        for (key, entry) in self.cache.iter().chain(self.head_cache.iter()) {
+            let hash = entry.proposal.hash();
+            by_hash
+                .entry(hash)
+                .or_insert_with(|| HashSet::new())
+                .insert(*key);
+        }
+
+        for (key, entry) in self.cache.iter().chain(self.head_cache.iter()) {
+            // Dump out the node itself.
+            result.push_str(&format!(
+                "c{0}[label=\"{1}\"]\n",
+                key,
+                represent_entry(*key, entry)
+            ));
+            // Now find our parent
+            let parent_hash = entry.proposal.header.qc.block_hash;
+            if let Some(p_values) = by_hash.get(&parent_hash) {
+                for p in p_values.iter() {
+                    result.push_str(&format!("c{0} -> c{1}\n", p, key));
+                }
+            }
+        }
+
+        // now ..
+        for h in from_db.iter() {
+            //result.push_str(&format!("h{0}\n", h));
+            if let Some(v) = self.by_parent_hash.get(h) {
+                for p in v.iter() {
+                    result.push_str(&format!("h{0} -> c{1}\n", h, p));
+                }
+            }
+        }
+        result.push_str("\n");
+        Ok(result)
     }
 
     pub fn key_from_view(&self, peer: &PeerId, view_num: u64) -> u128 {
@@ -229,6 +284,15 @@ impl BlockCache {
         &mut self,
         hashes: &Vec<Hash>,
     ) -> Vec<(PeerId, Proposal)> {
+        {
+            self.tick += 1;
+            let contents = self.illustrate(hashes).unwrap();
+            let to_write = format!("digraph {{\n{0}\n}}", contents);
+            let file_name = format!("/tmp/block_cache_{0:08}.dot", self.tick);
+            trace!("*** Writing cache contents to {file_name}");
+            std::fs::write(file_name, to_write.as_bytes()).unwrap();
+        }
+
         // For each hash, find the list of blocks that have it as the parent.
         let cache_keys = hashes
             .iter()
@@ -272,11 +336,31 @@ impl BlockCache {
     pub fn delete_blocks_up_to(&mut self, block_number: u64) {
         // note that this code embodies the assumption that increasing block number implies
         // increasing view number.
-        self.trim_with_fn(|_, v| -> bool { v.proposal.number() <= block_number });
+        self.trim_with_fn(|_, v| -> bool {
+            if v.proposal.number() <= block_number {
+                trace!(
+                    "[cache] delete cached block with view#{0}/blk#{1}",
+                    v.proposal.view(),
+                    v.proposal.number()
+                );
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    pub fn last_safe_view(&self, highest_confirmed_view: u64) -> u64 {
+        if highest_confirmed_view >= 3 {
+            highest_confirmed_view - 3
+        } else {
+            0
+        }
     }
 
     pub fn trim(&mut self, highest_confirmed_view: u64) {
-        let lowest_ignored_key = self.min_key_for_view(highest_confirmed_view);
+        // -3 for competing forks.
+        let lowest_ignored_key = self.min_key_for_view(self.last_safe_view(highest_confirmed_view));
         debug!(
             "before trim {highest_confirmed_view} cache has {0:?} expecting {3:?} with {1}/{2}",
             self.extant_block_ranges(),
@@ -801,7 +885,7 @@ impl BlockStore {
             self.highest_known_view,
         )?;
 
-        let mut peer = self.peer_info(from);
+        let peer = self.peer_info(from);
         if view > peer.availability.highest_known_view {
             trace!(%from, view, "block_store:: new highest known view for peer");
             peer.availability.highest_known_view = view;
@@ -880,9 +964,12 @@ impl BlockStore {
                 // the responses and we'll end up being unable to reconstruct the chain. Not strictly true, because
                 // the network will hold some blocks for us, but true enough that I think we ought to treat it as
                 // such.
-                let to = cmp::min(
-                    current_view + self.max_blocks_in_flight,
-                    self.highest_known_view,
+                let to = cmp::max(
+                    self.max_blocks_in_flight,
+                    cmp::min(
+                        current_view + self.max_blocks_in_flight,
+                        self.highest_known_view,
+                    ),
                 );
                 trace!("block_store::request_missing_blocks() : requesting blocks {from} to {to}");
                 to_request.with_range(&Range {
@@ -1257,17 +1344,6 @@ impl BlockStore {
             // There would be a few easy optimisations if we could eg. assume that forks were max length
             // 1. As it is, I can't think of a clever way to do this, so...
 
-            // In any case, deleting any cached block that calls itself the next block is
-            // the right thing to do - if it really was the next block, we would not be
-            // executing this branch.
-            if let Some(highest_block_number) = self.db.get_highest_canonical_block_number()? {
-                self.buffered.delete_blocks_up_to(highest_block_number + 1);
-                trace!(
-                    "block_store::obtain_child_block_candidates : deleted cached blocks up to and including {0}",
-                    highest_block_number + 1
-                );
-            }
-
             let fork_elems =
                 self.buffered.inc_fork_counter() * (1 + constants::EXAMINE_BLOCKS_PER_FORK_COUNT);
             let parent_hashes = self.db.get_highest_block_hashes(fork_elems)?;
@@ -1280,7 +1356,27 @@ impl BlockStore {
             if !revised.is_empty() {
                 // Found some!
                 self.buffered.reset_fork_counter();
+            } else {
+                // In any case, deleting any cached block that calls itself the next block is
+                // the right thing to do - if it really was the next block, we would not be
+                // executing this branch.
+                if let Some(highest_block_number) = self.db.get_highest_canonical_block_number()? {
+                    // TR-32: forks are not canonical until the winner is at least two blocks higher
+                    // than the loser. So any chain shorter than highest_block_number - 2 can be disposed
+                    // of.
+                    self.buffered
+                        .delete_blocks_up_to(if highest_block_number >= 3 {
+                            highest_block_number - 3
+                        } else {
+                            0
+                        });
+                    trace!(
+                        "block_store::obtain_child_block_candidates : deleted cached blocks up to and including {0}",
+                        highest_block_number
+                    );
+                }
             }
+
             Ok(revised)
         } else {
             Ok(with_parent_hashes)
