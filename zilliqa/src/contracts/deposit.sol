@@ -163,6 +163,15 @@ contract Deposit {
 
     uint64 public blocksPerEpoch;
 
+    modifier onlyControlAddress(bytes calldata blsPubKey) {
+        require(blsPubKey.length == 48);
+        require(
+            _stakersMap[blsPubKey].controlAddress == msg.sender,
+            "sender is not the control address"
+        );
+        _;
+    }
+
     constructor(
         uint256 _minimumStake,
         uint256 _maximumStakers,
@@ -273,6 +282,10 @@ contract Deposit {
         return committee().stakerKeys;
     }
 
+    function getTotalStake() public view returns (uint256) {
+        return committee().totalStake;
+    }
+
     function getStakersData()
         public
         view
@@ -309,6 +322,30 @@ contract Deposit {
             revert("not staked");
         }
         return _stakersMap[blsPubKey].rewardAddress;
+    }
+
+    function getControlAddress(
+        bytes calldata blsPubKey
+    ) public view returns (address) {
+        require(blsPubKey.length == 48);
+        if (_stakersMap[blsPubKey].controlAddress == address(0)) {
+            revert("not staked");
+        }
+        return _stakersMap[blsPubKey].controlAddress;
+    }
+
+    function setRewardAddress(
+        bytes calldata blsPubKey,
+        address rewardAddress
+    ) public onlyControlAddress(blsPubKey) {
+        _stakersMap[blsPubKey].rewardAddress = rewardAddress;
+    }
+
+    function setControlAddress(
+        bytes calldata blsPubKey,
+        address controlAddress
+    ) public onlyControlAddress(blsPubKey) {
+        _stakersMap[blsPubKey].controlAddress = controlAddress;
     }
 
     function getPeerId(
