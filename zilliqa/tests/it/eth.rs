@@ -339,6 +339,52 @@ async fn get_account_transaction_count(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn eth_get_transaction_receipt(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Deploy a contract to generate a transaction receipt
+    let (hash, _abi) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    // Wait for the transaction to be mined
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Get the transaction receipt
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    // Verify the transaction receipt fields
+    assert_eq!(receipt.transaction_hash, hash);
+    assert!(receipt.block_hash.is_some());
+    assert!(receipt.block_number.is_some());
+    assert_eq!(receipt.from, wallet.address());
+    assert!(receipt.to.is_some());
+    assert!(receipt.cumulative_gas_used > 0.into());
+    assert!(receipt.effective_gas_price.unwrap_or_default() > 0.into());
+    assert!(receipt.gas_used.unwrap_or_default() > 0.into());
+    assert_eq!(receipt.contract_address, Some(receipt.to.unwrap()));
+    assert!(!receipt.logs.is_empty());
+    assert!(receipt.logs_bloom.0.iter().any(|&b| b != 0));
+    assert_eq!(receipt.status.unwrap_or_default(), 1.into());
+}
+
+#[zilliqa_macros::test]
 async fn get_logs(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
