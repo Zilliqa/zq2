@@ -430,6 +430,15 @@ impl QuorumCertificate {
             .with(self.view.to_be_bytes())
             .finalize()
     }
+
+    pub fn size(&self) -> u64 {
+        let mut size = 0;
+        size += self.signature.to_bytes().len() as u64;
+        size += self.cosigned.as_raw_slice().len() as u64;
+        size += self.block_hash.as_bytes().len() as u64;
+        size += std::mem::size_of_val(&self.view) as u64;
+        size
+    }
 }
 
 impl Display for QuorumCertificate {
@@ -714,7 +723,7 @@ impl Block {
         size += std::mem::size_of_val(&self.header.view) as u64;
         size += std::mem::size_of_val(&self.header.number) as u64;
         size += self.header.hash.as_bytes().len() as u64;
-        size += self.header.qc.size() as u64;
+        size += self.header.qc.size();
         size += self.header.signature.to_bytes().len() as u64;
         size += self.header.state_root_hash.as_bytes().len() as u64;
         size += self.header.transactions_root_hash.as_bytes().len() as u64;
@@ -725,7 +734,7 @@ impl Block {
 
         // Size of AggregateQc if present
         if let Some(agg) = &self.agg {
-            size += agg.size() as u64;
+            size += agg.size();
         }
 
         // Size of transactions
