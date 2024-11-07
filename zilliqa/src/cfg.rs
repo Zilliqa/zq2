@@ -139,7 +139,7 @@ pub fn block_request_limit_default() -> usize {
 }
 
 pub fn max_blocks_in_flight_default() -> u64 {
-    1000
+    20
 }
 
 pub fn block_request_batch_size_default() -> u64 {

@@ -761,7 +761,10 @@ impl Consensus {
             if view != proposal_view + 1 {
                 view = proposal_view + 1;
                 self.set_view(view)?;
-                debug!("*** setting view to proposal view... view is now {}", view);
+                debug!(
+                    "*** setting view to proposal view... view is now {} ({:0x})",
+                    view, view
+                );
             }
 
             if let Some(buffered_votes) = self.buffered_votes.remove(&block.hash()) {

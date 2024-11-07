@@ -227,6 +227,13 @@ pub async fn run_deployer_deposit(config_file: &str, node_selection: bool) -> Re
     Ok(())
 }
 
+pub async fn run_deployer_info(config_file: &str) -> Result<()> {
+    println!("🦆 Getting info for {config_file} .. ");
+    let result = deployer::info(config_file).await?;
+    println!("{}", &serde_yaml::to_string(&result)?);
+    Ok(())
+}
+
 pub async fn run_rpc_call(
     method: &str,
     params: &Option<String>,
