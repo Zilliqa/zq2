@@ -239,6 +239,10 @@ impl Node {
         response_channel: ResponseChannel,
     ) -> Result<()> {
         debug!(%from, to = %self.peer_id, %id, %message, "handling request");
+        if !self.director.is_allowed(id, &from)? {
+            debug!("Ignoring request");
+            return Ok(());
+        }
         match message {
             ExternalMessage::Vote(m) => {
                 if let Some((block, transactions)) = self.consensus.vote(*m)? {
@@ -342,12 +346,23 @@ impl Node {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
+        if !self
+            .director
+            .is_allowed(&format!("{:?}", failure.request_id), &failure.peer)?
+        {
+            trace!("Ignoring message failure");
+            return Ok(());
+        }
         self.consensus.report_outgoing_message_failure(failure)?;
         Ok(())
     }
 
     pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
+        if !self.director.is_allowed("Unknown", &from)? {
+            trace!("Ignoring response");
+            return Ok(());
+        }
         match message {
             ExternalMessage::BlockResponse(m) => self.handle_block_response(from, m)?,
             ExternalMessage::Acknowledgement => {}
