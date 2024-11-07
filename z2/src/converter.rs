@@ -89,10 +89,10 @@ fn convert_scilla_state(
         };
 
         // We handle this type of keys differently in zq2
-        if chunks[0].contains("_fields_map_depth")
-            || chunks[0].contains("_version")
-            || chunks[0].contains("_hasmap")
-            || chunks[0].contains("_addr")
+        if chunks[0].as_str() == "_fields_map_depth"
+            || chunks[0].as_str() == "_version"
+            || chunks[0].as_str() == "_hasmap"
+            || chunks[0].as_str() == "_addr"
         {
             continue;
         }
@@ -252,7 +252,6 @@ pub async fn convert_persistence(
     )?;
 
     if convert_accounts {
-        // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
         // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
         let distance_sum: u64 = zq1_db
             .accounts()

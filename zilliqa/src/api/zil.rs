@@ -534,7 +534,8 @@ fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 // GetSmartContractState
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let mut seq = params.sequence();
-    let address: Address = seq.next()?;
+    let address: ZilAddress = seq.next()?;
+    let address: Address = address.into();
     get_smart_contract_state_internal(address, None, None, node)
 }
 
@@ -1232,7 +1233,7 @@ fn get_smart_contract_state_internal(
         unreachable!()
     };
 
-    let is_scilla = account.code.scilla_code_and_init_data().is_some();
+    let is_scilla = account.code.clone().scilla_code_and_init_data().is_some();
     if is_scilla {
         let limit = node.config.state_rpc_limit;
 
@@ -1252,12 +1253,13 @@ fn get_smart_contract_state_internal(
             }
             let mut var = result.entry(var_name.clone());
 
-            for index in indices {
+            for index in indices.clone() {
                 if let Some(ref x) = requested_indices {
                     if !x.contains(&index.to_hex()) {
                         continue;
                     }
                 }
+
                 let next = var.or_insert_with(|| Value::Object(Default::default()));
                 let Value::Object(next) = next else {
                     unreachable!()
@@ -1265,8 +1267,23 @@ fn get_smart_contract_state_internal(
                 let key: String = serde_json::from_slice(&index)?;
                 var = next.entry(key.clone());
             }
+            let code = &account.code;
 
-            var.or_insert(serde_json::from_slice(&v)?);
+            let field_defs = match code {
+                Code::Scilla { types, .. } => types.clone(),
+                _ => unreachable!(),
+            };
+            let (_, depth) = field_defs.get(&var_name).unwrap();
+            let depth = *depth as usize;
+
+            let convert_result = serde_json::from_slice(&v);
+            if depth > 0 && indices.len() < depth {
+                if convert_result.is_err() {
+                    var.or_insert(Value::Object(Default::default()));
+                }
+            } else {
+                var.or_insert(convert_result?);
+            }
         }
     }
 
