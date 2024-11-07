@@ -581,8 +581,17 @@ impl ChainNode {
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
 
-        let private_key = &self.get_private_key().await?;
-        let genesis_key = &self.chain.genesis_wallet_private_key().await?;
+        let private_key = if *role_name == NodeRole::Apps.to_string() {
+            ""
+        } else {
+            &self.get_private_key().await?
+        };
+
+        let genesis_key = if *role_name == NodeRole::Apps.to_string() {
+            &self.chain.genesis_wallet_private_key().await?
+        } else {
+            ""
+        };
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
