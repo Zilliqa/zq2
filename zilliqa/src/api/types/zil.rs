@@ -202,68 +202,48 @@ impl GetTxResponse {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
-                key.to_encoded_point(true)
-                    .as_bytes()
-                    .to_hex()
-                    .to_uppercase(),
-                <[u8; 64]>::from(sig.to_bytes()).to_hex().to_uppercase(),
+                key.to_encoded_point(true).as_bytes().to_hex(),
+                <[u8; 64]>::from(sig.to_bytes()).to_hex(),
                 (!tx.code.is_empty()).then_some(tx.code),
-                (!tx.data.is_empty())
-                    .then_some(tx.data)
-                    .map(|x| x.to_uppercase()),
+                (!tx.data.is_empty()).then_some(tx.data),
             ),
             SignedTransaction::Legacy { tx, sig } => (
                 ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
                     .to_sec1_bytes()
-                    .to_hex()
-                    .to_uppercase(),
-                sig.as_bytes().to_hex().to_uppercase(),
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
                 tx.to.is_create().then(|| hex::encode(&tx.input)),
-                tx.to
-                    .is_call()
-                    .then(|| hex::encode(&tx.input))
-                    .map(|x| x.to_uppercase()),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip2930 { tx, sig } => (
                 ((tx.chain_id as u32) << 16) | 3,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
                     .to_sec1_bytes()
-                    .to_hex()
-                    .to_uppercase(),
-                sig.as_bytes().to_hex().to_uppercase(),
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
                 tx.to.is_create().then(|| hex::encode(&tx.input)),
-                tx.to
-                    .is_call()
-                    .then(|| hex::encode(&tx.input))
-                    .map(|x| x.to_uppercase()),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip1559 { tx, sig } => (
                 ((tx.chain_id as u32) << 16) | 4,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
                     .to_sec1_bytes()
-                    .to_hex()
-                    .to_uppercase(),
-                sig.as_bytes().to_hex().to_uppercase(),
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
                 tx.to.is_create().then(|| hex::encode(&tx.input)),
-                tx.to
-                    .is_call()
-                    .then(|| hex::encode(&tx.input))
-                    .map(|x| x.to_uppercase()),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Intershard { tx, .. } => (
                 ((tx.chain_id as u32) << 16) | 20,
                 tx.to_addr.unwrap_or_default(),
-                String::new().to_uppercase(),
-                String::new().to_uppercase(),
+                String::new(),
+                String::new(),
                 tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
-                tx.to_addr
-                    .is_some()
-                    .then(|| hex::encode(&tx.payload))
-                    .map(|x| x.to_uppercase()),
+                tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
             ),
         };
 
