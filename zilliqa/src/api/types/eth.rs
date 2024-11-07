@@ -101,13 +101,14 @@ pub struct Block {
     pub quorum_certificate: QuorumCertificate,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate_quorum_certificate: Option<AggregateQc>,
+    pub version: u64,
 }
 
 impl Block {
     pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
         Block {
             header: Header::from_header(block.header, miner, block_gas_limit),
-            size: 0,
+            size: block.size(),
             transactions: block
                 .transactions
                 .iter()
@@ -116,6 +117,7 @@ impl Block {
             uncles: vec![],
             quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
+            version: 2, // since we're on ZQ2
         }
     }
 }

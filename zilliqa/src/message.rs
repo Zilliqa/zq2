@@ -461,6 +461,17 @@ impl AggregateQc {
             .with_iter(hashes.iter().map(|hash| hash.as_bytes()))
             .finalize()
     }
+
+    pub fn size(&self) -> u64 {
+        let mut size = 0;
+        size += self.signature.to_bytes().len() as u64;
+        size += self.cosigned.as_raw_slice().len() as u64;
+        size += std::mem::size_of_val(&self.view) as u64;
+        for qc in &self.qcs {
+            size += qc.size();
+        }
+        size
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -695,6 +706,34 @@ impl Block {
     }
     pub fn gas_limit(&self) -> EvmGas {
         self.header.gas_limit
+    }
+    pub fn size(&self) -> u64 {
+        let mut size = 0;
+
+        // Size of BlockHeader
+        size += std::mem::size_of_val(&self.header.view) as u64;
+        size += std::mem::size_of_val(&self.header.number) as u64;
+        size += self.header.hash.as_bytes().len() as u64;
+        size += self.header.qc.size() as u64;
+        size += self.header.signature.to_bytes().len() as u64;
+        size += self.header.state_root_hash.as_bytes().len() as u64;
+        size += self.header.transactions_root_hash.as_bytes().len() as u64;
+        size += self.header.receipts_root_hash.as_bytes().len() as u64;
+        size += std::mem::size_of_val(&self.header.timestamp) as u64;
+        size += std::mem::size_of_val(&self.header.gas_used) as u64;
+        size += std::mem::size_of_val(&self.header.gas_limit) as u64;
+
+        // Size of AggregateQc if present
+        if let Some(agg) = &self.agg {
+            size += agg.size() as u64;
+        }
+
+        // Size of transactions
+        for tx in &self.transactions {
+            size += tx.as_bytes().len() as u64;
+        }
+
+        size
     }
 }
 
