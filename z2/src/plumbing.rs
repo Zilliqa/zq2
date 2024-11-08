@@ -258,6 +258,32 @@ pub async fn run_deployer_restart(config_file: &str, node_selection: bool) -> Re
     Ok(())
 }
 
+pub async fn run_deployer_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
+    println!("🦆 Running generate-genesis-key for {config_file} .. ");
+    deployer::run_generate_genesis_key(config_file, force).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_generate_private_keys(
+    config_file: &str,
+    node_selection: bool,
+    force: bool,
+) -> Result<()> {
+    println!("🦆 Running generate-private-keys for {config_file} .. ");
+    deployer::run_generate_private_keys(config_file, node_selection, force).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_generate_reward_wallets(
+    config_file: &str,
+    node_selection: bool,
+    force: bool,
+) -> Result<()> {
+    println!("🦆 Running generate-reward-wallets for {config_file} .. ");
+    deployer::run_generate_reward_wallets(config_file, node_selection, force).await?;
+    Ok(())
+}
+
 pub async fn print_depends(_base_dir: &str) -> Result<()> {
     for p in Component::all().iter() {
         let req = setup::Setup::describe_component(p).await?;

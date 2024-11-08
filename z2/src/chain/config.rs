@@ -57,4 +57,8 @@ impl NetworkConfig {
         ))?;
         Ok(config)
     }
+
+    pub fn project_id(&self) -> String {
+        self.project_id.clone()
+    }
 }

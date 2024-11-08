@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::{anyhow, Result};
+use cliclack::MultiProgress;
 use colored::Colorize;
 use tokio::{fs, sync::Semaphore, task};
 
@@ -11,6 +12,7 @@ use crate::{
         instance::ChainInstance,
         node::{ChainNode, NodeRole},
     },
+    secret::Secret,
     validators,
 };
 
@@ -339,8 +341,7 @@ pub async fn run_rpc_call(
 
     // Create a list of chain instances
     let mut machines = chain.machines();
-    machines.sort_by_key(|machine| machine.name.to_owned());
-    machines.retain(|m| m.labels.get("role") != Some(&"apps".to_string()));
+    machines.retain(|m| m.labels.get("role") != Some(&NodeRole::Apps.to_string()));
 
     println!("Running RPC call on {} nodes", chain.name());
     println!("🦆 Running the RPC call - Method: '{method}' .. ");
@@ -545,6 +546,7 @@ pub async fn run_reset(config_file: &str, node_selection: bool) -> Result<()> {
         nodes.retain(|n| selection.contains(&n.name()));
         nodes
     } else {
+        chain_nodes.sort_by_key(|node| node.name());
         chain_nodes
     };
 
@@ -608,6 +610,7 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
         nodes.retain(|n| selection.contains(&n.name()));
         nodes
     } else {
+        chain_nodes.sort_by_key(|node| node.name());
         chain_nodes
     };
 
@@ -643,6 +646,242 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
     for failure in failures {
         log::error!("FAILURE: {}", failure);
     }
+
+    Ok(())
+}
+
+pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let project_id = &config.project_id();
+    let chain = ChainInstance::new(config).await?;
+
+    let multi_progress = cliclack::multi_progress("Generating the genesis key".yellow());
+
+    let secret_name = &format!("{}-genesis-key", chain.name());
+    let mut labels = BTreeMap::<String, String>::new();
+    labels.insert("role".to_string(), "genesis".to_owned());
+    labels.insert("zq2-network".to_string(), chain.name());
+    let result = generate_secret(&multi_progress, secret_name, labels, project_id, force).await;
+
+    multi_progress.stop();
+
+    result
+}
+
+pub async fn run_generate_private_keys(
+    config_file: &str,
+    node_selection: bool,
+    force: bool,
+) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config).await?;
+
+    // Create a list of instances
+    let mut machines = chain.machines();
+    machines.retain(|m| m.labels.get("role") != Some(&NodeRole::Apps.to_string()));
+
+    let machine_names = machines.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
+
+    let target_nodes = if node_selection {
+        let mut select = cliclack::multiselect("Select target nodes");
+
+        for name in &machine_names {
+            select = select.item(name.clone(), name, "");
+        }
+
+        let selection = select.interact()?;
+        let mut machines = machines.clone();
+        machines.retain(|m| selection.contains(&m.name));
+        machines
+    } else {
+        machines.sort_by_key(|machine| machine.name.to_owned());
+        machines
+    };
+
+    let semaphore = Arc::new(Semaphore::new(50));
+    let mut futures = vec![];
+
+    let multi_progress = cliclack::multi_progress("Generating the node private keys".yellow());
+
+    for node in target_nodes {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let mp = multi_progress.to_owned();
+        let chain_name = chain.name();
+        let role = node
+            .labels
+            .get("role")
+            .unwrap_or_else(|| panic!("The machine {} has no label role", node.name))
+            .clone();
+        let future = task::spawn(async move {
+            let secret_name = &format!("{}-pk", node.clone().name);
+            let project_id = &node.clone().project_id;
+            let mut labels = BTreeMap::<String, String>::new();
+            labels.insert("is-private-key".to_string(), "true".to_string());
+            labels.insert("role".to_string(), role);
+            labels.insert("zq2-network".to_string(), chain_name);
+            labels.insert("node-name".to_string(), node.clone().name);
+            let result = generate_secret(&mp, secret_name, labels, project_id, force).await;
+            drop(permit); // Release the permit when the task is done
+            (node, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    multi_progress.stop();
+
+    let mut failures = vec![];
+
+    for result in results {
+        if let (machine, Err(err)) = result? {
+            println!("Node {} failed with error: {}", machine.name, err);
+            failures.push(machine.name);
+        }
+    }
+
+    for failure in failures {
+        log::error!("FAILURE: {}", failure);
+    }
+
+    Ok(())
+}
+
+pub async fn run_generate_reward_wallets(
+    config_file: &str,
+    node_selection: bool,
+    force: bool,
+) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config).await?;
+
+    // Create a list of instances
+    let mut machines = chain.machines();
+    machines.retain(|m| m.labels.get("role") == Some(&NodeRole::Validator.to_string()));
+
+    let machine_names = machines.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
+
+    let target_nodes = if node_selection {
+        let mut select = cliclack::multiselect("Select target nodes");
+
+        for name in &machine_names {
+            select = select.item(name.clone(), name, "");
+        }
+
+        let selection = select.interact()?;
+        let mut machines = machines.clone();
+        machines.retain(|m| selection.contains(&m.name));
+        machines
+    } else {
+        machines.sort_by_key(|machine| machine.name.to_owned());
+        machines
+    };
+
+    let semaphore = Arc::new(Semaphore::new(50));
+    let mut futures = vec![];
+
+    let multi_progress = cliclack::multi_progress("Generating the reward wallets".yellow());
+
+    for node in target_nodes {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let mp = multi_progress.to_owned();
+        let chain_name = chain.name();
+        let role = node
+            .labels
+            .get("role")
+            .unwrap_or_else(|| panic!("The machine {} has no label role", node.name))
+            .clone();
+        let future = task::spawn(async move {
+            let secret_name = &format!("{}-wallet-pk", node.clone().name);
+            let project_id = &node.clone().project_id;
+            let mut labels = BTreeMap::<String, String>::new();
+            labels.insert("is-reward-wallet".to_string(), "true".to_string());
+            labels.insert("role".to_string(), role);
+            labels.insert("zq2-network".to_string(), chain_name);
+            labels.insert("node-name".to_string(), node.clone().name);
+            let result = generate_secret(&mp, secret_name, labels, project_id, force).await;
+            drop(permit); // Release the permit when the task is done
+            (node, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    multi_progress.stop();
+
+    let mut failures = vec![];
+
+    for result in results {
+        if let (machine, Err(err)) = result? {
+            println!("Node {} failed with error: {}", machine.name, err);
+            failures.push(machine.name);
+        }
+    }
+
+    for failure in failures {
+        log::error!("FAILURE: {}", failure);
+    }
+
+    Ok(())
+}
+
+async fn generate_secret(
+    multi_progress: &MultiProgress,
+    name: &str,
+    labels: BTreeMap<String, String>,
+    project_id: &str,
+    force: bool,
+) -> Result<()> {
+    let progress_bar = multi_progress.add(cliclack::progress_bar(if force { 4 } else { 3 }));
+    let mut filters = Vec::<String>::new();
+    for (k, v) in labels.clone() {
+        filters.push(format!("labels.{}={}", k, v));
+    }
+    let filters = &filters.join(" AND ");
+
+    // Retrieve existing secret
+    progress_bar.start(format!("{}: Retrieving existing secret", name));
+    let mut secrets = Secret::get_secrets(project_id, filters).await?;
+    if secrets.len() > 1 {
+        return Err(anyhow!(
+            "Error: found multiple secrets with the filter {filters}"
+        ));
+    }
+    progress_bar.inc(1);
+
+    // If force and present delete the old secret before
+    if !secrets.is_empty() && force {
+        progress_bar.start(format!("{}: Deleting existing secret", name));
+        secrets[0].delete().await?;
+        secrets.clear();
+        progress_bar.inc(1);
+    }
+
+    // Create secret if does not exist
+    progress_bar.start(format!("{}: Create secret if does not exist", name));
+    if secrets.is_empty() {
+        let secret = Secret::create(project_id, name, labels).await?;
+        secrets.push(secret);
+    }
+    progress_bar.inc(1);
+
+    // Create a version if does not exist or replace it
+    progress_bar.start(format!(
+        "{}: Creating new secret version if not exist",
+        name
+    ));
+    let secret_value = &Secret::generate_random_secret().await?;
+
+    if let Some(error) = secrets[0].value().await.err() {
+        if error.to_string().contains("has no versions") {
+            secrets[0].add_version(secret_value).await?;
+        }
+    }
+    progress_bar.inc(1);
+
+    // Process completed
+    progress_bar.stop(format!("{} {}: Secret created", "✔".green(), name));
 
     Ok(())
 }
