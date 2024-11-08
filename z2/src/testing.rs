@@ -8,6 +8,7 @@ use jsonrpsee::http_client::HttpClientBuilder;
 use jsonrpsee::rpc_params;
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::{BinaryHeap, HashSet};
+use tokio::process::Command;
 use tokio::time::{self, Duration, Instant};
 use tower_http::trace::TraceLayer;
 
@@ -177,4 +178,51 @@ impl Partition {
         }
         Ok(())
     }
+}
+
+pub async fn dump_graphs(
+    setup: &Setup,
+    file_name: &str,
+    indices: Option<HashSet<u64>>,
+    min_view: u64,
+    max_view: u64,
+) -> Result<()> {
+    // OK. Request dumps ..
+    let indices_to_dump = if let Some(v) = indices {
+        v
+    } else {
+        setup.config.shape.all_nodes()
+    };
+    for idx in &indices_to_dump {
+        let node_fn = format!("{file_name}_{idx:08}");
+        println!("🐑 Dumping graphs for index {idx} to /tmp/{node_fn}.dot");
+        let client = HttpClientBuilder::default().build(setup.get_json_rpc_url_for_node(*idx)?)?;
+        let params = rpc_params![node_fn, format!("{min_view}"), format!("{max_view}")];
+        client
+            .request::<(), ArrayParams>("admin_graphs", params)
+            .await?;
+    }
+    for idx in &indices_to_dump {
+        let node_fn = format!("{file_name}_{idx:08}");
+        println!("🐑 Trying to generate SVG in file:///tmp/{node_fn}.svg");
+        // Yuck, but test code (and I'm out of time)
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c");
+        cmd.arg(format!("dot  /tmp/{node_fn}.dot -Tsvg >/tmp/{node_fn}.svg"));
+        let result = cmd.spawn();
+        if let Ok(mut r) = result {
+            if let Ok(v) = r.wait().await {
+                if !v.success() {
+                    println!("🐧🐧🐧 dot failed.");
+                }
+            } else {
+                println!("🐧🐧🐧 Couldn't run dot");
+            }
+        } else {
+            println!("🐧🐧🐧 Couldn't spawn dot!");
+        }
+    }
+
+    println!("🐐 All done. Open your files in chrome!");
+    Ok(())
 }

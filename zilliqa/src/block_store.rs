@@ -73,6 +73,8 @@ pub struct BlockCache {
     /// The head cache - this caches
     /// An index into the cache by parent hash
     pub by_parent_hash: HashMap<Hash, HashSet<u128>>,
+    /// By hash, because when restarting we need it.
+    pub by_hash: HashMap<Hash, HashSet<u128>>,
     /// Set associative shift
     pub shift: usize,
     /// This is used to count the number of times we've looked for a fork.
@@ -89,6 +91,7 @@ pub struct BlockCache {
     pub views_expecting_proposals: BTreeSet<u64>,
 
     pub tick: u64,
+    pub last_hash: String,
 }
 
 impl BlockCache {
@@ -98,11 +101,13 @@ impl BlockCache {
             head_cache: BTreeMap::new(),
             empty_view_ranges: RangeMap::new(),
             by_parent_hash: HashMap::new(),
+            by_hash: HashMap::new(),
             shift: 8 - constants::BLOCK_CACHE_LOG2_WAYS,
             fork_counter: 0,
             max_blocks_in_flight,
             views_expecting_proposals: BTreeSet::new(),
             tick: 0,
+            last_hash: "".to_string(),
         }
     }
 
@@ -177,6 +182,30 @@ impl BlockCache {
 
     pub fn received_process_proposal(&mut self, view: u64) {
         self.views_expecting_proposals.remove(&view);
+    }
+
+    /// There is no way to work out which of the blocks that purport to be
+    /// the block with hash H we actually want, so return any one and
+    /// if this is a lie, we'll soon find out.
+    /// cloning proposals is slow, so we'll take the first here.
+    pub fn first_proposal_by_hash(&self, hash: &Hash) -> Result<Option<Proposal>> {
+        // Frustratingly, there appears to be no flat_map().
+        Ok(self
+            .by_hash
+            .get(hash)
+            .map(|entry_set: &HashSet<u128>| {
+                entry_set
+                    .iter()
+                    .take(1)
+                    .filter_map(|entry_key| {
+                        self.cache
+                            .get(entry_key)
+                            .or(self.head_cache.get(entry_key))
+                            .map(|entry| entry.proposal.clone())
+                    })
+                    .last()
+            })
+            .flatten())
     }
 
     /// Find any view gaps known to exist in the cache and add them to the known view gap
@@ -284,14 +313,26 @@ impl BlockCache {
         &mut self,
         hashes: &Vec<Hash>,
     ) -> Vec<(PeerId, Proposal)> {
-        {
-            self.tick += 1;
-            let contents = self.illustrate(hashes).unwrap();
-            let to_write = format!("digraph {{\n{0}\n}}", contents);
-            let file_name = format!("/tmp/block_cache_{0:08}.dot", self.tick);
-            trace!("*** Writing cache contents to {file_name}");
-            std::fs::write(file_name, to_write.as_bytes()).unwrap();
-        }
+        // {
+        //     use sha2::Digest;
+        //     let contents = self.illustrate(hashes).unwrap();
+        //     let mut hasher = sha3::Sha3_256::new();
+        //     hasher.update(contents.as_bytes());
+        //     let result = hex::encode(hasher.finalize());
+        //     if result == self.last_hash {
+        //         trace!(
+        //             "*** Cache contents are same as last (tick = {}, hashed = {result})",
+        //             self.tick
+        //         );
+        //     } else {
+        //         self.tick += 1;
+        //         self.last_hash = result;
+        //         let to_write = format!("digraph {{\n{0}\n}}", contents);
+        //         let file_name = format!("/tmp/block_cache_{0:08}.dot", self.tick);
+        //         trace!("*** Writing cache contents to {file_name}");
+        //         std::fs::write(file_name, to_write.as_bytes()).unwrap();
+        //     }
+        // }
 
         // For each hash, find the list of blocks that have it as the parent.
         let cache_keys = hashes
@@ -387,7 +428,7 @@ impl BlockCache {
     /// any selector function which is not monotonic in key will not work properly.
     fn trim_with_fn<F: Fn(&u128, &BlockCacheEntry) -> bool>(&mut self, selector: F) {
         // We've deleted or replaced this key with this parent hash; remove it from the index.
-        fn unlink_parent_hash(cache: &mut HashMap<Hash, HashSet<u128>>, key: &u128, hash: &Hash) {
+        fn unlink_hash(cache: &mut HashMap<Hash, HashSet<u128>>, key: &u128, hash: &Hash) {
             let mut do_remove = false;
             if let Some(val) = cache.get_mut(hash) {
                 val.remove(key);
@@ -411,7 +452,8 @@ impl BlockCache {
                 if selector(k, v) {
                     // Kill it!
                     if let Some((k, v)) = cache_ptr.pop_first() {
-                        unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
+                        unlink_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
+                        unlink_hash(&mut self.by_hash, &k, &v.proposal.hash());
                     };
                 } else {
                     let view_number = u64::try_from(*k >> shift).unwrap();
@@ -446,7 +488,8 @@ impl BlockCache {
         }
         while self.cache.len() > cache_size {
             if let Some((k, v)) = self.cache.pop_last() {
-                unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
+                unlink_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
+                unlink_hash(&mut self.by_hash, &k, &v.proposal.hash());
             }
         }
         // Both caches are now at most the "right" number of entries long.
@@ -472,24 +515,24 @@ impl BlockCache {
         fn insert_with_replacement(
             into: &mut BTreeMap<u128, BlockCacheEntry>,
             by_parent_hash: &mut HashMap<Hash, HashSet<u128>>,
+            by_hash: &mut HashMap<Hash, HashSet<u128>>,
             from: &PeerId,
             parent_hash: &Hash,
             key: u128,
             value: Proposal,
         ) {
+            let hash = value.hash();
             into.insert(key, BlockCacheEntry::new(*parent_hash, *from, value))
                 .map(|entry| {
                     by_parent_hash
                         .get_mut(&entry.parent_hash)
                         .map(|x| x.remove(&key))
                 });
-            if let Some(v) = by_parent_hash.get_mut(parent_hash) {
-                v.insert(key);
-            } else {
-                let mut new_set = HashSet::new();
-                new_set.insert(key);
-                by_parent_hash.insert(*parent_hash, new_set);
-            }
+            by_parent_hash
+                .entry(*parent_hash)
+                .or_insert(HashSet::new())
+                .insert(key);
+            by_hash.entry(hash).or_insert(HashSet::new()).insert(key);
         }
 
         if proposal.header.view <= highest_confirmed_view {
@@ -502,6 +545,7 @@ impl BlockCache {
             insert_with_replacement(
                 &mut self.head_cache,
                 &mut self.by_parent_hash,
+                &mut self.by_hash,
                 from,
                 parent_hash,
                 key,
@@ -517,6 +561,7 @@ impl BlockCache {
             insert_with_replacement(
                 &mut self.cache,
                 &mut self.by_parent_hash,
+                &mut self.by_hash,
                 from,
                 parent_hash,
                 key,
@@ -1254,6 +1299,13 @@ impl BlockStore {
         self.get_block(hash)
     }
 
+    pub fn get_cached_block_by_hash(&self, hash: &Hash) -> Result<Option<Block>> {
+        Ok(self
+            .buffered
+            .first_proposal_by_hash(hash)?
+            .map(|x| x.into_parts().0))
+    }
+
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
         self.db.get_highest_canonical_block_number()
     }
@@ -1499,5 +1551,9 @@ impl BlockStore {
                 expected_highest_block_number,
             )))
         }
+    }
+
+    pub fn illustrate(&self, from_db: &Vec<Hash>) -> Result<String> {
+        self.buffered.illustrate(from_db)
     }
 }

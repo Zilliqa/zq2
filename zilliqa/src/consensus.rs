@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
     fmt::Display,
+    ops::Range,
     sync::Arc,
     time::Duration,
 };
@@ -3218,6 +3219,52 @@ impl Consensus {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.block_store.report_outgoing_message_failure(failure)
+    }
+
+    pub fn dump_graphs(&mut self, file_name: &str, min_view: u64, max_view: u64) -> Result<()> {
+        let hashes = if max_view == 0 {
+            if min_view == 0 {
+                // the last 256 hashes.
+                self.db.get_highest_block_hashes(256)?
+            } else {
+                // from min_view to latest.
+                let latest = self.db.get_highest_block_view()?;
+                self.db.get_hashes_for_views(Range {
+                    start: min_view,
+                    end: latest + 1,
+                })?
+            }
+        } else {
+            // An actual range..
+            self.db.get_hashes_for_views(Range {
+                start: min_view,
+                end: max_view + 1,
+            })?
+        };
+        let cache_contents = if max_view == 0 {
+            self.block_store.illustrate(&hashes)?
+        } else {
+            "".to_string()
+        };
+        // Now illustrate the hashes in recent.
+        let mut recent_blocks = String::new();
+        for blk_hash in hashes {
+            // @todo could be (much) more efficient.
+            let blk = self
+                .get_block(&blk_hash)?
+                .ok_or(anyhow!("No block for hash {0}", blk_hash))?;
+            let parent_hash = blk.parent_hash();
+            recent_blocks.push_str(&format!(
+                "h{0}[label=\"v#{1}/b#{2} {0}\"]\n",
+                blk.hash(),
+                blk.view(),
+                blk.number()
+            ));
+            recent_blocks.push_str(&format!("h{0} -> h{1}\n", parent_hash, blk.hash()));
+        }
+        let to_write = format!("digraph {{\n{0}\n{1}\n}}", cache_contents, recent_blocks);
+        std::fs::write(file_name, to_write.as_bytes())?;
+        Ok(())
     }
 
     pub fn tick(&mut self) -> Result<()> {
