@@ -17,7 +17,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
         node,
         [
             ("admin_generateCheckpoint", checkpoint),
-            ("admin_whitelist", whitelist)
+            ("admin_whitelist", whitelist),
+            ("admin_graphs", graphs)
         ]
     )
 }
@@ -62,5 +63,25 @@ fn whitelist(params: Params, node: &Arc<Mutex<Node>>) -> Result<()> {
     } else {
         Some(the_list)
     })?;
+    Ok(())
+}
+
+fn graphs(params: Params<'_>, node: &Arc<Mutex<Node>>) -> Result<()> {
+    let mut params = params.sequence();
+    // Make safe.
+    let filename = params
+        .next::<String>()
+        .unwrap()
+        .chars()
+        .filter(|x| *x != '.' && *x != '/')
+        .collect::<String>();
+    let min_view = params.next::<String>()?.parse::<u64>()?;
+    let max_view = params.next::<String>()?.parse::<u64>()?;
+
+    let full_path = format!("/tmp/{filename}.dot");
+    node.lock()
+        .unwrap()
+        .consensus
+        .dump_graphs(&full_path, min_view, max_view)?;
     Ok(())
 }

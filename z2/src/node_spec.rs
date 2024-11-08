@@ -72,6 +72,10 @@ impl Composition {
         Ok(Self { nodes })
     }
 
+    pub fn all_nodes(&self) -> HashSet<u64> {
+        self.nodes.keys().cloned().collect::<HashSet<u64>>()
+    }
+
     pub fn single_node(is_validator: bool) -> Self {
         let mut nodes = HashMap::new();
         nodes.insert(0, NodeDesc { is_validator });

@@ -15,7 +15,7 @@ use zilliqa::crypto::SecretKey;
 use crate::{
     chain,
     chain::node::NodeRole,
-    kpi,
+    kpi, node_spec,
     node_spec::{Composition, NodeSpec},
     testing, utils, validators,
 };
@@ -487,12 +487,33 @@ pub async fn test(
         return Err(anyhow!("No test name specified"));
     }
     let cmd = &rest[0];
-    if cmd == "partition" {
-        // The rest of the args are partition sets.
-        let part = testing::Partition::from_args(&rest[1..], &setup_obj)?;
-        part.run_with(&mut setup_obj).await?;
-    } else {
-        return Err(anyhow!(format!("No test type {0}", cmd)));
+    match cmd.as_str() {
+        "partition" => {
+            // The rest of the args are partition sets.
+            let part = testing::Partition::from_args(&rest[1..], &setup_obj)?;
+            part.run_with(&mut setup_obj).await?;
+            Ok(())
+        }
+        "graphs" => {
+            // Get a range and request graphs
+            let file_name = rest
+                .get(1)
+                .ok_or(anyhow!("You must provide a base filename"))?;
+            let (min_view, max_view) = if let Some(v) = rest.get(2) {
+                utils::parse_range(v)?
+            } else {
+                // Meaning the last 128 please.
+                (128, 0)
+            };
+            let indices = if let Some(v) = rest.get(3) {
+                Some(node_spec::indices_from_string(v)?)
+            } else {
+                None
+            };
+
+            testing::dump_graphs(&setup_obj, file_name, indices, min_view, max_view).await?;
+            Ok(())
+        }
+        _ => Err(anyhow!(format!("No test type {0}", cmd))),
     }
-    Ok(())
 }
