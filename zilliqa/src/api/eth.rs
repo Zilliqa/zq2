@@ -1,6 +1,9 @@
 //! The Ethereum API, as documented at <https://ethereum.org/en/developers/docs/apis/json-rpc>.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    str::FromStr,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use alloy::{
     consensus::{TxEip1559, TxEip2930, TxLegacy},
@@ -228,9 +231,21 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
-    let address: Address = params.next()?;
+    let address: String = params.next()?;
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
+
+    // Support for bech32(zil) addresses in eth_getBalance
+    let address: Address = match bech32::decode(&address) {
+        Ok((hrp, data)) => {
+            if hrp.as_str() == "zil" {
+                (&data[..]).try_into()?
+            } else {
+                return Err(anyhow!("Invalid HRP, expected 'zil'"));
+            }
+        }
+        _ => Address::from_str(&address)?,
+    };
 
     let node = node.lock().unwrap();
     let block = node.get_block(block_id)?;
