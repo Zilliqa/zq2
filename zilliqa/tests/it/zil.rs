@@ -2,6 +2,7 @@ use std::{ops::DerefMut, str::FromStr};
 
 use alloy::primitives::Address;
 use anyhow::Result;
+use bech32::{Bech32, Hrp};
 use ethabi::{ParamType, Token};
 use ethers::{
     providers::{Middleware, ProviderError},
@@ -490,6 +491,41 @@ async fn create_transaction(mut network: Network) {
         .await
         .unwrap();
     assert_eq!(response["balance"].as_str().unwrap(), "200000000000000");
+}
+
+#[zilliqa_macros::test]
+async fn get_balance_via_eth_api(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let encoded_bech32 =
+        bech32::encode::<Bech32>(Hrp::parse("zil").unwrap(), to_addr.as_bytes()).unwrap();
+
+    let response: Value = wallet
+        .provider()
+        .request("eth_getBalance", [encoded_bech32, "latest".to_string()])
+        .await
+        .unwrap();
+
+    let stripped_str = response.as_str().unwrap().strip_prefix("0x").unwrap();
+    let returned = u128::from_str_radix(stripped_str, 16).unwrap();
+    assert_eq!(returned, 200u128 * 10u128.pow(18));
 }
 
 #[zilliqa_macros::test]
