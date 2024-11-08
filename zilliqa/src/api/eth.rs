@@ -704,7 +704,6 @@ pub(super) fn get_transaction_receipt_inner(
         v,
         r,
         s,
-        root: block.header.receipts_root_hash.into(),
     };
 
     Ok(Some(receipt))

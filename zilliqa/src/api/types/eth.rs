@@ -339,8 +339,6 @@ pub struct TransactionReceipt {
     pub r: U256,
     #[serde(serialize_with = "hex")]
     pub s: U256,
-    #[serde(serialize_with = "hex")]
-    pub root: B256,
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
