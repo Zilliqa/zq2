@@ -5,7 +5,6 @@
 locals {
   labels       = merge(var.labels, { "zq2-network" = var.chain_name })
   network_name = element(split("/", data.google_compute_subnetwork.default.network), length(split("/", data.google_compute_subnetwork.default.network)) - 1)
-  genesis_key  = google_secret_manager_secret_version.genesis_key_version.secret_data
 
   google_load_balancer_ip_ranges = [
     "130.211.0.0/22",
