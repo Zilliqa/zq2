@@ -108,7 +108,7 @@ impl Block {
     pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
         Block {
             header: Header::from_header(block.header, miner, block_gas_limit),
-            size: block.size(),
+            size: block.size() as u64,
             transactions: block
                 .transactions
                 .iter()

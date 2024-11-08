@@ -431,13 +431,11 @@ impl QuorumCertificate {
             .finalize()
     }
 
-    pub fn size(&self) -> u64 {
-        let mut size = 0;
-        size += self.signature.to_bytes().len() as u64;
-        size += self.cosigned.as_raw_slice().len() as u64;
-        size += self.block_hash.as_bytes().len() as u64;
-        size += std::mem::size_of_val(&self.view) as u64;
-        size
+    pub fn size(&self) -> usize {
+        self.signature.to_bytes().len()
+            + self.cosigned.as_raw_slice().len()
+            + self.block_hash.as_bytes().len()
+            + std::mem::size_of_val(&self.view)
     }
 }
 
@@ -471,11 +469,11 @@ impl AggregateQc {
             .finalize()
     }
 
-    pub fn size(&self) -> u64 {
+    pub fn size(&self) -> usize {
         let mut size = 0;
-        size += self.signature.to_bytes().len() as u64;
-        size += self.cosigned.as_raw_slice().len() as u64;
-        size += std::mem::size_of_val(&self.view) as u64;
+        size += self.signature.to_bytes().len();
+        size += self.cosigned.as_raw_slice().len();
+        size += std::mem::size_of_val(&self.view);
         for qc in &self.qcs {
             size += qc.size();
         }
@@ -531,6 +529,20 @@ impl BlockHeader {
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
         }
+    }
+
+    pub fn size(&self) -> usize {
+        std::mem::size_of_val(&self.view)
+            + std::mem::size_of_val(&self.number)
+            + self.hash.as_bytes().len()
+            + self.qc.size()
+            + self.signature.to_bytes().len()
+            + self.state_root_hash.as_bytes().len()
+            + self.transactions_root_hash.as_bytes().len()
+            + self.receipts_root_hash.as_bytes().len()
+            + std::mem::size_of_val(&self.timestamp)
+            + std::mem::size_of_val(&self.gas_used)
+            + std::mem::size_of_val(&self.gas_limit)
     }
 }
 
@@ -716,21 +728,11 @@ impl Block {
     pub fn gas_limit(&self) -> EvmGas {
         self.header.gas_limit
     }
-    pub fn size(&self) -> u64 {
+    pub fn size(&self) -> usize {
         let mut size = 0;
 
         // Size of BlockHeader
-        size += std::mem::size_of_val(&self.header.view) as u64;
-        size += std::mem::size_of_val(&self.header.number) as u64;
-        size += self.header.hash.as_bytes().len() as u64;
-        size += self.header.qc.size();
-        size += self.header.signature.to_bytes().len() as u64;
-        size += self.header.state_root_hash.as_bytes().len() as u64;
-        size += self.header.transactions_root_hash.as_bytes().len() as u64;
-        size += self.header.receipts_root_hash.as_bytes().len() as u64;
-        size += std::mem::size_of_val(&self.header.timestamp) as u64;
-        size += std::mem::size_of_val(&self.header.gas_used) as u64;
-        size += std::mem::size_of_val(&self.header.gas_limit) as u64;
+        size += self.header.size();
 
         // Size of AggregateQc if present
         if let Some(agg) = &self.agg {
@@ -739,7 +741,7 @@ impl Block {
 
         // Size of transactions
         for tx in &self.transactions {
-            size += tx.as_bytes().len() as u64;
+            size += tx.as_bytes().len();
         }
 
         size
