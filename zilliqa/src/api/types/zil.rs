@@ -198,7 +198,7 @@ impl GetTxResponse {
         let amount = tx.zil_amount();
         let gas_price = tx.gas_price_per_scilla_gas();
         let gas_limit = tx.gas_limit_scilla();
-        // Some of these are returned as all caps in ZQ1, but that should be fine 
+        // Some of these are returned as all caps in ZQ1, but that should be fine
         let (version, to_addr, sender_pub_key, signature, code, data) = match tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 ((tx.chain_id as u32) << 16) | 1,
