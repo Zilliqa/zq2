@@ -1924,6 +1924,17 @@ impl Consensus {
             .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
     }
 
+    pub fn get_raw_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
+        let Some(tx) = self.db.get_transaction(&hash)? else {
+            return if let Some(from_pool) = self.transaction_pool.get_transaction(hash).cloned() {
+                Ok(Some(from_pool.tx))
+            } else {
+                Ok(None)
+            };
+        };
+        Ok(Some(tx))
+    }
+
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
         let Some(block_hash) = self.db.get_block_hash_reverse_index(hash)? else {
             return Ok(None);
