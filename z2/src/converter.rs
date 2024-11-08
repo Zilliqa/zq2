@@ -364,10 +364,10 @@ pub async fn convert_persistence(
         let mut transactions = Vec::new();
         let mut receipts = Vec::new();
 
-        let block = zq1::TxBlock::from_proto(block)?;
+        let zq1_block = zq1::TxBlock::from_proto(block)?;
         // TODO: Retain ZQ1 block hash, so we can return it in APIs.
 
-        let txn_hashes: Vec<_> = block
+        let txn_hashes: Vec<_> = zq1_block
             .mb_infos
             .iter()
             .filter_map(|mbi| {
@@ -386,7 +386,7 @@ pub async fn convert_persistence(
             secret_key,
             parent_hash,
             secret_key.node_public_key(),
-            block.block_num - 1,
+            zq1_block.block_num - 1,
         );
 
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -431,21 +431,21 @@ pub async fn convert_persistence(
             &[vote.signature()],
             bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
             parent_hash,
-            block.block_num - 1,
+            zq1_block.block_num - 1,
         );
         let block = Block::from_qc(
             secret_key,
-            block.block_num,
-            block.block_num,
+            zq1_block.block_num,
+            zq1_block.block_num,
             qc,
             None,
             state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             txn_hashes.iter().map(|h| Hash(h.0)).collect(),
-            SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
-            ScillaGas(block.gas_used).into(),
-            ScillaGas(block.gas_limit).into(),
+            SystemTime::UNIX_EPOCH + Duration::from_micros(zq1_block.timestamp),
+            ScillaGas(zq1_block.gas_used).into(),
+            ScillaGas(zq1_block.gas_limit).into(),
         );
 
         // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
@@ -453,10 +453,14 @@ pub async fn convert_persistence(
             receipt.block_hash = block.hash();
         }
 
-        parent_hash = block.hash();
+        parent_hash = zq1_block.block_hash.into();
 
         zq2_db.with_sqlite_tx(|sqlite_tx| {
-            zq2_db.insert_block_with_db_tx(sqlite_tx, &block)?;
+            zq2_db.insert_block_with_hash_with_db_tx(
+                sqlite_tx,
+                zq1_block.block_hash.into(),
+                &block,
+            )?;
             zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.header.qc)?;
             zq2_db.set_finalized_view_with_db_tx(sqlite_tx, block.view())?;
             trace!("{} block inserted", block.number());
