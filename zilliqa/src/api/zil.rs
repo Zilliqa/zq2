@@ -399,7 +399,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
     let tx = node
         .lock()
         .unwrap()
-        .get_transaction_by_hash(hash)?
+        .get_raw_transaction_by_hash(hash)?
         .ok_or_else(|| {
             ErrorObject::owned(
                 RPCErrorCode::RpcDatabaseError as i32,
@@ -424,7 +424,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
         .get_block(receipt.block_hash)?
         .ok_or_else(|| anyhow!("block does not exist"))?;
 
-    GetTxResponse::new(tx, receipt, block.number())
+    GetTxResponse::new(hash, tx, receipt, block.number())
 }
 
 // GetBalance
@@ -931,16 +931,16 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
     let mut transactions = Vec::with_capacity(block.transactions.len());
     for hash in &block.transactions {
         let tx = node
-            .get_transaction_by_hash(*hash)?
+            .get_raw_transaction_by_hash(*hash)?
             .ok_or(anyhow!("Transaction hash missing"))?;
-        let nonce = tx.tx.nonce().unwrap_or_default();
-        let amount = tx.tx.zil_amount();
-        let gas_price = tx.tx.gas_price_per_scilla_gas();
-        let gas_limit = tx.tx.gas_limit_scilla();
+        let nonce = tx.nonce().unwrap_or_default();
+        let amount = tx.zil_amount();
+        let gas_price = tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.gas_limit_scilla();
         let receipt = node
             .get_transaction_receipt(*hash)?
             .ok_or(anyhow!("Transaction receipt missing"))?;
-        let (version, to_addr, sender_pub_key, signature, _code, _data) = match tx.tx {
+        let (version, to_addr, sender_pub_key, signature, _code, _data) = match tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
@@ -989,7 +989,7 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
             ),
         };
         let body = TransactionBody {
-            id: tx.hash.to_string(),
+            id: hash.to_string(),
             amount: amount.to_string(),
             gas_limit: gas_limit.to_string(),
             gas_price: gas_price.to_string(),
@@ -1283,7 +1283,7 @@ fn get_transaction_status(
 
     let node = node.lock().unwrap();
     let transaction =
-        node.get_transaction_by_hash(hash)?
+        node.get_raw_transaction_by_hash(hash)?
             .ok_or(jsonrpsee::types::ErrorObject::owned(
                 RPCErrorCode::RpcDatabaseError as i32,
                 "Txn Hash not found".to_string(),
