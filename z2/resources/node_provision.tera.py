@@ -31,9 +31,9 @@ def query_metadata_key(key: str) -> str:
 ZQ2_IMAGE="{{ docker_image }}"
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
 SPOUT_IMAGE="{{ spout_image }}"
-SECRET_KEY=base64.b64decode(query_metadata_key("secret_key")).decode('utf-8')
+SECRET_KEY="{{ secret_key }}"
+GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL=base64.b64decode(query_metadata_key("persistence_url")).decode('utf-8')
-GENESIS_KEY=base64.b64decode(query_metadata_key("genesis_key")).decode('utf-8')
 SUBDOMAIN=base64.b64decode(query_metadata_key("subdomain")).decode('utf-8')
 
 VERSIONS={
