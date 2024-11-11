@@ -979,6 +979,7 @@ impl Consensus {
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        let now = std::time::Instant::now();
         let block_hash = vote.block_hash;
         let block_view = vote.view;
         let current_view = self.get_view()?;
@@ -995,6 +996,8 @@ impl Consensus {
         // words, a malicious node which is not part of the consensus committee may send us a vote and this check will
         // still pass. We later validate that the owner of `vote.public_key` is a valid voter.
         vote.verify()?;
+        debug!("VOTE_VERIFY {:?}", now.elapsed());
+        let now = std::time::Instant::now();
 
         // Retrieve the actual block this vote is for.
         let Some(block) = self.get_block(&block_hash)? else {
@@ -1008,6 +1011,7 @@ impl Consensus {
                 .push(vote);
             return Ok(None);
         };
+        debug!("VOTE_SUPERMAJORITY_1 {:?}", now.elapsed());
 
         // if we are not the leader of the round in which the vote counts
         // The vote is in the happy path (?) - so the view is block view + 1
@@ -1019,6 +1023,7 @@ impl Consensus {
             );
             return Ok(None);
         }
+        debug!("VOTE_SUPERMAJORITY_2 {:?}", now.elapsed());
 
         let executed_block = BlockHeader {
             number: block.header.number + 1,
@@ -1029,6 +1034,7 @@ impl Consensus {
             .state
             .at_root(block.state_root_hash().into())
             .get_stakers(executed_block)?;
+        debug!("VOTE_SUPERMAJORITY_3 {:?}", now.elapsed());
 
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
@@ -1039,6 +1045,7 @@ impl Consensus {
             warn!("Skipping vote outside of committee");
             return Ok(None);
         };
+        debug!("VOTE_SUPERMAJORITY_4 {:?}", now.elapsed());
 
         let (mut signatures, mut cosigned, mut cosigned_weight, mut supermajority_reached) =
             self.votes.get(&block_hash).cloned().unwrap_or_else(|| {
@@ -1050,6 +1057,7 @@ impl Consensus {
                 )
             });
 
+        debug!("VOTE_SUPERMAJORITY_5 {:?}", now.elapsed());
         if supermajority_reached {
             trace!(
                 "(vote) supermajority already reached in this round {}",
@@ -1057,6 +1065,7 @@ impl Consensus {
             );
             return Ok(None);
         }
+        let now = std::time::Instant::now();
 
         // if the vote is new, store it
         if !cosigned[index] {
@@ -1067,10 +1076,13 @@ impl Consensus {
             let Some(weight) = self.state.get_stake(vote.public_key, executed_block)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
+            debug!("VOTE_PROPOSE_1 {:?}", now.elapsed());
+
             cosigned_weight += weight.get();
 
             let total_weight = self.total_weight(&committee, executed_block);
             supermajority_reached = cosigned_weight * 3 > total_weight * 2;
+            debug!("VOTE_PROPOSE_2 {:?}", now.elapsed());
 
             trace!(
                 cosigned_weight,
@@ -1089,6 +1101,8 @@ impl Consensus {
                     supermajority_reached,
                 ),
             );
+            debug!("VOTE_PROPOSE_3 {:?}", now.elapsed());
+
             // if we are already in the round in which the vote counts and have reached supermajority
             if supermajority_reached {
                 // We propose new block immediately if there's something in mempool or it's the first view
@@ -1106,12 +1120,15 @@ impl Consensus {
                 block_hash,
                 (signatures, cosigned, cosigned_weight, supermajority_reached),
             );
+            debug!("VOTE_PROPOSE_4 {:?}", now.elapsed());
         }
 
         // Either way assemble early proposal now if it doesnt already exist
         if self.transaction_pool.has_txn_ready() {
             self.early_proposal_assemble_at(None)?;
         }
+
+        debug!("VOTE_PROPOSE_N {:?}", now.elapsed());
 
         Ok(None)
     }
