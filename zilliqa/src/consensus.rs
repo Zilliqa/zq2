@@ -3255,7 +3255,7 @@ impl Consensus {
                 .ok_or(anyhow!("No block for hash {0}", blk_hash))?;
             let parent_hash = blk.parent_hash();
             recent_blocks.push_str(&format!(
-                "h{0}[label=\"v#{1}/b#{2} {0}\"]\n",
+                "h{0}[label=\"Bv#{1}/b#{2} {0}\"]\n",
                 blk.hash(),
                 blk.view(),
                 blk.number()
