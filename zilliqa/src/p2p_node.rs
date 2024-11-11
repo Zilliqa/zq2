@@ -9,17 +9,20 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use cfg_if::cfg_if;
+use core::ops::BitAnd;
 use libp2p::{
     autonat,
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
     kad::{self, store::MemoryStore},
-    mdns,
+    //    mdns,
     multiaddr::{Multiaddr, Protocol},
     request_response::{self, OutboundFailure, ProtocolSupport},
     swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
-    PeerId, StreamProtocol, Swarm,
+    PeerId,
+    StreamProtocol,
+    Swarm,
 };
 use tokio::{
     select,
@@ -46,8 +49,9 @@ type DirectMessage = (u64, ExternalMessage);
 struct Behaviour {
     request_response: request_response::cbor::Behaviour<DirectMessage, ExternalMessage>,
     gossipsub: gossipsub::Behaviour,
-    mdns: mdns::tokio::Behaviour,
-    autonat: libp2p::autonat::Behaviour,
+    // mdns: mdns::tokio::Behaviour,
+    autonat_client: autonat::v2::client::Behaviour,
+    autonat_server: autonat::v2::server::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
 }
@@ -119,8 +123,12 @@ impl P2pNode {
                             .map_err(|e| anyhow!(e))?,
                     )
                     .map_err(|e| anyhow!(e))?,
-                    mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
-                    autonat: autonat::Behaviour::new(peer_id, Default::default()),
+                    // mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
+                    autonat_client: autonat::v2::client::Behaviour::new(
+                        rand::rngs::OsRng,
+                        autonat::v2::client::Config::default(),
+                    ),
+                    autonat_server: autonat::v2::server::Behaviour::new(rand::rngs::OsRng),
                     identify: identify::Behaviour::new(identify::Config::new(
                         "/ipfs/id/1.0.0".to_owned(),
                         key_pair.public(),
@@ -206,19 +214,22 @@ impl P2pNode {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        self.swarm.listen_on(
-            Multiaddr::empty()
-                .with(Protocol::Ip4(std::net::Ipv4Addr::UNSPECIFIED))
-                .with(Protocol::Udp(self.config.p2p_port))
-                .with(Protocol::QuicV1),
-        )?;
+        let listen_addr = Multiaddr::empty()
+            .with(Protocol::Ip4(std::net::Ipv4Addr::UNSPECIFIED))
+            .with(Protocol::Udp(self.config.p2p_port))
+            .with(Protocol::QuicV1);
+        info!(
+            "Listening on {listen_addr} for p2p port {0}",
+            self.config.p2p_port
+        );
+        self.swarm.listen_on(listen_addr)?;
 
-        if let Some(bootstrap_address) = &self.config.bootstrap_address {
-            self.swarm
-                .behaviour_mut()
-                .autonat
-                .add_server(bootstrap_address.0, Some(bootstrap_address.1.clone()));
-        }
+        // if let Some(bootstrap_address) = &self.config.bootstrap_address {
+        //     self.swarm.listen_on(
+        //         .behaviour_mut()
+        //         .autonat
+        //         .add_server(bootstrap_address.0, Some(bootstrap_address.1.clone()));
+        // }
 
         if let Some(external_address) = &self.config.external_address {
             self.swarm.add_external_address(external_address.clone());
@@ -251,23 +262,35 @@ impl P2pNode {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                            for (peer_id, addr) in list {
-                                info!(%peer_id, %addr, "discovered peer via mDNS");
-                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
-                                self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                            }
-                        }
-                        SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                            for (peer_id, addr) in list {
-                                self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
-                            }
-                        }
+                        // SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
+                        //     for (peer_id, addr) in list {
+                        //         info!(%peer_id, %addr, "discovered peer via mDNS");
+                        //         self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                        //         self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                        //     }
+                        // }
+                        // SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
+                        //     for (peer_id, addr) in list {
+                        //         self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
+                        //     }
+                        // }
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { listen_addrs, .. }, peer_id, .. })) => {
+                            info!("Received an identify()");
                             for addr in listen_addrs {
                                 // If the node is advertising a non-global address, ignore it.
                                 let is_non_global = addr.iter().any(|p| match p {
-                                    Protocol::Ip4(addr) => addr.is_loopback() || addr.is_private(),
+                                    Protocol::Ip4(addr) => {
+                                        if let Some((net, mask)) = self.config.listening_subnet {
+                                            let left = net.bitand(mask);
+                                            let right = addr.bitand(mask);
+                                            info!("Left = {left} right={right}");
+                                            if left == right {
+                                                info!("{addr:?} is in the listening subnet - passing");
+                                                return false;
+                                            }
+                                        }
+                                        addr.is_loopback() || addr.is_private()
+                                    },
                                     Protocol::Ip6(addr) => addr.is_loopback(),
                                     _ => false,
                                 });
@@ -275,22 +298,34 @@ impl P2pNode {
                                     continue;
                                 }
 
+                                info!("Adding peer {peer_id:?} with {addr:?}");
                                 self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
                             }
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::Autonat(libp2p::autonat::Event::StatusChanged{old, new})) => {
-                            info!("Autonat status changed from {:?} to {:?}", old, new);
-                            match new {
-                                autonat::NatStatus::Public(_) => (), // Autonat will add this automatically
-                                autonat::NatStatus::Private => {
-                                    let external_addresses: Vec<_> = self.swarm.external_addresses().cloned().collect();
-                                    for addr in external_addresses {
-                                        self.swarm.remove_external_address(&addr);
-                                    }
-                                },
-                                autonat::NatStatus::Unknown => (),
-                            };
+                        SwarmEvent::Behaviour(BehaviourEvent::AutonatClient(autonat::v2::client::Event {
+                            server, tested_addr, bytes_sent, result: Ok(()) })) => {
+                            info!("Tested {tested_addr} with {server}. Sent {bytes_sent} bytes for verification. All OK");
                         },
+                        SwarmEvent::Behaviour(BehaviourEvent::AutonatClient(autonat::v2::client::Event {
+                            server, tested_addr, bytes_sent, result: Err(e) })) => {
+                            info!("Tested {tested_addr} with {server}. Sent {bytes_sent} for verification and failed with {e:?}");
+                        },
+                        SwarmEvent::ExternalAddrConfirmed { address } => {
+                            info!("External address confirmed: {address}");
+                        },
+                        // SwarmEvent::Behaviour(BehaviourEvent::Autonat(libp2p::autonat::Event::StatusChanged{old, new})) => {
+                        //     info!("Autonat status changed from {:?} to {:?}", old, new);
+                        //     match new {
+                        //         autonat::NatStatus::Public(_) => (), // Autonat will add this automatically
+                        //         autonat::NatStatus::Private => {
+                        //             let external_addresses: Vec<_> = self.swarm.external_addresses().cloned().collect();
+                        //             for addr in external_addresses {
+                        //                 self.swarm.remove_external_address(&addr);
+                        //             }
+                        //         },
+                        //         autonat::NatStatus::Unknown => (),
+                        //     };
+                        // },
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                             message_id: msg_id,
                             message: gossipsub::Message {
