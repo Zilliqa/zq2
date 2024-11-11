@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use cfg_if::cfg_if;
+use core::ops::BitAnd;
 use libp2p::{
     autonat,
     futures::StreamExt,
@@ -119,8 +120,11 @@ impl P2pNode {
                             .map_err(|e| anyhow!(e))?,
                     )
                     .map_err(|e| anyhow!(e))?,
-                    autonat_client: autonat::v2::client::Behaviour::new(OsRng, Default::default()),
-                    autonat_server: autonat::v2::server::Behaviour::new(OsRng),
+                    autonat_client: autonat::v2::client::Behaviour::new(
+                        rand::rngs::OsRng,
+                        autonat::v2::client::Config::default(),
+                    ),
+                    autonat_server: autonat::v2::server::Behaviour::new(rand::rngs::OsRng),
                     identify: identify::Behaviour::new(identify::Config::new(
                         "/zilliqa/1.0.0".to_owned(),
                         key_pair.public(),
@@ -213,12 +217,15 @@ impl P2pNode {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        self.swarm.listen_on(
-            Multiaddr::empty()
-                .with(Protocol::Ip4(std::net::Ipv4Addr::UNSPECIFIED))
-                .with(Protocol::Udp(self.config.p2p_port))
-                .with(Protocol::QuicV1),
-        )?;
+        let listen_addr = Multiaddr::empty()
+            .with(Protocol::Ip4(std::net::Ipv4Addr::UNSPECIFIED))
+            .with(Protocol::Udp(self.config.p2p_port))
+            .with(Protocol::QuicV1);
+        info!(
+            "Listening on {listen_addr} for p2p port {0}",
+            self.config.p2p_port
+        );
+        self.swarm.listen_on(listen_addr)?;
 
         if let Some(external_address) = &self.config.external_address {
             self.swarm.add_external_address(external_address.clone());
@@ -253,7 +260,18 @@ impl P2pNode {
                         }
                         SwarmEvent::NewExternalAddrOfPeer { peer_id, address } => {
                             let is_non_global = address.iter().any(|p| match p {
-                                Protocol::Ip4(a) => a.is_loopback() || a.is_private(),
+                                Protocol::Ip4(a) => {
+                                    if let Some((net, mask)) = self.config.listening_subnet {
+                                        let left = net.bitand(mask);
+                                        let right = addr.bitand(mask);
+                                        info!("Left = {left} right={right}");
+                                        if left == right {
+                                            info!("{addr:?} is in the listening subnet - passing");
+                                            return false;
+                                        }
+                                    }
+                                    a.is_loopback() || a.is_private()
+                                },
                                 Protocol::Ip6(a) => a.is_loopback(),
                                 _ => false,
                             });
@@ -263,12 +281,25 @@ impl P2pNode {
                             if is_non_global {
                                 continue;
                             }
+                            info!("Adding peer {peer_id:?} with {addr:?}");
+                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
 
                             self.swarm
                                 .behaviour_mut()
                                 .kademlia
                                 .add_address(&peer_id, address.clone());
                         }
+                        SwarmEvent::Behaviour(BehaviourEvent::AutonatClient(autonat::v2::client::Event {
+                            server, tested_addr, bytes_sent, result: Ok(()) })) => {
+                            info!("Tested {tested_addr} with {server}. Sent {bytes_sent} bytes for verification. All OK");
+                        },
+                        SwarmEvent::Behaviour(BehaviourEvent::AutonatClient(autonat::v2::client::Event {
+                            server, tested_addr, bytes_sent, result: Err(e) })) => {
+                            info!("Tested {tested_addr} with {server}. Sent {bytes_sent} for verification and failed with {e:?}");
+                        },
+                        SwarmEvent::ExternalAddrConfirmed { address } => {
+                            info!("External address confirmed: {address}");
+                        },
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                             message_id: msg_id,
                             message: gossipsub::Message {

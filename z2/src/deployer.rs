@@ -4,7 +4,6 @@ use anyhow::{anyhow, Result};
 use cliclack::MultiProgress;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use tokio::{fs, sync::Semaphore, task};
 
 use crate::{
@@ -918,7 +917,7 @@ pub async fn info(config_file: &str) -> Result<ChainInfo> {
         let private_keys =
             node::retrieve_secret_by_node_name(&config.name, &config.project_id, &m.name).await?;
         if let Some(key) = private_keys.first() {
-            let address = EthereumAddress::from_private_key(key)?;
+            let address = EthereumAddress::from_private_key(&key.value().await?)?;
             info.machines.push(MachineChainInfo {
                 zone: m.zone.to_string(),
                 name: m.name.to_string(),

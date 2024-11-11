@@ -228,6 +228,7 @@ pub struct DeployerGenerateGenesisArgs {
     force: bool,
 }
 
+#[derive(Args, Debug)]
 pub struct DeployerInfoArgs {
     config_file: String,
 }
