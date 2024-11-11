@@ -137,7 +137,7 @@ impl BlockCache {
         for (key, entry) in self.cache.iter().chain(self.head_cache.iter()) {
             // Dump out the node itself.
             result.push_str(&format!(
-                "c{0}[label=\"{1}\"]\n",
+                "c{0}[label=\"C{1}\"]\n",
                 key,
                 represent_entry(*key, entry)
             ));
