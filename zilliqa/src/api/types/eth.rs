@@ -101,7 +101,6 @@ pub struct Block {
     pub quorum_certificate: QuorumCertificate,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate_quorum_certificate: Option<AggregateQc>,
-    pub version: u64,
 }
 
 impl Block {
@@ -117,7 +116,6 @@ impl Block {
             uncles: vec![],
             quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
-            version: 2, // since we're on ZQ2
         }
     }
 }
