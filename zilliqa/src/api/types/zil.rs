@@ -7,6 +7,7 @@ use alloy::{
 use anyhow::Result;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
@@ -619,6 +620,42 @@ pub struct TransactionReceiptResponse {
     pub success: bool,
 }
 
+// From https://github.com/Zilliqa/Zilliqa/blob/master/src/common/TxnStatus.h#L23
+#[derive(Serialize_repr, Deserialize_repr, Clone)]
+#[repr(u8)] // Because otherwise it's weird that 255 is a special case
+pub enum TxnStatusEnum {
+    NotPresent = 0,
+    Dispatched = 1,
+    SoftConfirmed = 2,
+    Confirmed = 3,
+    // Pending
+    PresentNonceHigh = 4,
+    PresentGasExceeded = 5,
+    PresentValidConsensusNotReached = 6,
+    // RareDropped
+    MathError = 10,
+    FailScillaLib = 11,
+    FailContractInit = 12,
+    InvalidFromAccount = 13,
+    HighGasLimit = 14,
+    IncorrectTxnType = 15,
+    IncorrectShard = 16,
+    ContractCallWrongShard = 17,
+    HighByteSizeCode = 18,
+    VerifError = 19,
+    //
+    InsufficientGasLimit = 20,
+    InsufficientBalance = 21,
+    InsufficientGas = 22,
+    MempoolAlreadyPresent = 23,
+    MempoolSameNonceLowerGas = 24,
+    //
+    InvalidToAccount = 25,
+    FailContractAccountCreation = 26,
+    NonceTooLow = 27,
+    Error = 255, // MiscError
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TransactionStatusResponse {
     #[serde(rename = "ID")]
@@ -639,7 +676,7 @@ pub struct TransactionStatusResponse {
     pub last_modified: String,
     #[serde(rename = "modificationState")]
     pub modification_state: u64,
-    pub status: u64,
+    pub status: TxnStatusEnum,
     pub nonce: String,
     #[serde(rename = "senderAddr")]
     pub sender_addr: String,
@@ -705,21 +742,21 @@ impl TransactionStatusResponse {
             ),
         };
         let status_code = if receipt.accepted.is_some() && receipt.accepted.unwrap() {
-            3
+            TxnStatusEnum::Confirmed
         } else if receipt.accepted.is_none() {
-            1
+            TxnStatusEnum::Dispatched
         } else {
             let errors: Vec<ScillaError> =
                 receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
             if errors.len() == 1 {
                 match errors[0] {
-                    ScillaError::CallFailed => 11,
-                    ScillaError::CreateFailed => 255,
-                    ScillaError::OutOfGas => 0,
-                    ScillaError::InsufficientBalance => 21,
+                    ScillaError::CallFailed => TxnStatusEnum::FailScillaLib,
+                    ScillaError::CreateFailed => TxnStatusEnum::Error,
+                    ScillaError::OutOfGas => TxnStatusEnum::InsufficientGas,
+                    ScillaError::InsufficientBalance => TxnStatusEnum::InsufficientBalance,
                 }
             } else {
-                255
+                TxnStatusEnum::Error
             }
         };
         let modification_state = if receipt.accepted.is_none() { 0 } else { 2 };
