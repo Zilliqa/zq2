@@ -1159,9 +1159,7 @@ impl Consensus {
         }
 
         // Either way assemble early proposal now if it doesnt already exist
-        if self.transaction_pool.has_txn_ready() {
-            self.early_proposal_assemble_at(None)?;
-        }
+        self.early_proposal_assemble_at(None)?;
 
         Ok(None)
     }
