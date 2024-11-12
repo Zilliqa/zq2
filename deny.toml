@@ -41,4 +41,8 @@ license-files = [
 github = [ "zilliqa" ]
 
 [advisories]
-ignore = ["RUSTSEC-2024-0346"]
+ignore = [
+    { id = "RUSTSEC-2024-0379", reason = "no upgrade to boa_engine@v0.19.0 is yet available (https://github.com/boa-dev/boa/issues/4033)" },
+    { id = "RUSTSEC-2024-0384", reason = "no upgrade to boa_engine@v0.19.0 is yet available (https://github.com/boa-dev/boa/issues/4035)" },
+    { id = "RUSTSEC-2024-0388", reason = "no upgrade to foundry-compilers@v0.11.6 is yet available" },
+]
