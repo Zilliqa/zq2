@@ -412,8 +412,8 @@ impl Consensus {
                 ..block.header
             };
             let root_hash = self.state.root_hash()?;
-            let stakers = self.get_committee(root_hash, next_block_header)?; // self.state.get_stakers(next_block_header)?;
-                                                                             // If we're in the genesis committee, vote again.
+            let stakers = self.get_stakers_mut(root_hash, next_block_header)?; // self.state.get_stakers(next_block_header)?;
+                                                                               // If we're in the genesis committee, vote again.
             if stakers.iter().any(|v| *v == self.public_key()) {
                 info!("timeout in view: {:?}, we will vote for block rather than incrementing view, block hash: {}", view, block.hash());
                 let leader = self.leader_at_block(&block, view).unwrap();
@@ -497,7 +497,7 @@ impl Consensus {
             number: block.number() + 1,
             ..block.header
         };
-        let stakers = self.get_committee(block.state_root_hash(), next_block_header)?;
+        let stakers = self.get_stakers_mut(block.state_root_hash(), next_block_header)?;
         if !stakers.iter().any(|v| *v == self.public_key()) {
             debug!(
                 "can't vote for new view, we aren't in the committee of length {:?}",
@@ -691,7 +691,7 @@ impl Consensus {
             }
 
             let root_hash = self.state.root_hash()?;
-            let stakers = self.get_committee(root_hash, block.header)?; // self.state.get_stakers(block.header)?;
+            let stakers = self.get_stakers_mut(root_hash, block.header)?; // self.state.get_stakers(block.header)?;
 
             // It is possible to source Proposals from own storage during sync, which alters the source of the Proposal.
             // Only allow from == self, for fast-forwarding, in normal case but not during sync
@@ -739,7 +739,7 @@ impl Consensus {
                 ..block.header
             };
             let root_hash = self.state.root_hash()?;
-            let stakers = self.get_committee(root_hash, next_block_header)?; //  self.state.get_stakers(next_block_header)?;
+            let stakers = self.get_stakers_mut(root_hash, next_block_header)?; //  self.state.get_stakers(next_block_header)?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
                 debug!(
@@ -985,7 +985,7 @@ impl Consensus {
     }
 
     /// Returns cached stakers, retaining N highest blocks
-    fn get_committee(
+    fn get_stakers_mut(
         &mut self,
         state_root_hash: Hash,
         executed_block: BlockHeader,
@@ -1009,6 +1009,24 @@ impl Consensus {
         self.stakers_cache.insert(key, stakers.clone());
 
         Ok(stakers)
+    }
+
+    /// Return stakers from cache, if present; else retrieves from EVM
+    fn get_stakers(
+        &self,
+        state_root_hash: Hash,
+        executed_block: BlockHeader,
+    ) -> Result<Vec<NodePublicKey>> {
+        // return cached value, if present
+        let key = (executed_block.number, state_root_hash);
+        if let Some(v) = self.stakers_cache.get(&key) {
+            return Ok(v.to_vec());
+        }
+
+        // retrieve from EVM, on miss
+        self.state
+            .at_root(state_root_hash.into())
+            .get_stakers_raw(executed_block)
     }
 
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
@@ -1063,7 +1081,7 @@ impl Consensus {
             ..Default::default()
         };
 
-        let committee = self.get_committee(block.state_root_hash(), executed_block)?;
+        let committee = self.get_stakers_mut(block.state_root_hash(), executed_block)?;
         debug!("VOTE_SUPERMAJORITY_3 {:?}", now.elapsed());
 
         // verify the sender's signature on block_hash
@@ -1196,9 +1214,8 @@ impl Consensus {
                     return Ok(None);
                 };
                 // Retrieve the previous leader and committee - for rewards
-                let committee = state
-                    .at_root(parent_block.state_root_hash().into())
-                    .get_stakers_raw(proposal.header)?;
+                let committee =
+                    self.get_stakers(parent_block.state_root_hash(), proposal.header)?;
                 (
                     self.qc_from_bits(
                         parent_block_hash,
@@ -1757,10 +1774,7 @@ impl Consensus {
             ..Default::default()
         };
 
-        let committee = self
-            .state
-            .at_root(parent_root_hash.into())
-            .get_stakers_raw(executed_block)?;
+        let committee = self.get_stakers(parent_root_hash, executed_block)?;
 
         Ok(committee)
     }
@@ -2331,9 +2345,7 @@ impl Consensus {
             .verify(block.hash().as_bytes(), block.signature());
 
         let committee = self
-            .state
-            .at_root(parent.state_root_hash().into())
-            .get_stakers_raw(block.header)
+            .get_stakers(parent.state_root_hash(), block.header)
             .map_err(|e| (e, false))?;
 
         if verified.is_err() {
@@ -2978,7 +2990,7 @@ impl Consensus {
                 .get_block(&block_pointer.parent_hash())?
                 .ok_or_else(|| anyhow!("missing parent"))?;
             let committee: Vec<_> =
-                self.get_committee(parent.state_root_hash(), block_pointer.header)?;
+                self.get_stakers_mut(parent.state_root_hash(), block_pointer.header)?;
 
             self.execute_block(None, &block_pointer, transactions, &committee)?;
         }
