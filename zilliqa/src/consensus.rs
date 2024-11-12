@@ -2787,18 +2787,8 @@ impl Consensus {
         })
     }
 
-    fn total_weight(&self, committee: &[NodePublicKey], executed_block: BlockHeader) -> u128 {
-        committee
-            .iter()
-            .map(|&pub_key| {
-                let stake = self
-                    .state
-                    .get_stake(pub_key, executed_block)
-                    .unwrap()
-                    .unwrap();
-                stake.get()
-            })
-            .sum()
+    fn total_weight(&self, _committee: &[NodePublicKey], executed_block: BlockHeader) -> u128 {
+        self.state.get_total_stake(executed_block).unwrap().unwrap().into()
     }
 
     /// Deal with the fork to this block. The block is assumed to be valid to switch to.
