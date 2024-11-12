@@ -162,6 +162,8 @@ pub struct Consensus {
     /// Receipts cache
     receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
     receipts_cache_hash: Hash,
+    /// Cache stake
+    stake_cache: BTreeMap<u64, u128>,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
@@ -337,6 +339,7 @@ impl Consensus {
             db,
             receipts_cache: HashMap::new(),
             receipts_cache_hash: Hash::ZERO,
+            stake_cache: BTreeMap::new(),
             transaction_pool: Default::default(),
             early_proposal: None,
             create_next_block_on_timeout: false,
@@ -1080,7 +1083,7 @@ impl Consensus {
 
             cosigned_weight += weight.get();
 
-            let total_weight = self.total_weight(&committee, executed_block);
+            let total_weight = self.total_weight(executed_block);
             supermajority_reached = cosigned_weight * 3 > total_weight * 2;
             debug!("VOTE_PROPOSE_2 {:?}", now.elapsed());
 
@@ -1818,7 +1821,7 @@ impl Consensus {
             cosigned_weight += weight.get();
             qcs.insert(index, new_view.qc);
 
-            supermajority = cosigned_weight * 3 > self.total_weight(&committee, executed_block) * 2;
+            supermajority = cosigned_weight * 3 > self.total_weight(executed_block) * 2;
 
             let num_signers = signatures.len();
 
@@ -2751,7 +2754,7 @@ impl Consensus {
             })
             .sum();
 
-        if cosigned_sum * 3 <= self.total_weight(committee, block.header) * 2 {
+        if cosigned_sum * 3 <= self.total_weight_raw(block.header) * 2 {
             return Err(anyhow!("no quorum"));
         }
 
@@ -2787,8 +2790,32 @@ impl Consensus {
         })
     }
 
-    fn total_weight(&self, _committee: &[NodePublicKey], executed_block: BlockHeader) -> u128 {
-        self.state.get_total_stake(executed_block).unwrap().unwrap().into()
+    /// Retrieves cached total stake for specific block number, retaining only N highest blocks.
+    fn total_weight(&mut self, executed_block: BlockHeader) -> u128 {
+        // return cached value
+        if let Some(stake) = self.stake_cache.get(&executed_block.number) {
+            return *stake;
+        }
+
+        // populate cache
+        let stake = self.total_weight_raw(executed_block);
+        self.stake_cache.insert(executed_block.number, stake);
+
+        // keep cache small
+        while self.stake_cache.len() > 10 {
+            self.stake_cache.pop_first(); // remove oldest block stake
+        }
+
+        stake
+    }
+
+    /// Retrieves total stake from Deposit contract via EVM.
+    fn total_weight_raw(&self, executed_block: BlockHeader) -> u128 {
+        self.state
+            .get_total_stake(executed_block)
+            .unwrap()
+            .unwrap()
+            .into()
     }
 
     /// Deal with the fork to this block. The block is assumed to be valid to switch to.
@@ -2810,6 +2837,9 @@ impl Consensus {
             proposed_block.hash(),
             proposed_block_height
         );
+
+        // Flush stake cache
+        self.stake_cache.clear();
 
         // Need to make sure both pointers are at the same height
         while head_height > proposed_block_height {
