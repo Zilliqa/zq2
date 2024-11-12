@@ -2797,14 +2797,14 @@ impl Consensus {
             return *stake;
         }
 
+        // keep cache small
+        if self.stake_cache.len() == 10 {
+            self.stake_cache.pop_first(); // remove oldest block stake
+        }
+
         // populate cache
         let stake = self.total_weight_raw(executed_block);
         self.stake_cache.insert(executed_block.number, stake);
-
-        // keep cache small
-        while self.stake_cache.len() > 10 {
-            self.stake_cache.pop_first(); // remove oldest block stake
-        }
 
         stake
     }
