@@ -152,7 +152,7 @@ pub fn to_zil_checksum_string(address: &Address) -> String {
 
 #[derive(Deserialize)]
 #[serde(transparent)]
-struct ZilAddress {
+pub struct ZilAddress {
     #[serde(deserialize_with = "deserialize_zil_address")]
     inner: Address,
 }
