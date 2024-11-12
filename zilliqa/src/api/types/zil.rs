@@ -37,7 +37,7 @@ impl TxBlock {
         scalar[31] = 1;
         TxBlock {
             header: TxBlockHeader {
-                version: 2,                                    // ZQ2
+                version: 1,                                    // To match ZQ1
                 gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
                 gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
                 rewards: 0,
