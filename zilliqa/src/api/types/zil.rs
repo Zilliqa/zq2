@@ -623,7 +623,7 @@ pub struct TransactionReceiptResponse {
 // From https://github.com/Zilliqa/Zilliqa/blob/master/src/common/TxnStatus.h#L23
 #[derive(Serialize_repr, Deserialize_repr, Clone)]
 #[repr(u8)] // Because otherwise it's weird that 255 is a special case
-pub enum TxnStatusEnum {
+pub enum TxnStatusCode {
     NotPresent = 0,
     Dispatched = 1,
     SoftConfirmed = 2,
@@ -676,7 +676,7 @@ pub struct TransactionStatusResponse {
     pub last_modified: String,
     #[serde(rename = "modificationState")]
     pub modification_state: u64,
-    pub status: TxnStatusEnum,
+    pub status: TxnStatusCode,
     pub nonce: String,
     #[serde(rename = "senderAddr")]
     pub sender_addr: String,
@@ -742,21 +742,21 @@ impl TransactionStatusResponse {
             ),
         };
         let status_code = if receipt.accepted.is_some() && receipt.accepted.unwrap() {
-            TxnStatusEnum::Confirmed
+            TxnStatusCode::Confirmed
         } else if receipt.accepted.is_none() {
-            TxnStatusEnum::Dispatched
+            TxnStatusCode::Dispatched
         } else {
             let errors: Vec<ScillaError> =
                 receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
             if errors.len() == 1 {
                 match errors[0] {
-                    ScillaError::CallFailed => TxnStatusEnum::FailScillaLib,
-                    ScillaError::CreateFailed => TxnStatusEnum::Error,
-                    ScillaError::OutOfGas => TxnStatusEnum::InsufficientGas,
-                    ScillaError::InsufficientBalance => TxnStatusEnum::InsufficientBalance,
+                    ScillaError::CallFailed => TxnStatusCode::FailScillaLib,
+                    ScillaError::CreateFailed => TxnStatusCode::Error,
+                    ScillaError::OutOfGas => TxnStatusCode::InsufficientGas,
+                    ScillaError::InsufficientBalance => TxnStatusCode::InsufficientBalance,
                 }
             } else {
-                TxnStatusEnum::Error
+                TxnStatusCode::Error
             }
         };
         let modification_state = if receipt.accepted.is_none() { 0 } else { 2 };
