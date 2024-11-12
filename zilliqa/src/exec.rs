@@ -734,7 +734,7 @@ impl State {
         )
     }
 
-    pub fn get_stakers(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
+    pub fn get_stakers_raw(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
         let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
         let stakers = self.call_contract(
