@@ -34,6 +34,8 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
     pub static COMMITTEE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
+    pub static GET_TOTAL_STAKE: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getTotalStake").unwrap().clone());
 }
 
 pub mod shard {
