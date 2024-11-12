@@ -450,7 +450,7 @@ pub async fn convert_persistence(
 
         // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
         for receipt in &mut receipts {
-            receipt.block_hash = block.hash();
+            receipt.block_hash = zq1_block.block_hash.into();
         }
 
         parent_hash = zq1_block.block_hash.into();
