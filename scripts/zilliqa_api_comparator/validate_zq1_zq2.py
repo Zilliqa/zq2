@@ -1,3 +1,4 @@
+import os
 import time
 import sys
 import requests
@@ -9,6 +10,9 @@ from deepdiff import DeepDiff
 import hashlib
 
 init(autoreset=True)
+
+LOGS_DIR = "logs"
+os.makedirs(LOGS_DIR, exist_ok=True)
 
 def make_api_call(url, headers, method, params, output_file, json_output_file):
     start_time = time.time()
@@ -23,6 +27,10 @@ def make_api_call(url, headers, method, params, output_file, json_output_file):
         response = requests.post(url, headers=headers, json=data)
         response_time = time.time() - start_time
 
+        # Save to logs directory
+        output_file = os.path.join(LOGS_DIR, output_file)
+        json_output_file = os.path.join(LOGS_DIR, json_output_file)
+
         with open(output_file, 'w') as f:
             f.write(f"Response Time: {response_time:.4f} seconds\n")
             f.write("Response:\n")
@@ -36,6 +44,75 @@ def make_api_call(url, headers, method, params, output_file, json_output_file):
         print(f"Error making API call to {url}: {e}")
         return None, None
 
+def display_key_differences(diff, api_method, params):
+    section_separator = "\n" + ">" * 40 + "\n\n"
+    diff_file = generate_short_diff_filename(api_method, params)
+
+    diff_file = os.path.join(LOGS_DIR, diff_file)
+    
+    with open(diff_file, 'w') as diff_out:
+        if diff:
+            diff_out.write(f"Differences for API: {api_method}\n")
+            
+            if 'dictionary_item_added' in diff:
+                print(Fore.RED + "\nKeys present in ZQ1 but missing in ZQ2:")
+                diff_out.write("\nKeys present in ZQ1 but missing in ZQ2:\n")
+                for item in diff['dictionary_item_added']:
+                    print(Fore.RED + f"  {item}")
+                    diff_out.write(f"  {item}\n")
+                print(section_separator)
+                diff_out.write(section_separator)
+                
+            if 'dictionary_item_removed' in diff:
+                print(Fore.RED + "\nKeys present in ZQ2 but missing in ZQ1:")
+                diff_out.write("\nKeys present in ZQ2 but missing in ZQ1:\n")
+                for item in diff['dictionary_item_removed']:
+                    print(Fore.RED + f"  {item}")
+                    diff_out.write(f"  {item}\n")
+                print(section_separator)
+                diff_out.write(section_separator)
+                
+            if 'values_changed' in diff:
+                print(Fore.YELLOW + "\nValues that differ between ZQ2 and ZQ1:")
+                diff_out.write("\nValues that differ between ZQ2 and ZQ1:\n")
+                for key, value in diff['values_changed'].items():
+                    print(Fore.YELLOW + f"  {key}:")
+                    print(Fore.YELLOW + f"    ZQ2 -> {value['old_value']}")
+                    print(Fore.YELLOW + f"    ZQ1 -> {value['new_value']}")
+                    diff_out.write(f"  {key}:\n")
+                    diff_out.write(f"    ZQ2 -> {value['old_value']}\n")
+                    diff_out.write(f"    ZQ1 -> {value['new_value']}\n")
+                print(section_separator)
+                diff_out.write(section_separator)
+                
+            if 'missing_nested_items' in diff:
+                print(Fore.MAGENTA + "\nLists empty in ZQ2 but populated in ZQ1:")
+                diff_out.write("\nLists empty in ZQ2 but populated in ZQ1:\n")
+                for key, value in diff['missing_nested_items'].items():
+                    print(Fore.MAGENTA + f"  {key}:\n    ZQ2 -> {value['ZQ2']}\n    ZQ1 -> {value['ZQ1']}")
+                    diff_out.write(f"  {key}:\n    ZQ2 -> {value['ZQ2']}\n    ZQ1 -> {value['ZQ1']}\n")
+                    print(section_separator)
+                    diff_out.write(section_separator)
+                
+        else:
+            print(Fore.GREEN + "No differences detected.")
+            diff_out.write("No differences detected.\n")
+    
+    print(f"\nDifferences written to: {diff_file}")
+
+# Other functions remain unchanged
+def generate_unique_file_prefix(method, params):
+    param_str = "_".join(str(p) for p in params)
+    unique_suffix = hashlib.md5(param_str.encode()).hexdigest()[:8]
+    return f"{method}_{unique_suffix}"
+
+
+
+def generate_short_diff_filename(method, params):
+    param_str = "_".join(str(p) for p in params)
+    unique_suffix = hashlib.md5(f"{method}_{param_str}".encode()).hexdigest()[:10]
+    return f"{method}_{unique_suffix}_diff.txt"
+    
 def pretty_print_with_jq(file_path):
     try:
         result = subprocess.run(['jq', '.', file_path], capture_output=True, text=True)
@@ -98,9 +175,19 @@ def compare_json_files(file1, file2):
     except json.JSONDecodeError as e:
         print(f"Error decoding JSON: {e}")
         return None
+
+
+def generate_short_diff_filename(method, params):
+    param_str = "_".join(str(p) for p in params)
+    unique_suffix = hashlib.md5(f"{method}_{param_str}".encode()).hexdigest()[:10]
+    return f"{method}_{unique_suffix}_diff.txt"
+
 def display_key_differences(diff, api_method, params):
     section_separator = "\n" + ">" * 40 + "\n\n"
     diff_file = generate_short_diff_filename(api_method, params)
+
+    # Save diff file to logs directory
+    diff_file = os.path.join(LOGS_DIR, diff_file)
     
     with open(diff_file, 'w') as diff_out:
         if diff:
@@ -151,20 +238,6 @@ def display_key_differences(diff, api_method, params):
             diff_out.write("No differences detected.\n")
     
     print(f"\nDifferences written to: {diff_file}")
-
-
-
-def generate_short_diff_filename(method, params):
-    """Generate a short, hashed filename based on method and params."""
-    param_str = "_".join(str(p) for p in params)
-    unique_suffix = hashlib.md5(f"{method}_{param_str}".encode()).hexdigest()[:10]
-    return f"{method}_{unique_suffix}_diff.txt"
-
-def generate_unique_file_prefix(method, params):
-    """Generate a unique file prefix based on method and params using a hash."""
-    param_str = "_".join(str(p) for p in params)
-    unique_suffix = hashlib.md5(param_str.encode()).hexdigest()[:8]
-    return f"{method}_{unique_suffix}"
 
 def load_config(subset=None, method=None):
     with open('config_mainnet.json', 'r') as f:

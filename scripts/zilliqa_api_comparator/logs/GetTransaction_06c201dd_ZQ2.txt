@@ -1,0 +1,3 @@
+Response Time: 0.0239 seconds
+Response:
+{"jsonrpc":"2.0","id":1,"result":{"ID":"741b86b06f65a0a16f42a7cd5981b32c68899a5719875658374e84cc0bf60c7e","version":"65537","nonce":"1421","toAddr":"412b55a0ebc1001f930aba8dc107022a3a2ba484","senderPubKey":"0x0326bbce46008ab209287185d1fbdf0906c759ac822401332c5f985490459ff6da","amount":"150646053846","signature":"0x5a1709374026157d7e147985f8178ea52218bd72552d8a4c4362d01a0aeb79af902bb5bb506eff7a4f1ff34d70236e6768dfc94388c8e6c38edc3025d35f89d2","receipt":{"accepted":false,"cumulative_gas":"0","epoch_num":"4131493","transitions":[],"event_logs":[],"success":true},"gasPrice":"2000000000","gasLimit":"50"}}
