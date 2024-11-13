@@ -22,7 +22,7 @@ describe("Revert Contract Call", function () {
   });
 
   it("Should revert transaction with a custom message if the called function reverts with custom message", async function () {
-    const REVERT_MESSAGE = "reverted!!";
+    const REVERT_MESSAGE = "revert: reverted!!";
     try {
       await contract.revertCallWithMessage(REVERT_MESSAGE, {value: 1000});
     } catch (error: any) {

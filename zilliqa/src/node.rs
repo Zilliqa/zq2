@@ -18,7 +18,10 @@ use alloy::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::{primitives::map::FxBuildHasher, Inspector};
+use revm::{
+    primitives::{map::FxBuildHasher, ExecutionResult},
+    Inspector,
+};
 use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
     TransactionContext,
@@ -769,7 +772,7 @@ impl Node {
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<ExecutionResult> {
         trace!("call_contract: block={:?}", block);
 
         let state = self
