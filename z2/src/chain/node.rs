@@ -593,6 +593,8 @@ impl ChainNode {
             ""
         };
 
+        let persistence_url = self.chain.persistence_url().unwrap_or_default();
+
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
         var_map.insert("docker_image", z2_image);
@@ -600,6 +602,7 @@ impl ChainNode {
         var_map.insert("spout_image", spout_image);
         var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);
+        var_map.insert("persistence_url", &persistence_url);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;

@@ -141,6 +141,9 @@ pub struct DeployerInstallArgs {
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
+    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    #[clap(long)]
+    persistence_url: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -738,11 +741,16 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_install(&config_file, arg.select, arg.max_parallel)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer install command: {}", err)
-                    })?;
+                plumbing::run_deployer_install(
+                    &config_file,
+                    arg.select,
+                    arg.max_parallel,
+                    arg.persistence_url.clone(),
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer install command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::Upgrade(ref arg) => {

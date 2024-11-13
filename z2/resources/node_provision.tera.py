@@ -33,7 +33,7 @@ OTTERSCAN_IMAGE="{{ otterscan_image }}"
 SPOUT_IMAGE="{{ spout_image }}"
 SECRET_KEY="{{ secret_key }}"
 GENESIS_KEY="{{ genesis_key }}"
-PERSISTENCE_URL=base64.b64decode(query_metadata_key("persistence_url")).decode('utf-8')
+PERSISTENCE_URL="{{ persistence_url }}"
 SUBDOMAIN=base64.b64decode(query_metadata_key("subdomain")).decode('utf-8')
 
 VERSIONS={
@@ -599,6 +599,7 @@ def configure_logrotate():
 def download_persistence():
     if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
         PERSISTENCE_DIR="/data"
+        run_or_die(["rm", "-rf", f"{PERSISTENCE_DIR}"])
         PERSISTENCE_FILENAME = os.path.basename(urlparse(PERSISTENCE_URL).path)
         os.makedirs(PERSISTENCE_DIR, exist_ok=True)
         run_or_die(["gsutil", "-m", "cp", f"{PERSISTENCE_URL}", f"{PERSISTENCE_DIR}/{PERSISTENCE_FILENAME}"])
