@@ -45,7 +45,11 @@ Option to view saved output files for further analysis.
 
 ## Additional Features
 Detailed JSON Comparison: Saves detailed differences between JSON responses to text files in the results/ folder.
-Color-coded Console Output: Uses color for easy viewing of matched and mismatched values.
+
+Color-coded Console Output: Displays matched and mismatched values with color highlighting. If the ZQ2 API response time exceeds that of ZQ1, it appears in red for easy identification.
+
 Pagination for Large Outputs: Automatically paginates JSON output for manageable viewing.
+
+
 
 
