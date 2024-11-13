@@ -512,7 +512,7 @@ impl Consensus {
             if (time_since_last_view_change
                 > self.config.consensus.consensus_timeout.as_millis() as u64)
                 && (Duration::from_millis(time_since_last_view_change).as_secs()
-                    % self.config.consensus.consensus_timeout.as_secs() as u64)
+                    % self.config.consensus.consensus_timeout.as_secs())
                     == 0
             {
                 return Ok(Some(self.build_new_view()?));
