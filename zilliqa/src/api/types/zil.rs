@@ -195,13 +195,13 @@ impl GetTxResponse {
         receipt: TransactionReceipt,
         block_number: u64,
     ) -> Result<GetTxResponse> {
-        let nonce = tx.nonce().unwrap_or_default();
         let amount = tx.zil_amount();
         let gas_price = tx.gas_price_per_scilla_gas();
         let gas_limit = tx.gas_limit_scilla();
         // Some of these are returned as all caps in ZQ1, but that should be fine
-        let (version, to_addr, sender_pub_key, signature, code, data) = match tx {
+        let (nonce, version, to_addr, sender_pub_key, signature, code, data) = match tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
                 key.to_encoded_point(true).as_bytes().to_hex(),
@@ -210,6 +210,7 @@ impl GetTxResponse {
                 (!tx.data.is_empty()).then_some(tx.data),
             ),
             SignedTransaction::Legacy { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -220,6 +221,7 @@ impl GetTxResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip2930 { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 3,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -230,6 +232,7 @@ impl GetTxResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip1559 { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 4,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -240,6 +243,7 @@ impl GetTxResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Intershard { tx, .. } => (
+                0,
                 ((tx.chain_id as u32) << 16) | 20,
                 tx.to_addr.unwrap_or_default(),
                 String::new(),
