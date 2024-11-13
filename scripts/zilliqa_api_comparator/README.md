@@ -21,7 +21,7 @@ pip install -r requirements.txt
 
 ### Step 2: Configuration
 
-Update the `config_mainnet.json` file with your specific API parameters and endpoints as needed.
+Modify the config_mainnet.json file to include your specific API parameters and endpoints as required. Additionally, you can expand the test scenarios by adding more API inputs to the configuration.
 
 ### Step 3: Run the Script
 
@@ -32,9 +32,9 @@ python zilliqa_api_test.py
 ```
 
 Usage Guide
-1) Select an API Subset: When prompted, choose a subset to validate (e.g., Transaction APIs, Smart Contract APIs, Balance APIs).
-2) Choose a Method: You can run a specific method in the subset or choose to run all methods in the subset.
-3) View Results: The script displays a table summarizing API responses, response times, and mismatches.
+* Select an API Subset: When prompted, choose a subset to validate (e.g., Transaction APIs, Smart Contract APIs, Balance APIs).
+* Choose a Method: You can run a specific method in the subset or choose to run all methods in the subset.
+* View Results: The script displays a table summarizing API responses, response times, and mismatches.
 
 
 ## Example Output
