@@ -33,7 +33,7 @@ pub struct TxBlock {
 }
 
 impl TxBlock {
-    pub fn new(block: &Block, proposer: Address) -> Self {
+    pub fn new(block: &Block) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         let mut scalar = [0; 32];
         scalar[31] = 1;
@@ -101,7 +101,8 @@ pub struct TxBlockHeader {
 
 #[derive(Clone, Serialize)]
 pub struct TxBlockVerbose {
-    pub header: TxBlockHeaderVerbose,
+    pub header: TxBlockVerboseHeader,
+    pub body: TxBlockVerboseBody,
 }
 
 impl TxBlockVerbose {
@@ -110,7 +111,7 @@ impl TxBlockVerbose {
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlockVerbose {
-            header: TxBlockHeaderVerbose {
+            header: TxBlockVerboseHeader {
                 version: 1,                                    // To match ZQ1
                 gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
                 gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
@@ -137,13 +138,21 @@ impl TxBlockVerbose {
                 ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
                 committee_hash: Some(B256::ZERO),
             },
+            body: TxBlockVerboseBody {
+                header_sign: B512::ZERO, // Appears obsolete in ZQ2
+                block_hash: block.hash().into(),
+                micro_block_infos: vec![],
+                cosig_bitmap_1: vec![true; 8],
+                cosig_bitmap_2: vec![true; 8],
+                cosig_1: Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap()),
+            },
         }
     }
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct TxBlockHeaderVerbose {
+pub struct TxBlockVerboseHeader {
     pub version: u8,
     pub gas_limit: ScillaGas,
     pub gas_used: ScillaGas,
@@ -173,6 +182,22 @@ pub struct TxBlockHeaderVerbose {
         skip_serializing_if = "Option::is_none"
     )]
     pub committee_hash: Option<B256>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TxBlockVerboseBody {
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub header_sign: B512,
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub block_hash: B256,
+    pub micro_block_infos: Vec<MicroBlockInfo>,
+    #[serde(rename = "B1")]
+    pub cosig_bitmap_1: Vec<bool>,
+    #[serde(rename = "B2")]
+    pub cosig_bitmap_2: Vec<bool>,
+    #[serde(rename = "CS1")]
+    pub cosig_1: Option<schnorr::Signature>,
 }
 
 #[derive(Clone, Serialize, Debug)]

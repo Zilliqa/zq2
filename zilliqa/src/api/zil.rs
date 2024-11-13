@@ -468,11 +468,7 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
-    let proposer = node
-        .get_proposer_reward_address(block.header)?
-        .expect("No proposer");
-
-    let tx_block = zil::TxBlock::new(&block, proposer);
+    let tx_block = zil::TxBlock::new(&block);
     Ok(tx_block)
 }
 
@@ -618,10 +614,7 @@ fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::T
     let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
-    let proposer = node
-        .get_proposer_reward_address(block.header)?
-        .expect("No proposer");
-    let block: zil::TxBlock = zil::TxBlock::new(&block, proposer);
+    let block: zil::TxBlock = zil::TxBlock::new(&block);
 
     Ok(Some(block))
 }
