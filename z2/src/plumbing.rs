@@ -175,6 +175,7 @@ pub async fn run_deployer_install(
     config_file: &str,
     node_selection: bool,
     max_parallel: Option<usize>,
+    persistence_url: Option<String>,
 ) -> Result<()> {
     println!("🦆 Installing {config_file} .. ");
     deployer::install_or_upgrade(
@@ -182,6 +183,7 @@ pub async fn run_deployer_install(
         false,
         node_selection,
         max_parallel.unwrap_or(50),
+        persistence_url,
     )
     .await?;
     Ok(())
@@ -193,8 +195,14 @@ pub async fn run_deployer_upgrade(
     max_parallel: Option<usize>,
 ) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
-    deployer::install_or_upgrade(config_file, true, node_selection, max_parallel.unwrap_or(1))
-        .await?;
+    deployer::install_or_upgrade(
+        config_file,
+        true,
+        node_selection,
+        max_parallel.unwrap_or(1),
+        None,
+    )
+    .await?;
     Ok(())
 }
 
