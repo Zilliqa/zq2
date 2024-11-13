@@ -76,8 +76,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNetworkId", get_network_id),
             ("GetVersion", get_version),
             ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
-            ("GetTxBlock", |p, n| get_tx_block(p, n)),
-            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n)),
+            ("GetTxBlock", get_tx_block),
+            ("GetTxBlockVerbose", get_tx_block_verbose),
             ("GetSmartContracts", get_smart_contracts),
             ("GetDSBlock", get_ds_block),
             ("GetDSBlockVerbose", get_ds_block_verbose),
@@ -622,6 +622,26 @@ fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::T
         .get_proposer_reward_address(block.header)?
         .expect("No proposer");
     let block: zil::TxBlock = zil::TxBlock::new(&block, proposer);
+
+    Ok(Some(block))
+}
+
+// GetTxBlockVerbose
+fn get_tx_block_verbose(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<zil::TxBlockVerbose>> {
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block(block_number)? else {
+        return Ok(None);
+    };
+    let proposer = node
+        .get_proposer_reward_address(block.header)?
+        .expect("No proposer");
+    let block: zil::TxBlockVerbose = zil::TxBlockVerbose::new(&block, proposer);
 
     Ok(Some(block))
 }
