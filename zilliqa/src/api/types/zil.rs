@@ -34,7 +34,6 @@ pub struct TxBlock {
 
 impl TxBlock {
     pub fn new(block: &Block) -> Self {
-        // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlock {
@@ -111,7 +110,6 @@ pub struct TxBlockVerbose {
 
 impl TxBlockVerbose {
     pub fn new(block: &Block, proposer: Address) -> Self {
-        // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlockVerbose {
