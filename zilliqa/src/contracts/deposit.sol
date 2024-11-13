@@ -314,6 +314,19 @@ contract Deposit {
         return committee().stakers[blsPubKey].balance;
     }
 
+    function getFutureStake(bytes calldata blsPubKey) public view returns (uint256) {
+        require(blsPubKey.length == 48);
+
+        uint64 epoch = latestComputedEpoch > currentEpoch() ? latestComputedEpoch : currentEpoch();
+        Committee storage latestCommittee = _committee[
+            epoch % 3
+        ];
+
+        // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
+        // balance will default to zero.
+        return latestCommittee.stakers[blsPubKey].balance;
+    }
+
     function getRewardAddress(
         bytes calldata blsPubKey
     ) public view returns (address) {
