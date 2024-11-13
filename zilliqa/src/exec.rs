@@ -15,6 +15,7 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
+use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
@@ -950,7 +951,7 @@ impl State {
 
         let gas_used = result.gas_used();
         // Return an error if the transaction did not succeed
-        ensure_success(result)?;
+        ensure_success(result).map_err(ErrorObjectOwned::from)?;
         Ok(gas_used)
     }
 

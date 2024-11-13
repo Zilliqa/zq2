@@ -22,11 +22,11 @@ describe("Revert Contract Call", function () {
   });
 
   it("Should revert transaction with a custom message if the called function reverts with custom message", async function () {
-    const REVERT_MESSAGE = "revert: reverted!!";
+    const REVERT_MESSAGE = "reverted!!";
     try {
       await contract.revertCallWithMessage(REVERT_MESSAGE, {value: 1000});
     } catch (error: any) {
-      expect(error.error.reason).eq(`execution reverted: ${REVERT_MESSAGE}`);
+      expect(error.error.reason).eq(`execution reverted: revert: ${REVERT_MESSAGE}`);
     }
   });
 
