@@ -877,10 +877,6 @@ impl Node {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn get_raw_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
-        self.consensus.get_raw_transaction_by_hash(hash)
-    }
-
     pub fn txpool_content(&self) -> TxPoolContent {
         self.consensus.txpool_content()
     }
