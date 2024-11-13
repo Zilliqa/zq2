@@ -76,9 +76,13 @@ impl TxBlock {
 #[serde(rename_all = "PascalCase")]
 pub struct TxBlockHeader {
     pub version: u8,
+    #[serde(with = "num_as_str")]
     pub gas_limit: ScillaGas,
+    #[serde(with = "num_as_str")]
     pub gas_used: ScillaGas,
+    #[serde(with = "num_as_str")]
     pub rewards: u128,
+    #[serde(with = "num_as_str")]
     pub txn_fees: u128,
     #[serde(serialize_with = "hex_no_prefix")]
     pub prev_block_hash: B256,
@@ -95,7 +99,7 @@ pub struct TxBlockHeader {
     pub num_txns: u64,
     pub num_pages: usize,
     pub num_micro_blocks: u8,
-    #[serde(rename = "DSBlockNum")]
+    #[serde(rename = "DSBlockNum", with = "num_as_str")]
     pub ds_block_num: u64,
 }
 
@@ -154,9 +158,13 @@ impl TxBlockVerbose {
 #[serde(rename_all = "PascalCase")]
 pub struct TxBlockVerboseHeader {
     pub version: u8,
+    #[serde(with = "num_as_str")]
     pub gas_limit: ScillaGas,
+    #[serde(with = "num_as_str")]
     pub gas_used: ScillaGas,
+    #[serde(with = "num_as_str")]
     pub rewards: u128,
+    #[serde(with = "num_as_str")]
     pub txn_fees: u128,
     #[serde(serialize_with = "hex_no_prefix")]
     pub prev_block_hash: B256,
@@ -175,7 +183,7 @@ pub struct TxBlockVerboseHeader {
     pub num_micro_blocks: u8,
     #[serde(serialize_with = "hex")]
     pub miner_pub_key: Address,
-    #[serde(rename = "DSBlockNum")]
+    #[serde(rename = "DSBlockNum", with = "num_as_str")]
     pub ds_block_num: u64,
     #[serde(
         serialize_with = "option_hex_no_prefix",
