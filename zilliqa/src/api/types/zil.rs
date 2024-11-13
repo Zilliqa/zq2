@@ -15,14 +15,15 @@ use crate::{
         to_hex::ToHex,
         zil::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
     },
-    crypto::Hash,
     exec::{ScillaError, ScillaException},
     message::Block,
     schnorr,
     scilla::ParamValue,
     serde_util::num_as_str,
     time::SystemTime,
-    transaction::{ScillaGas, SignedTransaction, TransactionReceipt, ZilAmount},
+    transaction::{
+        ScillaGas, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
+    },
 };
 
 #[derive(Clone, Serialize)]
@@ -190,16 +191,15 @@ struct GetTxResponseReceipt {
 
 impl GetTxResponse {
     pub fn new(
-        hash: Hash,
-        tx: SignedTransaction,
+        tx: VerifiedTransaction,
         receipt: TransactionReceipt,
         block_number: u64,
     ) -> Result<GetTxResponse> {
-        let amount = tx.zil_amount();
-        let gas_price = tx.gas_price_per_scilla_gas();
-        let gas_limit = tx.gas_limit_scilla();
+        let amount = tx.tx.zil_amount();
+        let gas_price = tx.tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.tx.gas_limit_scilla();
         // Some of these are returned as all caps in ZQ1, but that should be fine
-        let (nonce, version, to_addr, sender_pub_key, signature, code, data) = match tx {
+        let (nonce, version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 tx.nonce,
                 ((tx.chain_id as u32) << 16) | 1,
@@ -254,7 +254,7 @@ impl GetTxResponse {
         };
 
         Ok(GetTxResponse {
-            id: hash.into(),
+            id: tx.hash.into(),
             version,
             nonce,
             to_addr,
@@ -262,7 +262,7 @@ impl GetTxResponse {
             amount,
             signature,
             receipt: GetTxResponseReceipt {
-                cumulative_gas: receipt.cumulative_gas_used.into(),
+                cumulative_gas: ScillaGas(receipt.cumulative_gas_used.0),
                 epoch_num: block_number,
                 transitions: receipt
                     .transitions
@@ -692,12 +692,12 @@ pub struct TransactionStatusResponse {
 }
 
 impl TransactionStatusResponse {
-    pub fn new(tx: SignedTransaction, receipt: TransactionReceipt, block: Block) -> Result<Self> {
-        let nonce = tx.nonce().unwrap_or_default();
-        let amount = tx.zil_amount();
-        let gas_price = tx.gas_price_per_scilla_gas();
-        let gas_limit = tx.gas_limit_scilla();
-        let (version, to_addr, sender_pub_key, signature, _code, data) = match tx {
+    pub fn new(tx: VerifiedTransaction, receipt: TransactionReceipt, block: Block) -> Result<Self> {
+        let nonce = tx.tx.nonce().unwrap_or_default();
+        let amount = tx.tx.zil_amount();
+        let gas_price = tx.tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.tx.gas_limit_scilla();
+        let (version, to_addr, sender_pub_key, signature, _code, data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
@@ -765,7 +765,7 @@ impl TransactionStatusResponse {
         };
         let modification_state = if receipt.accepted.is_none() { 0 } else { 2 };
         Ok(Self {
-            id: receipt.tx_hash.to_string(),
+            id: tx.hash.to_string(),
             _id: serde_json::Value::Null,
             amount: amount.to_string(),
             data: data.unwrap_or_default(),
