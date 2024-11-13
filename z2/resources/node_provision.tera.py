@@ -545,8 +545,6 @@ def create_zq2_start_script():
 
 def install_zilliqa():
     create_zq2_start_script()
-    if os.path.exists("/etc/systemd/system/zilliqa.service"):
-        return 0
     with open("/tmp/zilliqa.service", "w") as f:
         f.write(ZQ2_SERVICE_DESC)
     run_or_die(["sudo","cp","/tmp/zilliqa.service","/etc/systemd/system/zilliqa.service"])
