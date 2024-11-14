@@ -50,20 +50,20 @@ impl TxBlock {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_micros(),
-                mb_info_hash: B256::ZERO, // Appears obsolete in ZQ2
+                mb_info_hash: B256::ZERO, // Obsolete in ZQ2
                 state_root_hash: block.state_root_hash().into(),
-                state_delta_hash: B256::ZERO, // Appears obsolete in ZQ2
+                state_delta_hash: B256::ZERO, // Obsolete in ZQ2
                 num_txns: block.transactions.len() as u64,
                 num_pages: if block.transactions.is_empty() {
                     0
                 } else {
                     (block.transactions.len() / TRANSACTIONS_PER_PAGE) + 1
                 },
-                num_micro_blocks: 0, // Microblocks appear obsolete in ZQ2
+                num_micro_blocks: 0, // Microblocks obsolete in ZQ2
                 ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
             },
             body: TxBlockBody {
-                header_sign: B512::ZERO, // Appears obsolete in ZQ2
+                header_sign: B512::ZERO, // Obsolete in ZQ2
                 block_hash: block.hash().into(),
                 micro_block_infos: vec![],
             },
@@ -126,22 +126,22 @@ impl TxBlockVerbose {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_micros(),
-                mb_info_hash: B256::ZERO, // Appears obsolete in ZQ2
+                mb_info_hash: B256::ZERO, // Obsolete in ZQ2
                 state_root_hash: block.state_root_hash().into(),
-                state_delta_hash: B256::ZERO, // Appears obsolete in ZQ2
+                state_delta_hash: B256::ZERO, // Obsolete in ZQ2
                 num_txns: block.transactions.len() as u64,
                 num_pages: if block.transactions.is_empty() {
                     0
                 } else {
                     (block.transactions.len() / TRANSACTIONS_PER_PAGE) + 1
                 },
-                num_micro_blocks: 0, // Microblocks appear obsolete in ZQ2
+                num_micro_blocks: 0, // Microblocks obsolete in ZQ2
                 miner_pub_key: proposer,
                 ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
                 committee_hash: Some(B256::ZERO),
             },
             body: TxBlockVerboseBody {
-                header_sign: B512::ZERO, // Appears obsolete in ZQ2
+                header_sign: B512::ZERO, // Obsolete in ZQ2
                 block_hash: block.hash().into(),
                 micro_block_infos: vec![],
                 cosig_bitmap_1: vec![true; 8],
