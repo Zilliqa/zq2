@@ -37,6 +37,7 @@ enum Commands {
     Perf(PerfStruct),
     #[clap(subcommand)]
     /// Group of subcommands to deploy and configure a Zilliqa 2 network
+    /// If you define the environment variable ZQ2_API_URL, we will use it in preference to the default API url for this network.
     Deployer(DeployerCommands),
     #[clap(subcommand)]
     /// Convert Zilliqa 1 to Zilliqa 2 persistnce
@@ -57,6 +58,8 @@ enum Commands {
     Nodes(NodesStruct),
     /// Start a node and join it to a network
     JoinNode(JoinNodeStruct),
+    /// Run various tests on the chain
+    Test(TestStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -104,6 +107,8 @@ enum DeployerCommands {
     GeneratePrivateKeys(DeployerGenerateActionsArgs),
     /// Generate the genesis key. --force to replace if already existing
     GenerateGenesisKey(DeployerGenerateGenesisArgs),
+    /// Get info
+    Info(DeployerInfoArgs),
 }
 
 #[derive(Args, Debug)]
@@ -144,6 +149,9 @@ pub struct DeployerInstallArgs {
     /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long)]
     persistence_url: Option<String>,
+    /// Machines to install
+    #[clap(long, num_args= 0..)]
+    machines: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -156,6 +164,9 @@ pub struct DeployerUpgradeArgs {
     /// Define the number of nodes to process in parallel. Default: 1
     #[clap(long)]
     max_parallel: Option<usize>,
+    /// Machines to install
+    #[clap(long, num_args= 0..)]
+    machines: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -222,6 +233,11 @@ pub struct DeployerGenerateGenesisArgs {
     /// Generate and replace the existing key
     #[clap(long)]
     force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerInfoArgs {
+    config_file: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -298,6 +314,23 @@ struct DocStruct {
     /// API url to show in the generated documentation
     #[clap(long)]
     api_url: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct TestStruct {
+    config_dir: String,
+    #[clap(long)]
+    #[clap(default_value = "warn")]
+    log_level: LogLevel,
+
+    #[clap(long)]
+    debug_modules: Vec<String>,
+
+    #[clap(long)]
+    trace_modules: Vec<String>,
+
+    #[arg(trailing_var_arg = true, hide = true)]
+    rest: Vec<String>,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -746,6 +779,7 @@ async fn main() -> Result<()> {
                     arg.select,
                     arg.max_parallel,
                     arg.persistence_url.clone(),
+                    &arg.machines,
                 )
                 .await
                 .map_err(|err| {
@@ -759,11 +793,16 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_upgrade(&config_file, arg.select, arg.max_parallel)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
-                    })?;
+                plumbing::run_deployer_upgrade(
+                    &config_file,
+                    arg.select,
+                    arg.max_parallel,
+                    &arg.machines,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::GetConfigFile(ref arg) => {
@@ -920,6 +959,14 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
+            DeployerCommands::Info(ref arg) => {
+                plumbing::run_deployer_info(&arg.config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer info command: {}", err)
+                    })?;
+                Ok(())
+            }
         },
         Commands::Converter(converter_command) => match &converter_command {
             ConverterCommands::Convert(ref arg) => {
@@ -1073,6 +1120,15 @@ async fn main() -> Result<()> {
                 Some(secret_key_hex),
             )
             .await?;
+            Ok(())
+        }
+        Commands::Test(ref arg) => {
+            let log_spec = utils::compute_log_string(
+                &arg.log_level.to_string(),
+                &arg.debug_modules,
+                &arg.trace_modules,
+            )?;
+            plumbing::test(&arg.config_dir, &base_dir, &log_spec, false, &arg.rest).await?;
             Ok(())
         }
     }

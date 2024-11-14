@@ -1,17 +1,18 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
-
+use crate::address::EthereumAddress;
 use alloy::{
     primitives::{address, Address},
     signers::local::LocalSigner,
 };
 use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
+use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 use tera::Tera;
 use tokio::fs;
 use zilliqa::{
@@ -41,6 +42,7 @@ use crate::{
     node_spec::Composition,
     scilla, utils, validators,
 };
+use core::net::Ipv4Addr;
 
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
 const DATADIR_PREFIX: &str = "z2_node_";
@@ -274,6 +276,21 @@ impl Setup {
         index + 201 + self.config.base_port + if proxied { 1000 } else { 0 }
     }
 
+    pub fn get_p2p_port(&self, index: u16) -> u16 {
+        return self.config.base_port + 301 + index + self.config.base_port;
+    }
+
+    pub fn get_external_addr(&self, index: u16) -> Result<Multiaddr> {
+        Ok(format!("/ip4/127.0.0.1/udp/{0}/quic-v1", self.get_p2p_port(index)).parse()?)
+    }
+
+    pub fn get_json_rpc_url_for_node(&self, node: u64) -> Result<String> {
+        Ok(format!(
+            "http://localhost:{}/",
+            self.get_json_rpc_port(u64::try_into(node)?, false)
+        ))
+    }
+
     pub fn get_scilla_port(&self, index: u16) -> u16 {
         index + self.config.base_port + 500
     }
@@ -313,6 +330,10 @@ impl Setup {
         result.push_str(&format!(
             "🦏  JSON-RPC ports are at {0}+<node_index>\n",
             self.get_json_rpc_port(0, false)
+        ));
+        result.push_str(&format!(
+            "🦏  libp2p ports are at {0}+<node_index>\n",
+            self.get_p2p_port(0)
         ));
         result.push_str(&format!(
             "🦏  Scilla ports are at {0}+<node_index>\n",
@@ -398,6 +419,17 @@ impl Setup {
         Ok(())
     }
 
+    pub fn peer_id_for_idx(&self, idx: u64) -> Result<String> {
+        let secret_key = self
+            .config
+            .node_data
+            .get(&idx)
+            .ok_or(anyhow!("No node with index {idx}"))?
+            .secret_key
+            .clone();
+        Ok(EthereumAddress::from_private_key(&secret_key)?.peer_id)
+    }
+
     pub async fn generate_standalone_config(&self) -> Result<()> {
         // The genesis deposits.
         let mut genesis_deposits: Vec<GenesisDeposit> = Vec::new();
@@ -430,7 +462,7 @@ impl Setup {
                 address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
                 zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
             ),
-            // e53d1c3edaffc7a7bab5418eb836cf75819a82872b4a1a0f1c7fcf5c3e020b89
+            // privkey dbcfgfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
             (
                 address!("2ce2dbd623b3c277fae4074f0b2605e624510e20"),
                 zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
@@ -485,7 +517,7 @@ impl Setup {
                 .add_raw_template("test_env", include_str!("../resources/test_env.tera.sh"))?;
             let env_str = test_tera
                 .render("test_env", &context)
-                .context("whilst rendering test_env.tera.sh")?;
+                .context("whilst recfgring test_env.tera.sh")?;
             fs::write(test_env_path, &env_str).await?;
         }
 
@@ -496,17 +528,25 @@ impl Setup {
             &self.config_dir
         );
         for (node_index, _node_desc) in self.config.shape.nodes.iter() {
+            let node_index_as_u16 = u64::try_into(*node_index)?;
             println!("🎱 Generating configuration for node {node_index}...");
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
-                bootstrap_address: None,
                 nodes: Vec::new(),
-                p2p_port: 0,
-                external_address: None,
+                p2p_port: self.get_p2p_port(node_index_as_u16),
+                external_address: Some(self.get_external_addr(node_index_as_u16)?),
+                bootstrap_address: Some((
+                    PeerId::from_str(&self.peer_id_for_idx(0)?)?,
+                    self.get_external_addr(0)?,
+                )),
+                listening_subnet: Some((
+                    "127.0.0.1".parse::<Ipv4Addr>()?,
+                    "255.255.255.0".parse::<Ipv4Addr>()?,
+                )),
             };
             // @todo should pass this in!
             let mut node_config = cfg::NodeConfig {
-                json_rpc_port: self.get_json_rpc_port(u64::try_into(*node_index)?, false),
+                json_rpc_port: self.get_json_rpc_port(node_index_as_u16, false),
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
                 state_cache_size: state_cache_size_default(),
@@ -577,10 +617,8 @@ impl Setup {
             node_config.state_rpc_limit = usize::try_from(i64::MAX)?;
             node_config.consensus.scilla_stdlib_dir =
                 scilla::Runner::get_scilla_stdlib_dir(&self.base_dir);
-
             cfg.nodes = Vec::new();
             cfg.nodes.push(node_config);
-            cfg.p2p_port = 0;
             // Now write the config.
             let config_path = self.get_config_path(*node_index)?;
             println!("🪅 Writing configuration file for node {0} .. ", node_index);

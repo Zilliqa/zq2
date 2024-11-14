@@ -7,6 +7,7 @@ mod constants;
 pub mod contracts;
 pub mod crypto;
 pub mod db;
+pub mod director;
 mod error;
 pub mod exec;
 mod health;

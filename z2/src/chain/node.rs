@@ -111,7 +111,7 @@ impl fmt::Display for NodeRole {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Machine {
     pub project_id: String,
     pub zone: String,
@@ -386,7 +386,8 @@ impl ChainNode {
             private_key.value().await?
         } else {
             return Err(anyhow!(
-                "Found multiple private keys for the instance {}",
+                "Found {} private keys for the instance {}",
+                private_keys.len(),
                 &self.machine.name
             ));
         };
@@ -764,7 +765,7 @@ pub async fn retrieve_secret_by_role(
     .await
 }
 
-async fn retrieve_secret_by_node_name(
+pub async fn retrieve_secret_by_node_name(
     chain_name: &str,
     project_id: &str,
     node_name: &str,

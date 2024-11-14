@@ -100,3 +100,16 @@ pub fn make_executable<P: AsRef<Path>>(file_path: &P) -> Result<()> {
     fs::set_permissions(file_path, perms)?;
     Ok(())
 }
+
+pub fn parse_range(in_val: &str) -> Result<(u64, u64)> {
+    let mut fields = in_val.split('-');
+    let mut min: u64 = 0;
+    let mut max: u64 = 0;
+    if let Some(mv) = fields.next() {
+        min = mv.parse::<u64>()?;
+    }
+    if let Some(mv) = fields.next() {
+        max = mv.parse::<u64>()?;
+    }
+    Ok((min, max))
+}
