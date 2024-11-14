@@ -12,7 +12,6 @@ use alloy::{
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
-use eth_trie::Trie;
 use jsonrpsee::{
     types::{ErrorObject, Params},
     RpcModule,
@@ -1300,21 +1299,31 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
             .iter()
             .map(|x| serde_json::to_vec(&x))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let k = storage_key(&var_name, &indicies_encoded);
-        let v = match trie.get(&k)? {
-            Some(v) => v,
-            None => return Err(anyhow!("Key not found")),
-        };
-        let mut var = result.entry(var_name.clone());
-        for requested_index in requested_indices {
-            let next = var.or_insert_with(|| Value::Object(Default::default()));
-            let Value::Object(next) = next else {
-                unreachable!()
-            };
-            var = next.entry(requested_index.clone());
-        }
+        let prefix = storage_key(&var_name, &indicies_encoded);
+        let mut n = 0;
+        for (k, v) in trie.iter_by_prefix(&prefix)? {
+            n += 1;
+            if n > node.config.state_rpc_limit {
+                return Err(anyhow!(
+                    "Requested indices exceed the limit of {}",
+                    node.config.state_rpc_limit
+                ));
+            }
 
-        var.or_insert(serde_json::from_slice(&v)?);
+            let (var_name, indices) = split_storage_key(&k)?;
+            let mut var = result.entry(var_name.clone());
+
+            for index in indices {
+                let next = var.or_insert_with(|| Value::Object(Default::default()));
+                let Value::Object(next) = next else {
+                    unreachable!()
+                };
+                let key: String = serde_json::from_slice(&index)?;
+                var = next.entry(key.clone());
+            }
+
+            var.or_insert(serde_json::from_slice(&v)?);
+        }
     }
     Ok(result.into())
 }
