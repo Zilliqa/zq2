@@ -440,7 +440,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let state = node.get_state(&block)?;
 
     if !state.has_account(address)? {
-        return Err(jsonrpsee::types::ErrorObject::owned(
+        return Err(ErrorObject::owned(
             RPCErrorCode::RpcInvalidAddressOrKey as i32,
             "Account is not created",
             None::<()>,
@@ -550,10 +550,11 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     let state = node.get_state(&block)?;
 
     if !state.has_account(address)? {
-        return Err(anyhow!(
-            "Address does not exist: {}",
-            hex::encode(address.0)
-        ));
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            format!("Address does not exist: {}", address),
+            None::<()>,
+        ).into());
     }
     let account = state.get_account(address)?;
 
@@ -574,7 +575,18 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node.get_state(&block)?.get_account(address)?;
+
+    let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist".to_string(),
+            None::<()>,
+        )
+            .into());
+    }
+    let account = state.get_account(address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address does not exist"));
@@ -1205,7 +1217,7 @@ fn get_smart_contract_state_internal(
         return Err(ErrorObject::owned(
             RPCErrorCode::RpcInvalidAddressOrKey as i32,
             "Address does not exist".to_string(),
-            None::<String>,
+            None::<()>,
         )
         .into());
     }
