@@ -554,7 +554,8 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
             RPCErrorCode::RpcInvalidAddressOrKey as i32,
             format!("Address does not exist: {}", address),
             None::<()>,
-        ).into());
+        )
+        .into());
     }
     let account = state.get_account(address)?;
 
@@ -584,7 +585,7 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
             "Address does not exist".to_string(),
             None::<()>,
         )
-            .into());
+        .into());
     }
     let account = state.get_account(address)?;
 
