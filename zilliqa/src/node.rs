@@ -191,7 +191,11 @@ impl Node {
             local_channel: local_sender_channel,
             request_id: RequestId::default(),
         };
-        let db = Arc::new(Db::new(config.data_dir.as_ref(), config.eth_chain_id)?);
+        let db = Arc::new(Db::new(
+            config.data_dir.as_ref(),
+            config.eth_chain_id,
+            config.state_cache_size,
+        )?);
         let node = Node {
             config: config.clone(),
             peer_id,

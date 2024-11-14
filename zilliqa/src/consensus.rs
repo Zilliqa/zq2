@@ -162,9 +162,6 @@ pub struct Consensus {
     /// Receipts cache
     receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
     receipts_cache_hash: Hash,
-    /// Cache stake/stakers
-    stake_cache: BTreeMap<u64, u128>,
-    stakers_cache: BTreeMap<(u64, Hash), Vec<NodePublicKey>>,
     /// Actions that act on newly created blocks
     transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
@@ -191,8 +188,6 @@ impl Consensus {
             config.eth_chain_id
         );
 
-        let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
-
         // Start chain from checkpoint. Load data file and initialise data in tables
         let mut checkpoint_data = None;
         if let Some(checkpoint) = &config.load_checkpoint {
@@ -203,6 +198,10 @@ impl Consensus {
                 config.eth_chain_id,
             )?;
         }
+
+        // It is important to create the `BlockStore` after the checkpoint has been loaded into the DB. The
+        // `BlockStore` pre-loads and caches information about the currently stored blocks.
+        let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
 
         let latest_block = db
             .get_finalized_view()?
@@ -253,7 +252,7 @@ impl Consensus {
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
-                    let mut start_view = db
+                    let start_view = db
                         .get_view()?
                         .or_else(|| {
                             Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
@@ -261,21 +260,11 @@ impl Consensus {
                         .unwrap();
 
                     trace!(
-                        "recovery: high_block view {0}, finalized_number {1} , start_view {2}",
+                        "recovery: high_block view {0}, finalized_number {1}, start_view {2}",
                         high_block.view(),
                         finalized_number,
                         start_view
                     );
-
-                    // If timestamp of when current view was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
-                    if let Some(latest_view_timestamp) = db.get_view_updated_at()? {
-                        let view_diff = Consensus::minimum_views_in_time_difference(
-                            latest_view_timestamp.elapsed()?,
-                            config.consensus.consensus_timeout,
-                        );
-                        start_view += view_diff;
-                        debug!("Atleast {} views changed since last view was written. new start_view {}", view_diff, start_view);
-                    }
 
                     if finalized_number > high_block.view() {
                         // We know of a finalized view higher than the view in finalized_number; start there.
@@ -340,8 +329,6 @@ impl Consensus {
             db,
             receipts_cache: HashMap::new(),
             receipts_cache_hash: Hash::ZERO,
-            stake_cache: BTreeMap::new(),
-            stakers_cache: BTreeMap::new(),
             transaction_pool: Default::default(),
             early_proposal: None,
             create_next_block_on_timeout: false,
@@ -353,7 +340,7 @@ impl Consensus {
         consensus.db.set_view(start_view)?;
         consensus.set_finalized_view(finalized_view)?;
 
-        // If we're at genesis, add the genesis block.
+        // If we're at genesis, add the genesis block and return
         if latest_block_view == 0 {
             if let Some(genesis) = latest_block {
                 // The genesis block might already be stored and we were interrupted before we got a
@@ -364,6 +351,7 @@ impl Consensus {
             }
             // treat genesis as finalized
             consensus.set_finalized_view(latest_block_view)?;
+            return Ok(consensus);
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
@@ -375,11 +363,44 @@ impl Consensus {
                 &consensus
                     .state
                     .at_root(parent.state_root_hash().into())
-                    .get_stakers_raw(block.header)?,
+                    .get_stakers(block.header)?,
             )?;
         }
 
+        // If timestamp of when current view was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
+        // This is useful in scenarios in which consensus has failed since this node went down
+        if let Some(latest_view_timestamp) = consensus.db.get_view_updated_at()? {
+            let view_diff = Consensus::minimum_views_in_time_difference(
+                latest_view_timestamp.elapsed()?,
+                consensus.config.consensus.consensus_timeout,
+            );
+            let start_view_jumped_ahead = start_view + view_diff;
+            consensus.db.set_view(start_view_jumped_ahead)?;
+            debug!(
+                "Atleast {} views changed since last view was written. new start_view {}",
+                view_diff, start_view_jumped_ahead
+            );
+        }
+
         Ok(consensus)
+    }
+
+    /// Build NewView message for this view
+    fn build_new_view(&mut self) -> Result<NetworkMessage> {
+        let view = self.get_view()?;
+        let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
+            anyhow!("missing block corresponding to our high qc - this should never happen")
+        })?;
+        let leader = self.leader_at_block(&block, view);
+        Ok((
+            leader.map(|leader| leader.peer_id),
+            ExternalMessage::NewView(Box::new(NewView::new(
+                self.secret_key,
+                self.high_qc,
+                view,
+                self.secret_key.node_public_key(),
+            ))),
+        ))
     }
 
     pub fn public_key(&self) -> NodePublicKey {
@@ -411,8 +432,7 @@ impl Consensus {
                 number: block.number() + 1,
                 ..block.header
             };
-            let root_hash = self.state.root_hash()?;
-            let stakers = self.get_stakers_mut(root_hash, next_block_header)?;
+            let stakers = self.state.get_stakers(next_block_header)?;
             // If we're in the genesis committee, vote again.
             if stakers.iter().any(|v| *v == self.public_key()) {
                 info!("timeout in view: {:?}, we will vote for block rather than incrementing view, block hash: {}", view, block.hash());
@@ -483,6 +503,17 @@ impl Consensus {
                 time_since_last_view_change,
                 exponential_backoff_timeout
             );
+
+            // Resend NewView message for this view if timeout period is a multiple of consensus_timeout
+            if (time_since_last_view_change
+                > self.config.consensus.consensus_timeout.as_millis() as u64)
+                && (Duration::from_millis(time_since_last_view_change).as_secs()
+                    % self.config.consensus.consensus_timeout.as_secs())
+                    == 0
+            {
+                return Ok(Some(self.build_new_view()?));
+            }
+
             return Ok(None);
         }
 
@@ -497,7 +528,10 @@ impl Consensus {
             number: block.number() + 1,
             ..block.header
         };
-        let stakers = self.get_stakers_mut(block.state_root_hash(), next_block_header)?;
+        let stakers = self
+            .state
+            .at_root(block.state_root_hash().into())
+            .get_stakers(next_block_header)?;
         if !stakers.iter().any(|v| *v == self.public_key()) {
             debug!(
                 "can't vote for new view, we aren't in the committee of length {:?}",
@@ -514,21 +548,8 @@ impl Consensus {
         );
 
         self.set_view(next_view)?;
-        let Some(leader) = self.leader_at_block(&block, next_view) else {
-            return Ok(None);
-        };
-
-        let new_view = NewView::new(
-            self.secret_key,
-            self.high_qc,
-            next_view,
-            self.secret_key.node_public_key(),
-        );
-
-        Ok(Some((
-            Some(leader.peer_id),
-            ExternalMessage::NewView(Box::new(new_view)),
-        )))
+        let new_view = self.build_new_view()?;
+        Ok(Some(new_view))
     }
 
     fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
@@ -689,9 +710,7 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
                 self.state.set_to_root(parent.state_root_hash().into());
             }
-
-            let root_hash = self.state.root_hash()?;
-            let stakers = self.get_stakers_mut(root_hash, block.header)?;
+            let stakers: Vec<_> = self.state.get_stakers(block.header)?;
 
             // It is possible to source Proposals from own storage during sync, which alters the source of the Proposal.
             // Only allow from == self, for fast-forwarding, in normal case but not during sync
@@ -738,8 +757,7 @@ impl Consensus {
                 number: block.number() + 1,
                 ..block.header
             };
-            let root_hash = self.state.root_hash()?;
-            let stakers = self.get_stakers_mut(root_hash, next_block_header)?;
+            let stakers = self.state.get_stakers(next_block_header)?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
                 debug!(
@@ -984,51 +1002,6 @@ impl Consensus {
         Ok(())
     }
 
-    /// Returns cached stakers, retaining N highest blocks
-    fn get_stakers_mut(
-        &mut self,
-        state_root_hash: Hash,
-        executed_block: BlockHeader,
-    ) -> Result<Vec<NodePublicKey>> {
-        // return cached value
-        let key = (executed_block.number, state_root_hash);
-        if let Some(v) = self.stakers_cache.get(&key) {
-            return Ok(v.to_vec());
-        }
-
-        // keep cache small
-        if self.stakers_cache.len() == 10 {
-            self.stakers_cache.pop_first();
-        }
-
-        // populate cache on miss, ordered by block number
-        let stakers = self
-            .state
-            .at_root(state_root_hash.into())
-            .get_stakers_raw(executed_block)?;
-        self.stakers_cache.insert(key, stakers.clone());
-
-        Ok(stakers)
-    }
-
-    /// Return stakers from cache, if present; else retrieves from EVM
-    fn get_stakers(
-        &self,
-        state_root_hash: Hash,
-        executed_block: BlockHeader,
-    ) -> Result<Vec<NodePublicKey>> {
-        // return cached value, if present
-        let key = (executed_block.number, state_root_hash);
-        if let Some(v) = self.stakers_cache.get(&key) {
-            return Ok(v.to_vec());
-        }
-
-        // retrieve from EVM, on miss
-        self.state
-            .at_root(state_root_hash.into())
-            .get_stakers_raw(executed_block)
-    }
-
     pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         let block_hash = vote.block_hash;
         let block_view = vote.view;
@@ -1076,7 +1049,10 @@ impl Consensus {
             ..Default::default()
         };
 
-        let committee = self.get_stakers_mut(block.state_root_hash(), executed_block)?;
+        let committee = self
+            .state
+            .at_root(block.state_root_hash().into())
+            .get_stakers(executed_block)?;
 
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
@@ -1115,10 +1091,9 @@ impl Consensus {
             let Some(weight) = self.state.get_stake(vote.public_key, executed_block)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
-
             cosigned_weight += weight.get();
 
-            let total_weight = self.total_weight(executed_block);
+            let total_weight = self.total_weight(&committee, executed_block);
             supermajority_reached = cosigned_weight * 3 > total_weight * 2;
 
             trace!(
@@ -1138,7 +1113,6 @@ impl Consensus {
                     supermajority_reached,
                 ),
             );
-
             // if we are already in the round in which the vote counts and have reached supermajority
             if supermajority_reached {
                 // We propose new block immediately if there's something in mempool or it's the first view
@@ -1197,8 +1171,9 @@ impl Consensus {
                     return Ok(None);
                 };
                 // Retrieve the previous leader and committee - for rewards
-                let committee =
-                    self.get_stakers(parent_block.state_root_hash(), proposal.header)?;
+                let committee = state
+                    .at_root(parent_block.state_root_hash().into())
+                    .get_stakers(proposal.header)?;
                 (
                     self.qc_from_bits(
                         parent_block_hash,
@@ -1752,12 +1727,13 @@ impl Consensus {
 
         let parent_root_hash = parent.state_root_hash();
 
+        let state = self.state.at_root(parent_root_hash.into());
         let executed_block = BlockHeader {
             number: parent.header.number + 1,
             ..Default::default()
         };
 
-        let committee = self.get_stakers(parent_root_hash, executed_block)?;
+        let committee = state.get_stakers(executed_block)?;
 
         Ok(committee)
     }
@@ -1847,7 +1823,7 @@ impl Consensus {
             cosigned_weight += weight.get();
             qcs.insert(index, new_view.qc);
 
-            supermajority = cosigned_weight * 3 > self.total_weight(executed_block) * 2;
+            supermajority = cosigned_weight * 3 > self.total_weight(&committee, executed_block) * 2;
 
             let num_signers = signatures.len();
 
@@ -2317,7 +2293,9 @@ impl Consensus {
             .verify(block.hash().as_bytes(), block.signature());
 
         let committee = self
-            .get_stakers(parent.state_root_hash(), block.header)
+            .state
+            .at_root(parent.state_root_hash().into())
+            .get_stakers(block.header)
             .map_err(|e| (e, false))?;
 
         if verified.is_err() {
@@ -2767,7 +2745,7 @@ impl Consensus {
             })
             .sum();
 
-        if cosigned_sum * 3 <= self.total_weight_raw(block.header) * 2 {
+        if cosigned_sum * 3 <= self.total_weight(committee, block.header) * 2 {
             return Err(anyhow!("no quorum"));
         }
 
@@ -2803,32 +2781,18 @@ impl Consensus {
         })
     }
 
-    /// Retrieves cached total stake for specific block number, retaining only N highest blocks.
-    fn total_weight(&mut self, executed_block: BlockHeader) -> u128 {
-        // return cached value
-        if let Some(stake) = self.stake_cache.get(&executed_block.number) {
-            return *stake;
-        }
-
-        // keep cache small
-        if self.stake_cache.len() == 10 {
-            self.stake_cache.pop_first(); // remove oldest block stake
-        }
-
-        // populate cache
-        let stake = self.total_weight_raw(executed_block);
-        self.stake_cache.insert(executed_block.number, stake);
-
-        stake
-    }
-
-    /// Retrieves total stake from Deposit contract via EVM.
-    fn total_weight_raw(&self, executed_block: BlockHeader) -> u128 {
-        self.state
-            .get_total_stake(executed_block)
-            .unwrap()
-            .unwrap()
-            .into()
+    fn total_weight(&self, committee: &[NodePublicKey], executed_block: BlockHeader) -> u128 {
+        committee
+            .iter()
+            .map(|&pub_key| {
+                let stake = self
+                    .state
+                    .get_stake(pub_key, executed_block)
+                    .unwrap()
+                    .unwrap();
+                stake.get()
+            })
+            .sum()
     }
 
     /// Deal with the fork to this block. The block is assumed to be valid to switch to.
@@ -2850,10 +2814,6 @@ impl Consensus {
             proposed_block.hash(),
             proposed_block_height
         );
-
-        // Flush stake cache
-        self.stake_cache.clear();
-        self.stakers_cache.clear();
 
         // Need to make sure both pointers are at the same height
         while head_height > proposed_block_height {
@@ -2961,9 +2921,10 @@ impl Consensus {
             let parent = self
                 .get_block(&block_pointer.parent_hash())?
                 .ok_or_else(|| anyhow!("missing parent"))?;
-            let committee: Vec<_> =
-                self.get_stakers_mut(parent.state_root_hash(), block_pointer.header)?;
-
+            let committee: Vec<_> = self
+                .state
+                .at_root(parent.state_root_hash().into())
+                .get_stakers(block_pointer.header)?;
             self.execute_block(None, &block_pointer, transactions, &committee)?;
         }
 

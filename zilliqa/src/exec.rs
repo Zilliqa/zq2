@@ -736,7 +736,7 @@ impl State {
         )
     }
 
-    pub fn get_stakers_raw(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
+    pub fn get_stakers(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
         let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
         let result = self.call_contract(
@@ -776,20 +776,6 @@ impl State {
         info!("committee: {committee:?}");
 
         Ok(())
-    }
-
-    pub fn get_total_stake(&self, current_block: BlockHeader) -> Result<Option<NonZeroU128>> {
-        let data = contracts::deposit::GET_TOTAL_STAKE.encode_input(&[])?;
-        let result = self.call_contract(
-            Address::ZERO,
-            Some(contract_addr::DEPOSIT),
-            data,
-            0,
-            current_block,
-        )?;
-        let total = ensure_success(result)?;
-        let total = NonZeroU128::new(U256::from_be_slice(&total).to());
-        Ok(total)
     }
 
     pub fn get_stake(
