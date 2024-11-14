@@ -17,7 +17,7 @@ use crate::{
     chain::node::NodeRole,
     kpi,
     node_spec::{Composition, NodeSpec},
-    utils, validators,
+    testing, utils, validators,
 };
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
@@ -473,4 +473,26 @@ pub async fn generate_docs(
             "There are RPC methods implemented but not documented, or vice versa"
         ))
     }
+}
+
+pub async fn test(
+    config_dir: &str,
+    base_dir: &str,
+    log_spec: &str,
+    watch: bool,
+    rest: &Vec<String>,
+) -> Result<()> {
+    let mut setup_obj = setup::Setup::load(config_dir, log_spec, base_dir, watch).await?;
+    if rest.is_empty() {
+        return Err(anyhow!("No test name specified"));
+    }
+    let cmd = &rest[0];
+    if cmd == "partition" {
+        // The rest of the args are partition sets.
+        let part = testing::Partition::from_args(&rest[1..], &setup_obj)?;
+        part.run_with(&mut setup_obj).await?;
+    } else {
+        return Err(anyhow!(format!("No test type {0}", cmd)));
+    }
+    Ok(())
 }

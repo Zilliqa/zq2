@@ -4,6 +4,7 @@ use std::{
     str::FromStr,
 };
 
+use crate::address::EthereumAddress;
 use alloy::{
     primitives::{address, Address},
     signers::local::LocalSigner,
@@ -274,6 +275,13 @@ impl Setup {
         index + 201 + self.config.base_port + if proxied { 1000 } else { 0 }
     }
 
+    pub fn get_json_rpc_url_for_node(&self, node: u64) -> Result<String> {
+        Ok(format!(
+            "http://localhost:{}/",
+            self.get_json_rpc_port(u64::try_into(node)?, false)
+        ))
+    }
+
     pub fn get_scilla_port(&self, index: u16) -> u16 {
         index + self.config.base_port + 500
     }
@@ -396,6 +404,17 @@ impl Setup {
         let config_str = toml::to_string(&loaded_config)?;
         fs::write(&config_path, config_str).await?;
         Ok(())
+    }
+
+    pub fn peer_id_for_idx(&self, idx: u64) -> Result<String> {
+        let secret_key = self
+            .config
+            .node_data
+            .get(&idx)
+            .ok_or(anyhow!("No node with index {idx}"))?
+            .secret_key
+            .clone();
+        Ok(EthereumAddress::from_private_key(&secret_key)?.peer_id)
     }
 
     pub async fn generate_standalone_config(&self) -> Result<()> {
