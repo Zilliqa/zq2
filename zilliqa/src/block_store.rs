@@ -542,7 +542,6 @@ impl BlockStoreStatus {
             .iter()
             .map(|(k, v)| (format!("{:?}", k), PeerInfoStatus::new(v)))
             .collect::<Vec<_>>();
-
         Ok(Self {
             highest_known_view: block_store.highest_known_view,
             views_held: block_store.db.get_view_ranges()?,
@@ -605,6 +604,20 @@ impl BlockStore {
             started_syncing_at: 0,
             last_sync_flag: false,
         })
+    }
+
+    /// The data set here is held in memory. It can be useful to update manually
+    /// For example after a restart to remind block_store of its peers and height
+    pub fn set_peers_and_view(
+        &mut self,
+        highest_known_view: u64,
+        peer_ids: &Vec<PeerId>,
+    ) -> Result<()> {
+        for peer_id in peer_ids {
+            self.peer_info(*peer_id);
+        }
+        self.highest_known_view = highest_known_view;
+        Ok(())
     }
 
     /// Create a read-only clone of this [BlockStore]. The read-only property must be upheld by the caller - Calling
