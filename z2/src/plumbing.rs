@@ -176,7 +176,7 @@ pub async fn run_deployer_install(
     node_selection: bool,
     max_parallel: Option<usize>,
     persistence_url: Option<String>,
-    machines: &Vec<String>,
+    machines: &[String],
 ) -> Result<()> {
     println!("🦆 Installing {config_file} .. ");
     deployer::install_or_upgrade(
@@ -195,7 +195,7 @@ pub async fn run_deployer_upgrade(
     config_file: &str,
     node_selection: bool,
     max_parallel: Option<usize>,
-    machines: &Vec<String>,
+    machines: &[String],
 ) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
     deployer::install_or_upgrade(
@@ -484,7 +484,7 @@ pub async fn test(
     base_dir: &str,
     log_spec: &str,
     watch: bool,
-    rest: &Vec<String>,
+    rest: &[String],
 ) -> Result<()> {
     let mut setup_obj = setup::Setup::load(config_dir, log_spec, base_dir, watch).await?;
     if rest.is_empty() {

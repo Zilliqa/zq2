@@ -1,4 +1,4 @@
-use std::{ops::Deref, str::FromStr, time::Duration};
+use std::{net::Ipv4Addr, ops::Deref, str::FromStr, time::Duration};
 
 use alloy::primitives::Address;
 use libp2p::{Multiaddr, PeerId};
@@ -9,7 +9,6 @@ use crate::{
     crypto::{Hash, NodePublicKey},
     transaction::EvmGas,
 };
-use std::net::Ipv4Addr;
 
 // Note that z2 constructs instances of this to save as a configuration so it must be both
 // serializable and deserializable.

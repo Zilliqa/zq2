@@ -107,7 +107,7 @@ impl BlockCache {
     }
 
     // Dump out a graphviz dotfile fragment containing the cache with links.
-    pub fn illustrate(&self, from_db: &Vec<Hash>) -> Result<String> {
+    pub fn illustrate(&self, from_db: &[Hash]) -> Result<String> {
         // Print out the structure of the cache (fairly slowly!).
         let mut by_hash: HashMap<Hash, HashSet<u128>> = HashMap::new();
         let mut result = String::new();
@@ -123,10 +123,7 @@ impl BlockCache {
 
         for (key, entry) in self.cache.iter().chain(self.head_cache.iter()) {
             let hash = entry.proposal.hash();
-            by_hash
-                .entry(hash)
-                .or_insert_with(|| HashSet::new())
-                .insert(*key);
+            by_hash.entry(hash).or_default().insert(*key);
         }
 
         for (key, entry) in self.cache.iter().chain(self.head_cache.iter()) {
@@ -154,7 +151,7 @@ impl BlockCache {
                 }
             }
         }
-        result.push_str("\n");
+        result.push('\n');
         Ok(result)
     }
 
@@ -188,7 +185,7 @@ impl BlockCache {
         Ok(self
             .by_hash
             .get(hash)
-            .map(|entry_set: &HashSet<u128>| {
+            .and_then(|entry_set: &HashSet<u128>| {
                 entry_set
                     .iter()
                     .take(1)
@@ -199,8 +196,7 @@ impl BlockCache {
                             .map(|entry| entry.proposal.clone())
                     })
                     .last()
-            })
-            .flatten())
+            }))
     }
 
     /// Find any view gaps known to exist in the cache and add them to the known view gap
@@ -276,7 +272,7 @@ impl BlockCache {
             .head_cache
             .range::<u128, _>((Bound::Included(key), Bound::Unbounded));
         if let Some((_, v)) = head_iter.next() {
-            return Some((v.proposal.view(), v.proposal.number()));
+            Some((v.proposal.view(), v.proposal.number()))
         } else {
             None
         }
@@ -494,11 +490,8 @@ impl BlockCache {
                         .get_mut(&entry.parent_hash)
                         .map(|x| x.remove(&key))
                 });
-            by_parent_hash
-                .entry(*parent_hash)
-                .or_insert(HashSet::new())
-                .insert(key);
-            by_hash.entry(hash).or_insert(HashSet::new()).insert(key);
+            by_parent_hash.entry(*parent_hash).or_default().insert(key);
+            by_hash.entry(hash).or_default().insert(key);
         }
 
         if proposal.header.view <= highest_confirmed_view {
@@ -1515,7 +1508,7 @@ impl BlockStore {
         }
     }
 
-    pub fn illustrate(&self, from_db: &Vec<Hash>) -> Result<String> {
+    pub fn illustrate(&self, from_db: &[Hash]) -> Result<String> {
         self.buffered.illustrate(from_db)
     }
 }

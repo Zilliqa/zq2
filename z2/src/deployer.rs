@@ -8,11 +8,11 @@ use tokio::{fs, sync::Semaphore, task};
 
 use crate::{
     address::EthereumAddress,
-    chain::Chain,
     chain::{
         config::NetworkConfig,
         instance::ChainInstance,
         node::{self, ChainNode, NodeRole},
+        Chain,
     },
     secret::Secret,
     validators,
@@ -63,7 +63,7 @@ pub async fn install_or_upgrade(
     node_selection: bool,
     max_parallel: usize,
     persistence_url: Option<String>,
-    machines: &Vec<String>,
+    machines: &[String],
 ) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let mut chain = ChainInstance::new(config).await?;
@@ -75,7 +75,7 @@ pub async fn install_or_upgrade(
         .collect::<Vec<_>>();
 
     let selected_machines = if !machines.is_empty() {
-        machines.clone()
+        machines.to_owned()
     } else if !node_selection {
         node_names
     } else {
