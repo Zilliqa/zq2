@@ -600,8 +600,7 @@ contract Deposit {
 
     function withdrawalPeriod() public view returns (uint256) {
         // shorter unbonding period for testing deposit withdrawals
-        if (block.chainid == 33469)
-            return 5 minutes;
+        if (block.chainid == 33469) return 5 minutes;
         return 2 weeks;
     }
 
