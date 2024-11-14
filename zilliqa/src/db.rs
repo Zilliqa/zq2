@@ -553,14 +553,33 @@ impl Db {
             .optional()?)
     }
 
-    pub fn get_highest_block_hashes(&self, how_many: usize) -> Result<Vec<Hash>> {
+    pub fn get_highest_block_view(&self) -> Result<u64> {
+        Ok(self.db.lock().unwrap().query_row_and_then(
+            "select view from blocks order by height desc limit 1",
+            (),
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn get_hashes_for_views(&self, views: Range<u64>) -> Result<Vec<Hash>> {
         Ok(self
             .db
             .lock()
-           .unwrap()
-           .prepare_cached(
-               "select block_hash from blocks where is_canonical = true order by height desc limit ?1")?
-           .query_map([how_many], |row| row.get(0))?.collect::<Result<Vec<Hash>, _>>()?)
+            .unwrap()
+            .prepare_cached("select block_hash from blocks where view >= ?1 and view < ?2")?
+            .query_map([views.start, views.end], |row| row.get(0))?
+            .collect::<Result<Vec<Hash>, _>>()?)
+    }
+
+    pub fn get_highest_block_hashes(&self, how_many: usize) -> Result<Vec<Hash>> {
+        // Deliberately don't test for is_canonical - we want to include forks.
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("select block_hash from blocks order by height desc limit ?1")?
+            .query_map([how_many], |row| row.get(0))?
+            .collect::<Result<Vec<Hash>, _>>()?)
     }
 
     pub fn set_high_qc_with_db_tx(

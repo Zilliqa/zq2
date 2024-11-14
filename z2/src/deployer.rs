@@ -1,20 +1,41 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, str::FromStr, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use cliclack::MultiProgress;
 use colored::Colorize;
+use serde::{Deserialize, Serialize};
 use tokio::{fs, sync::Semaphore, task};
 
 use crate::{
     address::EthereumAddress,
+    chain::Chain,
     chain::{
         config::NetworkConfig,
         instance::ChainInstance,
-        node::{ChainNode, NodeRole},
+        node::{self, ChainNode, NodeRole},
     },
     secret::Secret,
     validators,
 };
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MachineChainInfo {
+    pub zone: String,
+    pub name: String,
+    pub external_address: String,
+    pub peer_id: String,
+    pub p2p: String,
+    pub rpc: String,
+    pub labels: BTreeMap<String, String>,
+}
+
+// Serializable for easy printing.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChainInfo {
+    pub config: NetworkConfig,
+    pub machines: Vec<MachineChainInfo>,
+    pub rpc: Option<String>,
+}
 
 pub async fn new(
     network_name: &str,
@@ -42,6 +63,7 @@ pub async fn install_or_upgrade(
     node_selection: bool,
     max_parallel: usize,
     persistence_url: Option<String>,
+    machines: &Vec<String>,
 ) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let mut chain = ChainInstance::new(config).await?;
@@ -52,7 +74,9 @@ pub async fn install_or_upgrade(
         .map(|n| n.name().clone())
         .collect::<Vec<_>>();
 
-    let selected_machines = if !node_selection {
+    let selected_machines = if !machines.is_empty() {
+        machines.clone()
+    } else if !node_selection {
         node_names
     } else {
         let mut multi_select = cliclack::multiselect(format!(
@@ -886,4 +910,32 @@ async fn generate_secret(
     progress_bar.stop(format!("{} {}: Secret created", "✔".green(), name));
 
     Ok(())
+}
+
+pub async fn info(config_file: &str) -> Result<ChainInfo> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let instance = ChainInstance::new(config.clone()).await?;
+    let chain = Chain::from_str(&instance.name()).unwrap();
+    let mut info = ChainInfo {
+        config: config.clone(),
+        machines: Vec::new(),
+        rpc: chain.get_endpoint().map(|x| x.to_string()),
+    };
+    for m in instance.machines().iter() {
+        let private_keys =
+            node::retrieve_secret_by_node_name(&config.name, &config.project_id, &m.name).await?;
+        if let Some(key) = private_keys.first() {
+            let address = EthereumAddress::from_private_key(&key.value().await?)?;
+            info.machines.push(MachineChainInfo {
+                zone: m.zone.to_string(),
+                name: m.name.to_string(),
+                external_address: m.external_address.to_string(),
+                peer_id: address.peer_id,
+                p2p: format!("/ip4/{0}/udp/3333/quic-v1", m.external_address),
+                rpc: format!("http://{0}:4201/", m.external_address),
+                labels: m.labels.clone(),
+            })
+        }
+    }
+    Ok(info)
 }

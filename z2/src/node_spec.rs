@@ -37,7 +37,7 @@ impl fmt::Display for Composition {
     }
 }
 
-fn indices_from_string(input: &str) -> Result<HashSet<u64>> {
+pub fn indices_from_string(input: &str) -> Result<HashSet<u64>> {
     // We support a-b and a,b,c .
     let components = input.split(',');
     let mut result = RangeMap::new();
@@ -70,6 +70,10 @@ impl Composition {
             }
         }
         Ok(Self { nodes })
+    }
+
+    pub fn all_nodes(&self) -> HashSet<u64> {
+        self.nodes.keys().cloned().collect::<HashSet<u64>>()
     }
 
     pub fn single_node(is_validator: bool) -> Self {

@@ -15,9 +15,9 @@ use zilliqa::crypto::SecretKey;
 use crate::{
     chain,
     chain::node::NodeRole,
-    kpi,
+    kpi, node_spec,
     node_spec::{Composition, NodeSpec},
-    utils, validators,
+    testing, utils, validators,
 };
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
@@ -176,6 +176,7 @@ pub async fn run_deployer_install(
     node_selection: bool,
     max_parallel: Option<usize>,
     persistence_url: Option<String>,
+    machines: &Vec<String>,
 ) -> Result<()> {
     println!("🦆 Installing {config_file} .. ");
     deployer::install_or_upgrade(
@@ -184,6 +185,7 @@ pub async fn run_deployer_install(
         node_selection,
         max_parallel.unwrap_or(50),
         persistence_url,
+        machines,
     )
     .await?;
     Ok(())
@@ -193,6 +195,7 @@ pub async fn run_deployer_upgrade(
     config_file: &str,
     node_selection: bool,
     max_parallel: Option<usize>,
+    machines: &Vec<String>,
 ) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
     deployer::install_or_upgrade(
@@ -201,6 +204,7 @@ pub async fn run_deployer_upgrade(
         node_selection,
         max_parallel.unwrap_or(1),
         None,
+        machines,
     )
     .await?;
     Ok(())
@@ -224,6 +228,13 @@ pub async fn run_deployer_get_deposit_commands(
 pub async fn run_deployer_deposit(config_file: &str, node_selection: bool) -> Result<()> {
     println!("🦆 Running deposit for {config_file} .. ");
     deployer::run_deposit(config_file, node_selection).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_info(config_file: &str) -> Result<()> {
+    println!("🦆 Getting info for {config_file} .. ");
+    let result = deployer::info(config_file).await?;
+    println!("{}", &serde_yaml::to_string(&result)?);
     Ok(())
 }
 
@@ -465,5 +476,48 @@ pub async fn generate_docs(
         Err(anyhow!(
             "There are RPC methods implemented but not documented, or vice versa"
         ))
+    }
+}
+
+pub async fn test(
+    config_dir: &str,
+    base_dir: &str,
+    log_spec: &str,
+    watch: bool,
+    rest: &Vec<String>,
+) -> Result<()> {
+    let mut setup_obj = setup::Setup::load(config_dir, log_spec, base_dir, watch).await?;
+    if rest.is_empty() {
+        return Err(anyhow!("No test name specified"));
+    }
+    let cmd = &rest[0];
+    match cmd.as_str() {
+        "partition" => {
+            // The rest of the args are partition sets.
+            let part = testing::Partition::from_args(&rest[1..], &setup_obj)?;
+            part.run_with(&mut setup_obj).await?;
+            Ok(())
+        }
+        "graphs" => {
+            // Get a range and request graphs
+            let file_name = rest
+                .get(1)
+                .ok_or(anyhow!("You must provide a base filename"))?;
+            let (min_view, max_view) = if let Some(v) = rest.get(2) {
+                utils::parse_range(v)?
+            } else {
+                // Meaning the last 128 please.
+                (128, 0)
+            };
+            let indices = if let Some(v) = rest.get(3) {
+                Some(node_spec::indices_from_string(v)?)
+            } else {
+                None
+            };
+
+            testing::dump_graphs(&setup_obj, file_name, indices, min_view, max_view).await?;
+            Ok(())
+        }
+        _ => Err(anyhow!(format!("No test type {0}", cmd))),
     }
 }

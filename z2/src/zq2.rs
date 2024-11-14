@@ -1,5 +1,6 @@
 use anyhow::Result;
 use futures::future::JoinAll;
+use std::env;
 use tokio::{process::Command, sync::mpsc, task::JoinHandle};
 
 use crate::{
@@ -39,25 +40,33 @@ impl Runner {
         watch: bool,
         channel: &mpsc::Sender<collector::Message>,
     ) -> Result<Runner> {
-        let mut cmd = Command::new("cargo");
         let mut args = Vec::<&str>::new();
-        let cargo_cmd = &[
-            "run",
-            "--release",
-            "--bin",
-            "zilliqa",
-            "--",
-            key,
-            "--config-file",
-            config_file,
-        ];
-        let joined = cargo_cmd.join(" ").to_string();
-        if watch {
-            args.extend_from_slice(&["watch", "-x", &joined])
+        let prefix_script = env::var("ZQ2_SCRIPT");
+        let mut cmd = if let Ok(val) = prefix_script {
+            let mut cmd = Command::new(val);
+            cmd.args(["target/release/zilliqa", key, "--config-file", config_file]);
+            cmd
         } else {
-            args.extend_from_slice(cargo_cmd);
-        }
-        cmd.args(args);
+            let mut cmd = Command::new("cargo");
+            let cargo_cmd = &[
+                "run",
+                "--release",
+                "--bin",
+                "zilliqa",
+                "--",
+                key,
+                "--config-file",
+                config_file,
+            ];
+            let joined = cargo_cmd.join(" ").to_string();
+            if watch {
+                args.extend_from_slice(&["watch", "-x", &joined])
+            } else {
+                args.extend_from_slice(cargo_cmd);
+            }
+            cmd.args(args);
+            cmd
+        };
         cmd.current_dir(format!("{base_dir}/zq2"));
         if let Some(val) = debug_spec {
             cmd.env("RUST_LOG", val);

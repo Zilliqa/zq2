@@ -2,7 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     num::NonZeroUsize,
-    ops::Range,
+    ops::{Bound, Range},
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -73,6 +73,8 @@ pub struct BlockCache {
     /// The head cache - this caches
     /// An index into the cache by parent hash
     pub by_parent_hash: HashMap<Hash, HashSet<u128>>,
+    /// By hash, because when restarting we need it.
+    pub by_hash: HashMap<Hash, HashSet<u128>>,
     /// Set associative shift
     pub shift: usize,
     /// This is used to count the number of times we've looked for a fork.
@@ -96,11 +98,64 @@ impl BlockCache {
             head_cache: BTreeMap::new(),
             empty_view_ranges: RangeMap::new(),
             by_parent_hash: HashMap::new(),
+            by_hash: HashMap::new(),
             shift: 8 - constants::BLOCK_CACHE_LOG2_WAYS,
             fork_counter: 0,
             max_blocks_in_flight,
             views_expecting_proposals: BTreeSet::new(),
         }
+    }
+
+    // Dump out a graphviz dotfile fragment containing the cache with links.
+    pub fn illustrate(&self, from_db: &Vec<Hash>) -> Result<String> {
+        // Print out the structure of the cache (fairly slowly!).
+        let mut by_hash: HashMap<Hash, HashSet<u128>> = HashMap::new();
+        let mut result = String::new();
+        fn represent_entry(k: u128, v: &BlockCacheEntry) -> String {
+            format!(
+                "v#{0}/b#{1}/k#{2} {3}",
+                v.proposal.view(),
+                v.proposal.number(),
+                k,
+                v.proposal.hash()
+            )
+        }
+
+        for (key, entry) in self.cache.iter().chain(self.head_cache.iter()) {
+            let hash = entry.proposal.hash();
+            by_hash
+                .entry(hash)
+                .or_insert_with(|| HashSet::new())
+                .insert(*key);
+        }
+
+        for (key, entry) in self.cache.iter().chain(self.head_cache.iter()) {
+            // Dump out the node itself.
+            result.push_str(&format!(
+                "c{0}[label=\"C{1}\"]\n",
+                key,
+                represent_entry(*key, entry)
+            ));
+            // Now find our parent
+            let parent_hash = entry.proposal.header.qc.block_hash;
+            if let Some(p_values) = by_hash.get(&parent_hash) {
+                for p in p_values.iter() {
+                    result.push_str(&format!("c{0} -> c{1}\n", p, key));
+                }
+            }
+        }
+
+        // now ..
+        for h in from_db.iter() {
+            //result.push_str(&format!("h{0}\n", h));
+            if let Some(v) = self.by_parent_hash.get(h) {
+                for p in v.iter() {
+                    result.push_str(&format!("h{0} -> c{1}\n", h, p));
+                }
+            }
+        }
+        result.push_str("\n");
+        Ok(result)
     }
 
     pub fn key_from_view(&self, peer: &PeerId, view_num: u64) -> u128 {
@@ -122,6 +177,109 @@ impl BlockCache {
 
     pub fn received_process_proposal(&mut self, view: u64) {
         self.views_expecting_proposals.remove(&view);
+    }
+
+    /// There is no way to work out which of the blocks that purport to be
+    /// the block with hash H we actually want, so return any one and
+    /// if this is a lie, we'll soon find out.
+    /// cloning proposals is slow, so we'll take the first here.
+    pub fn first_proposal_by_hash(&self, hash: &Hash) -> Result<Option<Proposal>> {
+        // Frustratingly, there appears to be no flat_map().
+        Ok(self
+            .by_hash
+            .get(hash)
+            .map(|entry_set: &HashSet<u128>| {
+                entry_set
+                    .iter()
+                    .take(1)
+                    .filter_map(|entry_key| {
+                        self.cache
+                            .get(entry_key)
+                            .or(self.head_cache.get(entry_key))
+                            .map(|entry| entry.proposal.clone())
+                    })
+                    .last()
+            })
+            .flatten())
+    }
+
+    /// Find any view gaps known to exist in the cache and add them to the known view gap
+    /// array so that we don't keep re-requesting them.
+    pub fn find_known_view_gaps(&mut self) {
+        // Iterate through the list of blocks we have. If we are ever in the situation where
+        // the next block has the next number, but not the next view, there must be a gap.
+        // We can safely allow peers to mislead us here, because we will eventually notice
+        // (when the sync point gets to the gap) and remove the gap.
+        let mut last_block: u64 = 0;
+        let mut max_view_for_current_block: u64 = 0;
+
+        // This measures the maximum received view for the next block, based on the intuition that
+        // view gaps happen with forks. When a fork happens, it will lead to two blocks at the same
+        // block number but different view numbers (probably missing a view number in the middle).
+        // we will see that missing view number as a place where we could have a block and attempt to
+        // fetch the block in it - except that there isn't one.
+        // the "max_view_for_next_block" heuristic used here effectively means that if a peer advertises
+        // block N+1 at view V1, we assume that there are no blocks in the views between block N with
+        // view V0 and block N+1 with view V1. This may not be true, but it is efficient and prevents
+        // us rerequesting missing views that aren't really missing - it will also slow down sync
+        // if the peer was lying, because we will not fetch those views ahead, thinking they don't
+        // exist, until we realise that the N+1/V1 block we thought we had was invalid and we in
+        // fact needed the "other" fork, which contains blocks in views we never fetched.
+        // This seems the lesser of the evils at the moment. It may change later!
+        // - rrw 2024-11-01
+        let mut max_view_for_next_block: Option<u64> = None;
+        //trace!("find_known_view_gaps: finding");
+        // Avoids a borrow conflict in the loop...
+        let mut empty_view_ranges = self.empty_view_ranges.clone();
+        for (k, v) in self.cache.iter().chain(self.head_cache.iter()) {
+            let view = self.view_from_key(*k);
+            let block = v.proposal.number();
+            //trace!("find_known_view_gaps: view#{view} blk#{block}");
+            if block <= last_block {
+                // The view at last_block must be at least the view in this entry.
+                max_view_for_current_block = std::cmp::max(max_view_for_current_block, view)
+            } else if block == last_block + 1 {
+                // The view at the next block must be at least the view in this entry
+                max_view_for_next_block =
+                    Some(max_view_for_next_block.map_or(view, |x| std::cmp::max(x, view)));
+            } else {
+                // We're at a higher block now.
+                if last_block != 0
+                    && max_view_for_next_block.map_or(false, |x| x > max_view_for_current_block + 1)
+                {
+                    // There's a gap.
+                    empty_view_ranges.with_range(&Range {
+                        start: max_view_for_current_block + 1,
+                        // Safe because the if stmt above would have failed if this had not been ok.
+                        end: max_view_for_next_block.unwrap(),
+                    });
+                }
+                last_block = block;
+                max_view_for_current_block = view;
+                max_view_for_next_block = None;
+            }
+        }
+        self.empty_view_ranges = empty_view_ranges;
+    }
+
+    /// Useful for finding gaps in view numbers. Returns the next (view_number, block number)
+    /// we know of, >= the given view.
+    pub fn get_next_block_number_ge_view(&mut self, view: u64) -> Option<(u64, u64)> {
+        let key = self.min_key_for_view(view);
+        let mut cache_iter = self
+            .cache
+            .range::<u128, _>((Bound::Included(key), Bound::Unbounded));
+        if let Some((_, v)) = cache_iter.next() {
+            return Some((v.proposal.view(), v.proposal.number()));
+        }
+        let mut head_iter = self
+            .head_cache
+            .range::<u128, _>((Bound::Included(key), Bound::Unbounded));
+        if let Some((_, v)) = head_iter.next() {
+            return Some((v.proposal.view(), v.proposal.number()));
+        } else {
+            None
+        }
     }
 
     /// returns the minimum key (view << shift) that we are prepared to store in the head cache.
@@ -186,11 +344,30 @@ impl BlockCache {
     pub fn delete_blocks_up_to(&mut self, block_number: u64) {
         // note that this code embodies the assumption that increasing block number implies
         // increasing view number.
-        self.trim_with_fn(|_, v| -> bool { v.proposal.number() <= block_number });
+        self.trim_with_fn(|_, v| -> bool {
+            if v.proposal.number() <= block_number {
+                trace!(
+                    "[cache] delete cached block with view#{0}/blk#{1}",
+                    v.proposal.view(),
+                    v.proposal.number()
+                );
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    pub fn last_safe_view(&self, highest_confirmed_view: u64) -> u64 {
+        if highest_confirmed_view >= 3 {
+            highest_confirmed_view - 3
+        } else {
+            0
+        }
     }
 
     pub fn trim(&mut self, highest_confirmed_view: u64) {
-        let lowest_ignored_key = self.min_key_for_view(highest_confirmed_view);
+        let lowest_ignored_key = self.min_key_for_view(self.last_safe_view(highest_confirmed_view));
         debug!(
             "before trim {highest_confirmed_view} cache has {0:?} expecting {3:?} with {1}/{2}",
             self.extant_block_ranges(),
@@ -217,7 +394,7 @@ impl BlockCache {
     /// any selector function which is not monotonic in key will not work properly.
     fn trim_with_fn<F: Fn(&u128, &BlockCacheEntry) -> bool>(&mut self, selector: F) {
         // We've deleted or replaced this key with this parent hash; remove it from the index.
-        fn unlink_parent_hash(cache: &mut HashMap<Hash, HashSet<u128>>, key: &u128, hash: &Hash) {
+        fn unlink_hash(cache: &mut HashMap<Hash, HashSet<u128>>, key: &u128, hash: &Hash) {
             let mut do_remove = false;
             if let Some(val) = cache.get_mut(hash) {
                 val.remove(key);
@@ -241,7 +418,8 @@ impl BlockCache {
                 if selector(k, v) {
                     // Kill it!
                     if let Some((k, v)) = cache_ptr.pop_first() {
-                        unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
+                        unlink_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
+                        unlink_hash(&mut self.by_hash, &k, &v.proposal.hash());
                     };
                 } else {
                     let view_number = u64::try_from(*k >> shift).unwrap();
@@ -276,7 +454,8 @@ impl BlockCache {
         }
         while self.cache.len() > cache_size {
             if let Some((k, v)) = self.cache.pop_last() {
-                unlink_parent_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
+                unlink_hash(&mut self.by_parent_hash, &k, &v.parent_hash);
+                unlink_hash(&mut self.by_hash, &k, &v.proposal.hash());
             }
         }
         // Both caches are now at most the "right" number of entries long.
@@ -302,24 +481,24 @@ impl BlockCache {
         fn insert_with_replacement(
             into: &mut BTreeMap<u128, BlockCacheEntry>,
             by_parent_hash: &mut HashMap<Hash, HashSet<u128>>,
+            by_hash: &mut HashMap<Hash, HashSet<u128>>,
             from: &PeerId,
             parent_hash: &Hash,
             key: u128,
             value: Proposal,
         ) {
+            let hash = value.hash();
             into.insert(key, BlockCacheEntry::new(*parent_hash, *from, value))
                 .map(|entry| {
                     by_parent_hash
                         .get_mut(&entry.parent_hash)
                         .map(|x| x.remove(&key))
                 });
-            if let Some(v) = by_parent_hash.get_mut(parent_hash) {
-                v.insert(key);
-            } else {
-                let mut new_set = HashSet::new();
-                new_set.insert(key);
-                by_parent_hash.insert(*parent_hash, new_set);
-            }
+            by_parent_hash
+                .entry(*parent_hash)
+                .or_insert(HashSet::new())
+                .insert(key);
+            by_hash.entry(hash).or_insert(HashSet::new()).insert(key);
         }
 
         if proposal.header.view <= highest_confirmed_view {
@@ -332,6 +511,7 @@ impl BlockCache {
             insert_with_replacement(
                 &mut self.head_cache,
                 &mut self.by_parent_hash,
+                &mut self.by_hash,
                 from,
                 parent_hash,
                 key,
@@ -347,6 +527,7 @@ impl BlockCache {
             insert_with_replacement(
                 &mut self.cache,
                 &mut self.by_parent_hash,
+                &mut self.by_hash,
                 from,
                 parent_hash,
                 key,
@@ -355,6 +536,8 @@ impl BlockCache {
         }
         // Zero the fork counter.
         self.fork_counter = 0;
+        // Find known view gaps
+        self.find_known_view_gaps();
         // Now evict the worst entry
         self.trim(highest_confirmed_view);
         Ok(())
@@ -471,6 +654,30 @@ impl PeerInfo {
             pending_requests: HashMap::new(),
             last_request_failed_at: None,
         }
+    }
+
+    /// Clear any pending requests that contain this view.
+    /// Note that this is only legitimate because there is exactly one
+    /// BlockResponse per BlockRequest - otherwise, we would rerequest
+    /// blocks the peer was about to send us and end up in an awful mess.
+    fn clear_pending_requests_with_view(&mut self, view: u64) -> Result<()> {
+        let ids = self
+            .pending_requests
+            .iter()
+            .filter_map(|(k, (_, from, to))| {
+                if view >= *from && view <= *to {
+                    Some(k)
+                } else {
+                    None
+                }
+            })
+            .cloned()
+            .collect::<Vec<RequestId>>();
+        trace!("clear_pending_requests_with_view(): remove pending requests for {ids:?}");
+        ids.iter().for_each(|v| {
+            self.pending_requests.remove(v);
+        });
+        Ok(())
     }
 
     /// Do we have availability, or should we get it again?
@@ -703,6 +910,11 @@ impl BlockStore {
             peer.availability.highest_known_view = view;
         }
 
+        // Ack any pending requests with this proposal
+        // (it's fine that other proposals from this response may still be in the queue -
+        // our accounting for pending proposals will ensure that we don't request them again)
+        peer.clear_pending_requests_with_view(view)?;
+
         Ok(())
     }
 
@@ -771,9 +983,12 @@ impl BlockStore {
                 // the responses and we'll end up being unable to reconstruct the chain. Not strictly true, because
                 // the network will hold some blocks for us, but true enough that I think we ought to treat it as
                 // such.
-                let to = cmp::min(
-                    current_view + self.max_blocks_in_flight,
-                    self.highest_known_view,
+                let to = cmp::max(
+                    self.max_blocks_in_flight,
+                    cmp::min(
+                        current_view + self.max_blocks_in_flight,
+                        self.highest_known_view,
+                    ),
                 );
                 trace!("block_store::request_missing_blocks() : requesting blocks {from} to {to}");
                 to_request.with_range(&Range {
@@ -981,10 +1196,10 @@ impl BlockStore {
                             request,
                             requests
                         );
-                        // Yay!
+                        // Yay! Note that to_view is inclusive, not exclusive, so we need to subtract 1.
                         let message = ExternalMessage::BlockRequest(BlockRequest {
                             from_view: request.start,
-                            to_view: request.end,
+                            to_view: request.end - 1,
                         });
                         let request_id =
                             self.message_sender.send_external_message(*peer, message)?;
@@ -1048,6 +1263,13 @@ impl BlockStore {
             return Ok(None);
         };
         self.get_block(hash)
+    }
+
+    pub fn get_cached_block_by_hash(&self, hash: &Hash) -> Result<Option<Block>> {
+        Ok(self
+            .buffered
+            .first_proposal_by_hash(hash)?
+            .map(|x| x.into_parts().0))
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
@@ -1149,17 +1371,6 @@ impl BlockStore {
             // There would be a few easy optimisations if we could eg. assume that forks were max length
             // 1. As it is, I can't think of a clever way to do this, so...
 
-            // In any case, deleting any cached block that calls itself the next block is
-            // the right thing to do - if it really was the next block, we would not be
-            // executing this branch.
-            if let Some(highest_block_number) = self.db.get_highest_canonical_block_number()? {
-                self.buffered.delete_blocks_up_to(highest_block_number + 1);
-                trace!(
-                    "block_store::obtain_child_block_candidates : deleted cached blocks up to and including {0}",
-                    highest_block_number + 1
-                );
-            }
-
             let fork_elems =
                 self.buffered.inc_fork_counter() * (1 + constants::EXAMINE_BLOCKS_PER_FORK_COUNT);
             let parent_hashes = self.db.get_highest_block_hashes(fork_elems)?;
@@ -1172,7 +1383,23 @@ impl BlockStore {
             if !revised.is_empty() {
                 // Found some!
                 self.buffered.reset_fork_counter();
+            } else {
+                // In any case, deleting any cached block that calls itself the next block is
+                // the right thing to do - if it really was the next block, we would not be
+                // executing this branch.
+                if let Some(highest_block_number) = self.db.get_highest_canonical_block_number()? {
+                    // TR-32: forks are not canonical until the winner is at least two blocks higher
+                    // than the loser. So any chain shorter than highest_block_number - 2 can be disposed
+                    // of.
+                    self.buffered
+                        .delete_blocks_up_to(std::cmp::max(highest_block_number, 3) - 3);
+                    trace!(
+                        "block_store::obtain_child_block_candidates : deleted cached blocks up to and including {0}",
+                        highest_block_number
+                    );
+                }
             }
+
             Ok(revised)
         } else {
             Ok(with_parent_hashes)
@@ -1229,7 +1456,9 @@ impl BlockStore {
             }
             gap_start = gap_end + 1;
         }
-        // There's never a gap at the end, because we don't know at which view we stopped.
+
+        // There are various other cases, but find_known_view_gaps() will deal with them.
+
         Ok(())
     }
 
@@ -1284,5 +1513,9 @@ impl BlockStore {
                 expected_highest_block_number,
             )))
         }
+    }
+
+    pub fn illustrate(&self, from_db: &Vec<Hash>) -> Result<String> {
+        self.buffered.illustrate(from_db)
     }
 }
