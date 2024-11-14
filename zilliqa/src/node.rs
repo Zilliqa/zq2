@@ -18,7 +18,10 @@ use alloy::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::{primitives::map::FxBuildHasher, Inspector};
+use revm::{
+    primitives::{map::FxBuildHasher, ExecutionResult},
+    Inspector,
+};
 use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
     TransactionContext,
@@ -188,7 +191,11 @@ impl Node {
             local_channel: local_sender_channel,
             request_id: RequestId::default(),
         };
-        let db = Arc::new(Db::new(config.data_dir.as_ref(), config.eth_chain_id)?);
+        let db = Arc::new(Db::new(
+            config.data_dir.as_ref(),
+            config.eth_chain_id,
+            config.state_cache_size,
+        )?);
         let node = Node {
             config: config.clone(),
             peer_id,
@@ -769,7 +776,7 @@ impl Node {
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<ExecutionResult> {
         trace!("call_contract: block={:?}", block);
 
         let state = self
@@ -875,10 +882,6 @@ impl Node {
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         self.consensus.get_transaction_by_hash(hash)
-    }
-
-    pub fn get_raw_transaction_by_hash(&self, hash: Hash) -> Result<Option<SignedTransaction>> {
-        self.consensus.get_raw_transaction_by_hash(hash)
     }
 
     pub fn txpool_content(&self) -> TxPoolContent {

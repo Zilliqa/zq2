@@ -5,7 +5,7 @@ mod net;
 mod others;
 pub mod ots;
 pub mod subscription_id_provider;
-mod to_hex;
+pub mod to_hex;
 mod trace;
 pub mod types;
 mod web3;

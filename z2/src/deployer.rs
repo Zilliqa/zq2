@@ -41,9 +41,11 @@ pub async fn install_or_upgrade(
     is_upgrade: bool,
     node_selection: bool,
     max_parallel: usize,
+    persistence_url: Option<String>,
 ) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
+    let mut chain = ChainInstance::new(config).await?;
+    chain.set_persistence_url(persistence_url);
     let mut chain_nodes = chain.nodes().await?;
     let node_names = chain_nodes
         .iter()

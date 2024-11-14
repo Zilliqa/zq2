@@ -15,6 +15,7 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
+use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
@@ -34,7 +35,7 @@ use crate::{
     contracts,
     crypto::{Hash, NodePublicKey},
     db::TrieStorage,
-    eth_helpers::extract_revert_msg,
+    error::ensure_success,
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
@@ -716,13 +717,14 @@ impl State {
     pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
         let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
 
-        let leader = self.call_contract(
+        let result = self.call_contract(
             Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
             0,
             current_block,
         )?;
+        let leader = ensure_success(result)?;
 
         NodePublicKey::from_bytes(
             &contracts::deposit::LEADER_AT_VIEW
@@ -734,16 +736,17 @@ impl State {
         )
     }
 
-    pub fn get_stakers_raw(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
+    pub fn get_stakers(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
         let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
-        let stakers = self.call_contract(
+        let result = self.call_contract(
             Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
             0,
             current_block,
         )?;
+        let stakers = ensure_success(result)?;
 
         let stakers = contracts::deposit::GET_STAKERS
             .decode_output(&stakers)
@@ -761,30 +764,18 @@ impl State {
     pub fn committee(&self) -> Result<()> {
         let data = contracts::deposit::COMMITTEE.encode_input(&[])?;
 
-        let committee = self.call_contract(
+        let result = self.call_contract(
             Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
             0,
             BlockHeader::default(),
         )?;
+        let committee = ensure_success(result)?;
         let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
         info!("committee: {committee:?}");
 
         Ok(())
-    }
-
-    pub fn get_total_stake(&self, current_block: BlockHeader) -> Result<Option<NonZeroU128>> {
-        let data = contracts::deposit::GET_TOTAL_STAKE.encode_input(&[])?;
-        let total = self.call_contract(
-            Address::ZERO,
-            Some(contract_addr::DEPOSIT),
-            data,
-            0,
-            current_block,
-        )?;
-        let total = NonZeroU128::new(U256::from_be_slice(&total).to());
-        Ok(total)
     }
 
     pub fn get_stake(
@@ -795,13 +786,14 @@ impl State {
         let data =
             contracts::deposit::GET_STAKE.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
-        let stake = self.call_contract(
+        let result = self.call_contract(
             Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
             0,
             current_block,
         )?;
+        let stake = ensure_success(result)?;
 
         let stake = NonZeroU128::new(U256::from_be_slice(&stake).to());
 
@@ -812,7 +804,7 @@ impl State {
         let data = contracts::deposit::GET_REWARD_ADDRESS
             .encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
-        let return_value = self.call_contract(
+        let result = self.call_contract(
             Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
@@ -821,6 +813,7 @@ impl State {
             // dummy values.
             BlockHeader::default(),
         )?;
+        let return_value = ensure_success(result)?;
 
         let addr = contracts::deposit::GET_REWARD_ADDRESS.decode_output(&return_value)?[0]
             .clone()
@@ -835,7 +828,7 @@ impl State {
         let data =
             contracts::deposit::GET_PEER_ID.encode_input(&[Token::Bytes(public_key.as_bytes())])?;
 
-        let return_value = self.call_contract(
+        let result = self.call_contract(
             Address::ZERO,
             Some(contract_addr::DEPOSIT),
             data,
@@ -844,6 +837,7 @@ impl State {
             // dummy values.
             BlockHeader::default(),
         )?;
+        let return_value = ensure_success(result)?;
 
         let data = contracts::deposit::GET_PEER_ID.decode_output(&return_value)?[0]
             .clone()
@@ -941,25 +935,10 @@ impl State {
             BaseFeeCheck::Validate,
         )?;
 
-        match result {
-            ExecutionResult::Success { gas_used, .. } => Ok(gas_used),
-            ExecutionResult::Revert {
-                gas_used: _,
-                output,
-            } => {
-                let decoded_revert_msg = extract_revert_msg(&output);
-                // See: https://github.com/ethereum/go-ethereum/blob/9b9a1b677d894db951dc4714ea1a46a2e7b74ffc/internal/ethapi/api.go#L1026
-                const REVERT_ERROR_CODE: i32 = 3;
-
-                let response = jsonrpsee::types::ErrorObjectOwned::owned(
-                    REVERT_ERROR_CODE,
-                    decoded_revert_msg,
-                    Some(output),
-                );
-                Err(response.into())
-            }
-            ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
-        }
+        let gas_used = result.gas_used();
+        // Return an error if the transaction did not succeed
+        ensure_success(result).map_err(ErrorObjectOwned::from)?;
+        Ok(gas_used)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -970,7 +949,7 @@ impl State {
         data: Vec<u8>,
         amount: u128,
         current_block: BlockHeader,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<ExecutionResult> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -984,11 +963,7 @@ impl State {
             BaseFeeCheck::Ignore,
         )?;
 
-        match result {
-            ExecutionResult::Success { output, .. } => Ok(output.into_data().to_vec()),
-            ExecutionResult::Revert { output, .. } => Ok(output.to_vec()),
-            ExecutionResult::Halt { reason, .. } => Err(anyhow!("halted due to: {reason:?}")),
-        }
+        Ok(result)
     }
 }
 

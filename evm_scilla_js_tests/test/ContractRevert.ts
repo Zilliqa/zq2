@@ -26,7 +26,7 @@ describe("Revert Contract Call", function () {
     try {
       await contract.revertCallWithMessage(REVERT_MESSAGE, {value: 1000});
     } catch (error: any) {
-      expect(error.error.reason).eq(`execution reverted: ${REVERT_MESSAGE}`);
+      expect(error.error.reason).eq(`execution reverted: revert: ${REVERT_MESSAGE}`);
     }
   });
 

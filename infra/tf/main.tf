@@ -45,6 +45,17 @@ resource "google_storage_bucket" "persistence" {
   }
 }
 
+resource "google_storage_bucket_iam_binding" "persistence_bucket_viewers" {
+  bucket = google_storage_bucket.persistence.name
+  role   = "roles/storage.objectViewer"
+  members = [
+    "serviceAccount:${module.bootstraps.service_account.email}",
+    "serviceAccount:${module.validators.service_account.email}",
+    "serviceAccount:${module.apis.service_account.email}",
+    "serviceAccount:${module.checkpoints.service_account.email}"
+  ]
+}
+
 ################################################################################
 # FIREWALL POLICIES
 ################################################################################
@@ -114,8 +125,7 @@ module "bootstraps" {
   network_tags = []
 
   metadata = {
-    persistence_url = base64encode(var.persistence_url)
-    subdomain       = base64encode("")
+    subdomain = base64encode("")
   }
 
   node_dns_subdomain       = var.node_dns_subdomain
@@ -152,8 +162,7 @@ module "validators" {
   network_tags = []
 
   metadata = {
-    persistence_url = base64encode(var.persistence_url)
-    subdomain       = base64encode("")
+    subdomain = base64encode("")
   }
 
   node_dns_subdomain       = var.node_dns_subdomain
@@ -190,8 +199,7 @@ module "apis" {
   network_tags = []
 
   metadata = {
-    persistence_url = base64encode(var.persistence_url)
-    subdomain       = base64encode("")
+    subdomain = base64encode("")
   }
 
   node_dns_subdomain       = var.node_dns_subdomain

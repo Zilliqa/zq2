@@ -14,9 +14,6 @@ use serde::{Deserialize, Serialize};
 use serde_yaml;
 use tera::Tera;
 use tokio::fs;
-/// This module should eventually generate configuration files
-/// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
-use zilliqa::crypto::{SecretKey, TransactionPublicKey};
 use zilliqa::{
     cfg,
     cfg::{
@@ -29,6 +26,12 @@ use zilliqa::{
         total_native_token_supply_default, Amount, ConsensusConfig, GenesisDeposit,
     },
     transaction::EvmGas,
+};
+/// This module should eventually generate configuration files
+/// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
+use zilliqa::{
+    cfg::state_cache_size_default,
+    crypto::{SecretKey, TransactionPublicKey},
 };
 
 use crate::{
@@ -506,6 +509,7 @@ impl Setup {
                 json_rpc_port: self.get_json_rpc_port(u64::try_into(*node_index)?, false),
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
+                state_cache_size: state_cache_size_default(),
                 load_checkpoint: None,
                 do_checkpoints: false,
                 disable_rpc: disable_rpc_default(),

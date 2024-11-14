@@ -7,6 +7,7 @@ use alloy::{
 use anyhow::Result;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
@@ -14,14 +15,15 @@ use crate::{
         to_hex::ToHex,
         zil::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
     },
-    crypto::Hash,
     exec::{ScillaError, ScillaException},
     message::Block,
     schnorr,
     scilla::ParamValue,
     serde_util::num_as_str,
     time::SystemTime,
-    transaction::{ScillaGas, SignedTransaction, TransactionReceipt, ZilAmount},
+    transaction::{
+        ScillaGas, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
+    },
 };
 
 #[derive(Clone, Serialize)]
@@ -189,18 +191,17 @@ struct GetTxResponseReceipt {
 
 impl GetTxResponse {
     pub fn new(
-        hash: Hash,
-        tx: SignedTransaction,
+        tx: VerifiedTransaction,
         receipt: TransactionReceipt,
         block_number: u64,
     ) -> Result<GetTxResponse> {
-        let nonce = tx.nonce().unwrap_or_default();
-        let amount = tx.zil_amount();
-        let gas_price = tx.gas_price_per_scilla_gas();
-        let gas_limit = tx.gas_limit_scilla();
+        let amount = tx.tx.zil_amount();
+        let gas_price = tx.tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.tx.gas_limit_scilla();
         // Some of these are returned as all caps in ZQ1, but that should be fine
-        let (version, to_addr, sender_pub_key, signature, code, data) = match tx {
+        let (nonce, version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
                 key.to_encoded_point(true).as_bytes().to_hex(),
@@ -209,6 +210,7 @@ impl GetTxResponse {
                 (!tx.data.is_empty()).then_some(tx.data),
             ),
             SignedTransaction::Legacy { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -219,6 +221,7 @@ impl GetTxResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip2930 { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 3,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -229,6 +232,7 @@ impl GetTxResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip1559 { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 4,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -239,6 +243,7 @@ impl GetTxResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Intershard { tx, .. } => (
+                0,
                 ((tx.chain_id as u32) << 16) | 20,
                 tx.to_addr.unwrap_or_default(),
                 String::new(),
@@ -249,7 +254,7 @@ impl GetTxResponse {
         };
 
         Ok(GetTxResponse {
-            id: hash.into(),
+            id: tx.hash.into(),
             version,
             nonce,
             to_addr,
@@ -257,7 +262,7 @@ impl GetTxResponse {
             amount,
             signature,
             receipt: GetTxResponseReceipt {
-                cumulative_gas: receipt.cumulative_gas_used.into(),
+                cumulative_gas: ScillaGas(receipt.cumulative_gas_used.0),
                 epoch_num: block_number,
                 transitions: receipt
                     .transitions
@@ -619,6 +624,42 @@ pub struct TransactionReceiptResponse {
     pub success: bool,
 }
 
+// From https://github.com/Zilliqa/Zilliqa/blob/master/src/common/TxnStatus.h#L23
+#[derive(Serialize_repr, Deserialize_repr, Clone)]
+#[repr(u8)] // Because otherwise it's weird that 255 is a special case
+pub enum TxnStatusCode {
+    NotPresent = 0,
+    Dispatched = 1,
+    SoftConfirmed = 2,
+    Confirmed = 3,
+    // Pending
+    PresentNonceHigh = 4,
+    PresentGasExceeded = 5,
+    PresentValidConsensusNotReached = 6,
+    // RareDropped
+    MathError = 10,
+    FailScillaLib = 11,
+    FailContractInit = 12,
+    InvalidFromAccount = 13,
+    HighGasLimit = 14,
+    IncorrectTxnType = 15,
+    IncorrectShard = 16,
+    ContractCallWrongShard = 17,
+    HighByteSizeCode = 18,
+    VerifError = 19,
+    //
+    InsufficientGasLimit = 20,
+    InsufficientBalance = 21,
+    InsufficientGas = 22,
+    MempoolAlreadyPresent = 23,
+    MempoolSameNonceLowerGas = 24,
+    //
+    InvalidToAccount = 25,
+    FailContractAccountCreation = 26,
+    NonceTooLow = 27,
+    Error = 255, // MiscError
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TransactionStatusResponse {
     #[serde(rename = "ID")]
@@ -639,7 +680,7 @@ pub struct TransactionStatusResponse {
     pub last_modified: String,
     #[serde(rename = "modificationState")]
     pub modification_state: u64,
-    pub status: u64,
+    pub status: TxnStatusCode,
     pub nonce: String,
     #[serde(rename = "senderAddr")]
     pub sender_addr: String,
@@ -651,13 +692,13 @@ pub struct TransactionStatusResponse {
 }
 
 impl TransactionStatusResponse {
-    pub fn new(tx: SignedTransaction, receipt: TransactionReceipt, block: Block) -> Result<Self> {
-        let nonce = tx.nonce().unwrap_or_default();
-        let amount = tx.zil_amount();
-        let gas_price = tx.gas_price_per_scilla_gas();
-        let gas_limit = tx.gas_limit_scilla();
-        let (version, to_addr, sender_pub_key, signature, _code, data) = match tx {
+    pub fn new(tx: VerifiedTransaction, receipt: TransactionReceipt, block: Block) -> Result<Self> {
+        let amount = tx.tx.zil_amount();
+        let gas_price = tx.tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.tx.gas_limit_scilla();
+        let (nonce, version, to_addr, sender_pub_key, signature, _code, data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
                 key.to_encoded_point(true).as_bytes().to_hex(),
@@ -666,6 +707,7 @@ impl TransactionStatusResponse {
                 (!tx.data.is_empty()).then_some(tx.data),
             ),
             SignedTransaction::Legacy { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -676,6 +718,7 @@ impl TransactionStatusResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip2930 { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 3,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -686,6 +729,7 @@ impl TransactionStatusResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip1559 { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 4,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -696,6 +740,7 @@ impl TransactionStatusResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Intershard { tx, .. } => (
+                0,
                 ((tx.chain_id as u32) << 16) | 20,
                 tx.to_addr.unwrap_or_default(),
                 String::new(),
@@ -705,26 +750,26 @@ impl TransactionStatusResponse {
             ),
         };
         let status_code = if receipt.accepted.is_some() && receipt.accepted.unwrap() {
-            3
+            TxnStatusCode::Confirmed
         } else if receipt.accepted.is_none() {
-            1
+            TxnStatusCode::Dispatched
         } else {
             let errors: Vec<ScillaError> =
                 receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
             if errors.len() == 1 {
                 match errors[0] {
-                    ScillaError::CallFailed => 11,
-                    ScillaError::CreateFailed => 255,
-                    ScillaError::OutOfGas => 0,
-                    ScillaError::InsufficientBalance => 21,
+                    ScillaError::CallFailed => TxnStatusCode::FailScillaLib,
+                    ScillaError::CreateFailed => TxnStatusCode::Error,
+                    ScillaError::OutOfGas => TxnStatusCode::InsufficientGas,
+                    ScillaError::InsufficientBalance => TxnStatusCode::InsufficientBalance,
                 }
             } else {
-                255
+                TxnStatusCode::Error
             }
         };
         let modification_state = if receipt.accepted.is_none() { 0 } else { 2 };
         Ok(Self {
-            id: receipt.tx_hash.to_string(),
+            id: tx.hash.to_string(),
             _id: serde_json::Value::Null,
             amount: amount.to_string(),
             data: data.unwrap_or_default(),

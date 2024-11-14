@@ -399,7 +399,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
     let tx = node
         .lock()
         .unwrap()
-        .get_raw_transaction_by_hash(hash)?
+        .get_transaction_by_hash(hash)?
         .ok_or_else(|| {
             ErrorObject::owned(
                 RPCErrorCode::RpcDatabaseError as i32,
@@ -424,7 +424,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
         .get_block(receipt.block_hash)?
         .ok_or_else(|| anyhow!("block does not exist"))?;
 
-    GetTxResponse::new(hash, tx, receipt, block.number())
+    GetTxResponse::new(tx, receipt, block.number())
 }
 
 // GetBalance
@@ -440,7 +440,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let state = node.get_state(&block)?;
 
     if !state.has_account(address)? {
-        return Err(jsonrpsee::types::ErrorObject::owned(
+        return Err(ErrorObject::owned(
             RPCErrorCode::RpcInvalidAddressOrKey as i32,
             "Account is not created",
             None::<()>,
@@ -602,10 +602,12 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     let state = node.get_state(&block)?;
 
     if !state.has_account(address)? {
-        return Err(anyhow!(
-            "Address does not exist: {}",
-            hex::encode(address.0)
-        ));
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            format!("Address does not exist: {}", address),
+            None::<()>,
+        )
+        .into());
     }
     let account = state.get_account(address)?;
 
@@ -626,7 +628,18 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node.get_state(&block)?.get_account(address)?;
+
+    let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist".to_string(),
+            None::<()>,
+        )
+        .into());
+    }
+    let account = state.get_account(address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address does not exist"));
@@ -983,16 +996,16 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
     let mut transactions = Vec::with_capacity(block.transactions.len());
     for hash in &block.transactions {
         let tx = node
-            .get_raw_transaction_by_hash(*hash)?
+            .get_transaction_by_hash(*hash)?
             .ok_or(anyhow!("Transaction hash missing"))?;
-        let nonce = tx.nonce().unwrap_or_default();
-        let amount = tx.zil_amount();
-        let gas_price = tx.gas_price_per_scilla_gas();
-        let gas_limit = tx.gas_limit_scilla();
+        let nonce = tx.tx.nonce().unwrap_or_default();
+        let amount = tx.tx.zil_amount();
+        let gas_price = tx.tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.tx.gas_limit_scilla();
         let receipt = node
             .get_transaction_receipt(*hash)?
             .ok_or(anyhow!("Transaction receipt missing"))?;
-        let (version, to_addr, sender_pub_key, signature, _code, _data) = match tx {
+        let (version, to_addr, sender_pub_key, signature, _code, _data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
@@ -1041,7 +1054,7 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
             ),
         };
         let body = TransactionBody {
-            id: hash.to_string(),
+            id: tx.hash.to_string(),
             amount: amount.to_string(),
             gas_limit: gas_limit.to_string(),
             gas_price: gas_price.to_string(),
@@ -1261,6 +1274,16 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
         .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
 
     let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist".to_string(),
+            None::<()>,
+        )
+        .into());
+    }
+
     let account = state.get_account(address)?;
 
     let result = json!({
@@ -1320,7 +1343,7 @@ fn get_transaction_status(
 
     let node = node.lock().unwrap();
     let transaction =
-        node.get_raw_transaction_by_hash(hash)?
+        node.get_transaction_by_hash(hash)?
             .ok_or(jsonrpsee::types::ErrorObject::owned(
                 RPCErrorCode::RpcDatabaseError as i32,
                 "Txn Hash not found".to_string(),

@@ -605,7 +605,7 @@ fn try_with_zil_transaction(
             gas_price: ZilAmount::from_raw(transaction.gas_price),
             gas_limit: ScillaGas(transaction.gas_limit),
             to_addr: transaction.to_addr,
-            amount: ZilAmount::from_amount(transaction.amount),
+            amount: ZilAmount::from_raw(transaction.amount),
             code: transaction
                 .code
                 .map(String::from_utf8)
