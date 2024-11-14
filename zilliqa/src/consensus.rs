@@ -188,8 +188,6 @@ impl Consensus {
             config.eth_chain_id
         );
 
-        let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
-
         // Start chain from checkpoint. Load data file and initialise data in tables
         let mut checkpoint_data = None;
         if let Some(checkpoint) = &config.load_checkpoint {
@@ -200,6 +198,10 @@ impl Consensus {
                 config.eth_chain_id,
             )?;
         }
+
+        // It is important to create the `BlockStore` after the checkpoint has been loaded into the DB. The
+        // `BlockStore` pre-loads and caches information about the currently stored blocks.
+        let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
 
         let latest_block = db
             .get_finalized_view()?

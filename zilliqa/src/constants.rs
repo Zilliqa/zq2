@@ -29,9 +29,6 @@ pub const ZIL_CONTRACT_CREATE_GAS: usize = 50;
 // Gas needed for making transfer using ZIL transaction
 pub const ZIL_NORMAL_TXN_GAS: usize = 50;
 
-// Recompute available blocks after this many seconds
-pub const RECOMPUTE_BLOCK_AVAILABILITY_AFTER: Duration = Duration::from_secs(2);
-
 // Maximum rate at which to send availability requests
 pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE: Duration = Duration::from_millis(1000);
 
