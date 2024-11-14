@@ -14,9 +14,8 @@ NotDocumented
 
 Returns node type. The possible return values are:
 
-- `"Not in network, synced till epoch [epoch number]"` if the server has not joined the network and is synced until a specific epoch.
-- `"Seed"` if the server is in lookup node mode and is an archival lookup node.
-- `"Lookup"` if the server is in lookup node mode
+- `"Leader"` if we are currently the lead node
+- `"Validator"` otherwise
 
 # Curl
 
@@ -32,7 +31,7 @@ curl -d '{
 # Response
 
 ```json
-{ "id": "1", "jsonrpc": "2.0", "result": "Seed" }
+{ "id": "1", "jsonrpc": "2.0", "result": "Validator" }
 ```
 
 # Arguments
@@ -43,4 +42,3 @@ curl -d '{
 | `jsonrpc` | string | Required | `"2.0"`           |
 | `method`  | string | Required | `"GetNodeType"`   |
 | `params`  | string | Required | Empty string `""` |
-

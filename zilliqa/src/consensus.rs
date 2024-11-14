@@ -1700,6 +1700,14 @@ impl Consensus {
         }
     }
 
+    pub fn are_we_leader_now(&self) -> bool {
+        let head_block = self.head_block();
+        let leader = self
+            .leader_at_block(&head_block, head_block.view())
+            .unwrap();
+        leader.public_key == self.public_key()
+    }
+
     fn leader_for_view(&mut self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
             let leader = self.leader_at_block(&parent, view).unwrap();

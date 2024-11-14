@@ -2049,9 +2049,30 @@ async fn get_miner_info(mut _network: Network) {
     todo!();
 }
 
-#[allow(dead_code)]
-async fn get_node_type(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_node_type(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNodeType", [""])
+        .await
+        .expect("Failed to call GetNodeType API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+
+    let allowed_node_types = ["Leader", "Validator"];
+    let response_str = response.as_str().expect("Expected response to be a string");
+
+    assert!(
+        allowed_node_types.contains(&response_str),
+        "Unexpected node type: {}",
+        response_str
+    );
 }
 
 #[allow(dead_code)]
