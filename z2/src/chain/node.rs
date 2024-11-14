@@ -386,7 +386,8 @@ impl ChainNode {
             private_key.value().await?
         } else {
             return Err(anyhow!(
-                "Found multiple private keys for the instance {}",
+                "Found {} private keys for the instance {}",
+                private_keys.len(),
                 &self.machine.name
             ));
         };
