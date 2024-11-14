@@ -43,8 +43,7 @@ module "apps" {
   network_tags = []
 
   metadata = {
-    persistence_url = base64encode("")
-    subdomain       = base64encode(var.subdomain)
+    subdomain = base64encode(var.subdomain)
   }
 
   node_dns_subdomain       = var.node_dns_subdomain

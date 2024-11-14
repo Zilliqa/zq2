@@ -12,6 +12,7 @@ use super::{
 pub struct ChainInstance {
     config: NetworkConfig,
     machines: Vec<Machine>,
+    persistence_url: Option<String>,
 }
 
 impl ChainInstance {
@@ -19,11 +20,20 @@ impl ChainInstance {
         Ok(Self {
             config: config.clone(),
             machines: Self::import_machines(&config.name, &config.project_id).await?,
+            persistence_url: None,
         })
     }
 
     pub fn name(&self) -> String {
         self.config.name.clone()
+    }
+
+    pub fn persistence_url(&self) -> Option<String> {
+        self.persistence_url.clone()
+    }
+
+    pub fn set_persistence_url(&mut self, persistence_url: Option<String>) {
+        self.persistence_url = persistence_url;
     }
 
     pub fn machines(&self) -> Vec<Machine> {

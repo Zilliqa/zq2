@@ -36,6 +36,7 @@ use super::{
 use crate::{
     api::zil::ZilAddress,
     crypto::Hash,
+    error::ensure_success,
     message::Block,
     node::Node,
     pool::TxAddResult,
@@ -183,7 +184,7 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    let ret = node.call_contract(
+    let result = node.call_contract(
         &block,
         call_params.from,
         call_params.to,
@@ -195,7 +196,10 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.value.to(),
     )?;
 
-    Ok(ret.to_hex())
+    match ensure_success(result) {
+        Ok(output) => Ok(output.to_hex()),
+        Err(err) => Err(ErrorObjectOwned::from(err).into()),
+    }
 }
 
 fn chain_id(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {

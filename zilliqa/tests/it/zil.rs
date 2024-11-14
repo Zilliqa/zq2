@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zilliqa::{
+    api::types::zil::RPCErrorCode::RpcInvalidAddressOrKey,
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
@@ -2075,33 +2076,23 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     let variable_name = "admins";
     let indices: Vec<Value> = vec![];
 
-    let response: Value = wallet
+    let response: Result<Value, ProviderError> = wallet
         .provider()
         .request(
             "GetSmartContractSubState",
             (contract_address, variable_name, indices),
         )
-        .await
-        .expect("Failed to call GetSmartContractSubState API");
+        .await;
 
-    // Verify the balance format
-    assert!(
-        response["_balance"]
-            .as_str()
-            .unwrap()
-            .parse::<u64>()
-            .is_ok(),
-        "Invalid balance format"
-    );
+    assert!(response.is_err());
 
-    // Verify the admins field if it exists
-    if let Some(admins) = response.get("admins") {
-        assert!(
-            admins.is_object(),
-            "Expected admins to be an object, got: {:?}",
-            admins
-        );
-    }
+    let Err(ProviderError::JsonRpcClientError(rpc_error)) = response else {
+        panic!("Returned error type is not JSON RPC ClientError");
+    };
+    let rpc_error = rpc_error.as_error_response().unwrap();
+
+    assert_eq!(rpc_error.code, RpcInvalidAddressOrKey as i64);
+    assert_eq!(rpc_error.message, "Address does not exist".to_string());
 }
 
 #[allow(dead_code)]
