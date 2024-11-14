@@ -1200,6 +1200,16 @@ fn get_smart_contract_state_internal(
         .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
 
     let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist".to_string(),
+            None::<String>,
+        )
+        .into());
+    }
+
     let account = state.get_account(address)?;
 
     let result = json!({
