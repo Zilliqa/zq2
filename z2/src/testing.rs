@@ -1,16 +1,24 @@
 // Code to stress-test z2 networks.
 #![allow(unused_imports)]
 
-use crate::{node_spec, setup::Setup};
+use std::{
+    cmp::{Ordering, PartialOrd},
+    collections::{BinaryHeap, HashSet},
+};
+
 use anyhow::{anyhow, Error, Result};
-use jsonrpsee::core::{client::ClientT, params::ArrayParams};
-use jsonrpsee::http_client::HttpClientBuilder;
-use jsonrpsee::rpc_params;
-use std::cmp::{Ordering, PartialOrd};
-use std::collections::{BinaryHeap, HashSet};
-use tokio::process::Command;
-use tokio::time::{self, Duration, Instant};
+use jsonrpsee::{
+    core::{client::ClientT, params::ArrayParams},
+    http_client::HttpClientBuilder,
+    rpc_params,
+};
+use tokio::{
+    process::Command,
+    time::{self, Duration, Instant},
+};
 use tower_http::trace::TraceLayer;
+
+use crate::{node_spec, setup::Setup};
 
 // This is inherently reversed, since BinaryHeap is a max-heap
 
@@ -43,13 +51,7 @@ struct HeapEntry {
 impl Ord for HeapEntry {
     fn cmp(&self, other: &Self) -> Ordering {
         // Backwards because BinaryHeap is a max-heap.
-        if self.when_ms > other.when_ms {
-            Ordering::Less
-        } else if self.when_ms < other.when_ms {
-            Ordering::Greater
-        } else {
-            Ordering::Equal
-        }
+        other.when_ms.cmp(&self.when_ms)
     }
 }
 
@@ -103,8 +105,8 @@ impl Partition {
             if times.len() != 2 {
                 return Err(anyhow!("Arg '{arg}' - there must be two times, separated by a '/' after the ':' - found {0}", times.len()));
             }
-            let start_ms = u64::from_str_radix(times[0], 10)?;
-            let end_ms = u64::from_str_radix(times[1], 10)?;
+            let start_ms = times[0].parse::<u64>()?;
+            let end_ms = times[1].parse::<u64>()?;
             entries.push(PartitionEntry {
                 nodes_to_talk_to,
                 nodes_to_tell,

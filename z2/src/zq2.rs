@@ -1,6 +1,7 @@
+use std::env;
+
 use anyhow::Result;
 use futures::future::JoinAll;
-use std::env;
 use tokio::{process::Command, sync::mpsc, task::JoinHandle};
 
 use crate::{

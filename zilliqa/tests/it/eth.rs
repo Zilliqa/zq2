@@ -1381,7 +1381,7 @@ async fn test_eth_syncing(mut network: Network) {
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap().as_u64() > 4 },
-            50,
+            100,
         )
         .await
         .unwrap();

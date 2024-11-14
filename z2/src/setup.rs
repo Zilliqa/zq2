@@ -1,4 +1,10 @@
-use crate::address::EthereumAddress;
+use core::net::Ipv4Addr;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
 use alloy::{
     primitives::{address, Address},
     signers::local::LocalSigner,
@@ -8,11 +14,6 @@ use k256::ecdsa::SigningKey;
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
 use tera::Tera;
 use tokio::fs;
 use zilliqa::{
@@ -36,13 +37,13 @@ use zilliqa::{
 };
 
 use crate::{
+    address::EthereumAddress,
     chain,
     collector::{self, Collector},
     components::{Component, Requirements},
     node_spec::Composition,
     scilla, utils, validators,
 };
-use core::net::Ipv4Addr;
 
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
 const DATADIR_PREFIX: &str = "z2_node_";
@@ -277,7 +278,7 @@ impl Setup {
     }
 
     pub fn get_p2p_port(&self, index: u16) -> u16 {
-        return self.config.base_port + 301 + index + self.config.base_port;
+        self.config.base_port + 301 + index + self.config.base_port
     }
 
     pub fn get_external_addr(&self, index: u16) -> Result<Multiaddr> {

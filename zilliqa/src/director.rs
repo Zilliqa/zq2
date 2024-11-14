@@ -1,8 +1,9 @@
 // Director: directs the behaviour of other parts of the system.
 
+use std::collections::HashSet;
+
 use anyhow::Result;
 use libp2p::PeerId;
-use std::collections::HashSet;
 use tracing::*;
 
 #[derive(Debug)]
