@@ -37,6 +37,7 @@ enum Commands {
     Perf(PerfStruct),
     #[clap(subcommand)]
     /// Group of subcommands to deploy and configure a Zilliqa 2 network
+    /// If you define the environment variable ZQ2_API_URL, we will use it in preference to the default API url for this network.
     Deployer(DeployerCommands),
     #[clap(subcommand)]
     /// Convert Zilliqa 1 to Zilliqa 2 persistnce
@@ -148,6 +149,9 @@ pub struct DeployerInstallArgs {
     /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long)]
     persistence_url: Option<String>,
+    /// Machines to install
+    #[clap(long, num_args= 0..)]
+    machines: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -160,6 +164,9 @@ pub struct DeployerUpgradeArgs {
     /// Define the number of nodes to process in parallel. Default: 1
     #[clap(long)]
     max_parallel: Option<usize>,
+    /// Machines to install
+    #[clap(long, num_args= 0..)]
+    machines: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -756,6 +763,7 @@ async fn main() -> Result<()> {
                     arg.select,
                     arg.max_parallel,
                     arg.persistence_url.clone(),
+                    &arg.machines,
                 )
                 .await
                 .map_err(|err| {
@@ -769,11 +777,16 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_upgrade(&config_file, arg.select, arg.max_parallel)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
-                    })?;
+                plumbing::run_deployer_upgrade(
+                    &config_file,
+                    arg.select,
+                    arg.max_parallel,
+                    &arg.machines,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer upgrade command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::GetConfigFile(ref arg) => {
