@@ -34,6 +34,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::Db,
+    director::Director,
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
@@ -157,6 +158,7 @@ pub struct Node {
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
+    pub director: Director,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -206,6 +208,7 @@ impl Node {
             chain_id: ChainId::new(config.eth_chain_id),
             consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
             peer_num,
+            director: Director::new()?,
         };
         Ok(node)
     }

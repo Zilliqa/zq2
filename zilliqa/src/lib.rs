@@ -8,6 +8,8 @@ pub mod contracts;
 pub mod crypto;
 pub mod db;
 mod error;
+pub mod director;
+mod eth_helpers;
 pub mod exec;
 mod health;
 pub mod inspector;

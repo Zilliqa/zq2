@@ -37,7 +37,7 @@ impl fmt::Display for Composition {
     }
 }
 
-fn indices_from_string(input: &str) -> Result<HashSet<u64>> {
+pub fn indices_from_string(input: &str) -> Result<HashSet<u64>> {
     // We support a-b and a,b,c .
     let components = input.split(',');
     let mut result = RangeMap::new();

@@ -19,6 +19,7 @@ pub mod scilla;
 mod secret;
 pub mod setup;
 pub mod spout;
+pub mod testing;
 pub mod utils;
 pub mod validators;
 pub mod zq1;

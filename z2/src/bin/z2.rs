@@ -57,6 +57,8 @@ enum Commands {
     Nodes(NodesStruct),
     /// Start a node and join it to a network
     JoinNode(JoinNodeStruct),
+    /// Run various tests on the chain
+    Test(TestStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -291,6 +293,23 @@ struct DocStruct {
     /// API url to show in the generated documentation
     #[clap(long)]
     api_url: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct TestStruct {
+    config_dir: String,
+    #[clap(long)]
+    #[clap(default_value = "warn")]
+    log_level: LogLevel,
+
+    #[clap(long)]
+    debug_modules: Vec<String>,
+
+    #[clap(long)]
+    trace_modules: Vec<String>,
+
+    #[arg(trailing_var_arg = true, hide = true)]
+    rest: Vec<String>,
 }
 
 // See https://jwodder.github.io/kbits/posts/clap-bool-negate/
@@ -1064,6 +1083,15 @@ async fn main() -> Result<()> {
                 Some(secret_key_hex),
             )
             .await?;
+            Ok(())
+        }
+        Commands::Test(ref arg) => {
+            let log_spec = utils::compute_log_string(
+                &arg.log_level.to_string(),
+                &arg.debug_modules,
+                &arg.trace_modules,
+            )?;
+            plumbing::test(&arg.config_dir, &base_dir, &log_spec, false, &arg.rest).await?;
             Ok(())
         }
     }
