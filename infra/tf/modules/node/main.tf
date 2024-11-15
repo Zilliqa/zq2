@@ -97,6 +97,8 @@ resource "google_compute_instance" "this" {
     var.metadata,
   )
 
+  metadata_startup_script = templatefile("${path.module}/scripts/node_provision.py.tpl", {})
+
   lifecycle {
     ignore_changes = [
       labels["peer-id"]
