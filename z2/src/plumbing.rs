@@ -175,6 +175,7 @@ pub async fn run_deployer_install(
     config_file: &str,
     node_selection: bool,
     max_parallel: Option<usize>,
+    persistence_url: Option<String>,
 ) -> Result<()> {
     println!("🦆 Installing {config_file} .. ");
     deployer::install_or_upgrade(
@@ -182,6 +183,7 @@ pub async fn run_deployer_install(
         false,
         node_selection,
         max_parallel.unwrap_or(50),
+        persistence_url,
     )
     .await?;
     Ok(())
@@ -193,8 +195,14 @@ pub async fn run_deployer_upgrade(
     max_parallel: Option<usize>,
 ) -> Result<()> {
     println!("🦆 Upgrading {config_file} .. ");
-    deployer::install_or_upgrade(config_file, true, node_selection, max_parallel.unwrap_or(1))
-        .await?;
+    deployer::install_or_upgrade(
+        config_file,
+        true,
+        node_selection,
+        max_parallel.unwrap_or(1),
+        None,
+    )
+    .await?;
     Ok(())
 }
 
@@ -255,6 +263,32 @@ pub async fn run_deployer_reset(config_file: &str, node_selection: bool) -> Resu
 pub async fn run_deployer_restart(config_file: &str, node_selection: bool) -> Result<()> {
     println!("🦆 Running restart for {config_file} .. ");
     deployer::run_restart(config_file, node_selection).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
+    println!("🦆 Running generate-genesis-key for {config_file} .. ");
+    deployer::run_generate_genesis_key(config_file, force).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_generate_private_keys(
+    config_file: &str,
+    node_selection: bool,
+    force: bool,
+) -> Result<()> {
+    println!("🦆 Running generate-private-keys for {config_file} .. ");
+    deployer::run_generate_private_keys(config_file, node_selection, force).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_generate_reward_wallets(
+    config_file: &str,
+    node_selection: bool,
+    force: bool,
+) -> Result<()> {
+    println!("🦆 Running generate-reward-wallets for {config_file} .. ");
+    deployer::run_generate_reward_wallets(config_file, node_selection, force).await?;
     Ok(())
 }
 
@@ -328,12 +362,12 @@ pub async fn run_persistence_converter(
     let config_file = PathBuf::from_str(zq2_config)?;
     let zq2_config = fs::read_to_string(config_file).await?;
     let zq2_config: zilliqa::cfg::Config = toml::from_str(&zq2_config)?;
-    let shard_id: u64 = zq2_config
-        .nodes
-        .first()
-        .map(|node| node.eth_chain_id)
-        .unwrap_or(0);
-    let zq2_db = zilliqa::db::Db::new(Some(zq2_dir), shard_id)?;
+    let node_config = zq2_config.nodes.first().unwrap();
+    let zq2_db = zilliqa::db::Db::new(
+        Some(zq2_dir),
+        node_config.eth_chain_id,
+        node_config.state_cache_size,
+    )?;
     let zq1_db = zq1::Db::new(zq1_dir)?;
     converter::convert_persistence(
         zq1_db,

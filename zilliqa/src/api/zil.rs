@@ -1,6 +1,7 @@
 //! The Zilliqa API, as documented at <https://dev.zilliqa.com/api/introduction/api-introduction>.
 
 use std::{
+    collections::HashSet,
     fmt::Display,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -19,15 +20,21 @@ use jsonrpsee::{
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use sha3::digest::generic_array::{
+    sequence::Split,
+    typenum::{U12, U20},
+    GenericArray,
+};
 
 use super::{
     to_hex::ToHex,
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
-        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, RecentTransactionsResponse,
-        SWInfo, ShardingStructure, SmartContract, TXBlockRateResult, TransactionBody,
-        TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
-        TxnsForTxBlockExResponse,
+        DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
+        RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, TXBlockRateResult,
+        TransactionBody, TransactionStatusResponse, TxBlockListing, TxBlockListingResult,
+        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -69,8 +76,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNetworkId", get_network_id),
             ("GetVersion", get_version),
             ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
-            ("GetTxBlock", |p, n| get_tx_block(p, n, false)),
-            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n, true)),
+            ("GetTxBlock", |p, n| get_tx_block(p, n)),
+            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n)),
             ("GetSmartContracts", get_smart_contracts),
             ("GetDSBlock", get_ds_block),
             ("GetDSBlockVerbose", get_ds_block_verbose),
@@ -96,13 +103,56 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNumTxnsDSEpoch", get_num_txns_ds_epoch),
             ("GetTotalCoinSupply", get_total_coin_supply),
             ("GetTotalCoinSupplyAsInt", get_total_coin_supply_as_int),
+            ("GetMinerInfo", get_miner_info),
+            ("GetNodeType", get_node_type),
+            ("GetPrevDifficulty", get_prev_difficulty),
+            ("GetPrevDSDifficulty", get_prev_ds_difficulty),
+            ("GetShardingStructure", get_sharding_structure),
+            ("GetSmartContractSubState", get_smart_contract_sub_state),
+            (
+                "GetSoftConfirmedTransaction",
+                get_soft_confirmed_transaction
+            ),
+            ("GetStateProof", get_state_proof),
+            ("GetTransactionStatus", get_transaction_status),
         ],
     )
 }
 
+/// Take an Address and produce a checksummed hex representation of it.
+/// No initial 0x will be added.
+/// Public because some of the tests require it.
+pub fn to_zil_checksum_string(address: &Address) -> String {
+    const UPPER_CHARS: [char; 6] = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const LOWER_CHARS: [char; 16] = [
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+    ];
+    let bytes = address.into_array();
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut result = String::new();
+    // You could do this with iterators, but it's horrid.
+    for (idx, byte) in bytes.iter().enumerate() {
+        for nibble in 0..2 {
+            let shift = (1 - nibble) << 2;
+            let val = (byte >> shift) & 0xf;
+            // Should this be uppercase?
+            let bit_num = 6 * ((idx << 1) + nibble);
+            let bit = digest[bit_num >> 3] & (1 << (7 - (bit_num & 7)));
+            if bit != 0 && val > 9 {
+                result.push(UPPER_CHARS[usize::from(val - 10)])
+            } else {
+                result.push(LOWER_CHARS[usize::from(val)])
+            }
+        }
+    }
+    result
+}
+
 #[derive(Deserialize)]
 #[serde(transparent)]
-struct ZilAddress {
+pub struct ZilAddress {
     #[serde(deserialize_with = "deserialize_zil_address")]
     inner: Address,
 }
@@ -138,7 +188,7 @@ where
 struct TransactionParams {
     version: u32,
     nonce: u64,
-    to_addr: Address,
+    to_addr: String,
     #[serde(deserialize_with = "from_str")]
     amount: ZilAmount,
     pub_key: String,
@@ -162,7 +212,14 @@ where
     let s = String::deserialize(deserializer)?;
     s.parse().map_err(serde::de::Error::custom)
 }
+/// Helper function to extract signer address from a public key
+fn extract_signer_address(key: &schnorr::PublicKey) -> Address {
+    let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
+    let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
+    Address::new(bytes.into())
+}
 
+// CreateTransaction
 fn create_transaction(
     params: Params,
     node: &Arc<Mutex<Node>>,
@@ -199,17 +256,36 @@ fn create_transaction(
         ))?;
     }
 
-    let key = hex::decode(transaction.pub_key).map_err(|_|
+    let pre_key = hex::decode(transaction.pub_key).map_err(|_|
                 // This is apparently what ZQ1 does.
                 ErrorObject::owned::<String>(RPCErrorCode::RpcVerifyRejected as i32,
                                    "Cannot parse public key".to_string(),
                                    None))?;
 
-    let key = schnorr::PublicKey::from_sec1_bytes(&key).map_err(|_|
+    let key = schnorr::PublicKey::from_sec1_bytes(&pre_key).map_err(|_|
                  // This is apparently what ZQ1 does.
                  ErrorObject::owned::<String>(RPCErrorCode::RpcVerifyRejected as i32,
                                               "Invalid public key".to_string(),
                                               None))?;
+
+    // Addresses without an 0x prefix are legal.
+    let corrected_addr = if transaction.to_addr.starts_with("0x") {
+        transaction.to_addr
+    } else {
+        format!("0x{0}", transaction.to_addr)
+    };
+    let to_addr = Address::parse_checksummed(&corrected_addr, None).or_else(|_| {
+        // Not eth checksummed. How about Zilliqa?
+        let addr = Address::from_str(&corrected_addr)?;
+        let summed = format!("0x{0}", to_zil_checksum_string(&addr));
+        if summed == corrected_addr {
+            Ok(addr)
+        } else {
+            // Copied from ZQ1
+            Err(anyhow!("To Addr checksum wrong"))
+        }
+    })?;
+
     let sig = schnorr::Signature::from_str(&transaction.signature).map_err(|err| {
         ErrorObject::owned::<String>(
             RPCErrorCode::RpcVerifyRejected as i32,
@@ -217,8 +293,6 @@ fn create_transaction(
             None,
         )
     })?;
-
-    // TODO: Perform some initial validation of the transaction
 
     // If we don't trap this here, it will later cause the -1 in
     // transaction::get_nonce() to pan1ic.
@@ -230,22 +304,23 @@ fn create_transaction(
         ))?;
     }
 
-    let transaction = SignedTransaction::Zilliqa {
-        tx: TxZilliqa {
-            chain_id: chain_id as u16,
-            nonce: transaction.nonce,
-            gas_price: transaction.gas_price,
-            gas_limit: transaction.gas_limit,
-            to_addr: transaction.to_addr,
-            amount: transaction.amount,
-            code: transaction.code.unwrap_or_default(),
-            data: transaction.data.unwrap_or_default(),
-        },
+    let tx = TxZilliqa {
+        chain_id: chain_id as u16,
+        nonce: transaction.nonce,
+        gas_price: transaction.gas_price,
+        gas_limit: transaction.gas_limit,
+        to_addr,
+        amount: transaction.amount,
+        code: transaction.code.unwrap_or_default(),
+        data: transaction.data.unwrap_or_default(),
+    };
+    let signed_transaction = SignedTransaction::Zilliqa {
+        tx: tx.clone(),
         key,
         sig,
     };
 
-    let (transaction_hash, result) = node.create_transaction(transaction.clone())?;
+    let (transaction_hash, result) = node.create_transaction(signed_transaction.clone())?;
     let info = match result {
         TxAddResult::AddedToMempool => Ok("Txn processed".to_string()),
         TxAddResult::Duplicate(_) => Ok("Txn already present".to_string()),
@@ -279,9 +354,15 @@ fn create_transaction(
             Ok(format!("Nonce ({got}) lower than current ({expected})"))
         }
     }?;
+    let contract_address = if !tx.code.is_empty() {
+        let signer = extract_signer_address(&key);
+        Some(zil_contract_address(signer, tx.nonce - 1))
+    } else {
+        None
+    };
 
     let response = CreateTransactionResponse {
-        contract_address: None,
+        contract_address,
         info,
         tran_id: transaction_hash.0.into(),
     };
@@ -289,6 +370,7 @@ fn create_transaction(
     Ok(response)
 }
 
+// GetContractAddressFromTransactionID
 fn get_contract_address_from_transaction_id(
     params: Params,
     node: &Arc<Mutex<Node>>,
@@ -308,6 +390,7 @@ fn get_contract_address_from_transaction_id(
     Ok(contract_address.to_hex_no_prefix())
 }
 
+// GetTransaction
 fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxResponse> {
     let jsonrpc_error_data: Option<String> = None;
     let hash: B256 = params.one()?;
@@ -344,6 +427,7 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
     GetTxResponse::new(tx, receipt, block.number())
 }
 
+// GetBalance
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
@@ -356,7 +440,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let state = node.get_state(&block)?;
 
     if !state.has_account(address)? {
-        return Err(jsonrpsee::types::ErrorObject::owned(
+        return Err(ErrorObject::owned(
             RPCErrorCode::RpcInvalidAddressOrKey as i32,
             "Account is not created",
             None::<()>,
@@ -372,19 +456,27 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     Ok(json!({"balance": balance.to_string(), "nonce": account.nonce}))
 }
 
+// GetCurrentMiniEpoch
 fn get_current_mini_epoch(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(node.lock().unwrap().number().to_string())
 }
 
+// GetLatestTxBlock
 fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBlock> {
     let node = node.lock().unwrap();
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
-    Ok((&block).into())
+    let proposer = node
+        .get_proposer_reward_address(block.header)?
+        .expect("No proposer");
+
+    let tx_block = zil::TxBlock::new(&block, proposer);
+    Ok(tx_block)
 }
 
+// GetMinimumGasPrice
 fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let price = node.lock().unwrap().get_gas_price();
     // `price` is the cost per unit of [EvmGas]. This API should return the cost per unit of [ScillaGas].
@@ -393,11 +485,13 @@ fn get_minimum_gas_price(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     Ok(ZilAmount::from_amount(price).to_string())
 }
 
+// GetNetworkId
 fn get_network_id(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let network_id = node.lock().unwrap().chain_id.zil();
     Ok(network_id.to_string())
 }
 
+// GetVersion
 fn get_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<Value> {
     let commit = env!("VERGEN_GIT_SHA");
     let version = env!("VERGEN_GIT_DESCRIBE");
@@ -407,6 +501,7 @@ fn get_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<Value> {
     }))
 }
 
+// GetBlockchainInfo
 fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainInfo> {
     let node = node.lock().unwrap();
 
@@ -429,64 +524,21 @@ fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainI
     })
 }
 
+// GetNumTxBlocks
 fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
 
     Ok(node.get_chain_tip().to_string())
 }
 
+// GetSmartContractState
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: ZilAddress = params.one()?;
-    let address: Address = address.into();
-
-    let node = node.lock().unwrap();
-
-    // First get the account and check that its a scilla account
-    let block = node
-        .get_block(BlockId::latest())?
-        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
-
-    let state = node.get_state(&block)?;
-    let account = state.get_account(address)?;
-
-    let result = json!({
-        "_balance": ZilAmount::from_amount(account.balance).to_string(),
-    });
-    let Value::Object(mut result) = result else {
-        unreachable!()
-    };
-
-    let is_scilla = account.code.scilla_code_and_init_data().is_some();
-    if is_scilla {
-        let limit = node.config.state_rpc_limit;
-
-        let trie = state.get_account_trie(address)?;
-        for (i, (k, v)) in trie.iter().enumerate() {
-            if i >= limit {
-                return Err(anyhow!(
-                    "State of contract returned has size greater than the allowed maximum"
-                ));
-            }
-
-            let (var_name, indices) = split_storage_key(&k)?;
-            let mut var = result.entry(var_name.clone());
-
-            for index in indices {
-                let next = var.or_insert_with(|| Value::Object(Default::default()));
-                let Value::Object(next) = next else {
-                    unreachable!()
-                };
-                let key: String = serde_json::from_slice(&index)?;
-                var = next.entry(key.clone());
-            }
-
-            var.or_insert(serde_json::from_slice(&v)?);
-        }
-    }
-
-    Ok(result.into())
+    let mut seq = params.sequence();
+    let address: Address = seq.next()?;
+    get_smart_contract_state_internal(address, None, None, node)
 }
 
+// GetSmartContractCode
 fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
@@ -495,7 +547,17 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node.get_state(&block)?.get_account(address)?;
+    let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            format!("Address does not exist: {}", address),
+            None::<()>,
+        )
+        .into());
+    }
+    let account = state.get_account(address)?;
 
     let (code, type_) = match account.code {
         Code::Evm(ref bytes) => (hex::encode(bytes), "evm"),
@@ -505,6 +567,7 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     Ok(json!({ "code": code, "type": type_ }))
 }
 
+// GetSmartContractInit
 fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<ParamValue>> {
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
@@ -513,15 +576,27 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node.get_state(&block)?.get_account(address)?;
+
+    let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist".to_string(),
+            None::<()>,
+        )
+        .into());
+    }
+    let account = state.get_account(address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
-        return Err(anyhow!("Address not contract address"));
+        return Err(anyhow!("Address does not exist"));
     };
 
     Ok(init_data)
 }
 
+// GetTransactionsForTxBlock
 fn get_transactions_for_tx_block(
     params: Params,
     node: &Arc<Mutex<Node>>,
@@ -547,11 +622,8 @@ fn get_transactions_for_tx_block(
 pub const TRANSACTIONS_PER_PAGE: usize = 2500;
 pub const TX_BLOCKS_PER_DS_BLOCK: u64 = 100;
 
-fn get_tx_block(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-    verbose: bool,
-) -> Result<Option<zil::TxBlock>> {
+// GetTxBlock
+fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::TxBlock>> {
     let block_number: String = params.one()?;
     let block_number: u64 = block_number.parse()?;
 
@@ -559,20 +631,15 @@ fn get_tx_block(
     let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
-    let mut block: zil::TxBlock = (&block).into();
-
-    if verbose {
-        block.header.committee_hash = Some(B256::ZERO);
-        block.body.cosig_bitmap_1 = vec![true; 8];
-        block.body.cosig_bitmap_2 = vec![true; 8];
-        let mut scalar = [0; 32];
-        scalar[31] = 1;
-        block.body.cosig_1 = Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap());
-    }
+    let proposer = node
+        .get_proposer_reward_address(block.header)?
+        .expect("No proposer");
+    let block: zil::TxBlock = zil::TxBlock::new(&block, proposer);
 
     Ok(Some(block))
 }
 
+// GetSmartContracts
 fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<SmartContract>> {
     let address: ZilAddress = params.one()?;
     let address: Address = address.into();
@@ -646,6 +713,7 @@ fn get_example_ds_block(dsblocknum: u64, txblocknum: u64) -> DSBlock {
     get_example_ds_block_verbose(dsblocknum, txblocknum).into()
 }
 
+// GetDSBlock
 pub fn get_ds_block(params: Params, _node: &Arc<Mutex<Node>>) -> Result<DSBlock> {
     // Dummy implementation
     let block_number: String = params.one()?;
@@ -656,6 +724,7 @@ pub fn get_ds_block(params: Params, _node: &Arc<Mutex<Node>>) -> Result<DSBlock>
     ))
 }
 
+// GetDSBlockVerbose
 pub fn get_ds_block_verbose(params: Params, _node: &Arc<Mutex<Node>>) -> Result<DSBlockVerbose> {
     // Dummy implementation
     let block_number: String = params.one()?;
@@ -666,6 +735,7 @@ pub fn get_ds_block_verbose(params: Params, _node: &Arc<Mutex<Node>>) -> Result<
     ))
 }
 
+// GetLatestDSBlock
 pub fn get_latest_ds_block(_params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlock> {
     // Dummy implementation
     let node = node.lock().unwrap();
@@ -674,6 +744,7 @@ pub fn get_latest_ds_block(_params: Params, node: &Arc<Mutex<Node>>) -> Result<D
     Ok(get_example_ds_block(num_ds_blocks, num_tx_blocks))
 }
 
+// GetCurrentDSComm
 pub fn get_current_ds_comm(
     _params: Params,
     node: &Arc<Mutex<Node>>,
@@ -690,6 +761,7 @@ pub fn get_current_ds_comm(
     })
 }
 
+// GetCurrentDSEpoch
 pub fn get_current_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     // Dummy implementation
     let node = node.lock().unwrap();
@@ -698,6 +770,7 @@ pub fn get_current_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<
     Ok(num_ds_blocks.to_string())
 }
 
+// DSBlockListing
 pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockListingResult> {
     // Dummy implementation
     let node = node.lock().unwrap();
@@ -721,6 +794,7 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     })
 }
 
+// utilitiy function to calculate the tx block rate for get_ds_block_rate and get_tx_block_rate
 pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
     let node = node.lock().unwrap();
     let max_measurement_blocks = 5;
@@ -740,6 +814,7 @@ pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
     Ok(tx_block_rate)
 }
 
+// GetDSBlockRate
 pub fn get_ds_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockRateResult> {
     let tx_block_rate = calculate_tx_block_rate(node)?;
     let ds_block_rate = tx_block_rate / TX_BLOCKS_PER_DS_BLOCK as f64;
@@ -748,6 +823,7 @@ pub fn get_ds_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<DSB
     })
 }
 
+// GetTxBlockRate
 fn get_tx_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TXBlockRateResult> {
     let tx_block_rate = calculate_tx_block_rate(node)?;
     Ok(TXBlockRateResult {
@@ -755,6 +831,7 @@ fn get_tx_block_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<TXBlock
     })
 }
 
+// TxBlockListing
 fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockListingResult> {
     let page_number: u64 = params.one()?;
 
@@ -783,12 +860,14 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
     })
 }
 
+// GetNumPeers
 fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
     let node = node.lock().unwrap();
     let num_peers = node.get_peer_num();
     Ok(num_peers as u64)
 }
 
+// GetTransactionRate
 // Calculates transaction rate over the most recent block
 fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
     let node = node.lock().unwrap();
@@ -812,6 +891,7 @@ fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
     Ok(transaction_rate)
 }
 
+// GetTransactionsForTxBlockEx
 fn get_transactions_for_tx_block_ex(
     params: Params,
     node: &Arc<Mutex<Node>>,
@@ -859,6 +939,7 @@ fn get_transactions_for_tx_block_ex(
     })
 }
 
+// GetTransactionsForTxBlockEx
 fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<TransactionBody>> {
     let mut transactions = Vec::with_capacity(block.transactions.len());
     for hash in &block.transactions {
@@ -937,6 +1018,7 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
     Ok(transactions)
 }
 
+// GetTxnBodiesForTxBlock
 fn get_txn_bodies_for_tx_block(
     params: Params,
     node: &Arc<Mutex<Node>>,
@@ -952,6 +1034,7 @@ fn get_txn_bodies_for_tx_block(
     extract_transaction_bodies(&block, &node)
 }
 
+// GetTxnBodiesForTxBlockEx
 fn get_txn_bodies_for_tx_block_ex(
     params: Params,
     node: &Arc<Mutex<Node>>,
@@ -998,6 +1081,7 @@ fn get_txn_bodies_for_tx_block_ex(
     })
 }
 
+// GetNumDSBlocks
 fn get_num_ds_blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let num_tx_blocks = node.get_chain_tip();
@@ -1005,6 +1089,7 @@ fn get_num_ds_blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String>
     Ok(num_ds_blocks.to_string())
 }
 
+// GetRecentTransactions
 fn get_recent_transactions(
     _params: Params,
     node: &Arc<Mutex<Node>>,
@@ -1038,12 +1123,14 @@ fn get_recent_transactions(
     })
 }
 
+// GetNumTransactions
 fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let num_transactions = node.consensus.block_store.get_num_transactions()?;
     Ok(num_transactions.to_string())
 }
 
+// GetNumTxnsTXEpoch
 fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let latest_block = node
@@ -1057,6 +1144,7 @@ fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
     Ok(num_transactions.to_string())
 }
 
+// GetNumTxnsDSEpoch
 fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let ds_epoch_size = TX_BLOCKS_PER_DS_BLOCK;
@@ -1074,12 +1162,213 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
     Ok(num_txns_epoch.to_string())
 }
 
+// GetTotalCoinSupply
 fn get_total_coin_supply(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     Ok(node.config.consensus.total_native_token_supply.to_string())
 }
 
+// GetTotalCoinSupplyAsInt
 fn get_total_coin_supply_as_int(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
     let node = node.lock().unwrap();
     Ok(node.config.consensus.total_native_token_supply.0)
+}
+
+// GetMinerInfo
+fn get_miner_info(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo> {
+    todo!("API getminerinfo is not implemented yet");
+}
+
+// GetNodeType
+fn get_node_type(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<String> {
+    todo!("API getnodetype is not implemented yet");
+}
+
+// GetPrevDifficulty
+fn get_prev_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
+    todo!("API getprevdifficulty is not implemented yet");
+}
+
+// GetPrevDSDifficulty
+fn get_prev_ds_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
+    todo!("API getprevdsdifficulty is not implemented yet");
+}
+
+// GetShardingStructure
+fn get_sharding_structure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("API getshardingstructure is not implemented yet");
+}
+
+fn get_smart_contract_state_internal(
+    address: Address,
+    requested_varname: Option<String>,
+    requested_indices: Option<HashSet<String>>,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Value> {
+    let node = node.lock().unwrap();
+
+    // First get the account and check that its a scilla account
+    let block = node
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
+
+    let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist".to_string(),
+            None::<()>,
+        )
+        .into());
+    }
+
+    let account = state.get_account(address)?;
+
+    let result = json!({
+        "_balance": ZilAmount::from_amount(account.balance).to_string(),
+    });
+    let Value::Object(mut result) = result else {
+        unreachable!()
+    };
+
+    let is_scilla = account.code.scilla_code_and_init_data().is_some();
+    if is_scilla {
+        let limit = node.config.state_rpc_limit;
+
+        let trie = state.get_account_trie(address)?;
+        for (i, (k, v)) in trie.iter().enumerate() {
+            if i >= limit {
+                return Err(anyhow!(
+                    "State of contract returned has size greater than the allowed maximum"
+                ));
+            }
+
+            let (var_name, indices) = split_storage_key(&k)?;
+            if let Some(ref x) = requested_varname {
+                if *x != var_name {
+                    continue;
+                }
+            }
+            let mut var = result.entry(var_name.clone());
+
+            for index in indices {
+                if let Some(ref x) = requested_indices {
+                    if !x.contains(&index.to_hex()) {
+                        continue;
+                    }
+                }
+                let next = var.or_insert_with(|| Value::Object(Default::default()));
+                let Value::Object(next) = next else {
+                    unreachable!()
+                };
+                let key: String = serde_json::from_slice(&index)?;
+                var = next.entry(key.clone());
+            }
+
+            var.or_insert(serde_json::from_slice(&v)?);
+        }
+    }
+
+    Ok(result.into())
+}
+
+// GetSmartContractSubState
+fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
+    let mut seq = params.sequence();
+    let address: Address = seq.next()?;
+    let requested_varname: Option<String> = seq.optional_next()?;
+    let requested_indices: Option<HashSet<String>> = seq.optional_next()?;
+    get_smart_contract_state_internal(address, requested_varname, requested_indices, node)
+}
+
+// GetSoftConfirmedTransaction
+fn get_soft_confirmed_transaction(
+    _params: Params,
+    _node: &Arc<Mutex<Node>>,
+) -> Result<GetTxResponse> {
+    todo!("API getsoftconfirmedtransaction is not implemented yet");
+}
+
+// GetStateProof
+fn get_state_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("API getstateproof is not implemented yet");
+}
+
+// GetTransactionStatus
+fn get_transaction_status(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TransactionStatusResponse> {
+    let jsonrpc_error_data: Option<String> = None;
+    let hash: B256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+
+    let node = node.lock().unwrap();
+    let transaction =
+        node.get_transaction_by_hash(hash)?
+            .ok_or(jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn Hash not found".to_string(),
+                jsonrpc_error_data.clone(),
+            ))?;
+    let receipt =
+        node.get_transaction_receipt(hash)?
+            .ok_or(jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn receipt not found".to_string(),
+                jsonrpc_error_data.clone(),
+            ))?;
+    let block = node
+        .get_block(receipt.block_hash)?
+        .ok_or(jsonrpsee::types::ErrorObject::owned(
+            RPCErrorCode::RpcDatabaseError as i32,
+            "Block not found".to_string(),
+            jsonrpc_error_data.clone(),
+        ))?;
+
+    let res = TransactionStatusResponse::new(transaction, receipt, block)?;
+    Ok(res)
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_hex_checksum() {
+        use alloy::primitives::{address, Address};
+
+        use crate::api::zil::to_zil_checksum_string;
+
+        let cases: Vec<(Address, &str)> = vec![
+            (
+                address!("0000000000000000000000000000000000000002"),
+                "0000000000000000000000000000000000000002",
+            ),
+            (
+                address!("1234567890123456789012345678901234567890"),
+                "1234567890123456789012345678901234567890",
+            ),
+            (
+                address!("12a45b789d1f345c789def456789012be3467890"),
+                "12a45b789D1F345c789dEf456789012bE3467890",
+            ),
+            (
+                address!("f61477d7919478e5affe1fbd9a0cdceee9fde42d"),
+                "f61477D7919478e5AfFe1fbd9A0CDCeee9fdE42d",
+            ),
+            (
+                address!("4d76f701e16d7d481de292499718db36450d6a18"),
+                "4d76f701E16D7d481dE292499718db36450d6A18",
+            ),
+            (
+                address!("6e1757590ce532ff0f0e100139e36b7ee8049ce1"),
+                "6e1757590ce532Ff0F0e100139e36b7eE8049ce1",
+            ),
+        ];
+        for (address, good) in cases.iter() {
+            let summed = to_zil_checksum_string(address);
+            assert_eq!(&summed, good)
+        }
+    }
 }

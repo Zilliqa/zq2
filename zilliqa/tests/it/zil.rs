@@ -1,23 +1,27 @@
 use std::{ops::DerefMut, str::FromStr};
 
+use alloy::primitives::Address;
+use anyhow::Result;
+use bech32::{Bech32, Hrp};
 use ethabi::{ParamType, Token};
 use ethers::{
     providers::{Middleware, ProviderError},
     types::TransactionRequest,
     utils::keccak256,
 };
-use k256::elliptic_curve::sec1::ToEncodedPoint;
+use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
 use primitive_types::{H160, H256};
 use prost::Message;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zilliqa::{
+    api::types::zil::RPCErrorCode::RpcInvalidAddressOrKey,
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
-use crate::{deploy_contract, Network};
+use crate::{deploy_contract, Network, Wallet};
 
 pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
     let wallet = network.genesis_wallet().await;
@@ -57,12 +61,84 @@ pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160
     (secret_key, address)
 }
 
+enum ToAddr {
+    Address(H160),
+    StringVal(String),
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn issue_create_transaction(
+    wallet: &Wallet,
+    public_key: &PublicKey,
+    gas_price: u128,
+    _network: &mut Network,
+    secret_key: &schnorr::SecretKey,
+    nonce: u64,
+    to_addr: ToAddr,
+    amount: u128,
+    gas_limit: u64,
+    code: Option<&str>,
+    data: Option<&str>,
+) -> Result<Value> {
+    let chain_id = wallet.get_chainid().await.unwrap().as_u32() - 0x8000;
+    let version = (chain_id << 16) | 1u32;
+    let (to_addr_val, to_addr_string) = match to_addr {
+        ToAddr::Address(v) => {
+            let vec = v.as_bytes().to_vec();
+            (
+                vec.clone(),
+                Address::from_slice(vec.as_slice()).to_checksum(None),
+            )
+        }
+        ToAddr::StringVal(v) => (
+            H160::from_str(&v).unwrap().as_bytes().to_vec(),
+            v.to_string(),
+        ),
+    };
+    let proto = ProtoTransactionCoreInfo {
+        version,
+        toaddr: to_addr_val,
+        senderpubkey: Some(public_key.to_sec1_bytes().into()),
+        amount: Some(amount.to_be_bytes().to_vec().into()),
+        gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
+        gaslimit: gas_limit,
+        oneof2: Some(Nonce::Nonce(nonce)),
+        oneof8: code.map(|c| Code::Code(c.as_bytes().to_vec())),
+        oneof9: data.map(|d| Data::Data(d.as_bytes().to_vec())),
+    };
+    let txn_data = proto.encode_to_vec();
+    let signature = schnorr::sign(&txn_data, secret_key);
+
+    let mut request = json!({
+        "version": version,
+        "nonce": nonce,
+        "toAddr": to_addr_string,
+        "amount": amount.to_string(),
+        "pubKey": hex::encode(public_key.to_sec1_bytes()),
+        "gasPrice": gas_price.to_string(),
+        "gasLimit": gas_limit.to_string(),
+        "signature": hex::encode(signature.to_bytes()),
+    });
+
+    if let Some(code) = code {
+        request["code"] = code.into();
+    }
+    if let Some(data) = data {
+        request["data"] = data.into();
+    }
+
+    Ok(wallet
+        .provider()
+        .request("CreateTransaction", [request])
+        .await?)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn send_transaction(
     network: &mut Network,
     secret_key: &schnorr::SecretKey,
     nonce: u64,
-    to_addr: H160,
+    to_addr: ToAddr,
     amount: u128,
     gas_limit: u64,
     code: Option<&str>,
@@ -79,45 +155,21 @@ async fn send_transaction(
         .unwrap();
     let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
 
-    let chain_id = wallet.get_chainid().await.unwrap().as_u32() - 0x8000;
-    let version = (chain_id << 16) | 1u32;
-    let proto = ProtoTransactionCoreInfo {
-        version,
-        toaddr: to_addr.as_bytes().to_vec(),
-        senderpubkey: Some(public_key.to_sec1_bytes().into()),
-        amount: Some(amount.to_be_bytes().to_vec().into()),
-        gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
-        gaslimit: gas_limit,
-        oneof2: Some(Nonce::Nonce(nonce)),
-        oneof8: code.map(|c| Code::Code(c.as_bytes().to_vec())),
-        oneof9: data.map(|d| Data::Data(d.as_bytes().to_vec())),
-    };
-    let txn_data = proto.encode_to_vec();
-    let signature = schnorr::sign(&txn_data, secret_key);
-
-    let mut request = json!({
-        "version": version,
-        "nonce": nonce,
-        "toAddr": to_addr,
-        "amount": amount.to_string(),
-        "pubKey": hex::encode(public_key.to_sec1_bytes()),
-        "gasPrice": gas_price.to_string(),
-        "gasLimit": gas_limit.to_string(),
-        "signature": hex::encode(signature.to_bytes()),
-    });
-
-    if let Some(code) = code {
-        request["code"] = code.into();
-    }
-    if let Some(data) = data {
-        request["data"] = data.into();
-    }
-
-    let response: Value = wallet
-        .provider()
-        .request("CreateTransaction", [request])
-        .await
-        .unwrap();
+    let response = issue_create_transaction(
+        &wallet,
+        &public_key,
+        gas_price,
+        network,
+        secret_key,
+        nonce,
+        to_addr,
+        amount,
+        gas_limit,
+        code,
+        data,
+    )
+    .await
+    .unwrap();
     let txn_hash: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
 
     network
@@ -226,7 +278,7 @@ pub async fn deploy_scilla_contract(
         network,
         sender_secret_key,
         1,
-        H160::zero(),
+        ToAddr::Address(H160::zero()),
         0,
         50_000,
         Some(code),
@@ -252,7 +304,7 @@ async fn run_create_transaction_api_for_error(
     network: &mut Network,
     secret_key: &schnorr::SecretKey,
     nonce: u64,
-    to_addr: H160,
+    to_addr: ToAddr,
     amount: u128,
     gas_limit: u64,
     code: Option<&str>,
@@ -273,9 +325,22 @@ async fn run_create_transaction_api_for_error(
 
     let use_chain_id = chain_id.unwrap_or(wallet.get_chainid().await.unwrap().as_u32() - 0x8000);
     let version = (use_chain_id << 16) | 1u32;
+    let (to_addr_val, to_addr_string) = match to_addr {
+        ToAddr::Address(v) => {
+            let vec = v.as_bytes().to_vec();
+            (
+                vec.clone(),
+                Address::from_slice(vec.as_slice()).to_checksum(None),
+            )
+        }
+        ToAddr::StringVal(v) => (
+            H160::from_str(&v).unwrap().as_bytes().to_vec(),
+            v.to_string(),
+        ),
+    };
     let proto = ProtoTransactionCoreInfo {
         version,
-        toaddr: to_addr.as_bytes().to_vec(),
+        toaddr: to_addr_val,
         senderpubkey: Some(public_key.to_sec1_bytes().into()),
         amount: Some(amount.to_be_bytes().to_vec().into()),
         gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
@@ -288,13 +353,13 @@ async fn run_create_transaction_api_for_error(
     let mut signature = schnorr::sign(&txn_data, secret_key).to_bytes();
     if bad_signature {
         if let Some(x) = signature.first_mut() {
-            *x += 1;
+            *x = x.wrapping_add(1);
         }
     }
     let mut request = json!({
         "version": version,
         "nonce": nonce,
-        "toAddr": to_addr,
+        "toAddr": to_addr_string,
         "amount": amount.to_string(),
         "pubKey": hex::encode(public_key.to_sec1_bytes()),
         "gasPrice": gas_price.to_string(),
@@ -322,7 +387,38 @@ async fn run_create_transaction_api_for_error(
 }
 
 #[zilliqa_macros::test]
-async fn create_transaction(mut network: Network) {
+async fn create_transaction_bad_checksum(mut network: Network) {
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let wallet = network.random_wallet().await;
+    let public_key = secret_key.public_key();
+
+    // Get the gas price via the Zilliqa API.
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+
+    let ans = issue_create_transaction(
+        &wallet,
+        &public_key,
+        gas_price,
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::StringVal("0x00000000000000000000000000000000deaDbeef".to_string()),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+    assert!(ans.is_err());
+}
+
+#[zilliqa_macros::test]
+async fn create_transaction_zil_checksum(mut network: Network) {
     let wallet = network.random_wallet().await;
 
     let (secret_key, address) = zilliqa_account(&mut network).await;
@@ -330,11 +426,12 @@ async fn create_transaction(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
+
     send_transaction(
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::StringVal("0x00000000000000000000000000000000deADbeef".to_string()),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -360,6 +457,79 @@ async fn create_transaction(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn create_transaction(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    // Verify the sender's nonce has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [address])
+        .await
+        .unwrap();
+    assert_eq!(response["nonce"].as_u64().unwrap(), 1);
+
+    // Verify the receiver's balance has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [to_addr])
+        .await
+        .unwrap();
+    assert_eq!(response["balance"].as_str().unwrap(), "200000000000000");
+}
+
+#[zilliqa_macros::test]
+async fn get_balance_via_eth_api(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let encoded_bech32 =
+        bech32::encode::<Bech32>(Hrp::parse("zil").unwrap(), to_addr.as_bytes()).unwrap();
+
+    let response: Value = wallet
+        .provider()
+        .request("eth_getBalance", [encoded_bech32, "latest".to_string()])
+        .await
+        .unwrap();
+
+    let stripped_str = response.as_str().unwrap().strip_prefix("0x").unwrap();
+    let returned = u128::from_str_radix(stripped_str, 16).unwrap();
+    assert_eq!(returned, 200u128 * 10u128.pow(18));
+}
+
+#[zilliqa_macros::test]
 async fn create_transaction_errors(mut network: Network) {
     let (secret_key, _) = zilliqa_account(&mut network).await;
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
@@ -370,7 +540,7 @@ async fn create_transaction_errors(mut network: Network) {
             &mut network,
             &secret_key,
             0,
-            to_addr,
+            ToAddr::Address(to_addr),
             200u128 * 10u128.pow(12),
             50_000,
             None,
@@ -390,7 +560,7 @@ async fn create_transaction_errors(mut network: Network) {
             &mut network,
             &secret_key,
             1,
-            to_addr,
+            ToAddr::Address(to_addr),
             200u128 * 10u128.pow(12),
             50_000,
             None,
@@ -410,7 +580,7 @@ async fn create_transaction_errors(mut network: Network) {
             &mut network,
             &secret_key,
             1,
-            to_addr,
+            ToAddr::Address(to_addr),
             200u128 * 10u128.pow(12),
             50_000,
             None,
@@ -424,6 +594,68 @@ async fn create_transaction_errors(mut network: Network) {
         assert!(msg.to_lowercase().contains("signature"));
         assert_eq!(code, -26)
     }
+}
+
+#[zilliqa_macros::test]
+async fn get_transaction(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    // Create a Zilliqa account and get its secret key and address
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    // Define the recipient address
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    // Send a transaction
+    let (_contract_address, returned_transaction) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    // Get the transaction ID from the returned transaction
+    let transaction_id = returned_transaction["ID"]
+        .as_str()
+        .expect("Failed to get ID from response");
+
+    // Wait for the transaction to be mined
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    // Use the GetTransaction API to retrieve the transaction details
+    let response: Value = wallet
+        .provider()
+        .request("GetTransaction", [transaction_id])
+        .await
+        .expect("Failed to call GetTransaction API");
+
+    // Check for keys
+    assert!(response["receipt"]["success"].is_boolean());
+    assert!(response["receipt"]["event_logs"].is_array());
+    assert!(response["receipt"]["transitions"].is_array());
+
+    // Check the string formats
+    assert!(!response["ID"].as_str().unwrap().starts_with("0x"));
+    assert!(!response["toAddr"].as_str().unwrap().starts_with("0x"));
+    assert!(response["senderPubKey"].as_str().unwrap().starts_with("0x"));
+    assert!(response["signature"].as_str().unwrap().starts_with("0x"));
+
+    // Verify the transaction details
+    assert_eq!(response["ID"].as_str().unwrap(), transaction_id);
+    assert_eq!(response["toAddr"].as_str().unwrap(), hex::encode(to_addr),);
+    assert_eq!(response["amount"].as_str().unwrap(), "200000000000000");
+    assert_eq!(response["gasLimit"].as_str().unwrap(), "50000");
+    assert_eq!(
+        response["senderPubKey"].as_str().unwrap(),
+        format!("0x{}", hex::encode(secret_key.public_key().to_sec1_bytes()))
+    );
 }
 
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
@@ -471,7 +703,7 @@ async fn create_contract(mut network: Network) {
         &mut network,
         &secret_key,
         2,
-        contract_address,
+        ToAddr::Address(contract_address),
         0,
         50_000,
         None,
@@ -490,7 +722,7 @@ async fn create_contract(mut network: Network) {
         &mut network,
         &secret_key,
         3,
-        contract_address,
+        ToAddr::Address(contract_address),
         0,
         50_000,
         None,
@@ -560,7 +792,7 @@ async fn scilla_precompiles(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        H160::zero(),
+        ToAddr::Address(H160::zero()),
         0,
         50_000,
         Some(code),
@@ -713,6 +945,100 @@ async fn scilla_precompiles(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn get_tx_block(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Ensure there is at least one block in the chain
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    // Request the first block
+    let block_number = "1";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlock", [block_number])
+        .await
+        .expect("Failed to call GetTxBlock API");
+
+    dbg!(&response);
+
+    // Ensure the response is an object
+    assert!(response.is_object(), "Expected response to be an object");
+
+    // Verify the block number
+    let block_num = response["header"]["BlockNum"]
+        .as_str()
+        .expect("Expected BlockNum to be a string")
+        .parse::<u64>()
+        .expect("Failed to parse BlockNum as u64");
+    assert_eq!(
+        block_num,
+        block_number.parse::<u64>().unwrap(),
+        "Block number mismatch"
+    );
+
+    // Verify the DS block number
+    let _ds_block_num = response["header"]["DSBlockNum"]
+        .as_u64()
+        .expect("Failed to parse DsBlockNum as u64");
+
+    let block_hash = response["body"]["BlockHash"]
+        .as_str()
+        .expect("Expected BlockHash to be a string");
+    assert!(!block_hash.is_empty(), "Expected BlockHash to be non-empty");
+}
+
+#[zilliqa_macros::test]
+async fn get_smart_contract_init(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    // Deploy a Scilla contract
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+
+    // Test the success case
+    let response: Value = wallet
+        .provider()
+        .request("GetSmartContractInit", [contract_address])
+        .await
+        .expect("Failed to call GetSmartContractInit API");
+
+    let init_data: Vec<zilliqa::scilla::ParamValue> =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    // Assert the data returned from the API is a superset of the init data we passed.
+    let expected_data: Vec<Value> = serde_json::from_str(&data).unwrap();
+    for expected in expected_data {
+        assert!(init_data
+            .iter()
+            .any(|d| serde_json::to_value(d).unwrap() == expected));
+    }
+
+    // Test the error case with an invalid contract address
+    let invalid_contract_address: H160 = "0x0000000000000000000000000000000000000000"
+        .parse()
+        .unwrap();
+    let response: Result<Value, ProviderError> = wallet
+        .provider()
+        .request("GetSmartContractInit", [invalid_contract_address])
+        .await;
+
+    assert!(response.is_err());
+    if let Err(ProviderError::JsonRpcClientError(rpc_error)) = response {
+        if let Some(json_error) = rpc_error.as_error_response() {
+            assert_eq!(json_error.code, -32603); // Invalid params error code
+            assert!(json_error.message.contains("Address does not exist"));
+        } else {
+            panic!("Expected JSON-RPC error response");
+        }
+    } else {
+        panic!("Expected ProviderError::JsonRpcClientError");
+    }
+}
+
+#[zilliqa_macros::test]
 async fn get_ds_block(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -831,7 +1157,7 @@ async fn get_tx_block_rate_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -950,7 +1276,7 @@ async fn get_tx_rate_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1018,7 +1344,7 @@ async fn test_simulate_transactions(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1068,7 +1394,7 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1114,7 +1440,7 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1154,7 +1480,7 @@ async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1194,7 +1520,7 @@ async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1238,7 +1564,7 @@ async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1284,7 +1610,7 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1372,7 +1698,7 @@ async fn get_recent_transactions_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1391,7 +1717,7 @@ async fn get_recent_transactions_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1453,7 +1779,7 @@ async fn get_num_transactions_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1472,7 +1798,7 @@ async fn get_num_transactions_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1533,7 +1859,7 @@ async fn get_num_txns_ds_epoch_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1552,7 +1878,7 @@ async fn get_num_txns_ds_epoch_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1613,7 +1939,7 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1632,7 +1958,7 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
         &mut network,
         &secret_key,
         1,
-        to_addr,
+        ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
@@ -1715,5 +2041,171 @@ async fn combined_total_coin_supply_test(mut network: Network) {
     assert_eq!(
         total_coin_supply_as_int_from_str, total_coin_supply_as_int,
         "Total coin supply from string and int APIs should be the same"
+    );
+}
+
+#[allow(dead_code)]
+async fn get_miner_info(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn get_node_type(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn get_prev_difficulty(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn get_prev_ds_difficulty(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn get_sharding_structure(mut _network: Network) {
+    todo!();
+}
+
+#[zilliqa_macros::test]
+async fn get_smart_contract_sub_state(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let contract_address = "fe001824823b12b58708bf24edd94d8b5e1cfcf7";
+    let variable_name = "admins";
+    let indices: Vec<Value> = vec![];
+
+    let response: Result<Value, ProviderError> = wallet
+        .provider()
+        .request(
+            "GetSmartContractSubState",
+            (contract_address, variable_name, indices),
+        )
+        .await;
+
+    assert!(response.is_err());
+
+    let Err(ProviderError::JsonRpcClientError(rpc_error)) = response else {
+        panic!("Returned error type is not JSON RPC ClientError");
+    };
+    let rpc_error = rpc_error.as_error_response().unwrap();
+
+    assert_eq!(rpc_error.code, RpcInvalidAddressOrKey as i64);
+    assert_eq!(rpc_error.message, "Address does not exist".to_string());
+}
+
+#[allow(dead_code)]
+async fn get_soft_confirmed_transaction(mut _network: Network) {
+    todo!();
+}
+
+#[allow(dead_code)]
+async fn get_state_proof(mut _network: Network) {
+    todo!();
+}
+
+#[zilliqa_macros::test]
+async fn get_transaction_status(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    let (_contract_address_1, returned_transaction_1) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let returned_transaction_1_id = returned_transaction_1["ID"]
+        .as_str()
+        .expect("Failed to get ID from response");
+
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    let (_contract_address_2, returned_transaction_2) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let returned_transaction_2_id = returned_transaction_2["ID"]
+        .as_str()
+        .expect("Failed to get ID from response");
+
+    //    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let response_1: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [returned_transaction_1_id])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_1: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_1).expect("Failed to deserialize response");
+
+    assert_eq!(tx_status_1.id.to_string(), returned_transaction_1_id);
+    assert!(
+        tx_status_1.amount.parse::<f64>().is_ok(),
+        "Invalid amount format"
+    );
+    assert!(
+        tx_status_1.gas_limit.parse::<u64>().is_ok(),
+        "Invalid gasLimit format"
+    );
+    assert!(
+        tx_status_1.gas_price.parse::<u64>().is_ok(),
+        "Invalid gasPrice format"
+    );
+    assert!(
+        tx_status_1.nonce.parse::<u64>().is_ok(),
+        "Invalid nonce format"
+    );
+
+    let response_2: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [returned_transaction_2_id])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_2: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_2).expect("Failed to deserialize response");
+
+    assert_eq!(tx_status_2.id.to_string(), returned_transaction_2_id);
+    assert!(
+        tx_status_2.amount.parse::<f64>().is_ok(),
+        "Invalid amount format"
+    );
+    assert!(
+        tx_status_2.gas_limit.parse::<u64>().is_ok(),
+        "Invalid gasLimit format"
+    );
+    assert!(
+        tx_status_2.gas_price.parse::<u64>().is_ok(),
+        "Invalid gasPrice format"
+    );
+    assert!(
+        tx_status_2.nonce.parse::<u64>().is_ok(),
+        "Invalid nonce format"
     );
 }

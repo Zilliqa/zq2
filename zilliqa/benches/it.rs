@@ -36,7 +36,7 @@ pub fn process_blocks(c: &mut Criterion) {
         local_channel: local_message_sender,
         request_id: RequestId::default(),
     };
-    let db = Db::new::<PathBuf>(None, 0).unwrap();
+    let db = Db::new::<PathBuf>(None, 0, 1024).unwrap();
     let mut consensus = Consensus::new(
         secret_key,
         toml::from_str(&format!(
@@ -57,6 +57,7 @@ pub fn process_blocks(c: &mut Criterion) {
                         "{}",
                         "12D3KooWF4Zba8M8gkXS6aUe8oPa3stW5N17aX3eknSjW6bGAefe",
                         "1",
+                        "0x0000000000000000000000000000000000000001",
                         "0x0000000000000000000000000000000000000001",
                     ],
                 ]

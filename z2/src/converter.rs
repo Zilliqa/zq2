@@ -200,6 +200,13 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
             .map_err(|err| anyhow!("Unable to convert scilla initdata into string: {err}"))?,
         None => String::new(),
     };
+    let init_data_vec = if init_data.trim().is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str::<Vec<ParamValue>>(&init_data).map_err(|err| {
+            anyhow!("Unable to convert scilla init data into Vec<ParamValue>: {init_data} - {err}")
+        })?
+    };
 
     let code = String::from_utf8(code)
         .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?;
@@ -208,7 +215,7 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
 
     let scilla_code = Code::Scilla {
         code: code.clone(),
-        init_data: serde_json::from_str(&init_data)?,
+        init_data: init_data_vec,
         types: BTreeMap::default(),
         transitions: contract
             .transitions
@@ -236,7 +243,6 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
         } => {
             println!("Code::Scilla parameters:");
             println!("Address: {:?}", address);
-
             println!("Code: {}", code);
             println!("Init Data: {:?}", init_data);
             println!("Types: {:?}", types);
@@ -364,47 +370,6 @@ pub async fn convert_persistence(
         }
     }
 
-    // Add stake for this validator. For now, we just assume they've always had 64 ZIL staked.
-    // This assumptions will need to change for the actual testnet and mainnet launches, where we cannot invent ZIL
-    // out of thin air (like we do below).
-    let data = contracts::deposit::SET_STAKE.encode_input(&[
-        Token::Bytes(secret_key.node_public_key().as_bytes()),
-        Token::Bytes(
-            secret_key
-                .to_libp2p_keypair()
-                .public()
-                .to_peer_id()
-                .to_bytes(),
-        ),
-        Token::Address(ethabi::Address::from_low_u64_be(1)),
-        Token::Uint((64 * 10u128.pow(18)).into()),
-    ])?;
-    let (
-        ResultAndState {
-            result,
-            state: result_state,
-        },
-        ..,
-    ) = state.apply_transaction_evm(
-        Address::ZERO,
-        Some(contract_addr::DEPOSIT),
-        0,
-        node_config.consensus.eth_block_gas_limit,
-        0,
-        data,
-        None,
-        BlockHeader::default(),
-        inspector::noop(),
-        BaseFeeCheck::Ignore,
-    )?;
-    if !result.is_success() {
-        return Err(anyhow!("setting stake failed: {result:?}"));
-    }
-    state.apply_delta_evm(&result_state)?;
-
-    // Flush any pending changes to db
-    let _ = state.root_hash()?;
-
     if !convert_blocks {
         println!("Accounts converted. Skipping blocks.");
         return Ok(());
@@ -414,7 +379,7 @@ pub async fn convert_persistence(
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();
 
-    let current_block = zq2_db.get_latest_finalized_view()?.unwrap_or(1);
+    let current_block = zq2_db.get_finalized_view()?.unwrap_or(1);
 
     let progress = ProgressBar::new(max_block)
         .with_style(style.clone())
@@ -443,10 +408,10 @@ pub async fn convert_persistence(
         let mut transactions = Vec::new();
         let mut receipts = Vec::new();
 
-        let block = zq1::TxBlock::from_proto(block)?;
+        let zq1_block = zq1::TxBlock::from_proto(block)?;
         // TODO: Retain ZQ1 block hash, so we can return it in APIs.
 
-        let txn_hashes: Vec<_> = block
+        let txn_hashes: Vec<_> = zq1_block
             .mb_infos
             .iter()
             .filter_map(|mbi| {
@@ -465,7 +430,7 @@ pub async fn convert_persistence(
             secret_key,
             parent_hash,
             secret_key.node_public_key(),
-            block.block_num - 1,
+            zq1_block.block_num - 1,
         );
 
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -510,34 +475,38 @@ pub async fn convert_persistence(
             &[vote.signature()],
             bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
             parent_hash,
-            block.block_num - 1,
+            zq1_block.block_num - 1,
         );
         let block = Block::from_qc(
             secret_key,
-            block.block_num,
-            block.block_num,
+            zq1_block.block_num,
+            zq1_block.block_num,
             qc,
             None,
             state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             txn_hashes.iter().map(|h| Hash(h.0)).collect(),
-            SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
-            ScillaGas(block.gas_used).into(),
-            ScillaGas(block.gas_limit).into(),
+            SystemTime::UNIX_EPOCH + Duration::from_micros(zq1_block.timestamp),
+            ScillaGas(zq1_block.gas_used).into(),
+            ScillaGas(zq1_block.gas_limit).into(),
         );
 
         // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
         for receipt in &mut receipts {
-            receipt.block_hash = block.hash();
+            receipt.block_hash = zq1_block.block_hash.into();
         }
 
-        parent_hash = block.hash();
+        parent_hash = zq1_block.block_hash.into();
 
         zq2_db.with_sqlite_tx(|sqlite_tx| {
-            zq2_db.insert_block_with_db_tx(sqlite_tx, &block)?;
+            zq2_db.insert_block_with_hash_with_db_tx(
+                sqlite_tx,
+                zq1_block.block_hash.into(),
+                &block,
+            )?;
             zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.header.qc)?;
-            zq2_db.set_latest_finalized_view_with_db_tx(sqlite_tx, block.view())?;
+            zq2_db.set_finalized_view_with_db_tx(sqlite_tx, block.view())?;
             trace!("{} block inserted", block.number());
 
             for (hash, transaction) in &transactions {
@@ -680,7 +649,7 @@ fn try_with_zil_transaction(
             gas_price: ZilAmount::from_raw(transaction.gas_price),
             gas_limit: ScillaGas(transaction.gas_limit),
             to_addr: transaction.to_addr,
-            amount: ZilAmount::from_amount(transaction.amount),
+            amount: ZilAmount::from_raw(transaction.amount),
             code: transaction
                 .code
                 .map(String::from_utf8)

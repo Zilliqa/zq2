@@ -98,6 +98,12 @@ enum DeployerCommands {
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
+    /// Generate the validators reward wallets. --force to replace if already existing
+    GenerateRewardWallets(DeployerGenerateActionsArgs),
+    /// Generate the node private keys. --force to replace if already existing
+    GeneratePrivateKeys(DeployerGenerateActionsArgs),
+    /// Generate the genesis key. --force to replace if already existing
+    GenerateGenesisKey(DeployerGenerateGenesisArgs),
 }
 
 #[derive(Args, Debug)]
@@ -135,6 +141,9 @@ pub struct DeployerInstallArgs {
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
+    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    #[clap(long)]
+    persistence_url: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -192,6 +201,27 @@ pub struct DeployerRestoreArgs {
     max_parallel: Option<usize>,
     /// The network deployer config file
     config_file: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerGenerateActionsArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// Generate and replace the existing key
+    #[clap(long)]
+    force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerGenerateGenesisArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Generate and replace the existing key
+    #[clap(long)]
+    force: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -711,11 +741,16 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_install(&config_file, arg.select, arg.max_parallel)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer install command: {}", err)
-                    })?;
+                plumbing::run_deployer_install(
+                    &config_file,
+                    arg.select,
+                    arg.max_parallel,
+                    arg.persistence_url.clone(),
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer install command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::Upgrade(ref arg) => {
@@ -834,6 +869,54 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer restart command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GenerateGenesisKey(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_genesis_key(&config_file, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer generate-genesis-key command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GeneratePrivateKeys(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_private_keys(&config_file, arg.select, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer generate-private-keys command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GenerateRewardWallets(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_reward_wallets(&config_file, arg.select, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer generate-reward-wallets command: {}",
+                            err
+                        )
                     })?;
                 Ok(())
             }

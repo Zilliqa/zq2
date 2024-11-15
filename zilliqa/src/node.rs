@@ -18,7 +18,10 @@ use alloy::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::{primitives::map::FxBuildHasher, Inspector};
+use revm::{
+    primitives::{map::FxBuildHasher, ExecutionResult},
+    Inspector,
+};
 use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
     TransactionContext,
@@ -112,6 +115,15 @@ impl MessageSender {
             .send((None, self.our_shard, message))?;
         Ok(())
     }
+
+    /// Broadcast to the entire network of this shard
+    // This is a duplicate of [MessageSender::broadcast_external_message] but it allows for
+    // a separate treatment for proposals, if desired for debugging or future purposes.
+    pub fn broadcast_proposal(&self, message: ExternalMessage) -> Result<()> {
+        self.outbound_channel
+            .send((None, self.our_shard, message))?;
+        Ok(())
+    }
 }
 
 /// Messages sent by [Consensus].
@@ -161,8 +173,6 @@ impl ChainId {
     }
 }
 
-const DEFAULT_SLEEP_TIME_MS: Duration = Duration::from_millis(5000);
-
 impl Node {
     pub fn new(
         config: NodeConfig,
@@ -181,7 +191,11 @@ impl Node {
             local_channel: local_sender_channel,
             request_id: RequestId::default(),
         };
-        let db = Arc::new(Db::new(config.data_dir.as_ref(), config.eth_chain_id)?);
+        let db = Arc::new(Db::new(
+            config.data_dir.as_ref(),
+            config.eth_chain_id,
+            config.state_cache_size,
+        )?);
         let node = Node {
             config: config.clone(),
             peer_id,
@@ -226,9 +240,10 @@ impl Node {
             ExternalMessage::Vote(m) => {
                 if let Some((block, transactions)) = self.consensus.vote(*m)? {
                     self.message_sender
-                        .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, transactions),
-                        ))?;
+                        .broadcast_proposal(ExternalMessage::Proposal(Proposal::from_parts(
+                            block,
+                            transactions,
+                        )))?;
                 }
                 // Acknowledge this vote.
                 self.request_responses
@@ -237,9 +252,10 @@ impl Node {
             ExternalMessage::NewView(m) => {
                 if let Some((block, transactions)) = self.consensus.new_view(*m)? {
                     self.message_sender
-                        .broadcast_external_message(ExternalMessage::Proposal(
-                            Proposal::from_parts(block, transactions),
-                        ))?;
+                        .broadcast_proposal(ExternalMessage::Proposal(Proposal::from_parts(
+                            block,
+                            transactions,
+                        )))?;
                 }
                 // Acknowledge this new view.
                 self.request_responses
@@ -387,7 +403,7 @@ impl Node {
                     .send_external_message(leader, response)
                     .unwrap();
             } else {
-                self.message_sender.broadcast_external_message(response)?;
+                self.message_sender.broadcast_proposal(response)?;
             }
             return Ok(true);
         }
@@ -400,7 +416,8 @@ impl Node {
         info!(?hash, "seen new txn {:?}", txn);
 
         let result = self.consensus.handle_new_transaction(txn.clone())?;
-        if let TxAddResult::AddedToMempool = &result {
+        if result.was_added() {
+            // TODO: Avoid redundant self-broadcast
             self.message_sender
                 .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
         }
@@ -420,7 +437,7 @@ impl Node {
             BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
             BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
             BlockNumberOrTag::Finalized => {
-                let Some(view) = self.db.get_latest_finalized_view()? else {
+                let Some(view) = self.db.get_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
                 let Some(block) = self.db.get_block_by_view(view)? else {
@@ -759,7 +776,7 @@ impl Node {
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<ExecutionResult> {
         trace!("call_contract: block={:?}", block);
 
         let state = self
@@ -829,7 +846,7 @@ impl Node {
 
     /// Returns a stream of pairs of (receipt, index of transaction in block)
     pub fn subscribe_to_receipts(&self) -> broadcast::Receiver<(TransactionReceipt, usize)> {
-        self.consensus.receipts.subscribe()
+        self.consensus.new_receipts.subscribe()
     }
 
     pub fn subscribe_to_new_transactions(&self) -> broadcast::Receiver<VerifiedTransaction> {
@@ -851,8 +868,12 @@ impl Node {
         self.db.get_transaction_receipts_in_block(&block_hash)
     }
 
-    pub fn get_finalized_height(&self) -> u64 {
-        self.consensus.finalized_view()
+    pub fn get_finalized_height(&self) -> Result<u64> {
+        self.consensus.get_finalized_view()
+    }
+
+    pub fn get_current_view(&self) -> Result<u64> {
+        self.consensus.get_view()
     }
 
     pub fn get_transaction_receipt(&self, tx_hash: Hash) -> Result<Option<TransactionReceipt>> {
@@ -891,11 +912,12 @@ impl Node {
 
     fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
         if let Some((to, message)) = self.consensus.proposal(from, proposal, false)? {
-            self.reset_timeout.send(DEFAULT_SLEEP_TIME_MS)?;
+            self.reset_timeout
+                .send(self.config.consensus.consensus_timeout)?;
             if let Some(to) = to {
                 self.message_sender.send_external_message(to, message)?;
             } else {
-                self.message_sender.broadcast_external_message(message)?;
+                self.message_sender.broadcast_proposal(message)?;
             }
         }
 
@@ -935,7 +957,7 @@ impl Node {
                 proposal.header.view
             );
             self.message_sender
-                .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
+                .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
         }
         Ok(())
     }

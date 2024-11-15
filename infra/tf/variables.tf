@@ -240,13 +240,6 @@ variable "vpc_main_subnet_name" {
   nullable    = false
 }
 
-variable "persistence_url" {
-  description = "(Optional) ZQ2 Recovery persistence URL"
-  type        = string
-  nullable    = true
-  default     = ""
-}
-
 variable "gcp_docker_registry_project_id" {
   description = "(Optional) ZQ2 Artifact Registry project id"
   type        = string

@@ -69,10 +69,10 @@ use zilliqa::{
         failed_request_sleep_duration_default, json_rpc_port_default, local_address_default,
         max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
         scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
-        state_rpc_limit_default, total_native_token_supply_default, Amount, Checkpoint,
-        ConsensusConfig, NodeConfig,
+        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
+        Amount, Checkpoint, ConsensusConfig, GenesisDeposit, NodeConfig,
     },
-    crypto::{NodePublicKey, SecretKey, TransactionPublicKey},
+    crypto::{SecretKey, TransactionPublicKey},
     db,
     message::{ExternalMessage, InternalMessage},
     node::{Node, RequestId},
@@ -210,7 +210,7 @@ struct TestNode {
 }
 
 struct Network {
-    pub genesis_deposits: Vec<(NodePublicKey, PeerId, Amount, Address)>,
+    pub genesis_deposits: Vec<GenesisDeposit>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
     pub shard_id: u64,
@@ -239,10 +239,13 @@ struct Network {
     scilla_address: String,
     scilla_stdlib_dir: String,
     do_checkpoints: bool,
+    blocks_per_epoch: u64,
     consensus_tick_countdown: u64,
 }
 
 impl Network {
+    // This is only used in the zilliqa_macros::test macro. Consider refactoring this to a builder
+    // or removing entirely (and calling new_shard there)?
     /// Create a main shard network with reasonable defaults.
     pub fn new(
         rng: Arc<Mutex<ChaCha8Rng>>,
@@ -251,6 +254,7 @@ impl Network {
         scilla_address: String,
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
+        blocks_per_epoch: u64,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -262,6 +266,7 @@ impl Network {
             scilla_address,
             scilla_stdlib_dir,
             do_checkpoints,
+            blocks_per_epoch,
         )
     }
 
@@ -276,6 +281,7 @@ impl Network {
         scilla_address: String,
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
+        blocks_per_epoch: u64,
     ) -> Network {
         let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -298,13 +304,13 @@ impl Network {
         let stake = 32_000_000_000_000_000_000u128;
         let genesis_deposits: Vec<_> = keys
             .iter()
-            .map(|k| {
-                (
-                    k.0.node_public_key(),
-                    k.0.to_libp2p_keypair().public().to_peer_id(),
-                    stake.into(),
-                    TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                )
+            .map(|k| GenesisDeposit {
+                public_key: k.0.node_public_key(),
+                peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
+                stake: stake.into(),
+                reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true)
+                    .into_addr(),
             })
             .collect();
 
@@ -328,7 +334,7 @@ impl Network {
                 eth_block_gas_limit: EvmGas(84000000),
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
-                blocks_per_epoch: 10,
+                blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 total_native_token_supply: total_native_token_supply_default(),
             },
@@ -336,6 +342,7 @@ impl Network {
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             disable_rpc: disable_rpc_default(),
             data_dir: None,
+            state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
             do_checkpoints,
             block_request_limit: block_request_limit_default(),
@@ -400,6 +407,7 @@ impl Network {
             genesis_key,
             scilla_address,
             do_checkpoints,
+            blocks_per_epoch,
             scilla_stdlib_dir,
             consensus_tick_countdown: 10,
         }
@@ -429,6 +437,7 @@ impl Network {
             json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
+            state_cache_size: state_cache_size_default(),
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
             disable_rpc: disable_rpc_default(),
@@ -447,7 +456,7 @@ impl Network {
                 main_shard_id: None,
                 minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 scilla_address: scilla_address_default(),
-                blocks_per_epoch: 10,
+                blocks_per_epoch: self.blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
@@ -496,13 +505,13 @@ impl Network {
         let stake = 32_000_000_000_000_000_000u128;
         let genesis_deposits: Vec<_> = keys
             .iter()
-            .map(|k| {
-                (
-                    k.0.node_public_key(),
-                    k.0.to_libp2p_keypair().public().to_peer_id(),
-                    stake.into(),
-                    TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                )
+            .map(|k| GenesisDeposit {
+                public_key: k.0.node_public_key(),
+                peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
+                stake: stake.into(),
+                reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
+                control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true)
+                    .into_addr(),
             })
             .collect();
 
@@ -533,6 +542,7 @@ impl Network {
                     eth_chain_id: self.shard_id,
                     allowed_timestamp_skew: allowed_timestamp_skew_default(),
                     data_dir: None,
+                    state_cache_size: state_cache_size_default(),
                     load_checkpoint: None,
                     do_checkpoints: self.do_checkpoints,
                     disable_rpc: disable_rpc_default(),
@@ -554,7 +564,7 @@ impl Network {
                         minimum_time_left_for_empty_block:
                             minimum_time_left_for_empty_block_default(),
                         scilla_address: scilla_address_default(),
-                        blocks_per_epoch: 10,
+                        blocks_per_epoch: self.blocks_per_epoch,
                         epochs_per_checkpoint: 1,
                         scilla_stdlib_dir: scilla_stdlib_dir_default(),
                         scilla_ext_libs_path: scilla_ext_libs_path_default(),
@@ -885,6 +895,7 @@ impl Network {
                                     self.scilla_address.clone(),
                                     self.scilla_stdlib_dir.clone(),
                                     self.do_checkpoints,
+                                    self.blocks_per_epoch,
                                 ),
                             );
                         }
@@ -1235,7 +1246,7 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
     .evm_version(EvmVersion::Shanghai); // ensure compatible with EVM version in exec.rs
 
     // compile .sol file
-    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 26)).expect("solc missing");
+    let solc = Solc::find_or_install(&semver::Version::new(0, 8, 28)).expect("solc missing");
     let output = solc.compile_exact(&solc_input).expect("solc compile_exact");
 
     if output.has_error() {

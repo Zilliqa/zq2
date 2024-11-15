@@ -51,3 +51,9 @@ Each field is a comma-separated list of ranges - eg. `2` or `1,4-5`.
 Thus `1,2,3/` means "Create a network of three validators - nodes 1,2,3 and start none of them".
 
 Ranges are inclusive, so `2-3` means "start validators 2 and 3" - beware of this because internally we convert to the standard Rust half-open ranges.
+
+## Running the js tests against z2 networks
+
+You can run the js tests against z2 networks. See `evm_scilla_js_tests/README.z2.md` for details.
+
+

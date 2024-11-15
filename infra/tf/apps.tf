@@ -38,16 +38,12 @@ module "apps" {
   config     = var.apps
   chain_name = var.chain_name
 
-  role                   = "apps"
-  labels                 = {}
-  network_tags           = []
-  generate_node_key      = false
-  generate_reward_wallet = false
+  role         = "apps"
+  labels       = local.labels
+  network_tags = []
 
   metadata = {
-    persistence_url = base64encode("")
-    subdomain       = base64encode(var.subdomain)
-    genesis_key     = base64encode(local.genesis_key)
+    subdomain = base64encode(var.subdomain)
   }
 
   node_dns_subdomain       = var.node_dns_subdomain

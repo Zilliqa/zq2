@@ -29,10 +29,14 @@ use tracing::*;
 
 use super::{
     to_hex::ToHex,
-    types::eth::{self, CallParams, ErrorCode, HashOrTransaction, OneOrMany},
+    types::eth::{
+        self, CallParams, ErrorCode, HashOrTransaction, OneOrMany, SyncingResult, SyncingStruct,
+    },
 };
 use crate::{
+    api::zil::ZilAddress,
     crypto::Hash,
+    error::ensure_success,
     message::Block,
     node::Node,
     pool::TxAddResult,
@@ -178,10 +182,9 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
     let mut node = node.lock().unwrap();
     let block = node.get_block(block_id)?;
-
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    let ret = node.call_contract(
+    let result = node.call_contract(
         &block,
         call_params.from,
         call_params.to,
@@ -193,7 +196,10 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.value.to(),
     )?;
 
-    Ok(ret.to_hex())
+    match ensure_success(result) {
+        Ok(output) => Ok(output.to_hex()),
+        Err(err) => Err(ErrorObjectOwned::from(err).into()),
+    }
 }
 
 fn chain_id(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -227,7 +233,9 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
-    let address: Address = params.next()?;
+    let address: ZilAddress = params.next()?;
+    let address: Address = address.into();
+
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
@@ -498,7 +506,10 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             Ok(receipt
                 .logs
                 .into_iter()
-                .filter_map(|l| l.into_evm())
+                .map(|log| match log {
+                    Log::Evm(log) => log,
+                    Log::Scilla(log) => log.into_evm(),
+                })
                 .enumerate()
                 .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
         })
@@ -641,8 +652,10 @@ pub(super) fn get_transaction_receipt_inner(
     let logs = receipt
         .logs
         .into_iter()
-        // Filter non-EVM logs out. TODO: Encode Scilla logs and don't filter them.
-        .filter_map(|log| log.into_evm())
+        .map(|log| match log {
+            Log::Evm(log) => log,
+            Log::Scilla(log) => log.into_evm(),
+        })
         .enumerate()
         .map(|(log_index, log)| {
             let log = eth::Log::new(
@@ -852,8 +865,19 @@ fn protocol_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok("0x41".to_string())
 }
 
-fn syncing(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
-    Ok(false)
+fn syncing(params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingResult> {
+    expect_end_of_params(&mut params.sequence(), 0, 0)?;
+    if let Some((starting_block, current_block, highest_block)) =
+        node.lock().unwrap().consensus.get_sync_data()?
+    {
+        Ok(SyncingResult::Struct(SyncingStruct {
+            starting_block,
+            current_block,
+            highest_block,
+        }))
+    } else {
+        Ok(SyncingResult::Bool(false))
+    }
 }
 
 fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {

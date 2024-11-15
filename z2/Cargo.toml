@@ -22,7 +22,7 @@ test = false
 
 [dependencies]
 alloy = { version = "0.4.2", default-features = false, features = ["consensus", "rlp", "serde", "signer-local"] }
-anyhow = "1.0.90"
+anyhow = "1.0.93"
 async-trait = "0.1.83"
 base64 = "0.22.0"
 bitvec = "1.0.1"
@@ -41,38 +41,38 @@ futures = "0.3.31"
 git2 = "0.18.3"
 hex = "0.4.3"
 home = "0.5.9"
-indicatif = "0.17.8"
+indicatif = "0.17.9"
 itertools = "0.13.0"
 jsonrpsee = {version = "0.22.4", features = ["client"]}
 k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = {version = "0.54.0", features = ["identify"]}
 log = "0.4.22"
-octocrab = "0.41.1"
+octocrab = "0.41.2"
 primitive-types = "0.12.2"
 prost = "0.13.3"
 rand = "0.8.5"
 rand_core = "0.6.4"
-regex = "1.11.0"
-reqwest = {version = "0.12.8", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
+regex = "1.11.1"
+reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
 revm = {version = "14.0.3", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
-rustls = "0.23.15"
-serde = {version = "1.0.210", features = ["derive"]}
+rustls = "0.23.16"
+serde = {version = "1.0.215", features = ["derive"]}
 scilla-parser = "2.0.0"
 serde_json = "1.0.128"
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-tempfile = "3.13.0"
+tempfile = "3.14.0"
 tera = "1.19.1"
-thiserror = "1.0.64"
-tokio = {version = "1.39.2", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
+thiserror = "2.0.3"
+tokio = {version = "1.41.1", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
 tokio-stream = "0.1.16"
 toml = "0.8.19"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
-url = "2.5.2"
+url = "2.5.3"
 zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.1"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
