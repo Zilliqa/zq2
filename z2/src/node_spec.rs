@@ -8,6 +8,47 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use zilliqa::range_map::RangeMap;
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum NetSpec {
+    Local((String, Option<HashSet<u64>>)),
+    Chain((String, Option<String>)),
+}
+
+impl NetSpec {
+    pub fn from_string(in_str: &String) -> Result<Self> {
+        if let Some(place) = in_str.find(':') {
+            let (scheme, rest) = in_str.split_at(place);
+            let (loc, query) = if let Some(v) = rest.find('?') {
+                rest.split_at(v)
+            } else {
+                (rest, "")
+            };
+            // OK. Now we have everything.
+            match scheme {
+                "local" => {
+                    let spec = if query.is_empty() {
+                        None
+                    } else {
+                        Some(indices_from_string(query)?)
+                    };
+                    Ok(Self::Local((loc.to_string(), spec)))
+                }
+                "network" => Ok(Self::Chain((
+                    loc.to_string(),
+                    if query.is_empty() {
+                        None
+                    } else {
+                        Some(query.to_string())
+                    },
+                ))),
+                _ => Err(anyhow!("Unknown scheme specified - {}", scheme)),
+            }
+        } else {
+            Err(anyhow!("Not a valid netspec: '{0}' - I want (local|network):(location or name)?(nodespec or regex)", in_str))
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct NodeDesc {
     pub is_validator: bool,

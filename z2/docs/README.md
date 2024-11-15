@@ -52,6 +52,27 @@ Thus `1,2,3/` means "Create a network of three validators - nodes 1,2,3 and star
 
 Ranges are inclusive, so `2-3` means "start validators 2 and 3" - beware of this because internally we convert to the standard Rust half-open ranges.
 
+## Network spec
+
+There is now a thing called a network spec. It allows you to specify a set of nodes on either a local network or a remote chain.
+It's initially used for specifying (override) perf targets.
+It would be a URL, but the way we select target nodes for deployed zq2 chains is via regexes and encoding these in URLs is tedious.
+
+The syntax is:
+
+```
+<scheme>://<config_location>?<spec>
+```
+
+Where `<spec>` is a regex or a `nodespec`
+
+The scheme is:
+
+```
+local - config_location is a config directory
+network - config_location is the name of a chain config file (eg. zq2-richard.yaml)
+```
+
 ## Running the js tests against z2 networks
 
 You can run the js tests against z2 networks. See `evm_scilla_js_tests/README.z2.md` for details.

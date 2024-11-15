@@ -293,10 +293,18 @@ pub struct ConformConfig {
 
 impl Perf {
     pub fn from_file(config_file: &str) -> Result<Self> {
+        Perf::from_file_with_rpc_url(config_file, &None)
+    }
+
+    pub fn from_file_with_rpc_url(config_file: &str, rpc_url: &Option<String>) -> Result<Self> {
         let file_contents = fs::read_to_string(config_file)
             .context(format!("Cannot read configuration {config_file}"))?;
         let config_obj: Config = serde_yaml::from_str(&file_contents)?;
-        let provider = Provider::<Http>::try_from(config_obj.rpc_url.as_str())?;
+        let provider = if let Some(url) = rpc_url {
+            Provider::<Http>::try_from(url.as_str())?
+        } else {
+            Provider::<Http>::try_from(config_obj.rpc_url.as_str())?
+        };
         let source_of_funds = config_obj
             .source_of_funds
             .as_ref()

@@ -18,6 +18,11 @@ struct ChainIdResult {
     result: String,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct RpcSpec {
+    urls: Vec<String>
+}
+
 pub fn split_repo_spec(repo_spec: &str) -> Result<(String, String)> {
     let split = repo_spec.split(':').collect::<Vec<&str>>();
     let branch = if let Some(val) = split.get(1) {

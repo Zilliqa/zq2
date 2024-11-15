@@ -149,6 +149,10 @@ impl Machine {
         Ok(())
     }
 
+    pub fn get_rpc_url(&self) -> String {
+        format!("http://{0}:4201", self.external_address)
+    }
+
     async fn copy_from(&self, file_from: &str, file_to: &str) -> Result<()> {
         let file_from = &format!("{0}:{file_from}", &self.name);
         let args = &[
@@ -280,6 +284,10 @@ impl ChainNode {
         self.machine.name.clone()
     }
 
+    pub fn get_rpc_url(&self) -> String {
+        self.machine.get_rpc_url()
+    }
+    
     pub async fn install(&self) -> Result<()> {
         let message = format!("Installing {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());

@@ -9,14 +9,15 @@ use std::{
 use alloy::primitives::B256;
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
+use regex::Regex;
 use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
 use crate::{
     chain,
-    chain::node::NodeRole,
+    chain::{config::NetworkConfig, instance::ChainInstance, node::NodeRole},
     kpi, node_spec,
-    node_spec::{Composition, NodeSpec},
+    node_spec::{Composition, NetSpec, NodeSpec},
     testing, utils, validators,
 };
 
@@ -509,5 +510,45 @@ pub async fn test(
             Ok(())
         }
         _ => Err(anyhow!(format!("No test type {0}", cmd))),
+    }
+}
+
+/// Given a netspec, return a list of RPC urls.
+pub async fn rpc_urls_from_netspec(base_dir: &str, spec: &NetSpec) -> Result<Vec<String>> {
+    match spec {
+        NetSpec::Local((config_dir, maybe_node_spec)) => {
+            let setup_obj = setup::Setup::load(config_dir, "", base_dir, false).await?;
+            let node_indices = maybe_node_spec
+                .clone()
+                .unwrap_or(setup_obj.config.shape.all_nodes());
+            let mut result = Vec::new();
+            for idx in node_indices {
+                result.push(setup_obj.get_json_rpc_url_for_node(idx)?);
+            }
+            Ok(result)
+        }
+        NetSpec::Chain((name, regex)) => {
+            // Let's validate the regex before we do a lot of time-consuming gcloud stuff.
+            let maybe_regex = if let Some(v) = regex {
+                Some(Regex::new(v)?)
+            } else {
+                None
+            };
+            let config = NetworkConfig::from_file(name).await?;
+            let instance = ChainInstance::new(config).await?;
+            println!("⚾ Listing instances in network {0}", &instance.name());
+            let nodes = instance.nodes().await?;
+            Ok(nodes
+                .iter()
+                .filter(|x| {
+                    if let Some(r) = &maybe_regex {
+                        r.is_match(&x.name())
+                    } else {
+                        false
+                    }
+                })
+                .map(|x| x.get_rpc_url())
+                .collect::<Vec<String>>())
+        }
     }
 }

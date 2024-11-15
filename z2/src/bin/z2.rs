@@ -267,9 +267,11 @@ struct ConverterPrintTransactionConfigStruct {
 
 #[derive(Args, Debug)]
 struct PerfStruct {
-    config_dir: String,
-
     perf_file: String,
+
+    /// A config dir (for a local network)
+    #[clap(long)]
+    netspec: Option<String>,
 }
 
 #[derive(Args, Debug)]
