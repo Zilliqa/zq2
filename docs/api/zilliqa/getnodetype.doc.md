@@ -12,11 +12,7 @@ NotDocumented
 
 # Description
 
-Returns node type. The possible return values are:
-
-- `"Not in network, synced till epoch [epoch number]"` if the server has not joined the network and is synced until a specific epoch.
-- `"Seed"` if the server is in lookup node mode and is an archival lookup node.
-- `"Lookup"` if the server is in lookup node mode
+Returns node type. For backwards compatibility reasons, in ZQ2 this always returns "Seed".
 
 # Curl
 
@@ -43,4 +39,3 @@ curl -d '{
 | `jsonrpc` | string | Required | `"2.0"`           |
 | `method`  | string | Required | `"GetNodeType"`   |
 | `params`  | string | Required | Empty string `""` |
-

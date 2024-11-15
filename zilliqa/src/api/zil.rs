@@ -1232,7 +1232,7 @@ fn get_miner_info(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo
 
 // GetNodeType
 fn get_node_type(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<String> {
-    todo!("API getnodetype is not implemented yet");
+    Ok("Seed".into())
 }
 
 // GetPrevDifficulty
