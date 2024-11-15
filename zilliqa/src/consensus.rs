@@ -367,19 +367,23 @@ impl Consensus {
             )?;
         }
 
-        // If timestamp of when current view was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
+        // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
-        if let Some(latest_view_timestamp) = consensus.db.get_view_updated_at()? {
+        if let Some(latest_high_qc_timestamp) = consensus.db.get_high_qc_updated_at()? {
             let view_diff = Consensus::minimum_views_in_time_difference(
-                latest_view_timestamp.elapsed()?,
+                latest_high_qc_timestamp.elapsed()?,
                 consensus.config.consensus.consensus_timeout,
             );
-            let start_view_jumped_ahead = start_view + view_diff;
-            consensus.db.set_view(start_view_jumped_ahead)?;
-            debug!(
-                "Atleast {} views changed since last view was written. new start_view {}",
-                view_diff, start_view_jumped_ahead
-            );
+            let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
+            if min_view_since_high_qc_updated > start_view {
+                info!(
+                    "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
+                    latest_high_qc_timestamp.elapsed()?.as_secs(),
+                    view_diff,
+                    min_view_since_high_qc_updated
+                );
+                consensus.db.set_view(min_view_since_high_qc_updated)?;
+            }
         }
 
         Ok(consensus)
@@ -1991,7 +1995,6 @@ impl Consensus {
                     new_high_qc_block_view + 1,
                     current_high_qc_view,
                 );
-                //TODO write high_qc and current_view in one db call
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
                 if new_high_qc_block_view >= view {
@@ -2588,12 +2591,6 @@ impl Consensus {
             }
             views += 1;
         }
-
-        info!(
-            "Based on elapsed clock time of {} seconds since lastest view update, jump ahead {} views",
-            time_difference.as_secs(),
-            views
-        );
         views as u64
     }
 

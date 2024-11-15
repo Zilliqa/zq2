@@ -259,6 +259,7 @@ impl Db {
                 view INTEGER,
                 view_updated_at BLOB,
                 high_qc BLOB,
+                high_qc_updated_at BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL);
             ",
@@ -585,9 +586,11 @@ impl Db {
         high_qc: QuorumCertificate,
     ) -> Result<()> {
         sqlite_tx.execute(
-            "INSERT INTO tip_info (high_qc) VALUES (?1) ON CONFLICT DO UPDATE SET high_qc = ?1",
-            [high_qc],
-        )?;
+            "INSERT INTO tip_info (high_qc, high_qc_updated_at) VALUES (:high_qc, :timestamp) ON CONFLICT DO UPDATE SET high_qc = :high_qc, high_qc_updated_at = :timestamp",
+            named_params! {
+                ":high_qc": high_qc,
+                ":timestamp": SystemTimeSqlable(SystemTime::now())
+            })?;
         Ok(())
     }
 
@@ -603,6 +606,19 @@ impl Db {
             .query_row("SELECT high_qc FROM tip_info", (), |row| row.get(0))
             .optional()?
             .flatten())
+    }
+
+    pub fn get_high_qc_updated_at(&self) -> Result<Option<SystemTime>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT high_qc_updated_at FROM tip_info", (), |row| {
+                row.get::<_, SystemTimeSqlable>(0)
+            })
+            .optional()
+            .unwrap_or(None)
+            .map(Into::<SystemTime>::into))
     }
 
     pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
