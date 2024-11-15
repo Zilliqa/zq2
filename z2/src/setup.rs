@@ -817,6 +817,11 @@ impl Setup {
             }
         }
     }
+
+    pub fn eth_chain_id(&self) -> u32 {
+        // unwrap is safe because CHAIN_ID is constant
+        (CHAIN_ID | 0x8000).try_into().unwrap()
+    }
 }
 
 pub fn generate_secret_key() -> Result<SecretKey> {

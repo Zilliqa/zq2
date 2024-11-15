@@ -44,6 +44,7 @@ impl perf::PerfMod for AsyncTransfer {
                 // Feed the feeder.
                 let amount_required = (self.config.amount_max + perf.config.gas.gas_units())
                     * u128::from(self.config.nr_transfers);
+                println!("amount_required = {amount_required}");
                 result.push(
                     perf.issue_transfer(
                         &self.source_of_funds,

@@ -32,6 +32,8 @@ pub struct Perf {
     pub config: Config,
     pub source_of_funds: Account,
     pub provider: Provider<Http>,
+    pub effective_url: String,
+    pub effective_chainid: u32,
     pub step: usize,
 }
 
@@ -69,15 +71,7 @@ pub struct Config {
     pub steps: Vec<ConfigSet>,
 }
 
-impl Config {
-    pub fn zil_chainid(&self) -> u32 {
-        self.chainid
-    }
-
-    pub fn eth_chainid(&self) -> u64 {
-        u64::from(self.chainid | 0x8000)
-    }
-}
+impl Config {}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigSet {
@@ -293,22 +287,24 @@ pub struct ConformConfig {
 
 impl Perf {
     pub fn from_file(config_file: &str) -> Result<Self> {
-        Perf::from_file_with_params(config_file, &None, &None)
+        Perf::from_file_with_params(config_file, &None, &None, &None)
     }
 
     pub fn from_file_with_params(
         config_file: &str,
         rpc_url: &Option<String>,
         account: &Option<Account>,
+        eth_chain_id: &Option<u32>,
     ) -> Result<Self> {
         let file_contents = fs::read_to_string(config_file)
             .context(format!("Cannot read configuration {config_file}"))?;
         let config_obj: Config = serde_yaml::from_str(&file_contents)?;
-        let provider = if let Some(url) = rpc_url {
-            Provider::<Http>::try_from(url.as_str())?
+        let effective_url = if let Some(url) = rpc_url {
+            url.to_string()
         } else {
-            Provider::<Http>::try_from(config_obj.rpc_url.as_str())?
+            config_obj.rpc_url.to_string()
         };
+        let provider = Provider::<Http>::try_from(effective_url.as_str())?;
         let source_of_funds = if let Some(v) = account {
             v.clone()
         } else {
@@ -320,16 +316,27 @@ impl Perf {
                 .ok_or(anyhow!("No source of funds provided."))?
         };
 
+        let config_chain_id = config_obj.chainid;
         Ok(Perf {
             config: config_obj,
             provider,
+            effective_url,
+            effective_chainid: eth_chain_id.map_or(config_chain_id, |x| x & !0x8000),
             step: 0,
             source_of_funds,
         })
     }
 
+    pub fn zil_chainid(&self) -> u32 {
+        self.effective_chainid
+    }
+
+    pub fn eth_chainid(&self) -> u64 {
+        u64::from(self.effective_chainid | 0x8000)
+    }
+
     pub fn make_zil_provider(&self) -> Result<Provider<Http>> {
-        Ok(Provider::<Http>::try_from(self.config.rpc_url.as_str())?)
+        Ok(Provider::<Http>::try_from(self.effective_url.as_str())?)
     }
 
     pub fn make_eth_provider(
@@ -337,7 +344,7 @@ impl Perf {
     ) -> Result<ethers::providers::Provider<ethers::providers::Http>> {
         Ok(
             ethers::providers::Provider::<ethers::providers::Http>::try_from(
-                self.config.rpc_url.as_str(),
+                self.effective_url.as_str(),
             )?,
         )
     }
@@ -508,8 +515,7 @@ impl Perf {
         let provider = self.make_eth_provider()?;
         Ok(ethers::middleware::SignerMiddleware::new(
             provider,
-            from.get_eth_wallet()?
-                .with_chain_id(self.config.eth_chainid()),
+            from.get_eth_wallet()?.with_chain_id(self.eth_chainid()),
         ))
     }
 
@@ -529,7 +535,7 @@ impl Perf {
                 );
                 let middleware = self.get_zil_middleware(from).await?;
                 let mut txn = zilliqa_rs::transaction::builder::TransactionBuilder::default()
-                    .chain_id(self.config.zil_chainid().try_into()?)
+                    .chain_id(self.zil_chainid().try_into()?)
                     .pay(amt_zil, to.get_address_as_zil()?);
                 txn = match nonce {
                     Some(val) => txn.nonce(val),
@@ -545,19 +551,22 @@ impl Perf {
             AccountKind::Eth => {
                 let amt_eth = zil_to_eth(amt_zil);
                 println!(
-                    "💰 ETH Transfer {0:#032X} -> {1}: {amt_eth} / {nonce:?} ",
+                    "💰 ETH Transfer {0:#032x} -> {1}: {amt_eth} / {nonce:?} ",
                     from.get_eth_address()?,
                     to.get_address()?
                 );
                 let mut txn =
                     ethers::types::TransactionRequest::pay(to.get_address_as_eth()?, amt_eth)
-                        .chain_id(self.config.eth_chainid());
+                        .chain_id(self.eth_chainid());
                 txn = match nonce {
                     Some(val) => txn.nonce(val),
                     None => txn,
                 };
+                println!("privkey {0}", from.privkey);
                 let mware = self.get_eth_middleware(from).await?;
+                println!("Got mware");
                 let txn_sent = mware.send_transaction(txn, None).await?;
+                println!("Sent txn");
                 Ok(hex::encode(txn_sent.tx_hash()))
             }
         }

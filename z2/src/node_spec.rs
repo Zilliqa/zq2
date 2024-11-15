@@ -18,7 +18,7 @@ impl NetSpec {
     pub fn from_string(in_str: &String) -> Result<Self> {
         if let Some(place) = in_str.find(':') {
             let (scheme, rest) = in_str.split_at(place);
-            let (loc, query) = if let Some(v) = rest.find('?') {
+            let (loc, query) = if let Some(v) = rest[1..].find('?') {
                 rest[1..].split_at(v)
             } else {
                 (&rest[1..], "")
@@ -43,7 +43,7 @@ impl NetSpec {
                     if query.is_empty() {
                         None
                     } else {
-                        Some(query.to_string())
+                        Some(query[1..].to_string())
                     },
                 ))),
                 _ => Err(anyhow!("Unknown scheme specified - {}", scheme)),

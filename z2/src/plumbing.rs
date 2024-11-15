@@ -152,36 +152,45 @@ pub async fn run_perf_file(
     net_spec: &Option<String>,
     config_file: &str,
 ) -> Result<()> {
-    let (urls, source_of_funds) = if let Some(spec) = net_spec {
+    let (urls, source_of_funds, chain_id) = if let Some(spec) = net_spec {
         let parsed = NetSpec::from_string(spec)?;
         params_from_netspec(base_dir, &parsed).await?
     } else {
-        (None, None)
+        (None, None, None)
     };
     if let Some(lst) = urls {
         let mut join_handles = Vec::new();
         println!("🦆 running perf on URLs {lst:?}");
         for item in &lst {
-            let rpc_url = item.to_string();
+            let override_url = std::env::var("ZQ2_RPC_URL");
+            let rpc_url = if let Ok(val) = override_url {
+                println!("🦆🦆🦆 Overriding RPC URL with {val}");
+                val
+            } else {
+                item.to_string()
+            };
             let config_file_copy = config_file.to_string();
             let account = source_of_funds.clone();
+            let local_chain_id = chain_id.clone();
             join_handles.push(tokio::spawn(async move {
                 println!("🦆 Spawning perf for {config_file_copy} on {rpc_url} .. ");
                 async fn go(
                     config_file: &str,
                     rpc_url: &str,
                     account: &Option<perf::Account>,
+                    chain_id: &Option<u32>,
                 ) -> Result<()> {
                     let perf = perf::Perf::from_file_with_params(
                         config_file,
                         &Some(rpc_url.to_string()),
                         account,
+                        chain_id,
                     )?;
                     let mut rng = perf.make_rng()?;
                     perf.run(&mut rng).await?;
                     Ok(())
                 }
-                if let Err(e) = go(&config_file_copy, &rpc_url, &account).await {
+                if let Err(e) = go(&config_file_copy, &rpc_url, &account, &local_chain_id).await {
                     println!("🦆🦆 Perf failed for {rpc_url} - {e:?}");
                 } else {
                     println!("🦆 {rpc_url} done.");
@@ -561,7 +570,7 @@ pub async fn test(
 pub async fn params_from_netspec(
     base_dir: &str,
     spec: &NetSpec,
-) -> Result<(Option<Vec<String>>, Option<perf::Account>)> {
+) -> Result<(Option<Vec<String>>, Option<perf::Account>, Option<u32>)> {
     match spec {
         NetSpec::Local((config_dir, maybe_node_spec)) => {
             let setup_obj = setup::Setup::load(config_dir, "", base_dir, false).await?;
@@ -578,7 +587,8 @@ pub async fn params_from_netspec(
                 privkey: hex::encode(&genesis[0].secret_key),
                 kind: perf::AccountKind::Eth,
             };
-            Ok((Some(result), Some(funds)))
+            println!("eth_chain_id = {0}", setup_obj.eth_chain_id());
+            Ok((Some(result), Some(funds), Some(setup_obj.eth_chain_id())))
         }
         NetSpec::Chain((name, regex)) => {
             // Let's validate the regex before we do a lot of time-consuming gcloud stuff.
@@ -588,9 +598,28 @@ pub async fn params_from_netspec(
                 None
             };
             let config = NetworkConfig::from_file(name).await?;
+            let eth_chain_id: u32 = config.eth_chain_id.try_into()?;
             let instance = ChainInstance::new(config).await?;
-            println!("⚾ Listing instances in network {0}", &instance.name());
+            // Load the config file to get the genesis accounts
+            println!("⚾ Retrieve genesis private key for {0}", &instance.name());
+            let privkey = instance.genesis_wallet_private_key().await?;
+            println!(" P = {privkey}");
+            let signer = alloy::signers::local::LocalSigner::from_slice(&hex::decode(&privkey)?)?;
+            println!(" A = {0}", signer.address());
+            println!(
+                "⚾ Listing instances in network {0} for regex {1:?}",
+                &instance.name(),
+                regex
+            );
             let nodes = instance.nodes().await?;
+            println!(
+                "⚾ nodes: {0:?}",
+                nodes.iter().map(|x| x.name()).collect::<Vec<String>>()
+            );
+            let funds = perf::Account {
+                privkey,
+                kind: perf::AccountKind::Eth,
+            };
             Ok((
                 Some(
                     nodes
@@ -605,7 +634,8 @@ pub async fn params_from_netspec(
                         .map(|x| x.get_rpc_url())
                         .collect::<Vec<String>>(),
                 ),
-                None,
+                Some(funds),
+                Some(eth_chain_id),
             ))
         }
     }
