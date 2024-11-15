@@ -234,27 +234,25 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
             .collect(),
     };
     // Print all fields of Code::Scilla by matching on scilla_code
-    match &scilla_code {
-        Code::Scilla {
-            code,
-            init_data,
-            types,
-            transitions,
-        } => {
-            println!("Code::Scilla parameters:");
-            println!("Address: {:?}", address);
-            println!("Code: {}", code);
-            println!("Init Data: {:?}", init_data);
-            println!("Types: {:?}", types);
-            println!("Transitions:");
-            for transition in transitions {
-                println!("  Transition Name: {}", transition.name);
-                for param in &transition.params {
-                    println!("    Param Name: {}, Type: {}", param.name, param.ty);
-                }
+    if let Code::Scilla {
+        code,
+        init_data,
+        types,
+        transitions,
+    } = &scilla_code
+    {
+        println!("Code::Scilla parameters:");
+        println!("Address: {:?}", address);
+        println!("Code: {}", code);
+        println!("Init Data: {:?}", init_data);
+        println!("Types: {:?}", types);
+        println!("Transitions:");
+        for transition in transitions {
+            println!("  Transition Name: {}", transition.name);
+            for param in &transition.params {
+                println!("    Param Name: {}, Type: {}", param.name, param.ty);
             }
         }
-        _ => {}
     }
     Ok(scilla_code)
 }
