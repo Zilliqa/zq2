@@ -386,20 +386,22 @@ impl Consensus {
                 .get_block(high_qc.block_hash)?
                 .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
 
-            // Grab a few  peerIds in case others also went offline
-            let mut recent_peer_ids = vec![];
-            for view in (high_block.view().saturating_sub(5)..=high_block.view()).rev() {
-                if view < 1 {
-                    break;
-                }
-                if let Some(block) = consensus.block_store.get_block_by_view(view)? {
-                    if let Some(leader) = consensus.leader_at_block(&block, view) {
-                        if leader.peer_id != consensus.peer_id() {
-                            recent_peer_ids.push(leader.peer_id);
-                        }
-                    };
-                }
-            }
+            let executed_block = BlockHeader {
+                number: high_block.header.number + 1,
+                ..Default::default()
+            };
+            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
+
+            // Grab last seen committee's peerIds in case others also went offline
+            let committee = state_at.get_stakers(executed_block)?;
+            let recent_peer_ids: Vec<_> = committee
+                .iter()
+                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
+                .filter_map(|&peer_public_key| {
+                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
+                })
+                .collect();
+
             consensus
                 .block_store
                 .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
