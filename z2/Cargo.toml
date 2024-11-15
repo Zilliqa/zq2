@@ -59,7 +59,6 @@ revm = {version = "14.0.3", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 rustls = "0.23.16"
 serde = {version = "1.0.215", features = ["derive"]}
-scilla-parser = "2.0.0"
 serde_json = "1.0.128"
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
@@ -76,6 +75,7 @@ url = "2.5.3"
 zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.1"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
+scopeguard = "1.2.0"
 
 [build-dependencies]
 prost-build = "0.13.3"
