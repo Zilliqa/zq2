@@ -158,10 +158,10 @@ contract Deposit {
     // or withdrawals were made.
     uint64 latestComputedEpoch;
 
-    uint256 public minimumStake;
-    uint256 public maximumStakers;
+    uint256 public immutable minimumStake;
+    uint256 public immutable maximumStakers;
 
-    uint64 public blocksPerEpoch;
+    uint64 public immutable blocksPerEpoch;
 
     modifier onlyControlAddress(bytes calldata blsPubKey) {
         require(blsPubKey.length == 48);
@@ -312,6 +312,21 @@ contract Deposit {
         // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
         // balance will default to zero.
         return committee().stakers[blsPubKey].balance;
+    }
+
+    function getFutureStake(
+        bytes calldata blsPubKey
+    ) public view returns (uint256) {
+        require(blsPubKey.length == 48);
+
+        uint64 epoch = latestComputedEpoch > currentEpoch()
+            ? latestComputedEpoch
+            : currentEpoch();
+        Committee storage latestCommittee = _committee[epoch % 3];
+
+        // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
+        // balance will default to zero.
+        return latestCommittee.stakers[blsPubKey].balance;
     }
 
     function getRewardAddress(
@@ -583,9 +598,10 @@ contract Deposit {
         _withdraw(count);
     }
 
-    function withdrawalPeriod() public pure returns (uint256) {
-        // 2 weeks
-        return 2 * 7 * 24 * 60 * 60;
+    function withdrawalPeriod() public view returns (uint256) {
+        // shorter unbonding period for testing deposit withdrawals
+        if (block.chainid == 33469) return 5 minutes;
+        return 2 weeks;
     }
 
     function _withdraw(uint256 count) internal {
