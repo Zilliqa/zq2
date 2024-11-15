@@ -16,7 +16,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zilliqa::{
-    api::types::zil::RPCErrorCode::RpcInvalidAddressOrKey,
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
@@ -1392,13 +1391,13 @@ async fn tx_block_listing(mut network: Network) {
     );
 
     assert!(
-        tx_block_listing.data[0].block_num == 0,
-        "Expected BlockNum to be 0, got: {:?}",
+        tx_block_listing.data[0].block_num > 0,
+        "Expected BlockNum to be greater than 0, got: {:?}",
         tx_block_listing.data[0].block_num
     );
     assert!(
-        tx_block_listing.data[1].block_num > 0,
-        "Expected BlockNum to be greater than 0, got: {:?}",
+        tx_block_listing.data[1].block_num == 0,
+        "Expected BlockNum to be 0, got: {:?}",
         tx_block_listing.data[1].block_num
     );
     assert!(
@@ -2238,9 +2237,30 @@ async fn get_miner_info(mut _network: Network) {
     todo!();
 }
 
-#[allow(dead_code)]
-async fn get_node_type(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_node_type(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNodeType", [""])
+        .await
+        .expect("Failed to call GetNodeType API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+
+    let allowed_node_types = ["Seed"];
+    let response_str = response.as_str().expect("Expected response to be a string");
+
+    assert!(
+        allowed_node_types.contains(&response_str),
+        "Unexpected node type: {}",
+        response_str
+    );
 }
 
 #[allow(dead_code)]
@@ -2258,30 +2278,128 @@ async fn get_sharding_structure(mut _network: Network) {
     todo!();
 }
 
-#[zilliqa_macros::test]
+// We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
+// once it invokes Scilla. When many tests are run in parallel, this results in "Too many open files" errors.
+#[zilliqa_macros::test(restrict_concurrency)]
 async fn get_smart_contract_sub_state(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
-    let contract_address = "fe001824823b12b58708bf24edd94d8b5e1cfcf7";
-    let variable_name = "admins";
-    let indices: Vec<Value> = vec![];
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
 
-    let response: Result<Value, ProviderError> = wallet
+    let api_code: Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetSmartContractCode", [contract_address])
+        .await
+        .unwrap();
+    assert_eq!(code, api_code["code"]);
+
+    let api_data: Vec<Value> = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetSmartContractInit", [contract_address])
+        .await
+        .unwrap();
+    // Assert the data returned from the API is a superset of the init data we passed.
+    assert!(serde_json::from_str::<Vec<Value>>(&data)
+        .unwrap()
+        .iter()
+        .all(|d| api_data.contains(d)));
+
+    let call = r#"{
+        "_tag": "setHello",
+        "params": [
+            {
+                "vname": "msg",
+                "value": "foobar",
+                "type": "String"
+            }
+        ]
+    }"#;
+    let (_, txn) = send_transaction(
+        &mut network,
+        &secret_key,
+        2,
+        ToAddr::Address(contract_address),
+        0,
+        50_000,
+        None,
+        Some(call),
+    )
+    .await;
+    let event = &txn["receipt"]["event_logs"][0];
+    assert_eq!(event["_eventname"], "setHello");
+    assert_eq!(event["params"][0]["value"], "2");
+
+    let call = r#"{
+        "_tag": "getHello",
+        "params": []
+    }"#;
+    let (_, txn) = send_transaction(
+        &mut network,
+        &secret_key,
+        3,
+        ToAddr::Address(contract_address),
+        0,
+        50_000,
+        None,
+        Some(call),
+    )
+    .await;
+    for event in txn["receipt"]["event_logs"].as_array().unwrap() {
+        assert_eq!(event["_eventname"], "getHello");
+        assert_eq!(event["params"][0]["value"], "foobar");
+    }
+
+    let state: serde_json::Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetSmartContractState", [contract_address])
+        .await
+        .unwrap();
+    assert_eq!(state["welcome_msg"], "foobar");
+
+    let substate0: serde_json::Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetSmartContractSubState", [contract_address])
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+    assert_eq!(substate0, state);
+
+    let substate1: serde_json::Value = network
+        .random_wallet()
+        .await
         .provider()
         .request(
             "GetSmartContractSubState",
-            (contract_address, variable_name, indices),
+            (contract_address, "welcome_msg"),
         )
-        .await;
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+    assert_eq!(substate1["welcome_msg"], "foobar");
+    assert!(substate1.get("welcome_map").is_none());
 
-    assert!(response.is_err());
-
-    let Err(ProviderError::JsonRpcClientError(rpc_error)) = response else {
-        panic!("Returned error type is not JSON RPC ClientError");
-    };
-    let rpc_error = rpc_error.as_error_response().unwrap();
-
-    assert_eq!(rpc_error.code, RpcInvalidAddressOrKey as i64);
-    assert_eq!(rpc_error.message, "Address does not exist".to_string());
+    let substate2: serde_json::Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request(
+            "GetSmartContractSubState",
+            (contract_address, "welcome_map", ["1", "2"]),
+        )
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+    assert_eq!(
+        substate2["welcome_map"]["1"]["2"].as_str().unwrap(),
+        "foobar"
+    );
+    assert!(substate2.get("welcome_msg").is_none());
 }
 
 #[allow(dead_code)]
