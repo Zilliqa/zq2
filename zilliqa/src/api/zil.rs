@@ -1180,13 +1180,8 @@ fn get_miner_info(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo
 }
 
 // GetNodeType
-fn get_node_type(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    let node = node.lock().unwrap();
-    if node.consensus.are_we_leader_now() {
-        Ok("Leader".to_string())
-    } else {
-        Ok("Validator".to_string())
-    }
+fn get_node_type(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok("Seed".into())
 }
 
 // GetPrevDifficulty

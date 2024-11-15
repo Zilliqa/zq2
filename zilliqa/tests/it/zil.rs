@@ -2065,7 +2065,7 @@ async fn get_node_type(mut network: Network) {
         response
     );
 
-    let allowed_node_types = ["Leader", "Validator"];
+    let allowed_node_types = ["Seed"];
     let response_str = response.as_str().expect("Expected response to be a string");
 
     assert!(

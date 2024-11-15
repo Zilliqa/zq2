@@ -12,10 +12,7 @@ NotDocumented
 
 # Description
 
-Returns node type. The possible return values are:
-
-- `"Leader"` if we are currently the lead node
-- `"Validator"` otherwise
+Returns node type. For backwards compatibility reasons, in ZQ2 this always returns "Seed".
 
 # Curl
 
@@ -31,7 +28,7 @@ curl -d '{
 # Response
 
 ```json
-{ "id": "1", "jsonrpc": "2.0", "result": "Validator" }
+{ "id": "1", "jsonrpc": "2.0", "result": "Seed" }
 ```
 
 # Arguments
