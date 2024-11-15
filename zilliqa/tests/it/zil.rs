@@ -1202,13 +1202,13 @@ async fn tx_block_listing(mut network: Network) {
     );
 
     assert!(
-        tx_block_listing.data[0].block_num == 0,
-        "Expected BlockNum to be 0, got: {:?}",
+        tx_block_listing.data[0].block_num > 0,
+        "Expected BlockNum to be greater than 0, got: {:?}",
         tx_block_listing.data[0].block_num
     );
     assert!(
-        tx_block_listing.data[1].block_num > 0,
-        "Expected BlockNum to be greater than 0, got: {:?}",
+        tx_block_listing.data[1].block_num == 0,
+        "Expected BlockNum to be 0, got: {:?}",
         tx_block_listing.data[1].block_num
     );
     assert!(
