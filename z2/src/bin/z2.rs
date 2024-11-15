@@ -241,8 +241,8 @@ struct ConvertConfigStruct {
     zq2_config_file: String,
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
-    //#[clap(flatten)]
-    //convert_type_group: ConvertTypeGroup,
+    #[clap(flatten)]
+    convert_type_group: ConvertTypeGroup,
 }
 #[derive(Args, Debug)]
 #[group(required = true, multiple = false)]
@@ -928,8 +928,8 @@ async fn main() -> Result<()> {
                     &arg.zq2_data_dir,
                     &arg.zq2_config_file,
                     arg.secret_key,
-                    true,  //arg.convert_type_group.convert_accounts,
-                    false, //arg.convert_type_group.convert_blocks,
+                    arg.convert_type_group.convert_accounts,
+                    arg.convert_type_group.convert_blocks,
                 )
                 .await?;
                 Ok(())
