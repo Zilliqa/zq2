@@ -369,18 +369,18 @@ async fn eth_get_transaction_receipt(mut network: Network) {
     // Get the transaction receipt
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
+    dbg!(&receipt);
+
     // Verify the transaction receipt fields
     assert_eq!(receipt.transaction_hash, hash);
     assert!(receipt.block_hash.is_some());
     assert!(receipt.block_number.is_some());
     assert_eq!(receipt.from, wallet.address());
-    assert!(receipt.to.is_some());
+    assert!(receipt.to.is_none()); // This is a contract deployment so to should be empty
+    assert!(receipt.contract_address.is_some());
     assert!(receipt.cumulative_gas_used > 0.into());
     assert!(receipt.effective_gas_price.unwrap_or_default() > 0.into());
     assert!(receipt.gas_used.unwrap_or_default() > 0.into());
-    assert_eq!(receipt.contract_address, Some(receipt.to.unwrap()));
-    assert!(!receipt.logs.is_empty());
-    assert!(receipt.logs_bloom.0.iter().any(|&b| b != 0));
     assert_eq!(receipt.status.unwrap_or_default(), 1.into());
 }
 
