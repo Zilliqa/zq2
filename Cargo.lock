@@ -9833,7 +9833,7 @@ dependencies = [
  "revm",
  "revm-inspectors",
  "rusqlite",
- "scilla-parser 1.0.0",
+ "scilla-parser 2.0.0",
  "scopeguard",
  "semver 1.0.23",
  "serde",
