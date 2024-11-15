@@ -260,7 +260,7 @@ impl TransactionResult {
 }
 
 pub struct ModuleRecord {
-    module: Box<dyn PerfMod>,
+    module: Box<dyn PerfMod + Send>,
     // Results from the last phase.
     results: Vec<TransactionResult>,
     // Txns to monitor in the next phase.
@@ -293,10 +293,14 @@ pub struct ConformConfig {
 
 impl Perf {
     pub fn from_file(config_file: &str) -> Result<Self> {
-        Perf::from_file_with_rpc_url(config_file, &None)
+        Perf::from_file_with_params(config_file, &None, &None)
     }
 
-    pub fn from_file_with_rpc_url(config_file: &str, rpc_url: &Option<String>) -> Result<Self> {
+    pub fn from_file_with_params(
+        config_file: &str,
+        rpc_url: &Option<String>,
+        account: &Option<Account>,
+    ) -> Result<Self> {
         let file_contents = fs::read_to_string(config_file)
             .context(format!("Cannot read configuration {config_file}"))?;
         let config_obj: Config = serde_yaml::from_str(&file_contents)?;
@@ -305,12 +309,16 @@ impl Perf {
         } else {
             Provider::<Http>::try_from(config_obj.rpc_url.as_str())?
         };
-        let source_of_funds = config_obj
-            .source_of_funds
-            .as_ref()
-            .map(Account::try_from)
-            .transpose()?
-            .ok_or(anyhow!("No source of funds provided."))?;
+        let source_of_funds = if let Some(v) = account {
+            v.clone()
+        } else {
+            config_obj
+                .source_of_funds
+                .as_ref()
+                .map(Account::try_from)
+                .transpose()?
+                .ok_or(anyhow!("No source of funds provided."))?
+        };
 
         Ok(Perf {
             config: config_obj,
@@ -392,18 +400,16 @@ impl Perf {
             let mut monitor = vec![];
             let mut continue_anyway = false;
             let mut feeder_nonce = self.get_nonce(&self.source_of_funds).await?;
-            for this_mod in modules.iter_mut() {
-                {
-                    let result = this_mod
-                        .module
-                        .gen_phase(phase, rng, self, &this_mod.results, feeder_nonce)
-                        .await?;
-                    feeder_nonce = result.feeder_nonce;
-                    this_mod.txns = result.monitor;
-                    continue_anyway = continue_anyway || result.keep_going_anyway;
-                }
-                this_mod.offset = monitor.len();
-                monitor.extend_from_slice(&this_mod.txns);
+            for module in modules.iter_mut() {
+                let result = module
+                    .module
+                    .gen_phase(phase, rng, self, &module.results, feeder_nonce)
+                    .await?;
+                feeder_nonce = result.feeder_nonce;
+                module.txns = result.monitor;
+                continue_anyway = continue_anyway || result.keep_going_anyway;
+                module.offset = monitor.len();
+                monitor.extend_from_slice(&module.txns);
             }
             // Now clear the old results
             for this_mod in modules.iter_mut() {

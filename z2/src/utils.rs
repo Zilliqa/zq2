@@ -20,7 +20,7 @@ struct ChainIdResult {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct RpcSpec {
-    urls: Vec<String>
+    urls: Vec<String>,
 }
 
 pub fn split_repo_spec(repo_spec: &str) -> Result<(String, String)> {

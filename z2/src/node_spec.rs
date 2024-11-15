@@ -19,9 +19,9 @@ impl NetSpec {
         if let Some(place) = in_str.find(':') {
             let (scheme, rest) = in_str.split_at(place);
             let (loc, query) = if let Some(v) = rest.find('?') {
-                rest.split_at(v)
+                rest[1..].split_at(v)
             } else {
-                (rest, "")
+                (&rest[1..], "")
             };
             // OK. Now we have everything.
             match scheme {
@@ -29,9 +29,14 @@ impl NetSpec {
                     let spec = if query.is_empty() {
                         None
                     } else {
-                        Some(indices_from_string(query)?)
+                        Some(indices_from_string(&query[1..])?)
                     };
-                    Ok(Self::Local((loc.to_string(), spec)))
+                    // If loc has multiple slashes at the start, trim them down to one.
+                    let mut trimmed_loc = loc;
+                    while trimmed_loc.starts_with("//") {
+                        trimmed_loc = &trimmed_loc[1..];
+                    }
+                    Ok(Self::Local((trimmed_loc.to_string(), spec)))
                 }
                 "network" => Ok(Self::Chain((
                     loc.to_string(),

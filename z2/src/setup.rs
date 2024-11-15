@@ -1,8 +1,5 @@
 use crate::address::EthereumAddress;
-use alloy::{
-    primitives::{address, Address},
-    signers::local::LocalSigner,
-};
+use alloy::{primitives::Address, signers::local::LocalSigner};
 use anyhow::{anyhow, Context, Result};
 use k256::ecdsa::SigningKey;
 use libp2p::{Multiaddr, PeerId};
@@ -52,6 +49,31 @@ const CHAIN_ID: u64 = 700;
 const ONE_MILLION: u128 = 1_000_000u128;
 const ONE_ETH: u128 = ONE_MILLION * ONE_MILLION * ONE_MILLION;
 const ONE_BILLION: u128 = 1_000u128 * ONE_MILLION;
+
+// @todo derive the address automatically.
+pub struct GenesisAccount {
+    pub secret_key: Vec<u8>,
+    pub signer: LocalSigner<k256::ecdsa::SigningKey>,
+    pub amount: Amount,
+}
+
+impl GenesisAccount {
+    pub fn new(secret_key: &str, amount: Amount) -> Result<Self> {
+        Ok(Self::from_bytes(&hex::decode(secret_key)?, amount)?)
+    }
+
+    pub fn from_bytes(secret_key: &[u8], amount: Amount) -> Result<Self> {
+        Ok(Self {
+            secret_key: secret_key.to_vec(),
+            signer: LocalSigner::from_slice(secret_key)?,
+            amount,
+        })
+    }
+
+    pub fn eth_address(&self) -> Address {
+        self.signer.address()
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeData {
@@ -430,6 +452,40 @@ impl Setup {
         Ok(EthereumAddress::from_private_key(&secret_key)?.peer_id)
     }
 
+    pub fn get_genesis_accounts(&self) -> Vec<GenesisAccount> {
+        let mut genesis_accounts: Vec<GenesisAccount> = Vec::new();
+        // Safe to use unwrap: input data is constant.
+        genesis_accounts.push(
+            GenesisAccount::new(
+                "db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3",
+                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
+            )
+            .unwrap(),
+        );
+        genesis_accounts.push(
+            GenesisAccount::new(
+                "e53d1c3edaffc7a7bab5418eb836cf75819a82872b4a1a0f1c7fcf5c3e020b89",
+                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
+            )
+            .unwrap(),
+        );
+        genesis_accounts.push(
+            GenesisAccount::new(
+                "d96e9eb5b782a80ea153c937fa83e5948485fbfc8b7e7c069d7b914dbc350aba",
+                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
+            )
+            .unwrap(),
+        );
+        genesis_accounts.push(
+            GenesisAccount::new(
+                "589417286a3213dceb37f8f89bd164c3505a4cec9200c61f7c6db13a30a71b45",
+                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
+            )
+            .unwrap(),
+        );
+        genesis_accounts
+    }
+
     pub async fn generate_standalone_config(&self) -> Result<()> {
         // The genesis deposits.
         let mut genesis_deposits: Vec<GenesisDeposit> = Vec::new();
@@ -452,32 +508,7 @@ impl Setup {
             }
         }
 
-        let mut genesis_accounts: Vec<(Address, Amount)> = vec![
-            (
-                address!("7E5F4552091A69125d5DfCb7b8C2659029395Bdf"),
-                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
-            ),
-            // privkey db11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
-            (
-                address!("cb57ec3f064a16cadb36c7c712f4c9fa62b77415"),
-                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
-            ),
-            // privkey dbcfgfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3
-            (
-                address!("2ce2dbd623b3c277fae4074f0b2605e624510e20"),
-                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
-            ),
-            // d96e9eb5b782a80ea153c937fa83e5948485fbfc8b7e7c069d7b914dbc350aba
-            (
-                address!("f0cb24ac66ba7375bf9b9c4fa91e208d9eaabd2e"),
-                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
-            ),
-            // 589417286a3213dceb37f8f89bd164c3505a4cec9200c61f7c6db13a30a71b45
-            (
-                address!("cf671756a8238cbeb19bcb4d77fc9091e2fce1a3"),
-                zilliqa::cfg::Amount(2u128 * ONE_BILLION * ONE_ETH),
-            ),
-        ];
+        let mut genesis_accounts = self.get_genesis_accounts();
 
         // Generate signers - these are accounts with privkeys 0x10000 .. - push them to a
         // signers file, and add genesis accounts for them.
@@ -491,7 +522,10 @@ impl Setup {
             println!("PrivKey = {0:?}", signer.to_bytes());
             println!("Address[{idx}] = {0}", signer.address());
             signer_private_keys.push(format!("{0:?}", signer.to_bytes()));
-            genesis_accounts.push((signer.address(), 5000000000000000000000u128.into()))
+            genesis_accounts.push(GenesisAccount::from_bytes(
+                &bytes,
+                5000000000000000000000u128.into(),
+            )?);
         }
 
         {
@@ -606,10 +640,10 @@ impl Setup {
                 .consensus
                 .genesis_deposits
                 .clone_from(&genesis_deposits);
-            node_config
-                .consensus
-                .genesis_accounts
-                .clone_from(&genesis_accounts);
+            node_config.consensus.genesis_accounts = genesis_accounts
+                .iter()
+                .map(|x| (x.eth_address(), x.amount))
+                .collect();
             node_config.consensus.scilla_address = format!(
                 "http://localhost:{0}",
                 self.get_scilla_port(u64::try_into(*node_index)?)

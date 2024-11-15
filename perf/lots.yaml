@@ -4,7 +4,7 @@ attempts: 600
 sleep_ms: 1000
 source_of_funds:
   from_env: PRIV_KEY
-  kind: zil
+  kind: eth
 seed: 0
 gas:
   gas_price: 2000000000
@@ -13,19 +13,19 @@ steps:
   - name: 0
     modules:
       - !async_transfer
-        nr_transfers: 10
+        nr_transfers: 1000
         gap_min: 1
         gap_max: 1
         amount_min: 100
         amount_max: 10000
       - !async_transfer
-        nr_transfers: 10
+        nr_transfers: 1000
         gap_min: 1
         gap_max: 1
         amount_min: 100
         amount_max: 10000
       - !async_transfer
-        nr_transfers: 10
+        nr_transfers: 1000
         gap_min: 1
         gap_max: 1
         amount_min: 100

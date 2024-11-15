@@ -723,7 +723,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Perf(ref arg) => {
-            plumbing::run_perf_file(&arg.config_dir, &arg.perf_file).await?;
+            plumbing::run_perf_file(&base_dir, &arg.netspec, &arg.perf_file).await?;
             Ok(())
         }
         Commands::Kpi(ref arg) => {

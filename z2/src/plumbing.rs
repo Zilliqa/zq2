@@ -147,11 +147,55 @@ pub async fn run_net(
     Ok(())
 }
 
-pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
-    let perf = perf::Perf::from_file(config_file)?;
-    let mut rng = perf.make_rng()?;
-    println!("🦆 Running {config_file} .. ");
-    perf.run(&mut rng).await?;
+pub async fn run_perf_file(
+    base_dir: &str,
+    net_spec: &Option<String>,
+    config_file: &str,
+) -> Result<()> {
+    let (urls, source_of_funds) = if let Some(spec) = net_spec {
+        let parsed = NetSpec::from_string(spec)?;
+        params_from_netspec(base_dir, &parsed).await?
+    } else {
+        (None, None)
+    };
+    if let Some(lst) = urls {
+        let mut join_handles = Vec::new();
+        println!("🦆 running perf on URLs {lst:?}");
+        for item in &lst {
+            let rpc_url = item.to_string();
+            let config_file_copy = config_file.to_string();
+            let account = source_of_funds.clone();
+            join_handles.push(tokio::spawn(async move {
+                println!("🦆 Spawning perf for {config_file_copy} on {rpc_url} .. ");
+                async fn go(
+                    config_file: &str,
+                    rpc_url: &str,
+                    account: &Option<perf::Account>,
+                ) -> Result<()> {
+                    let perf = perf::Perf::from_file_with_params(
+                        config_file,
+                        &Some(rpc_url.to_string()),
+                        account,
+                    )?;
+                    let mut rng = perf.make_rng()?;
+                    perf.run(&mut rng).await?;
+                    Ok(())
+                }
+                if let Err(e) = go(&config_file_copy, &rpc_url, &account).await {
+                    println!("🦆🦆 Perf failed for {rpc_url} - {e:?}");
+                } else {
+                    println!("🦆 {rpc_url} done.");
+                }
+            }));
+        }
+        futures::future::join_all(join_handles).await;
+    } else {
+        println!("🦆 Spawning perf with URL from {config_file} .. ");
+        let perf = perf::Perf::from_file(config_file)?;
+        let mut rng = perf.make_rng()?;
+        perf.run(&mut rng).await?;
+        println!("🦆 All done");
+    }
     Ok(())
 }
 
@@ -514,7 +558,10 @@ pub async fn test(
 }
 
 /// Given a netspec, return a list of RPC urls.
-pub async fn rpc_urls_from_netspec(base_dir: &str, spec: &NetSpec) -> Result<Vec<String>> {
+pub async fn params_from_netspec(
+    base_dir: &str,
+    spec: &NetSpec,
+) -> Result<(Option<Vec<String>>, Option<perf::Account>)> {
     match spec {
         NetSpec::Local((config_dir, maybe_node_spec)) => {
             let setup_obj = setup::Setup::load(config_dir, "", base_dir, false).await?;
@@ -525,7 +572,13 @@ pub async fn rpc_urls_from_netspec(base_dir: &str, spec: &NetSpec) -> Result<Vec
             for idx in node_indices {
                 result.push(setup_obj.get_json_rpc_url_for_node(idx)?);
             }
-            Ok(result)
+            // The setup also has a source of funds ..
+            let genesis = setup_obj.get_genesis_accounts();
+            let funds = perf::Account {
+                privkey: hex::encode(&genesis[0].secret_key),
+                kind: perf::AccountKind::Eth,
+            };
+            Ok((Some(result), Some(funds)))
         }
         NetSpec::Chain((name, regex)) => {
             // Let's validate the regex before we do a lot of time-consuming gcloud stuff.
@@ -538,17 +591,22 @@ pub async fn rpc_urls_from_netspec(base_dir: &str, spec: &NetSpec) -> Result<Vec
             let instance = ChainInstance::new(config).await?;
             println!("⚾ Listing instances in network {0}", &instance.name());
             let nodes = instance.nodes().await?;
-            Ok(nodes
-                .iter()
-                .filter(|x| {
-                    if let Some(r) = &maybe_regex {
-                        r.is_match(&x.name())
-                    } else {
-                        false
-                    }
-                })
-                .map(|x| x.get_rpc_url())
-                .collect::<Vec<String>>())
+            Ok((
+                Some(
+                    nodes
+                        .iter()
+                        .filter(|x| {
+                            if let Some(r) = &maybe_regex {
+                                r.is_match(&x.name())
+                            } else {
+                                false
+                            }
+                        })
+                        .map(|x| x.get_rpc_url())
+                        .collect::<Vec<String>>(),
+                ),
+                None,
+            ))
         }
     }
 }
