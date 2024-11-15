@@ -782,6 +782,7 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     let base_blocknum = page_requested * 10;
     let end_blocknum = num_ds_blocks.min(base_blocknum + 10);
     let listings: Vec<DSBlockListing> = (base_blocknum..end_blocknum)
+        .rev()
         .map(|blocknum| DSBlockListing {
             block_num: blocknum,
             hash: "4DEED80AFDCC89D5B691DCB54CCB846AD9D823D448A56ACAC4DBE5E1213244C7".to_string(),
@@ -843,6 +844,7 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
     let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
 
     let listings: Vec<TxBlockListing> = (start_block..end_block)
+        .rev()
         .filter_map(|block_number| {
             node.get_block(block_number)
                 .ok()
