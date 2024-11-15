@@ -101,7 +101,7 @@ resource "google_compute_instance" "this" {
     #!/bin/bash
     apt-get update
     apt-get install -y python3 python3-pip
-    echo '$(${templatefile("${path.module}/scripts/node_provision.py.tpl")})' > /tmp/startup_script.py
+    echo '$(${templatefile("${path.module}/scripts/node_provision.py.tpl", {})})' > /tmp/startup_script.py
     chmod +x /tmp/startup_script.py
     python3 /tmp/startup_script.py
   EOT
