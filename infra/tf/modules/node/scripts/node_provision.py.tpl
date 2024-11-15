@@ -172,7 +172,7 @@ def install_docker():
         the_key.communicate(input=DOCKER_PUBKEY.encode('utf-8'))
     arch = subprocess.check_output(["dpkg", "--print-architecture"]).decode('utf-8').strip()
     codename = subprocess.check_output(["/bin/sh", "-c", ". /etc/os-release && echo \"$VERSION_CODENAME\""]).decode('utf-8').strip()
-    print(f"arch ${arch} codename ${codename}")
+    print(f"arch $${arch} codename $${codename}")
     with open("/tmp/docker.list", "w") as f:
         f.write(f"deb [arch={arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {codename} stable\n")
     run_or_die(["sudo", "cp", "/tmp/docker.list", "/etc/apt/sources.list.d/docker.list"])
