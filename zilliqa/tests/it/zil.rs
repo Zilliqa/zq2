@@ -2262,9 +2262,22 @@ async fn get_soft_confirmed_transaction(mut _network: Network) {
     todo!();
 }
 
-#[allow(dead_code)]
-async fn get_state_proof(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_state_proof(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let contract_address = "6d84363526a2d764835f8cf52dfeefe80a360fac";
+    let variable_hash = "A0BD91DE66D97E6930118179BA4F1836C366C4CB3309A6B354D26F52ABB2AAC6";
+    let tx_block = "39";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetStateProof", [contract_address, variable_hash, tx_block])
+        .await
+        .expect("Failed to call GetStateProof API");
+
+    let _state_proof: zilliqa::api::types::zil::StateProofResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
 }
 
 #[zilliqa_macros::test]
