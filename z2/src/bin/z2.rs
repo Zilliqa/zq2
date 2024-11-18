@@ -272,6 +272,10 @@ struct PerfStruct {
     /// A config dir (for a local network)
     #[clap(long)]
     netspec: Option<String>,
+
+    /// Randomize transactions? (useful for testing)
+    #[clap(long, action=ArgAction::SetTrue)]
+    randomise: bool,
 }
 
 #[derive(Args, Debug)]
@@ -723,7 +727,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Perf(ref arg) => {
-            plumbing::run_perf_file(&base_dir, &arg.netspec, &arg.perf_file).await?;
+            plumbing::run_perf_file(&base_dir, &arg.netspec, &arg.perf_file, arg.randomise).await?;
             Ok(())
         }
         Commands::Kpi(ref arg) => {

@@ -23,7 +23,7 @@ impl AsyncTransfer {
         Ok(Self {
             source_of_funds: source_of_funds.clone(),
             config: config.clone(),
-            feeder: perf.gen_account(rng, AccountKind::Zil).await?,
+            feeder: perf.gen_account(rng, config.kind).await?,
         })
     }
 }

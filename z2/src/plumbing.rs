@@ -9,6 +9,7 @@ use std::{
 use alloy::primitives::B256;
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
+use rand::RngCore;
 use regex::Regex;
 use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
@@ -151,6 +152,7 @@ pub async fn run_perf_file(
     base_dir: &str,
     net_spec: &Option<String>,
     config_file: &str,
+    randomise: bool,
 ) -> Result<()> {
     let (urls, source_of_funds, chain_id) = if let Some(spec) = net_spec {
         let parsed = NetSpec::from_string(spec)?;
@@ -158,39 +160,44 @@ pub async fn run_perf_file(
     } else {
         (None, None, None)
     };
+    let seed = if randomise {
+        Some(rand::thread_rng().next_u64())
+    } else {
+        None
+    };
+    let params = perf::Params {
+        rpc_url: None, // Will be substituted in later
+        account: source_of_funds,
+        eth_chain_id: chain_id,
+        seed,
+    };
     if let Some(lst) = urls {
         let mut join_handles = Vec::new();
+        let mut counting_seed = seed.unwrap_or_default();
         println!("🦆 running perf on URLs {lst:?}");
         for item in &lst {
-            let override_url = std::env::var("ZQ2_RPC_URL");
+            let override_url = std::env::var("ZQ2_API_URL");
+            let config_file_copy = config_file.to_string();
             let rpc_url = if let Ok(val) = override_url {
                 println!("🦆🦆🦆 Overriding RPC URL with {val}");
                 val
             } else {
                 item.to_string()
             };
-            let config_file_copy = config_file.to_string();
-            let account = source_of_funds.clone();
-            let local_chain_id = chain_id.clone();
+            let local_seed = counting_seed;
+            counting_seed += 1;
+            let local_params = params.clone().with_url(&rpc_url).with_seed(local_seed);
             join_handles.push(tokio::spawn(async move {
-                println!("🦆 Spawning perf for {config_file_copy} on {rpc_url} .. ");
-                async fn go(
-                    config_file: &str,
-                    rpc_url: &str,
-                    account: &Option<perf::Account>,
-                    chain_id: &Option<u32>,
-                ) -> Result<()> {
-                    let perf = perf::Perf::from_file_with_params(
-                        config_file,
-                        &Some(rpc_url.to_string()),
-                        account,
-                        chain_id,
-                    )?;
+                println!(
+                    "🦆 Spawning perf for {config_file_copy} on {rpc_url} , seed {local_seed} .. "
+                );
+                async fn go(config_file: &str, params: &perf::Params) -> Result<()> {
+                    let perf = perf::Perf::from_file_with_params(config_file, params)?;
                     let mut rng = perf.make_rng()?;
                     perf.run(&mut rng).await?;
                     Ok(())
                 }
-                if let Err(e) = go(&config_file_copy, &rpc_url, &account, &local_chain_id).await {
+                if let Err(e) = go(&config_file_copy, &local_params).await {
                     println!("🦆🦆 Perf failed for {rpc_url} - {e:?}");
                 } else {
                     println!("🦆 {rpc_url} done.");

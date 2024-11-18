@@ -16,17 +16,20 @@ steps:
         nr_transfers: 10
         gap_min: 1
         gap_max: 1
-        amount_min: 10
-        amount_max: 100
+        amount_min: 100
+        amount_max: 10000
+        kind: zil
       - !async_transfer
         nr_transfers: 10
         gap_min: 1
         gap_max: 1
-        amount_min: 10
-        amount_max: 100
+        amount_min: 100
+        amount_max: 10000
+        kind: zil
       - !async_transfer
         nr_transfers: 10
         gap_min: 1
         gap_max: 1
-        amount_min: 10
-        amount_max: 100
+        amount_min: 100
+        amount_max: 10000
+        kind: zil

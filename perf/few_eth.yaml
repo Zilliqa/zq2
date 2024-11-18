@@ -7,29 +7,29 @@ source_of_funds:
   kind: eth
 seed: 0
 gas:
-  gas_price: 2000000000
+  gas_price: 20000000
   gas_limit: 10000
 steps:
   - name: 0
     modules:
       - !async_transfer
-        nr_transfers: 1000
+        nr_transfers: 1
         gap_min: 1
         gap_max: 1
         amount_min: 100
-        amount_max: 10000
-        kind: zil
+        amount_max: 100
+        kind: eth
       - !async_transfer
-        nr_transfers: 1000
+        nr_transfers: 1
         gap_min: 1
         gap_max: 1
         amount_min: 100
-        amount_max: 10000
-        kind: zil
+        amount_max: 100
+        kind: eth
       - !async_transfer
-        nr_transfers: 1000
+        nr_transfers: 1
         gap_min: 1
         gap_max: 1
         amount_min: 100
-        amount_max: 10000
-        kind: zil
+        amount_max: 100
+        kind: eth

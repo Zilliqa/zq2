@@ -276,6 +276,7 @@ pub struct AsyncTransferConfig {
     pub gap_max: u64,
     pub amount_min: u128,
     pub amount_max: u128,
+    pub kind: AccountKind,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -285,27 +286,46 @@ pub struct ConformConfig {
     pub signer_amount: u128,
 }
 
-impl Perf {
-    pub fn from_file(config_file: &str) -> Result<Self> {
-        Perf::from_file_with_params(config_file, &None, &None, &None)
+#[derive(Clone, Debug, Default)]
+pub struct Params {
+    pub rpc_url: Option<String>,
+    pub account: Option<Account>,
+    pub eth_chain_id: Option<u32>,
+    pub seed: Option<u64>,
+}
+
+impl Params {
+    pub fn with_url(&self, url: &str) -> Self {
+        Self {
+            rpc_url: Some(url.to_string()),
+            ..self.clone()
+        }
     }
 
-    pub fn from_file_with_params(
-        config_file: &str,
-        rpc_url: &Option<String>,
-        account: &Option<Account>,
-        eth_chain_id: &Option<u32>,
-    ) -> Result<Self> {
+    pub fn with_seed(&self, seed: u64) -> Self {
+        Self {
+            seed: Some(seed),
+            ..self.clone()
+        }
+    }
+}
+
+impl Perf {
+    pub fn from_file(config_file: &str) -> Result<Self> {
+        Perf::from_file_with_params(config_file, &Params::default())
+    }
+
+    pub fn from_file_with_params(config_file: &str, params: &Params) -> Result<Self> {
         let file_contents = fs::read_to_string(config_file)
             .context(format!("Cannot read configuration {config_file}"))?;
-        let config_obj: Config = serde_yaml::from_str(&file_contents)?;
-        let effective_url = if let Some(url) = rpc_url {
+        let mut config_obj: Config = serde_yaml::from_str(&file_contents)?;
+        let effective_url = if let Some(url) = &params.rpc_url {
             url.to_string()
         } else {
             config_obj.rpc_url.to_string()
         };
         let provider = Provider::<Http>::try_from(effective_url.as_str())?;
-        let source_of_funds = if let Some(v) = account {
+        let source_of_funds = if let Some(v) = &params.account {
             v.clone()
         } else {
             config_obj
@@ -315,13 +335,16 @@ impl Perf {
                 .transpose()?
                 .ok_or(anyhow!("No source of funds provided."))?
         };
+        if let Some(v) = &params.seed {
+            config_obj.seed = *v;
+        }
 
         let config_chain_id = config_obj.chainid;
         Ok(Perf {
             config: config_obj,
             provider,
             effective_url,
-            effective_chainid: eth_chain_id.map_or(config_chain_id, |x| x & !0x8000),
+            effective_chainid: params.eth_chain_id.map_or(config_chain_id, |x| x & !0x8000),
             step: 0,
             source_of_funds,
         })
