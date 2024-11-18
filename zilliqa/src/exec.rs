@@ -1282,7 +1282,7 @@ impl From<Account> for PendingAccount {
     }
 }
 
-fn store_external_libraries(
+pub fn store_external_libraries(
     state: &State,
     scilla_ext_libs_path: &ScillaExtLibsPath,
     ext_libraries: Vec<ExternalLibrary>,
