@@ -49,21 +49,21 @@ macro_rules! declare_module {
         [ $(($name:expr, $method:expr)),* $(,)? ] $(,)?
     ) => {{
         let mut module: jsonrpsee::RpcModule<std::sync::Arc<std::sync::Mutex<crate::node::Node>>> = jsonrpsee::RpcModule::new($node);
-        let meter = opentelemetry::global::meter("");
+        let meter = opentelemetry::global::meter("zilliqa");
 
         $(
             let rpc_server_duration = meter
-                .f64_histogram("rpc.server.duration")
-                .with_unit("ms")
+                .f64_histogram(opentelemetry_semantic_conventions::metric::RPC_SERVER_DURATION)
+                .with_unit("s")
                 .build();
             module
                 .register_method($name, move |params, context, _| {
                     let mut attributes = vec![
-                        opentelemetry::KeyValue::new("rpc.system", "jsonrpc"),
-                        opentelemetry::KeyValue::new("rpc.service", "zilliqa.eth"),
-                        opentelemetry::KeyValue::new("rpc.method", $name),
-                        opentelemetry::KeyValue::new("network.transport", "tcp"),
-                        opentelemetry::KeyValue::new("rpc.jsonrpc.version", "2.0"),
+                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_SYSTEM, "jsonrpc"),
+                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_SERVICE, "zilliqa.eth"),
+                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_METHOD, $name),
+                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::NETWORK_TRANSPORT, "tcp"),
+                        opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_VERSION, "2.0"),
                     ];
 
                     let start = std::time::SystemTime::now();
@@ -90,10 +90,10 @@ macro_rules! declare_module {
                         }
                     });
                     if let Err(err) = &result {
-                        attributes.push(opentelemetry::KeyValue::new("rpc.jsonrpc.error_code", err.code() as i64));
+                        attributes.push(opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_JSONRPC_ERROR_CODE, err.code() as i64));
                     }
                     rpc_server_duration.record(
-                        start.elapsed().map_or(0.0, |d| d.as_secs_f64() * 1000.0),
+                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,
                     );
                     result
