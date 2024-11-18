@@ -252,6 +252,7 @@ pub async fn convert_persistence(
     )?;
 
     if convert_accounts {
+        // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
         // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
         let distance_sum: u64 = zq1_db
             .accounts()
