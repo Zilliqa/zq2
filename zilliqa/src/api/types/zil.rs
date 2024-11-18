@@ -375,11 +375,11 @@ pub struct BlockchainInfo {
     pub sharding_structure: ShardingStructure,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ShardingStructure {
     #[serde(rename = "NumPeers")]
-    pub num_peers: Vec<u16>,
+    pub num_peers: Vec<u64>,
 }
 
 #[derive(Clone, Serialize)]

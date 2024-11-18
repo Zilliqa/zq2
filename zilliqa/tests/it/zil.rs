@@ -2084,9 +2084,45 @@ async fn get_prev_ds_difficulty(mut _network: Network) {
     todo!();
 }
 
-#[allow(dead_code)]
-async fn get_sharding_structure(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_sharding_structure(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Get the sharding structure
+    let response: Value = wallet
+        .provider()
+        .request("GetShardingStructure", [""])
+        .await
+        .expect("Failed to call GetShardingStructure API");
+
+    // Deserialize the response into our expected type
+    let sharding_structure: zilliqa::api::types::zil::ShardingStructure =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    // Since Zilliqa 2.0 uses XShard instead of traditional sharding,
+    // we expect exactly one shard with the number of connected peers
+    assert_eq!(
+        sharding_structure.num_peers.len(),
+        1,
+        "Expected exactly one shard in sharding structure"
+    );
+
+    // Get the number of peers to verify
+    let num_peers_response: Value = wallet
+        .provider()
+        .request("GetNumPeers", [""])
+        .await
+        .expect("Failed to call GetNumPeers API");
+
+    let num_peers = num_peers_response
+        .as_u64()
+        .expect("Expected GetNumPeers to return a number");
+
+    // Verify that the number of peers matches
+    assert_eq!(
+        sharding_structure.num_peers[0], num_peers,
+        "Number of peers in sharding structure doesn't match GetNumPeers"
+    );
 }
 
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
