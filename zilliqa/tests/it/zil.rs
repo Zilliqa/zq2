@@ -667,6 +667,14 @@ async fn get_transaction(mut network: Network) {
     );
     assert_eq!(parsed_response.amount.to_string(), "200000000000000");
     assert_eq!(parsed_response.gas_limit.0, 50000);
+
+    let response_soft_confirmed: Value = wallet
+        .provider()
+        .request("GetSoftConfirmedTransaction", [transaction_id])
+        .await
+        .expect("Failed to call GetTransaction API");
+
+    assert_eq!(response, response_soft_confirmed);
 }
 
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
@@ -2267,80 +2275,6 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         "foobar"
     );
     assert!(substate2.get("welcome_msg").is_none());
-}
-
-#[zilliqa_macros::test]
-async fn get_soft_confirmed_transaction(mut network: Network) {
-    let wallet = network.random_wallet().await;
-
-    // Create a Zilliqa account and get its secret key and address
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
-
-    // Define the recipient address
-    let address_string_w_prefix = "0x00000000000000000000000000000000deadbeef";
-    let to_addr: H160 = address_string_w_prefix.parse().unwrap();
-
-    // Send a transaction
-    let (_contract_address, returned_transaction) = send_transaction(
-        &mut network,
-        &secret_key,
-        1,
-        ToAddr::Address(to_addr),
-        200u128 * 10u128.pow(12),
-        50_000,
-        None,
-        None,
-    )
-    .await;
-
-    // Get the transaction ID from the returned transaction
-    let transaction_id = returned_transaction["ID"]
-        .as_str()
-        .expect("Failed to get ID from response");
-
-    // Wait for the transaction to be mined
-    network.run_until_block(&wallet, 1.into(), 50).await;
-
-    // Use the GetTransaction API to retrieve the transaction details
-    let response: Value = wallet
-        .provider()
-        .request("GetTransaction", [transaction_id])
-        .await
-        .expect("Failed to call GetTransaction API");
-
-    // Check for keys
-    assert!(response["receipt"]["success"].is_boolean());
-    assert!(response["receipt"]["event_logs"].is_array());
-    assert!(response["receipt"]["transitions"].is_array());
-
-    // Check the string formats
-    assert!(!response["ID"].as_str().unwrap().starts_with("0x"));
-    assert!(!response["toAddr"].as_str().unwrap().starts_with("0x"));
-    assert!(response["senderPubKey"].as_str().unwrap().starts_with("0x"));
-    assert!(response["signature"].as_str().unwrap().starts_with("0x"));
-
-    // Verify the transaction details
-    assert_eq!(response["ID"].as_str().unwrap(), transaction_id);
-    assert_eq!(response["toAddr"].as_str().unwrap(), hex::encode(to_addr),);
-    assert_eq!(response["amount"].as_str().unwrap(), "200000000000000");
-    assert_eq!(response["gasLimit"].as_str().unwrap(), "50000");
-    assert_eq!(
-        response["senderPubKey"].as_str().unwrap(),
-        format!("0x{}", hex::encode(secret_key.public_key().to_sec1_bytes()))
-    );
-
-    let parsed_response = zilliqa::api::types::zil::GetTxResponse::deserialize(&response)
-        .expect("Failed to deserialize response");
-
-    // Verify the transaction details
-    assert_eq!(parsed_response.nonce, 1);
-    // Logic should be case independent
-    assert_eq!(
-        parsed_response.to_addr.to_string().to_lowercase(),
-        address_string_w_prefix
-    );
-    assert_eq!(parsed_response.amount.to_string(), "200000000000000");
-    assert_eq!(parsed_response.gas_limit.0, 50000);
 }
 
 #[allow(dead_code)]
