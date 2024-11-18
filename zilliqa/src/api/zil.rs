@@ -1248,8 +1248,13 @@ fn get_prev_ds_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u
 }
 
 // GetShardingStructure
-fn get_sharding_structure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("API getshardingstructure is not implemented yet");
+fn get_sharding_structure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<ShardingStructure> {
+    let node = _node.lock().unwrap();
+    let num_peers = node.get_peer_num();
+
+    Ok(ShardingStructure {
+        num_peers: vec![num_peers as u64],
+    })
 }
 
 // GetSmartContractSubState
