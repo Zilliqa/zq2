@@ -12,16 +12,8 @@ NotYetDocumented
 
 # Description
 
-Returns the mining nodes (i.e., the members of the DS committee and shards) at
-the specified DS block.
-
-**Notes:**
-
-1. Nodes owned by Zilliqa Research are omitted.
-1. `dscommittee` has no `size` field since the DS committee size is fixed for a
-   given chain.
-1. For the Zilliqa mainnet, this API is only available from DS block 5500
-   onwards.
+DS nodes no longer exist in ZQ2, so this API now returns placeholder data.
+In Zilliqa 2.0, sharding structure should be accessed via the XShard on-chain query mechanism.
 
 # Curl
 

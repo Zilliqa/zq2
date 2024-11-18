@@ -2055,9 +2055,17 @@ async fn combined_total_coin_supply_test(mut network: Network) {
     );
 }
 
-#[allow(dead_code)]
-async fn get_miner_info(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_miner_info(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetMinerInfo", ["5500"])
+        .await
+        .expect("Failed to call GetMinerInfo API");
+
+    zilliqa::api::types::zil::MinerInfo::deserialize(&response).unwrap();
 }
 
 #[zilliqa_macros::test]
