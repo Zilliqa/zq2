@@ -674,6 +674,9 @@ pub(super) fn get_transaction_receipt_inner(
         .collect();
 
     let from = signed_transaction.signer;
+    let v = signed_transaction.tx.sig_v();
+    let r = signed_transaction.tx.sig_r();
+    let s = signed_transaction.tx.sig_s();
     let transaction = signed_transaction.tx.into_transaction();
     let receipt = eth::TransactionReceipt {
         transaction_hash: hash.into(),
@@ -690,6 +693,9 @@ pub(super) fn get_transaction_receipt_inner(
         logs_bloom,
         ty: 0,
         status: receipt.success,
+        v,
+        r,
+        s,
     };
 
     Ok(Some(receipt))
