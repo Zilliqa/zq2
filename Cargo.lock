@@ -7400,6 +7400,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "scilla-parser"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e4ab4861d658e759bf82b9195dc2bca87e8310ed30a7a6f20f57708ae77ee1a"
+dependencies = [
+ "lalrpop",
+ "lalrpop-util",
+ "regex",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9820,7 +9832,7 @@ dependencies = [
  "revm",
  "revm-inspectors",
  "rusqlite",
- "scilla-parser",
+ "scilla-parser 2.0.0",
  "scopeguard",
  "semver 1.0.23",
  "serde",
@@ -9873,7 +9885,7 @@ dependencies = [
  "prost 0.12.6",
  "rand",
  "regex",
- "scilla-parser",
+ "scilla-parser 1.0.0",
  "serde",
  "serde-aux",
  "serde_bytes",
