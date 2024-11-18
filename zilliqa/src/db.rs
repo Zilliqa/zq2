@@ -205,6 +205,12 @@ impl Db {
             None => (Connection::open_in_memory()?, None),
         };
 
+        // SQLite performance tweaks
+        connection.pragma_update(None, "journal_mode", "wal")?;
+        connection.pragma_update(None, "synchronous", "normal")?;
+        connection.pragma_update(None, "temp_store", "memory")?;
+        connection.pragma_update(None, "journal_size_limit", 1 << 22)?;
+
         connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
 
         Self::ensure_schema(&connection)?;
