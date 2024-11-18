@@ -62,7 +62,7 @@ impl perf::PerfMod for AsyncTransfer {
             }
             1 => {
                 perf::TransactionResult::assert_all_successful(txns)?;
-                let mut nonce = perf.get_balance(&self.feeder.get_zq_hex()?).await?.nonce;
+                let mut nonce = perf.get_nonce(&self.feeder).await?;
                 let mut expect_success = true;
                 // Grab the accounts to send into.
                 for _ in 0..self.config.nr_transfers {

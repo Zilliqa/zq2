@@ -559,6 +559,8 @@ impl Perf {
                 let middleware = self.get_zil_middleware(from).await?;
                 let mut txn = zilliqa_rs::transaction::builder::TransactionBuilder::default()
                     .chain_id(self.zil_chainid().try_into()?)
+                    .gas_price(self.config.gas.gas_price)
+                    .gas_limit(self.config.gas.gas_limit)
                     .pay(amt_zil, to.get_address_as_zil()?);
                 txn = match nonce {
                     Some(val) => txn.nonce(val),
@@ -580,7 +582,8 @@ impl Perf {
                 );
                 let mut txn =
                     ethers::types::TransactionRequest::pay(to.get_address_as_eth()?, amt_eth)
-                        .chain_id(self.eth_chainid());
+                        .chain_id(self.eth_chainid())
+                        .gas_price(self.config.gas.gas_price);
                 txn = match nonce {
                     Some(val) => txn.nonce(val),
                     None => txn,
