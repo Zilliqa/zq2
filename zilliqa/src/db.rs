@@ -239,6 +239,7 @@ impl Db {
                 agg BLOB,
                 is_canonical BOOLEAN NOT NULL) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS idx_blocks_height ON blocks(height);
+            CREATE INDEX IF NOT EXISTS idx_blocks_canonical_height ON blocks(is_canonical, height DESC);
             CREATE TABLE IF NOT EXISTS transactions (
                 tx_hash BLOB NOT NULL PRIMARY KEY,
                 data BLOB NOT NULL) WITHOUT ROWID;
