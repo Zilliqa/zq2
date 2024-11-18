@@ -1229,7 +1229,13 @@ fn get_total_coin_supply_as_int(_params: Params, node: &Arc<Mutex<Node>>) -> Res
 
 // GetMinerInfo
 fn get_miner_info(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo> {
-    todo!("API getminerinfo is not implemented yet");
+    // This endpoint was previously queries by DS block number, which no longer exists, and
+    // neither do DS committees, so it now returns placeholder data for all queries to stay ZQ1 compatible.
+
+    Ok(MinerInfo {
+        dscommittee: vec![],
+        shards: vec![],
+    })
 }
 
 // GetNodeType
