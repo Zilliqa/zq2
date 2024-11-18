@@ -75,6 +75,7 @@ url = "2.5.3"
 zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.1"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
+scopeguard = "1.2.0"
 
 [build-dependencies]
 prost-build = "0.13.3"

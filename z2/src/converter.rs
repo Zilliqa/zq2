@@ -4,8 +4,10 @@ use std::{
     collections::BTreeMap,
     fs,
     path::PathBuf,
-    process::{self, Stdio},
+    process::{self, Child, ExitStatus, Stdio},
+    str::FromStr,
     sync::Arc,
+    thread::sleep,
     time::Duration,
 };
 
@@ -32,18 +34,18 @@ use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
 use zilliqa::{
     block_store::BlockStore,
-    cfg::Config,
+    cfg::{scilla_ext_libs_path_default, Config},
     consensus::Validator,
     contracts,
     crypto::{self, Hash, SecretKey},
     db::Db,
-    exec::BaseFeeCheck,
+    exec::{store_external_libraries, BaseFeeCheck, SCILLA_INVOKE_CHECKER},
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
     schnorr,
-    scilla::{storage_key, ParamValue},
-    state::{contract_addr, Account, Code, State},
+    scilla::{storage_key, CheckOutput, ParamValue, Transition, TransitionParam},
+    state::{contract_addr, Account, Code, ContractInit, State},
     time::SystemTime,
     transaction::{
         EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
@@ -58,12 +60,43 @@ fn create_acc_query_prefix(address: Address) -> String {
 
 const ZQ1_STATE_KEY_SEPARATOR: u8 = 0x16;
 
+fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result<CheckOutput> {
+    let scilla = state.scilla();
+
+    let contract_init = ContractInit::new(init_data.into());
+
+    let scilla_ext_libs_path = scilla_ext_libs_path_default();
+
+    let (ext_libs_dir_in_zq2, ext_libs_dir_in_scilla) = store_external_libraries(
+        state,
+        &scilla_ext_libs_path,
+        contract_init.external_libraries()?,
+    )?;
+
+    let _cleanup_ext_libs_guard = scopeguard::guard((), |_| {
+        // We need to ensure that in any case, the external libs directory will be removed.
+        let _ = std::fs::remove_dir_all(ext_libs_dir_in_zq2.0);
+    });
+
+    scilla
+        .check_contract(
+            code,
+            SCILLA_INVOKE_CHECKER,
+            &contract_init,
+            &ext_libs_dir_in_scilla,
+        )?
+        .map_err(|_| anyhow!("Failed to check contract code"))
+}
+
 #[allow(clippy::type_complexity)]
 fn convert_scilla_state(
     zq1_db: &zq1::Db,
     zq2_db: &Db,
+    state: &State,
+    code: &str,
+    init_data: &[ParamValue],
     address: Address,
-) -> Result<(B256, BTreeMap<String, (String, u8)>)> {
+) -> Result<(B256, BTreeMap<String, (String, u8)>, Vec<Transition>)> {
     let prefix = create_acc_query_prefix(address);
 
     let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
@@ -84,7 +117,7 @@ fn convert_scilla_state(
             .collect::<Vec<_>>();
 
         if chunks.is_empty() {
-            warn!("Malformed key name in contract storage!");
+            warn!("Malformed key name: {} in contract storage!", key);
             continue;
         };
 
@@ -134,6 +167,10 @@ fn convert_scilla_state(
         contract_values.push((field_name.to_owned(), (indices, value)));
     }
 
+    let checker_result = invoke_checker(state, code, init_data)?;
+
+    let transitions = checker_result.contract_info.unwrap().transitions;
+
     let db = Arc::new(zq2_db.state_trie()?);
     let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
 
@@ -144,7 +181,7 @@ fn convert_scilla_state(
 
     let storage_root = contract_trie.root_hash()?;
 
-    Ok((storage_root, field_types))
+    Ok((storage_root, field_types, transitions))
 }
 
 fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<B256> {
@@ -167,7 +204,7 @@ fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<
             .collect::<Vec<_>>();
 
         if chunks.len() < 2 || chunks[0] != evm_prefix {
-            warn!("Malformed key name in contract storage!");
+            warn!("Malformed key name: {} in contract storage!", key);
             continue;
         };
 
@@ -187,7 +224,7 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
 
     let evm_prefix = b"EVM";
 
-    if code.len() > 3 && code[0..3] == evm_prefix[0..3] {
+    if code.len() >= 3 && code[0..3] == evm_prefix[0..3] {
         return Ok(Code::Evm(code[3..].to_vec()));
     }
 
@@ -206,13 +243,68 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
         })?
     };
 
-    Ok(Code::Scilla {
-        code: String::from_utf8(code)
-            .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?,
+    let code = String::from_utf8(code)
+        .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?;
+
+    let scilla_code = Code::Scilla {
+        code: code.clone(),
         init_data: init_data_vec,
         types: BTreeMap::default(),
         transitions: vec![],
-    })
+    };
+
+    Ok(scilla_code)
+}
+
+fn run_scilla_docker() -> Result<Child> {
+    let name = "scilla-server";
+    let child = std::process::Command::new("docker")
+        .arg("run")
+        .arg("--name")
+        .arg(name)
+        .arg("--network")
+        .arg("host")
+        .arg("--init")
+        .arg("--rm")
+        .arg("-v")
+        .arg("/tmp:/scilla_ext_libs")
+        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72")
+        .arg("/scilla/0/bin/scilla-server-http")
+        .spawn()?;
+
+    // Wait for the container to be running.
+    for i in 0.. {
+        let status_output = std::process::Command::new("docker")
+            .arg("inspect")
+            .arg("-f")
+            .arg("{{.State.Status}}")
+            .arg(name)
+            .output()
+            .unwrap();
+        let status = String::from_utf8(status_output.stdout).unwrap();
+        if status.trim() == "running" {
+            break;
+        }
+        if i >= 1200 {
+            panic!("container is still not running");
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    Ok(child)
+}
+
+fn stop_scilla_docker(child: &mut Child) -> Result<ExitStatus> {
+    process::Command::new("docker")
+        .arg("stop")
+        .arg("--signal")
+        .arg("SIGKILL")
+        .arg("scilla-server")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    child
+        .wait()
+        .or(Err(anyhow!("Unable to stop docker container!")))
 }
 
 pub async fn convert_persistence(
@@ -225,8 +317,7 @@ pub async fn convert_persistence(
 ) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
-    )
-    .unwrap();
+    )?;
 
     let (outbound_message_sender, _a) = mpsc::unbounded_channel();
     let (local_message_sender, _b) = mpsc::unbounded_channel();
@@ -252,6 +343,7 @@ pub async fn convert_persistence(
     )?;
 
     if convert_accounts {
+        let mut scilla_docker = run_scilla_docker()?;
         // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
         // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
         let distance_sum: u64 = zq1_db
@@ -298,14 +390,14 @@ pub async fn convert_persistence(
                 Code::Scilla {
                     code, init_data, ..
                 } => {
-                    let (storage_root, types) = convert_scilla_state(&zq1_db, &zq2_db, address)?;
+                    let (storage_root, types, transitions) =
+                        convert_scilla_state(&zq1_db, &zq2_db, &state, &code, &init_data, address)?;
                     (
                         Code::Scilla {
                             code,
                             init_data,
                             types,
-                            // TODO: transitions were not part of zq1 storage (they have to be recreated with scilla-checker)
-                            transitions: vec![],
+                            transitions,
                         },
                         storage_root,
                     )
@@ -324,6 +416,8 @@ pub async fn convert_persistence(
             // Flush any pending changes to db
             let _ = state.root_hash()?;
         }
+
+        stop_scilla_docker(&mut scilla_docker)?;
     }
 
     if !convert_blocks {
