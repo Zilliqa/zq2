@@ -231,11 +231,11 @@ impl Db {
                 gas_limit INTEGER NOT NULL,
                 qc BLOB NOT NULL,
                 agg BLOB,
-                is_canonical BOOLEAN NOT NULL);
+                is_canonical BOOLEAN NOT NULL) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS idx_blocks_height ON blocks(height);
             CREATE TABLE IF NOT EXISTS transactions (
                 tx_hash BLOB NOT NULL PRIMARY KEY,
-                data BLOB NOT NULL);
+                data BLOB NOT NULL) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS receipts (
                 tx_hash BLOB NOT NULL PRIMARY KEY REFERENCES transactions (tx_hash) ON DELETE CASCADE,
                 block_hash BLOB NOT NULL REFERENCES blocks (block_hash), -- the touched_address_index needs to be updated for all the txs in the block, so delete txs first - thus no cascade here
@@ -248,19 +248,19 @@ impl Db {
                 transitions BLOB,
                 accepted INTEGER,
                 errors BLOB,
-                exceptions BLOB);
+                exceptions BLOB) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS block_hash_index ON receipts (block_hash);
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
                 tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
-                PRIMARY KEY (address, tx_hash));
+                PRIMARY KEY (address, tx_hash)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS tip_info (
                 finalized_view INTEGER,
                 view INTEGER,
                 high_qc BLOB,
                 high_qc_updated_at BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
-            CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
             ",
         )?;
         Ok(())
