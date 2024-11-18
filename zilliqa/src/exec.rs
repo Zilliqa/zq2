@@ -20,8 +20,8 @@ use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        map::FxBuildHasher, AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason,
-        HandlerCfg, Output, ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
+        ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, Inspector,
 };
@@ -670,7 +670,7 @@ impl State {
     /// Applies a state delta from an EVM execution to the state.
     pub fn apply_delta_evm(
         &mut self,
-        state: &HashMap<Address, revm::primitives::Account, FxBuildHasher>,
+        state: &revm::primitives::HashMap<Address, revm::primitives::Account>,
     ) -> Result<()> {
         for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
