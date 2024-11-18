@@ -532,7 +532,8 @@ fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 // GetSmartContractState
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: ZilAddress = params.one()?;
+    let mut seq = params.sequence();
+    let address: ZilAddress = seq.next()?;
     let address: Address = address.into();
 
     let node = node.lock().unwrap();
@@ -558,7 +559,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
         unreachable!()
     };
 
-    let is_scilla = account.code.scilla_code_and_init_data().is_some();
+    let is_scilla = account.code.clone().scilla_code_and_init_data().is_some();
     if is_scilla {
         let limit = node.config.state_rpc_limit;
 
@@ -573,16 +574,32 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
             let (var_name, indices) = split_storage_key(&k)?;
             let mut var = result.entry(var_name.clone());
 
-            for index in indices {
+            for index in indices.iter() {
                 let next = var.or_insert_with(|| Value::Object(Default::default()));
                 let Value::Object(next) = next else {
                     unreachable!()
                 };
-                let key: String = serde_json::from_slice(&index)?;
+                let key: String = serde_json::from_slice(index)?;
                 var = next.entry(key.clone());
             }
 
-            var.or_insert(serde_json::from_slice(&v)?);
+            let code = &account.code;
+
+            let field_defs = match code {
+                Code::Scilla { types, .. } => types.clone(),
+                _ => unreachable!(),
+            };
+            let (_, depth) = field_defs.get(&var_name).unwrap();
+            let depth = *depth as usize;
+
+            let convert_result = serde_json::from_slice(&v);
+            if depth > 0 && indices.len() < depth {
+                if convert_result.is_err() {
+                    var.or_insert(Value::Object(Default::default()));
+                }
+            } else {
+                var.or_insert(convert_result?);
+            }
         }
     }
 
@@ -1255,7 +1272,8 @@ fn get_sharding_structure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<(
 // GetSmartContractSubState
 fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let mut seq = params.sequence();
-    let address: Address = seq.next()?;
+    let address: ZilAddress = seq.next()?;
+    let address: Address = address.into();
     let var_name: String = match seq.optional_next()? {
         Some(x) => x,
         None => return get_smart_contract_state(params, node),
@@ -1294,7 +1312,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
         unreachable!()
     };
 
-    if account.code.scilla_code_and_init_data().is_some() {
+    if account.code.clone().scilla_code_and_init_data().is_some() {
         let trie = state.get_account_trie(address)?;
 
         let indicies_encoded = requested_indices
@@ -1315,16 +1333,32 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
             let (var_name, indices) = split_storage_key(&k)?;
             let mut var = result.entry(var_name.clone());
 
-            for index in indices {
+            for index in indices.iter() {
                 let next = var.or_insert_with(|| Value::Object(Default::default()));
                 let Value::Object(next) = next else {
                     unreachable!()
                 };
-                let key: String = serde_json::from_slice(&index)?;
+                let key: String = serde_json::from_slice(index)?;
                 var = next.entry(key.clone());
             }
 
-            var.or_insert(serde_json::from_slice(&v)?);
+            let code = &account.code;
+
+            let field_defs = match code {
+                Code::Scilla { types, .. } => types.clone(),
+                _ => unreachable!(),
+            };
+            let (_, depth) = field_defs.get(&var_name).unwrap();
+            let depth = *depth as usize;
+
+            let convert_result = serde_json::from_slice(&v);
+            if depth > 0 && indices.len() < depth {
+                if convert_result.is_err() {
+                    var.or_insert(Value::Object(Default::default()));
+                }
+            } else {
+                var.or_insert(convert_result?);
+            }
         }
     }
     Ok(result.into())

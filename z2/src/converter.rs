@@ -122,10 +122,10 @@ fn convert_scilla_state(
         };
 
         // We handle this type of keys differently in zq2
-        if chunks[0].contains("_fields_map_depth")
-            || chunks[0].contains("_version")
-            || chunks[0].contains("_hasmap")
-            || chunks[0].contains("_addr")
+        if chunks[0].as_str() == "_fields_map_depth"
+            || chunks[0].as_str() == "_version"
+            || chunks[0].as_str() == "_hasmap"
+            || chunks[0].as_str() == "_addr"
         {
             continue;
         }
