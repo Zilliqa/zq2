@@ -168,6 +168,8 @@ pub struct Consensus {
     early_proposal: Option<EarlyProposal>,
     /// Flag indicating that block creation should be postponed at least until empty_block_timeout is reached
     create_next_block_on_timeout: bool,
+    /// Timestamp of most recent view change
+    view_updated_at: SystemTime,
     pub new_blocks: broadcast::Sender<BlockHeader>,
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
@@ -332,6 +334,7 @@ impl Consensus {
             transaction_pool: Default::default(),
             early_proposal: None,
             create_next_block_on_timeout: false,
+            view_updated_at: SystemTime::now(),
             new_blocks: broadcast::Sender::new(4),
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
@@ -558,7 +561,7 @@ impl Consensus {
 
     fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
         let time_since_last_view_change = SystemTime::now()
-            .duration_since(self.get_view_updated_at()?)
+            .duration_since(self.view_updated_at)
             .unwrap_or_default()
             .as_millis() as u64;
         let exponential_backoff_timeout = self.exponential_backoff_timeout(self.get_view()?);
@@ -2541,12 +2544,14 @@ impl Consensus {
     }
 
     fn set_view(&mut self, view: u64) -> Result<()> {
-        if !self.db.set_view(view)? {
+        if self.db.set_view(view)? {
+            self.view_updated_at = SystemTime::now();
+        } else {
             warn!(
                 "Tried to set view to lower or same value - this is incorrect. value: {}",
                 view
             );
-        };
+        }
         Ok(())
     }
 
@@ -2554,13 +2559,6 @@ impl Consensus {
         Ok(self.db.get_view()?.unwrap_or_else(|| {
             warn!("no view found in table. Defaulting to 0");
             0
-        }))
-    }
-
-    pub fn get_view_updated_at(&self) -> Result<SystemTime> {
-        Ok(self.db.get_view_updated_at()?.unwrap_or_else(|| {
-            warn!("no view timestamp found. Defaulting to now");
-            SystemTime::now()
         }))
     }
 

@@ -257,7 +257,6 @@ impl Db {
             CREATE TABLE IF NOT EXISTS tip_info (
                 finalized_view INTEGER,
                 view INTEGER,
-                view_updated_at BLOB,
                 high_qc BLOB,
                 high_qc_updated_at BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
@@ -506,11 +505,8 @@ impl Db {
     /// Write view and timestamp to table if view is larger than current. Return true if write was successful
     pub fn set_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
         let res = sqlite_tx
-            .execute("INSERT INTO tip_info (view, view_updated_at) VALUES (:view, :timestamp) ON CONFLICT(_single_row) DO UPDATE SET view = :view, view_updated_at = :timestamp WHERE tip_info.view < :view",
-                    named_params! {
-                        ":view": view,
-                        ":timestamp": SystemTimeSqlable(SystemTime::now())
-                    })?;
+            .execute("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view < ?1",
+                    [view])?;
         Ok(res != 0)
     }
 
@@ -526,19 +522,6 @@ impl Db {
             .query_row("SELECT view FROM tip_info", (), |row| row.get(0))
             .optional()
             .unwrap_or(None))
-    }
-
-    pub fn get_view_updated_at(&self) -> Result<Option<SystemTime>> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .query_row("SELECT view_updated_at FROM tip_info", (), |row| {
-                row.get::<_, SystemTimeSqlable>(0)
-            })
-            .optional()
-            .unwrap_or(None)
-            .map(Into::<SystemTime>::into))
     }
 
     // Deliberately not named get_highest_block_number() because there used to be one
