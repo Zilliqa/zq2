@@ -1371,10 +1371,10 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
 
 // GetSoftConfirmedTransaction
 fn get_soft_confirmed_transaction(
-    _params: Params,
-    _node: &Arc<Mutex<Node>>,
+    params: Params,
+    node: &Arc<Mutex<Node>>,
 ) -> Result<GetTxResponse> {
-    todo!("API getsoftconfirmedtransaction is not implemented yet");
+    get_transaction(params, node)
 }
 
 // GetStateProof
