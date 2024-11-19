@@ -1,4 +1,4 @@
-use std::{ops::Deref, str::FromStr, time::Duration};
+use std::{net::Ipv4Addr, ops::Deref, str::FromStr, time::Duration};
 
 use alloy::primitives::Address;
 use libp2p::{Multiaddr, PeerId};
@@ -34,6 +34,11 @@ pub struct Config {
     /// The base address of the OTLP collector. If not set, metrics will not be exported.
     #[serde(default)]
     pub otlp_collector_endpoint: Option<String>,
+    /// The subnet on which "real" addresses are found. Set to 0 to ignore.
+    /// We do this because in z2, at least, and probabliy elsewhere, we need to bypass filtering of private
+    /// address ranges so that we can get any addresses at all for local services.
+    /// (addr, mask)
+    pub listening_subnet: Option<(Ipv4Addr, Ipv4Addr)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,7 +144,7 @@ pub fn block_request_limit_default() -> usize {
 }
 
 pub fn max_blocks_in_flight_default() -> u64 {
-    1000
+    20
 }
 
 pub fn block_request_batch_size_default() -> u64 {

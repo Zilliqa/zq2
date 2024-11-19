@@ -1,0 +1,5 @@
+#! /bin/bash
+# Use this as the value of ZQ2_SCRIPT to enable oprofile
+# You will also want to set [profile.release] debug = 1 in Cargo.toml
+# Args passed are (binary) (rest)
+valgrind --tool=dhat $*

@@ -99,7 +99,7 @@ async fn block_production(mut network: Network) {
                     .map_or(0, |b| b.number())
                     >= 5
             },
-            50,
+            100,
         )
         .await
         .unwrap();

@@ -173,7 +173,8 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
         stake.amount, stake.validator.peer_id
     );
 
-    let network_api = stake.chain_name.get_endpoint().unwrap();
+    let network_api = std::env::var("ZQ2_API_URL")
+        .unwrap_or(stake.chain_name.get_endpoint().unwrap().to_string());
     let provider = Provider::<Http>::try_from(network_api)?;
 
     let chain_id = provider.get_chainid().await?;

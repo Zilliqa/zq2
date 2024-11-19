@@ -8,11 +8,11 @@ use crate::github;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NetworkConfig {
-    pub(super) name: String,
-    pub(super) eth_chain_id: u64,
-    pub(super) project_id: String,
-    pub(super) roles: Vec<NodeRole>,
-    pub(super) versions: HashMap<String, String>,
+    pub name: String,
+    pub eth_chain_id: u64,
+    pub project_id: String,
+    pub roles: Vec<NodeRole>,
+    pub versions: HashMap<String, String>,
 }
 
 impl NetworkConfig {

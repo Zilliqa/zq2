@@ -34,6 +34,7 @@ use crate::{
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::Db,
+    director::Director,
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
@@ -157,6 +158,7 @@ pub struct Node {
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
+    pub director: Director,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -206,6 +208,7 @@ impl Node {
             chain_id: ChainId::new(config.eth_chain_id),
             consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
             peer_num,
+            director: Director::new()?,
         };
         Ok(node)
     }
@@ -236,6 +239,10 @@ impl Node {
         response_channel: ResponseChannel,
     ) -> Result<()> {
         debug!(%from, to = %self.peer_id, %id, %message, "handling request");
+        if !self.director.is_allowed(id, &from)? {
+            debug!("Ignoring request");
+            return Ok(());
+        }
         match message {
             ExternalMessage::Vote(m) => {
                 if let Some((block, transactions)) = self.consensus.vote(*m)? {
@@ -339,12 +346,23 @@ impl Node {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
+        if !self
+            .director
+            .is_allowed(&format!("{:?}", failure.request_id), &failure.peer)?
+        {
+            trace!("Ignoring message failure");
+            return Ok(());
+        }
         self.consensus.report_outgoing_message_failure(failure)?;
         Ok(())
     }
 
     pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
+        if !self.director.is_allowed("Unknown", &from)? {
+            trace!("Ignoring response");
+            return Ok(());
+        }
         match message {
             ExternalMessage::BlockResponse(m) => self.handle_block_response(from, m)?,
             ExternalMessage::Acknowledgement => {}
@@ -929,6 +947,7 @@ impl Node {
             "block_store::handle_block_response - received blocks response of length {}",
             response.proposals.len()
         );
+
         self.consensus
             .receive_block_availability(from, &response.availability)?;
 

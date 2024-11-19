@@ -19,6 +19,7 @@ license = "MIT OR Apache-2.0"
 # Makes flamegraphs more readable.
 # https://doc.rust-lang.org/cargo/reference/manifest.html#the-profile-sections
 debug = true
+# Set to false for profiling data.
 lto = "thin"
 
 [profile.release-stripped]
