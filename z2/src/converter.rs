@@ -65,6 +65,9 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
     let scilla = state.scilla();
 
     let contract_init = ContractInit::new(init_data.into());
+    println!("Scilla initialized: {:?}", scilla);
+    println!("ContractInit created: {:?}", contract_init);
+    println!("Contract code to be checked:\n{}", code);
 
     let scilla_ext_libs_path = scilla_ext_libs_path_default();
 
@@ -73,6 +76,10 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
         &scilla_ext_libs_path,
         contract_init.external_libraries()?,
     )?;
+    println!(
+        "External libraries stored. ZQ2 path: {:?}, Scilla path: {:?}",
+        ext_libs_dir_in_zq2, ext_libs_dir_in_scilla
+    );
 
     let _cleanup_ext_libs_guard = scopeguard::guard((), |_| {
         // We need to ensure that in any case, the external libs directory will be removed.
