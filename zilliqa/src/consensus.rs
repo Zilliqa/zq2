@@ -33,6 +33,7 @@ use crate::{
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
+    range_map::RangeMap,
     state::State,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -387,6 +388,39 @@ impl Consensus {
                 );
                 consensus.db.set_view(min_view_since_high_qc_updated)?;
             }
+
+            // Remind block_store of our peers and request any potentially missing blocks
+            let high_block = consensus
+                .block_store
+                .get_block(high_qc.block_hash)?
+                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
+
+            let executed_block = BlockHeader {
+                number: high_block.header.number + 1,
+                ..Default::default()
+            };
+            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
+
+            // Grab last seen committee's peerIds in case others also went offline
+            let committee = state_at.get_stakers(executed_block)?;
+            let recent_peer_ids: Vec<_> = committee
+                .iter()
+                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
+                .filter_map(|&peer_public_key| {
+                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
+                })
+                .collect();
+
+            consensus
+                .block_store
+                .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
+            // It is likley that we missed the most recent proposal. Request it now
+            consensus
+                .block_store
+                .request_blocks(&RangeMap::from_closed_interval(
+                    high_block.view(),
+                    high_block.view() + 1,
+                ))?;
         }
 
         Ok(consensus)
