@@ -85,15 +85,18 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
         // We need to ensure that in any case, the external libs directory will be removed.
         let _ = std::fs::remove_dir_all(ext_libs_dir_in_zq2.0);
     });
-
+    // Call Scilla's check_contract
     scilla
         .check_contract(
             code,
             SCILLA_INVOKE_CHECKER,
             &contract_init,
             &ext_libs_dir_in_scilla,
-        )?
-        .map_err(|_| anyhow!("Failed to check contract code"))
+        )
+        .and_then(|inner_result| {
+            inner_result.map_err(|err| anyhow!("Contract check error: {:?}", err))
+        })
+        .map_err(|e| anyhow!("Failed to check contract code: {:?}", e))
 }
 
 #[allow(clippy::type_complexity)]
