@@ -822,6 +822,7 @@ async fn get_transaction(mut network: Network) {
     assert_eq!(response, response_soft_confirmed);
 }
 
+#[zilliqa_macros::test]
 async fn create_transaction_high_gas_limit(mut network: Network) {
     let wallet = network.random_wallet().await;
 
