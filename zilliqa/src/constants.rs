@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::transaction::EvmGas;
+use crate::transaction::{EvmGas, ScillaGas};
 
 // How big data slot a transaction can use
 pub const EVM_TX_SLOT_IN_BYTES: usize = 32 * 1024;
@@ -63,3 +63,9 @@ pub const MAX_PENDING_BLOCK_REQUESTS_PER_PEER: usize = 16;
 /// set small enough to avoid serious database load, but large enough to jump any
 /// plausible fork reasonably quickly.
 pub const EXAMINE_BLOCKS_PER_FORK_COUNT: usize = 16;
+
+/// Gas costs.
+
+pub const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
+pub const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
+pub const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);

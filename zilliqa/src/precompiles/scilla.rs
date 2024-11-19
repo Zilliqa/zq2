@@ -24,7 +24,8 @@ use scilla_parser::{
 
 use crate::{
     cfg::scilla_ext_libs_path_default,
-    exec::{scilla_call, PendingState, ScillaError, SCILLA_INVOKE_RUNNER},
+    constants::SCILLA_INVOKE_RUNNER,
+    exec::{scilla_call, PendingState, ScillaError},
     inspector::ScillaInspector,
     state::Code,
     transaction::{EvmGas, ZilAmount},
