@@ -33,6 +33,7 @@ use crate::{
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
+    range_map::RangeMap,
     state::State,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -387,6 +388,37 @@ impl Consensus {
                 );
                 consensus.db.set_view(min_view_since_high_qc_updated)?;
             }
+
+            // Remind block_store of our peers and request any potentially missing blocks
+            let high_block = consensus
+                .block_store
+                .get_block(high_qc.block_hash)?
+                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
+
+            // Grab a few  peerIds in case others also went offline
+            let mut recent_peer_ids = vec![];
+            for view in (high_block.view().saturating_sub(5)..=high_block.view()).rev() {
+                if view < 1 {
+                    break;
+                }
+                if let Some(block) = consensus.block_store.get_block_by_view(view)? {
+                    if let Some(leader) = consensus.leader_at_block(&block, view) {
+                        if leader.peer_id != consensus.peer_id() {
+                            recent_peer_ids.push(leader.peer_id);
+                        }
+                    };
+                }
+            }
+            consensus
+                .block_store
+                .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
+            // It is likley that we missed the most recent proposal. Request it now
+            consensus
+                .block_store
+                .request_blocks(&RangeMap::from_closed_interval(
+                    high_block.view(),
+                    high_block.view() + 1,
+                ))?;
         }
 
         Ok(consensus)
