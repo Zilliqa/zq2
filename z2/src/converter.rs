@@ -89,7 +89,7 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
     scilla
         .check_contract(
             code,
-            SCILLA_INVOKE_CHECKER,
+            ScillaGas(10000000),
             &contract_init,
             &ext_libs_dir_in_scilla,
         )
