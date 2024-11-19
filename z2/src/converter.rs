@@ -343,6 +343,7 @@ pub async fn convert_persistence(
         block_store,
     )?;
 
+    let convert_accounts = true;
     if convert_accounts {
         let mut scilla_docker = run_scilla_docker()?;
         // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
@@ -417,6 +418,8 @@ pub async fn convert_persistence(
 
         stop_scilla_docker(&mut scilla_docker)?;
     }
+
+    let convert_blocks = true;
 
     if !convert_blocks {
         println!("Accounts converted. Skipping blocks.");
