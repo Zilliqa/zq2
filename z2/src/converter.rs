@@ -21,6 +21,7 @@ use clap::{Parser, Subcommand};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use ethabi::Token;
 use git2::Repository;
+use hex::FromHex;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
 use libp2p::PeerId;
@@ -346,76 +347,73 @@ pub async fn convert_persistence(
         let mut scilla_docker = run_scilla_docker()?;
         // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
         // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
-        let distance_sum: u64 = zq1_db
-            .accounts()
-            .map(|(addr, _)| addr)
-            .take(100)
-            .tuple_windows()
-            .map(|(a, b)| {
-                // Downsample the addresses to 8 bytes, treating them as `u64`s, for ease of computation.
-                let a = u64::from_be_bytes(a.as_slice()[..8].try_into().unwrap());
-                let b = u64::from_be_bytes(b.as_slice()[..8].try_into().unwrap());
+        // let distance_sum: u64 = zq1_db
+        //     .accounts()
+        //     .map(|(addr, _)| addr)
+        //     .take(100)
+        //     .tuple_windows()
+        //     .map(|(a, b)| {
+        //         // Downsample the addresses to 8 bytes, treating them as `u64`s, for ease of computation.
+        //         let a = u64::from_be_bytes(a.as_slice()[..8].try_into().unwrap());
+        //         let b = u64::from_be_bytes(b.as_slice()[..8].try_into().unwrap());
 
-                b - a
-            })
-            .sum();
-        let average_distance = distance_sum as f64 / 99.;
-        let address_count = ((u64::MAX as f64) / average_distance) as u64;
+        //         b - a
+        //     })
+        //     .sum();
+        // let average_distance = distance_sum as f64 / 99.;
+        // let address_count = ((u64::MAX as f64) / average_distance) as u64;
 
-        let progress = ProgressBar::new(address_count)
-            .with_style(style.clone())
-            .with_message("collect accounts")
-            .with_finish(ProgressFinish::AndLeave);
+        // let progress = ProgressBar::new(address_count)
+        //     .with_style(style.clone())
+        //     .with_message("collect accounts")
+        //     .with_finish(ProgressFinish::AndLeave);
 
-        let accounts: Vec<_> = zq1_db.accounts().progress_with(progress).collect();
+        // let accounts: Vec<_> = zq1_db.accounts().progress_with(progress).collect();
 
-        let progress = ProgressBar::new(accounts.len() as u64)
-            .with_style(style.clone())
-            .with_message("convert accounts")
-            .with_finish(ProgressFinish::AndLeave);
+        // let progress = ProgressBar::new(accounts.len() as u64)
+        //     .with_style(style.clone())
+        //     .with_message("convert accounts")
+        //     .with_finish(ProgressFinish::AndLeave);
+        let address = Address::from_hex("0x7003e608317e39d960a7569492df2c051c16fa30")?;
+        let zq1_account = zq1_db.get_account(address)?.unwrap();
 
-        for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
-            if address.is_zero() {
-                continue;
+        let zq1_account = zq1::Account::from_proto(zq1_account)?;
+
+        let code = get_contract_code(&zq1_db, address)?;
+
+        let (code, storage_root) = match code {
+            Code::Evm(evm_code) if !evm_code.is_empty() => {
+                let storage_root = convert_evm_state(&zq1_db, &zq2_db, address)?;
+                (Code::Evm(evm_code), storage_root)
             }
-            let zq1_account = zq1::Account::from_proto(zq1_account)?;
+            Code::Scilla {
+                code, init_data, ..
+            } => {
+                let (storage_root, types, transitions) =
+                    convert_scilla_state(&zq1_db, &zq2_db, &state, &code, &init_data, address)?;
+                (
+                    Code::Scilla {
+                        code,
+                        init_data,
+                        types,
+                        transitions,
+                    },
+                    storage_root,
+                )
+            }
+            _ => (code, EMPTY_ROOT_HASH),
+        };
 
-            let code = get_contract_code(&zq1_db, address)?;
+        let account = Account {
+            nonce: zq1_account.nonce,
+            balance: zq1_account.balance * 10u128.pow(6),
+            code,
+            storage_root,
+        };
 
-            let (code, storage_root) = match code {
-                Code::Evm(evm_code) if !evm_code.is_empty() => {
-                    let storage_root = convert_evm_state(&zq1_db, &zq2_db, address)?;
-                    (Code::Evm(evm_code), storage_root)
-                }
-                Code::Scilla {
-                    code, init_data, ..
-                } => {
-                    let (storage_root, types, transitions) =
-                        convert_scilla_state(&zq1_db, &zq2_db, &state, &code, &init_data, address)?;
-                    (
-                        Code::Scilla {
-                            code,
-                            init_data,
-                            types,
-                            transitions,
-                        },
-                        storage_root,
-                    )
-                }
-                _ => (code, EMPTY_ROOT_HASH),
-            };
-
-            let account = Account {
-                nonce: zq1_account.nonce,
-                balance: zq1_account.balance * 10u128.pow(6),
-                code,
-                storage_root,
-            };
-
-            state.save_account(address, account)?;
-            // Flush any pending changes to db
-            let _ = state.root_hash()?;
-        }
+        state.save_account(address, account)?;
+        // Flush any pending changes to db
+        let _ = state.root_hash()?;
 
         stop_scilla_docker(&mut scilla_docker)?;
     }
