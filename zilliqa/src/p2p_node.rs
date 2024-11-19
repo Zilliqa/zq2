@@ -3,6 +3,7 @@
 use std::{
     collections::HashMap,
     iter,
+    ops::BitAnd,
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
@@ -252,7 +253,17 @@ impl P2pNode {
                             for addr in listen_addrs {
                                 // If the node is advertising a non-global address, ignore it.
                                 let is_non_global = addr.iter().any(|p| match p {
-                                    Protocol::Ip4(addr) => addr.is_loopback() || addr.is_private(),
+                                    Protocol::Ip4(addr) => {
+                                        if let Some((net, mask)) = self.config.listening_subnet {
+                                            let left = net.bitand(mask);
+                                            let right = addr.bitand(mask);
+                                            if left == right {
+                                                info!("p2p_identify: {addr:?} is in the listening subnet - passing");
+                                                return false;
+                                            }
+                                        }
+                                        addr.is_loopback() || addr.is_private()
+                                    },
                                     Protocol::Ip6(addr) => addr.is_loopback(),
                                     _ => false,
                                 });
