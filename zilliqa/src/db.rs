@@ -206,11 +206,38 @@ impl Db {
         };
 
         // SQLite performance tweaks
-        connection.pragma_update(None, "journal_mode", "wal")?;
-        connection.pragma_update(None, "synchronous", "normal")?;
-        connection.pragma_update(None, "temp_store", "memory")?;
-        connection.pragma_update(None, "journal_size_limit", 1 << 22)?;
 
+        // large page_size is more compact/efficient
+        connection.pragma_update(None, "page_size", 1 << 15)?;
+        let page_size: i32 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
+
+        // reduced non-critical fsync() calls
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        let synchronous: i8 = connection.pragma_query_value(None, "synchronous", |r| r.get(0))?;
+
+        // store temporary tables/indices in-memory
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
+        let temp_store: i8 = connection.pragma_query_value(None, "temp_store", |r| r.get(0))?;
+
+        // general read/write performance improvement
+        let journal_mode: String =
+            connection.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
+
+        // limit the size of the journal
+        let journal_size_limit: i32 =
+            connection
+                .pragma_update_and_check(None, "journal_size_limit", 1 << 22, |r| r.get(0))?;
+
+        tracing::info!(
+            ?journal_mode,
+            ?journal_size_limit,
+            ?synchronous,
+            ?temp_store,
+            ?page_size,
+            "PRAGMA"
+        );
+
+        // Add tracing - logs all SQL statements
         connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
 
         Self::ensure_schema(&connection)?;
