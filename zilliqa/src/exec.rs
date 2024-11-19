@@ -371,7 +371,7 @@ impl DatabaseRef for &State {
 pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
 
 pub const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
-pub const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
+pub const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(2000000);
 pub const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);
 
 const SPEC_ID: SpecId = SpecId::SHANGHAI;
