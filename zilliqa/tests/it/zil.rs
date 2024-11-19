@@ -603,9 +603,8 @@ async fn get_transaction(mut network: Network) {
     let (secret_key, _address) = zilliqa_account(&mut network).await;
 
     // Define the recipient address
-    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
-        .parse()
-        .unwrap();
+    let address_string_w_prefix = "0x00000000000000000000000000000000deadbeef";
+    let to_addr: H160 = address_string_w_prefix.parse().unwrap();
 
     // Send a transaction
     let (_contract_address, returned_transaction) = send_transaction(
@@ -655,6 +654,27 @@ async fn get_transaction(mut network: Network) {
         response["senderPubKey"].as_str().unwrap(),
         format!("0x{}", hex::encode(secret_key.public_key().to_sec1_bytes()))
     );
+
+    let parsed_response = zilliqa::api::types::zil::GetTxResponse::deserialize(&response)
+        .expect("Failed to deserialize response");
+
+    // Verify the transaction details
+    assert_eq!(parsed_response.nonce, 1);
+    // Logic should be case independent
+    assert_eq!(
+        parsed_response.to_addr.to_string().to_lowercase(),
+        address_string_w_prefix
+    );
+    assert_eq!(parsed_response.amount.to_string(), "200000000000000");
+    assert_eq!(parsed_response.gas_limit.0, 50000);
+
+    let response_soft_confirmed: Value = wallet
+        .provider()
+        .request("GetSoftConfirmedTransaction", [transaction_id])
+        .await
+        .expect("Failed to call GetTransaction API");
+
+    assert_eq!(response, response_soft_confirmed);
 }
 
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
@@ -2255,11 +2275,6 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         "foobar"
     );
     assert!(substate2.get("welcome_msg").is_none());
-}
-
-#[allow(dead_code)]
-async fn get_soft_confirmed_transaction(mut _network: Network) {
-    todo!();
 }
 
 #[allow(dead_code)]
