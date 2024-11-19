@@ -270,7 +270,7 @@ async fn send_transaction_for_status(
     let mut request = json!({
         "version": version,
         "nonce": nonce,
-        "toAddr": to_addr,
+        "toAddr": Address::from_slice(to_addr.as_bytes()).to_checksum(None),
         "amount": amount.to_string(),
         "pubKey": hex::encode(public_key.to_sec1_bytes()),
         "gasPrice": gas_price.to_string(),
@@ -725,7 +725,7 @@ async fn create_transaction_errors(mut network: Network) {
             &mut network,
             &no_funds_secret_key,
             1,
-            to_addr,
+            ToAddr::Address(to_addr),
             200u128 * 10u128.pow(12),
             50_000,
             None,
