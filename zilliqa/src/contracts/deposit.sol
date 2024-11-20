@@ -144,6 +144,19 @@ struct InitialStaker {
 }
 
 contract Deposit {
+
+    // Emitted to inform that a new staker identified by `blsPubKey`
+    // is going to be added to the committee `atFutureBlock`
+    event StakerAdded(bytes blsPubKey, uint256 atFutureBlock);
+
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // is going to be removed from the committee `atFutureBlock`
+    event StakerRemoved(bytes blsPubKey, uint256 atFutureBlock);
+
+    // Emitted to inform that the deposited stake of the staker
+    // identified by `blsPubKey` is going to change `atFutureBlock`
+    event StakeChanged(bytes blsPubKey, uint256 atFutureBlock);
+
     // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
     // is stored at index (currentEpoch() % 3).
     Committee[3] _committee;
@@ -226,6 +239,8 @@ contract Deposit {
                 currentCommittee.stakerKeys.length +
                 1;
             currentCommittee.stakerKeys.push(blsPubKey);
+
+            emit StakerAdded(blsPubKey, block.number);
         }
     }
 
@@ -421,6 +436,13 @@ contract Deposit {
         }
     }
 
+    // Returns the next block number at which new stakers are added,
+    // existing ones removed and/or deposits of existing stakers change
+    function nextUpdate() public view returns(uint256 blockNumber) {
+        if (latestComputedEpoch > currentEpoch())
+            blockNumber = latestComputedEpoch * blocksPerEpoch;
+    }
+
     // keep in-sync with zilliqa/src/precompiles.rs
     function _popVerify(
         bytes memory pubkey,
@@ -495,6 +517,8 @@ contract Deposit {
             futureCommittee.stakerKeys.length +
             1;
         futureCommittee.stakerKeys.push(blsPubKey);
+
+        emit StakerAdded(blsPubKey, nextUpdate());
     }
 
     function depositTopup() public payable {
@@ -512,6 +536,8 @@ contract Deposit {
         );
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[stakerKey].balance += msg.value;
+
+        emit StakeChanged(stakerKey, nextUpdate());
     }
 
     function unstake(uint256 amount) public {
@@ -559,6 +585,8 @@ contract Deposit {
             delete futureCommittee.stakers[stakerKey];
 
             // Note that we leave the staker in `_stakersMap` forever.
+
+            emit StakerRemoved(stakerKey, nextUpdate());
         } else {
             require(
                 futureCommittee.stakers[stakerKey].balance - amount >=
@@ -569,6 +597,8 @@ contract Deposit {
             // Partial unstake. The staker stays in the committee, but with a reduced stake.
             futureCommittee.totalStake -= amount;
             futureCommittee.stakers[stakerKey].balance -= amount;
+
+            emit StakeChanged(stakerKey, nextUpdate());
         }
 
         // Enqueue the withdrawal for this staker.
