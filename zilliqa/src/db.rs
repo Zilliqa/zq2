@@ -1160,6 +1160,8 @@ impl eth_trie::DB for TrieStorage {
                 [key],
                 |row| row.get(0),
             )
+            // decompress stored value
+            .map(|v: Vec<_>| zstd::bulk::decompress(v.as_ref(), v.len()).unwrap())
             .optional()?;
 
         let mut cache = self.cache.lock().unwrap();
@@ -1173,9 +1175,11 @@ impl eth_trie::DB for TrieStorage {
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
+        let zvalue = zstd::bulk::compress(value.as_ref(), zstd::DEFAULT_COMPRESSION_LEVEL).unwrap();
+        // compress value for storage
         self.db.lock().unwrap().execute(
             "INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)",
-            (key, &value),
+            (key, &zvalue),
         )?;
         let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
         Ok(())
@@ -1206,7 +1210,17 @@ impl eth_trie::DB for TrieStorage {
                 .collect();
             let query =
                 format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
-            let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
+
+            // compress all values for storage
+            let zvalues = values
+                .iter()
+                .map(|v| zstd::bulk::compress(v, zstd::DEFAULT_COMPRESSION_LEVEL).unwrap())
+                .collect_vec();
+
+            let params = keys
+                .iter()
+                .zip(zvalues.as_slice())
+                .flat_map(|(k, v)| [k, v]);
             self.db
                 .lock()
                 .unwrap()
