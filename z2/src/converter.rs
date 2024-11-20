@@ -66,8 +66,9 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
 
     let contract_init = ContractInit::new(init_data.into());
     println!("Scilla initialized: {:?}", scilla);
-    println!("ContractInit created: {:?}", contract_init);
-    println!("Contract code to be checked:\n{}", code);
+    println!("ContractInit : {:?}", contract_init);
+    println!("Contract code:\n{}", code);
+
 
     let scilla_ext_libs_path = scilla_ext_libs_path_default();
 
@@ -108,7 +109,7 @@ fn convert_scilla_state(
     init_data: &[ParamValue],
     address: Address,
 ) -> Result<(B256, BTreeMap<String, (String, u8)>, Vec<Transition>)> {
-    println!("Processing contract at address: {:?}", address);
+    println!("contract address: {:?}", address);
 
     let prefix = create_acc_query_prefix(address);
 
@@ -387,7 +388,8 @@ pub async fn convert_persistence(
         //     .with_style(style.clone())
         //     .with_message("convert accounts")
         //     .with_finish(ProgressFinish::AndLeave);
-        let address = Address::from_hex("0x7003e608317e39d960a7569492df2c051c16fa30")?;
+        // let address = Address::from_hex("0x7003e608317e39d960a7569492df2c051c16fa30")?;
+        let address = Address::from_hex("0x01656a32395b5c74357c540f6116e89631723a5d")?;
         let zq1_account = zq1_db.get_account(address)?.unwrap();
 
         let zq1_account = zq1::Account::from_proto(zq1_account)?;
