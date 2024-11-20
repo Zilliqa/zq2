@@ -69,7 +69,6 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
     println!("ContractInit : {:?}", contract_init);
     println!("Contract code:\n{}", code);
 
-
     let scilla_ext_libs_path = scilla_ext_libs_path_default();
 
     let (ext_libs_dir_in_zq2, ext_libs_dir_in_scilla) = store_external_libraries(
@@ -181,10 +180,6 @@ fn convert_scilla_state(
         contract_values.push((field_name.to_owned(), (indices, value)));
     }
 
-    let checker_result = invoke_checker(state, code, init_data)?;
-
-    let transitions = checker_result.contract_info.unwrap().transitions;
-
     let db = Arc::new(zq2_db.state_trie()?);
     let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
 
@@ -194,6 +189,23 @@ fn convert_scilla_state(
     }
 
     let storage_root = contract_trie.root_hash()?;
+
+    let checker_result = match invoke_checker(state, code, init_data) {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!(
+                "Checker failed for address {:?} with error: {:?}",
+                address, err
+            );
+            // Return default values
+            return Ok((
+                storage_root,
+                field_types,
+                Vec::new(), // Default empty transitions
+            ));
+        }
+    };
+    let transitions = checker_result.contract_info.unwrap().transitions;
 
     Ok((storage_root, field_types, transitions))
 }
