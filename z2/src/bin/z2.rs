@@ -241,20 +241,7 @@ struct ConvertConfigStruct {
     zq2_config_file: String,
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
-    #[clap(flatten)]
-    convert_type_group: ConvertTypeGroup,
 }
-#[derive(Args, Debug)]
-#[group(required = true, multiple = false)]
-pub struct ConvertTypeGroup {
-    #[clap(long)]
-    #[arg(default_value_t = false)]
-    convert_accounts: bool,
-    #[clap(long)]
-    #[arg(default_value_t = false)]
-    convert_blocks: bool,
-}
-
 #[derive(Args, Debug)]
 struct ConverterPrintTransactionConfigStruct {
     zq1_persistence_directory: String,
@@ -925,8 +912,6 @@ async fn main() -> Result<()> {
                     &arg.zq2_data_dir,
                     &arg.zq2_config_file,
                     arg.secret_key,
-                    arg.convert_type_group.convert_accounts,
-                    arg.convert_type_group.convert_blocks,
                 )
                 .await?;
                 Ok(())
