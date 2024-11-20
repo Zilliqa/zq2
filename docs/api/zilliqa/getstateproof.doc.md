@@ -8,7 +8,7 @@ state,proof,get
 
 # Description
 
-This API returns empty in Zilliqa 2, since proof mechanisms have changed
+This API returns the state proof for the corresponding TxBlock for a smart contract.
 
 ## Proof Parameters
 
