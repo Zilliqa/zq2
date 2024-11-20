@@ -224,6 +224,7 @@ variable "alternative_subdomain" {
   description = "The alternative subdomain for the public endpoint certificates"
   type        = string
   nullable    = true
+  default     = ""
 }
 
 variable "chain_name" {
