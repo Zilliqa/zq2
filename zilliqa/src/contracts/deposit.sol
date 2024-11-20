@@ -144,7 +144,6 @@ struct InitialStaker {
 }
 
 contract Deposit {
-
     // Emitted to inform that a new staker identified by `blsPubKey`
     // is going to be added to the committee `atFutureBlock`
     event StakerAdded(bytes blsPubKey, uint256 atFutureBlock);
@@ -438,7 +437,7 @@ contract Deposit {
 
     // Returns the next block number at which new stakers are added,
     // existing ones removed and/or deposits of existing stakers change
-    function nextUpdate() public view returns(uint256 blockNumber) {
+    function nextUpdate() public view returns (uint256 blockNumber) {
         if (latestComputedEpoch > currentEpoch())
             blockNumber = latestComputedEpoch * blocksPerEpoch;
     }
