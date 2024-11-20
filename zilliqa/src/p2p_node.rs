@@ -15,6 +15,7 @@ use libp2p::{
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
     kad::{self, store::MemoryStore},
+    mdns,
     multiaddr::{Multiaddr, Protocol},
     request_response::{self, OutboundFailure, ProtocolSupport},
     swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
@@ -45,6 +46,7 @@ type DirectMessage = (u64, ExternalMessage);
 struct Behaviour {
     request_response: request_response::cbor::Behaviour<DirectMessage, ExternalMessage>,
     gossipsub: gossipsub::Behaviour,
+    mdns: mdns::tokio::Behaviour,
     autonat: libp2p::autonat::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
@@ -117,6 +119,7 @@ impl P2pNode {
                             .map_err(|e| anyhow!(e))?,
                     )
                     .map_err(|e| anyhow!(e))?,
+                    mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
                     autonat: autonat::Behaviour::new(peer_id, Default::default()),
                     identify: identify::Behaviour::new(identify::Config::new(
                         "/ipfs/id/1.0.0".to_owned(),
@@ -247,6 +250,18 @@ impl P2pNode {
                     match event {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
+                            for (peer_id, addr) in list {
+                                info!(%peer_id, %addr, "discovered peer via mDNS");
+                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                                self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                            }
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
+                            for (peer_id, addr) in list {
+                                self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
+                            }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { listen_addrs, .. }, peer_id, .. })) => {
                             for addr in listen_addrs {
