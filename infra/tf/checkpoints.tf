@@ -90,7 +90,7 @@ resource "google_compute_managed_ssl_certificate" "checkpoint" {
   name = format("%s-checkpoint-cdn", var.chain_name)
 
   managed {
-    domains = var.alternative_subdomain == null ? [format("checkpoints.%s", var.subdomain)] : concat([format("checkpoints.%s", var.subdomain)], [format("checkpoints.%s", var.alternative_subdomain)])
+    domains = var.alternative_subdomain == "" ? [format("checkpoints.%s", var.subdomain)] : concat([format("checkpoints.%s", var.subdomain)], [format("checkpoints.%s", var.alternative_subdomain)])
   }
 }
 
