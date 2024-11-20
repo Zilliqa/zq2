@@ -114,30 +114,32 @@ impl TxBlockVerbose {
         scalar[31] = 1;
         TxBlockVerbose {
             header: TxBlockVerboseHeader {
-                version: 1,                                    // To match ZQ1
-                gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
-                gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
-                rewards: 0,
-                txn_fees: 0,
-                prev_block_hash: block.parent_hash().into(),
-                block_num: block.number(),
-                timestamp: block
-                    .timestamp()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_micros(),
-                mb_info_hash: B256::ZERO, // Obsolete in ZQ2
-                state_root_hash: block.state_root_hash().into(),
-                state_delta_hash: B256::ZERO, // Obsolete in ZQ2
-                num_txns: block.transactions.len() as u64,
-                num_pages: if block.transactions.is_empty() {
-                    0
-                } else {
-                    (block.transactions.len() / TRANSACTIONS_PER_PAGE) + 1
+                non_verbose_header: TxBlockHeader {
+                    version: 1,                                    // To match ZQ1
+                    gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
+                    gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
+                    rewards: 0,
+                    txn_fees: 0,
+                    prev_block_hash: block.parent_hash().into(),
+                    block_num: block.number(),
+                    timestamp: block
+                        .timestamp()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros(),
+                    mb_info_hash: B256::ZERO, // Obsolete in ZQ2
+                    state_root_hash: block.state_root_hash().into(),
+                    state_delta_hash: B256::ZERO, // Obsolete in ZQ2
+                    num_txns: block.transactions.len() as u64,
+                    num_pages: if block.transactions.is_empty() {
+                        0
+                    } else {
+                        (block.transactions.len() / TRANSACTIONS_PER_PAGE) + 1
+                    },
+                    num_micro_blocks: 0, // Microblocks obsolete in ZQ2
+                    ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
                 },
-                num_micro_blocks: 0, // Microblocks obsolete in ZQ2
                 miner_pub_key: proposer,
-                ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
                 committee_hash: Some(B256::ZERO),
             },
             body: TxBlockVerboseBody {
@@ -155,34 +157,10 @@ impl TxBlockVerbose {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct TxBlockVerboseHeader {
-    pub version: u8,
-    #[serde(with = "num_as_str")]
-    pub gas_limit: ScillaGas,
-    #[serde(with = "num_as_str")]
-    pub gas_used: ScillaGas,
-    #[serde(with = "num_as_str")]
-    pub rewards: u128,
-    #[serde(with = "num_as_str")]
-    pub txn_fees: u128,
-    #[serde(serialize_with = "hex_no_prefix")]
-    pub prev_block_hash: B256,
-    #[serde(with = "num_as_str")]
-    pub block_num: u64,
-    #[serde(with = "num_as_str")]
-    pub timestamp: u128,
-    #[serde(serialize_with = "hex_no_prefix")]
-    pub mb_info_hash: B256,
-    #[serde(serialize_with = "hex_no_prefix")]
-    pub state_root_hash: B256,
-    #[serde(serialize_with = "hex_no_prefix")]
-    pub state_delta_hash: B256,
-    pub num_txns: u64,
-    pub num_pages: usize,
-    pub num_micro_blocks: u8,
+    #[serde(flatten)]
+    pub non_verbose_header: TxBlockHeader,
     #[serde(serialize_with = "hex")]
     pub miner_pub_key: Address,
-    #[serde(rename = "DSBlockNum", with = "num_as_str")]
-    pub ds_block_num: u64,
     #[serde(
         serialize_with = "option_hex_no_prefix",
         skip_serializing_if = "Option::is_none"
