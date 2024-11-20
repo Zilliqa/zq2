@@ -34,12 +34,13 @@ use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
 use zilliqa::{
     block_store::BlockStore,
-    cfg::{scilla_ext_libs_path_default, Config},
+    cfg::{scilla_ext_libs_path_default, Amount, Config, NodeConfig},
     consensus::Validator,
+    constants::SCILLA_INVOKE_CHECKER,
     contracts,
     crypto::{self, Hash, SecretKey},
     db::Db,
-    exec::{store_external_libraries, BaseFeeCheck, SCILLA_INVOKE_CHECKER},
+    exec::{store_external_libraries, BaseFeeCheck},
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
@@ -81,11 +82,14 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
     scilla
         .check_contract(
             code,
-            SCILLA_INVOKE_CHECKER,
+            ScillaGas(10000000),
             &contract_init,
             &ext_libs_dir_in_scilla,
-        )?
-        .map_err(|_| anyhow!("Failed to check contract code"))
+        )
+        .and_then(|inner_result| {
+            inner_result.map_err(|err| anyhow!("Contract check error: {:?}", err))
+        })
+        .map_err(|e| anyhow!("Failed to check contract code: {:?}", e))
 }
 
 #[allow(clippy::type_complexity)]
@@ -97,6 +101,7 @@ fn convert_scilla_state(
     init_data: &[ParamValue],
     address: Address,
 ) -> Result<(B256, BTreeMap<String, (String, u8)>, Vec<Transition>)> {
+    println!("contract address: {:?}", address);
     let prefix = create_acc_query_prefix(address);
 
     let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
@@ -167,10 +172,6 @@ fn convert_scilla_state(
         contract_values.push((field_name.to_owned(), (indices, value)));
     }
 
-    let checker_result = invoke_checker(state, code, init_data)?;
-
-    let transitions = checker_result.contract_info.unwrap().transitions;
-
     let db = Arc::new(zq2_db.state_trie()?);
     let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
 
@@ -180,6 +181,22 @@ fn convert_scilla_state(
     }
 
     let storage_root = contract_trie.root_hash()?;
+    let checker_result = match invoke_checker(state, code, init_data) {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!(
+                "Checker failed for address {:?} with error: {:?}",
+                address, err
+            );
+            // Return default values
+            return Ok((
+                storage_root,
+                field_types,
+                Vec::new(), // Default empty transitions
+            ));
+        }
+    };
+    let transitions = checker_result.contract_info.unwrap().transitions;
 
     Ok((storage_root, field_types, transitions))
 }
@@ -307,13 +324,42 @@ fn stop_scilla_docker(child: &mut Child) -> Result<ExitStatus> {
         .or(Err(anyhow!("Unable to stop docker container!")))
 }
 
+fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Result<()> {
+    let total_requested_amount = config
+        .consensus
+        .total_native_token_supply
+        .0
+        .checked_add(
+            config
+                .consensus
+                .genesis_accounts
+                .iter()
+                .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0),
+        )
+        .expect("Genesis accounts sum to more than max value of u128")
+        .checked_add(
+            config
+                .consensus
+                .genesis_deposits
+                .iter()
+                .fold(0, |acc, item| acc + item.stake.0),
+        )
+        .expect("Genesis accounts + genesis deposits sum to more than max value of u128");
+    state.mutate_account(Address::ZERO, |acc| {
+        acc.balance = acc.balance.checked_sub(total_requested_amount).expect("Sum of funds in genesis.deposit and genesis.accounts exceeds funds in ZeroAccount from zq1!");
+        Ok(())
+    })?;
+
+    // Flush any pending changes to db
+    let _ = state.root_hash()?;
+    Ok(())
+}
+
 pub async fn convert_persistence(
     zq1_db: zq1::Db,
     zq2_db: Db,
     zq2_config: Config,
     secret_key: SecretKey,
-    convert_accounts: bool,
-    convert_blocks: bool,
 ) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
@@ -342,88 +388,83 @@ pub async fn convert_persistence(
         block_store,
     )?;
 
-    if convert_accounts {
-        let mut scilla_docker = run_scilla_docker()?;
-        // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
-        // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
-        let distance_sum: u64 = zq1_db
-            .accounts()
-            .map(|(addr, _)| addr)
-            .take(100)
-            .tuple_windows()
-            .map(|(a, b)| {
-                // Downsample the addresses to 8 bytes, treating them as `u64`s, for ease of computation.
-                let a = u64::from_be_bytes(a.as_slice()[..8].try_into().unwrap());
-                let b = u64::from_be_bytes(b.as_slice()[..8].try_into().unwrap());
+    let mut scilla_docker = run_scilla_docker()?;
+    // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
+    // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
+    let distance_sum: u64 = zq1_db
+        .accounts()
+        .map(|(addr, _)| addr)
+        .take(100)
+        .tuple_windows()
+        .map(|(a, b)| {
+            // Downsample the addresses to 8 bytes, treating them as `u64`s, for ease of computation.
+            let a = u64::from_be_bytes(a.as_slice()[..8].try_into().unwrap());
+            let b = u64::from_be_bytes(b.as_slice()[..8].try_into().unwrap());
 
-                b - a
-            })
-            .sum();
-        let average_distance = distance_sum as f64 / 99.;
-        let address_count = ((u64::MAX as f64) / average_distance) as u64;
+            b - a
+        })
+        .sum();
+    let average_distance = distance_sum as f64 / 99.;
+    let address_count = ((u64::MAX as f64) / average_distance) as u64;
 
-        let progress = ProgressBar::new(address_count)
-            .with_style(style.clone())
-            .with_message("collect accounts")
-            .with_finish(ProgressFinish::AndLeave);
+    let progress = ProgressBar::new(address_count)
+        .with_style(style.clone())
+        .with_message("collect accounts")
+        .with_finish(ProgressFinish::AndLeave);
 
-        let accounts: Vec<_> = zq1_db.accounts().progress_with(progress).collect();
+    let accounts: Vec<_> = zq1_db.accounts().progress_with(progress).collect();
 
-        let progress = ProgressBar::new(accounts.len() as u64)
-            .with_style(style.clone())
-            .with_message("convert accounts")
-            .with_finish(ProgressFinish::AndLeave);
+    let progress = ProgressBar::new(accounts.len() as u64)
+        .with_style(style.clone())
+        .with_message("convert accounts")
+        .with_finish(ProgressFinish::AndLeave);
 
-        for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
-            if address.is_zero() {
-                continue;
-            }
-            let zq1_account = zq1::Account::from_proto(zq1_account)?;
-
-            let code = get_contract_code(&zq1_db, address)?;
-
-            let (code, storage_root) = match code {
-                Code::Evm(evm_code) if !evm_code.is_empty() => {
-                    let storage_root = convert_evm_state(&zq1_db, &zq2_db, address)?;
-                    (Code::Evm(evm_code), storage_root)
-                }
-                Code::Scilla {
-                    code, init_data, ..
-                } => {
-                    let (storage_root, types, transitions) =
-                        convert_scilla_state(&zq1_db, &zq2_db, &state, &code, &init_data, address)?;
-                    (
-                        Code::Scilla {
-                            code,
-                            init_data,
-                            types,
-                            transitions,
-                        },
-                        storage_root,
-                    )
-                }
-                _ => (code, EMPTY_ROOT_HASH),
-            };
-
-            let account = Account {
-                nonce: zq1_account.nonce,
-                balance: zq1_account.balance * 10u128.pow(6),
-                code,
-                storage_root,
-            };
-
-            state.save_account(address, account)?;
-            // Flush any pending changes to db
-            let _ = state.root_hash()?;
+    for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
+        if address.is_zero() {
+            continue;
         }
+        let zq1_account = zq1::Account::from_proto(zq1_account)?;
 
-        stop_scilla_docker(&mut scilla_docker)?;
+        let code = get_contract_code(&zq1_db, address)?;
+
+        let (code, storage_root) = match code {
+            Code::Evm(evm_code) if !evm_code.is_empty() => {
+                let storage_root = convert_evm_state(&zq1_db, &zq2_db, address)?;
+                (Code::Evm(evm_code), storage_root)
+            }
+            Code::Scilla {
+                code, init_data, ..
+            } => {
+                let (storage_root, types, transitions) =
+                    convert_scilla_state(&zq1_db, &zq2_db, &state, &code, &init_data, address)?;
+                (
+                    Code::Scilla {
+                        code,
+                        init_data,
+                        types,
+                        transitions,
+                    },
+                    storage_root,
+                )
+            }
+            _ => (code, EMPTY_ROOT_HASH),
+        };
+
+        let account = Account {
+            nonce: zq1_account.nonce,
+            balance: zq1_account.balance * 10u128.pow(6),
+            code,
+            storage_root,
+        };
+
+        state.save_account(address, account)?;
+        // Flush any pending changes to db
+        let _ = state.root_hash()?;
     }
 
-    if !convert_blocks {
-        println!("Accounts converted. Skipping blocks.");
-        return Ok(());
-    }
+    stop_scilla_docker(&mut scilla_docker)?;
+
+    deduct_funds_from_zero_account(&mut state, node_config)?;
 
     let max_block = zq1_db
         .get_tx_blocks_aux("MaxTxBlockNumber")?

@@ -1262,12 +1262,12 @@ fn get_node_type(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<String> {
 
 // GetPrevDifficulty
 fn get_prev_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
-    todo!("API getprevdifficulty is not implemented yet");
+    Ok(0)
 }
 
 // GetPrevDSDifficulty
 fn get_prev_ds_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
-    todo!("API getprevdsdifficulty is not implemented yet");
+    Ok(0)
 }
 
 // GetShardingStructure
@@ -1377,10 +1377,10 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
 
 // GetSoftConfirmedTransaction
 fn get_soft_confirmed_transaction(
-    _params: Params,
-    _node: &Arc<Mutex<Node>>,
+    params: Params,
+    node: &Arc<Mutex<Node>>,
 ) -> Result<GetTxResponse> {
-    todo!("API getsoftconfirmedtransaction is not implemented yet");
+    get_transaction(params, node)
 }
 
 // GetStateProof
