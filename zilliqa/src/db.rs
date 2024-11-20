@@ -52,6 +52,29 @@ macro_rules! sqlify_with_bincode {
     };
 }
 
+macro_rules! sqlify_with_bincode_and_zstd {
+    ($type: ty) => {
+        impl ToSql for $type {
+            fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+                let v = bincode::serialize(self)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
+                let v = zstd::bulk::compress(&v, zstd::DEFAULT_COMPRESSION_LEVEL)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                Ok(ToSqlOutput::from(v))
+            }
+        }
+        impl FromSql for $type {
+            fn column_result(
+                value: rusqlite::types::ValueRef<'_>,
+            ) -> rusqlite::types::FromSqlResult<Self> {
+                let v = value.as_blob()?;
+                let v = zstd::bulk::decompress(&v, v.len())
+                    .map_err(|e| FromSqlError::Other(Box::new(e)))?;
+                bincode::deserialize(&v).map_err(|e| FromSqlError::Other(e))
+            }
+        }
+    };
+}
 /// Creates a thin wrapper for a type with proper From traits. To ease implementing To/FromSql on
 /// foreign types.
 macro_rules! make_wrapper {
@@ -78,7 +101,7 @@ macro_rules! make_wrapper {
 sqlify_with_bincode!(AggregateQc);
 sqlify_with_bincode!(QuorumCertificate);
 sqlify_with_bincode!(NodeSignature);
-sqlify_with_bincode!(SignedTransaction);
+sqlify_with_bincode_and_zstd!(SignedTransaction);
 
 make_wrapper!(Vec<ScillaException>, VecScillaExceptionSqlable);
 sqlify_with_bincode!(VecScillaExceptionSqlable);
