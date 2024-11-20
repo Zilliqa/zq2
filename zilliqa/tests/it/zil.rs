@@ -1779,12 +1779,27 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
         .expect("Failed to call GetTransactionsForTxBlock API");
 
     let txns: Vec<Vec<String>> =
-        serde_json::from_value(response).expect("Failed to deserialize response");
+        serde_json::from_value(response.clone()).expect("Failed to deserialize response");
 
     assert!(
         !txns[0].is_empty(),
         "Expected Transactions length to be greater than or equal to 1"
     );
+
+    // Check it's an array of arrays of transaction hashes
+    assert!(response.is_array());
+    if let Some(shards) = response.as_array() {
+        if !shards.is_empty() {
+            assert!(shards[0].is_array());
+            if let Some(txns) = shards[0].as_array() {
+                if !txns.is_empty() {
+                    // Each hash should be a 32 byte hex string
+                    assert!(txns[0].is_string());
+                    assert_eq!(txns[0].as_str().unwrap().len(), 64);
+                }
+            }
+        }
+    }
 }
 
 #[zilliqa_macros::test]
@@ -1949,6 +1964,8 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
         .await
         .expect("Failed to call GetTxnBodiesForTxBlockEx API");
 
+    let result = response["result"].clone();
+
     let txn_bodies: zilliqa::api::types::zil::TxnBodiesForTxBlockExResponse =
         serde_json::from_value(response).expect("Failed to deserialize response");
 
@@ -1965,6 +1982,19 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
         !txn_bodies.transactions.is_empty(),
         "Expected Transactions length to be greater than or equal to 1"
     );
+
+    // Check transaction array structure
+    if let Some(shards) = result["Transactions"].as_array() {
+        if !shards.is_empty() && !shards[0].is_null() {
+            assert!(shards[0].is_array());
+            if let Some(txns) = shards[0].as_array() {
+                if !txns.is_empty() {
+                    assert!(txns[0].is_string());
+                    assert_eq!(txns[0].as_str().unwrap().len(), 64);
+                }
+            }
+        }
+    }
 }
 
 #[zilliqa_macros::test]
@@ -2718,4 +2748,46 @@ async fn get_transaction_status(mut network: Network) {
         tx_status_2.nonce.parse::<u64>().is_ok(),
         "Invalid nonce format"
     );
+}
+
+#[zilliqa_macros::test]
+async fn get_blockchain_info_structure(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let result: Value = wallet
+        .provider()
+        .request("GetBlockchainInfo", [""])
+        .await
+        .expect("Failed to call GetBlockchainInfo API");
+
+    // Verify all required fields exist and have correct types
+    assert!(result["CurrentDSEpoch"].is_string());
+    assert!(result["CurrentMiniEpoch"].is_string());
+    assert!(result["DSBlockRate"].is_number());
+    assert!(result["NumDSBlocks"].is_string());
+    assert!(result["NumPeers"].is_number());
+    assert!(result["NumTransactions"].is_string());
+    assert!(result["NumTxBlocks"].is_string());
+    assert!(result["NumTxnsDSEpoch"].is_string());
+    assert!(result["NumTxnsTxEpoch"].is_string());
+    assert!(result["TransactionRate"].is_number());
+    assert!(result["TxBlockRate"].is_number());
+
+    // Verify ShardingStructure
+    assert!(result["ShardingStructure"]["NumPeers"].is_array());
+}
+
+#[zilliqa_macros::test]
+async fn get_num_tx_blocks_structure(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumTxBlocks", [""])
+        .await
+        .expect("Failed to call GetNumTxBlocks API");
+
+    // Should be a string containing a number
+    assert!(response.is_string());
+    assert!(response.as_str().unwrap().parse::<u64>().is_ok());
 }
