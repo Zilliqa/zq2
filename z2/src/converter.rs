@@ -172,10 +172,6 @@ fn convert_scilla_state(
         contract_values.push((field_name.to_owned(), (indices, value)));
     }
 
-    let checker_result = invoke_checker(state, code, init_data)?;
-
-    let transitions = checker_result.contract_info.unwrap().transitions;
-
     let db = Arc::new(zq2_db.state_trie()?);
     let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
 
