@@ -155,7 +155,7 @@ resource "google_compute_managed_ssl_certificate" "apps" {
   name = "${var.chain_name}-apps"
 
   managed {
-    domains = ["explorer.${var.subdomain}", "faucet.${var.subdomain}"]
+    domains = var.alternative_subdomain == null ? ["explorer.${var.subdomain}", "faucet.${var.subdomain}"] : concat(["explorer.${var.subdomain}", "faucet.${var.subdomain}"], ["explorer.${var.alternative_subdomain}", "faucet.${var.alternative_subdomain}"])
   }
 }
 

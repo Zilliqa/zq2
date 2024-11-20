@@ -220,6 +220,12 @@ variable "subdomain" {
   nullable    = false
 }
 
+variable "alternative_subdomain" {
+  description = "The alternative subdomain for the public endpoint certificates"
+  type        = string
+  nullable    = true
+}
+
 variable "chain_name" {
   description = "(Optional) ZQ2 blockchain name"
   type        = string
