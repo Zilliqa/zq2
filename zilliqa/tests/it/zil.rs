@@ -2404,13 +2404,45 @@ async fn get_node_type(mut network: Network) {
 }
 
 #[allow(dead_code)]
-async fn get_prev_difficulty(mut _network: Network) {
-    todo!();
+async fn get_prev_difficulty(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetPrevDifficulty", [""])
+        .await
+        .expect("Failed to call GetPrevDifficulty API");
+
+    assert!(
+        response.is_u64(),
+        "Expected response to be a u64, got: {:?}",
+        response
+    );
+
+    let response_u64 = response.as_u64().expect("Expected response to be a u64");
+
+    assert_eq!(response_u64, 0);
 }
 
 #[allow(dead_code)]
-async fn get_prev_ds_difficulty(mut _network: Network) {
-    todo!();
+async fn get_prev_ds_difficulty(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetPrevDSDifficulty", [""])
+        .await
+        .expect("Failed to call GetPrevDSDifficulty API");
+
+    assert!(
+        response.is_u64(),
+        "Expected response to be a u64, got: {:?}",
+        response
+    );
+
+    let response_u64 = response.as_u64().expect("Expected response to be a u64");
+
+    assert_eq!(response_u64, 0);
 }
 
 #[zilliqa_macros::test]
