@@ -184,30 +184,28 @@ pub struct TxBlockVerboseBody {
     pub cosig_1: Option<schnorr::Signature>,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTxResponse {
     #[serde(rename = "ID", serialize_with = "hex_no_prefix")]
-    id: B256,
+    pub id: B256,
     #[serde(with = "num_as_str")]
-    version: u32,
+    pub version: u32,
     #[serde(with = "num_as_str")]
-    nonce: u64,
+    pub nonce: u64,
     #[serde(serialize_with = "hex_no_prefix")]
-    to_addr: Address,
-    sender_pub_key: String,
+    pub to_addr: Address,
+    pub sender_pub_key: String,
     #[serde(with = "num_as_str")]
-    amount: ZilAmount,
-    signature: String,
-    receipt: GetTxResponseReceipt,
+    pub amount: ZilAmount,
+    pub signature: String,
+    pub receipt: GetTxResponseReceipt,
     #[serde(with = "num_as_str")]
-    gas_price: ZilAmount,
+    pub gas_price: ZilAmount,
     #[serde(with = "num_as_str")]
-    gas_limit: ScillaGas,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<String>,
+    pub gas_limit: ScillaGas,
+    pub code: Option<String>,
+    pub data: Option<String>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -220,25 +218,25 @@ pub struct CreateTransactionResponse {
     pub tran_id: B256,
 }
 
-#[derive(Clone, Serialize, Debug)]
-struct Transition {
-    addr: Address,
-    depth: u64,
-    msg: TransitionMessage,
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Transition {
+    pub addr: Address,
+    pub depth: u64,
+    pub msg: TransitionMessage,
 }
 
-#[derive(Clone, Serialize, Debug)]
-struct TransitionMessage {
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct TransitionMessage {
     #[serde(rename = "_amount", with = "num_as_str")]
-    amount: ZilAmount,
+    pub amount: ZilAmount,
     #[serde(rename = "_recipient")]
-    recipient: Address,
+    pub recipient: Address,
     #[serde(rename = "_tag")]
-    tag: String,
-    params: serde_json::Value,
+    pub tag: String,
+    pub params: serde_json::Value,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct EventLog {
     pub address: Address,
     #[serde(rename = "_eventname")]
@@ -246,20 +244,18 @@ pub struct EventLog {
     pub params: Vec<ParamValue>,
 }
 
-#[derive(Clone, Serialize, Debug)]
-struct GetTxResponseReceipt {
-    accepted: bool,
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct GetTxResponseReceipt {
+    pub accepted: bool,
     #[serde(with = "num_as_str")]
-    cumulative_gas: ScillaGas,
+    pub cumulative_gas: ScillaGas,
     #[serde(with = "num_as_str")]
-    epoch_num: u64,
-    transitions: Vec<Transition>,
-    event_logs: Vec<EventLog>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    errors: BTreeMap<u64, Vec<u64>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    exceptions: Vec<ScillaException>,
-    success: bool,
+    pub epoch_num: u64,
+    pub transitions: Vec<Transition>,
+    pub event_logs: Vec<EventLog>,
+    pub errors: BTreeMap<u64, Vec<u64>>,
+    pub exceptions: Vec<ScillaException>,
+    pub success: bool,
 }
 
 impl GetTxResponse {
@@ -442,11 +438,11 @@ pub struct BlockchainInfo {
     pub sharding_structure: ShardingStructure,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ShardingStructure {
     #[serde(rename = "NumPeers")]
-    pub num_peers: Vec<u16>,
+    pub num_peers: Vec<u64>,
 }
 
 #[derive(Clone, Serialize)]

@@ -27,8 +27,8 @@ async-trait = "0.1.83"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
-clap = {version = "4.5.20", features = ["derive"]}
-clap-verbosity-flag = "2.2.2"
+clap = {version = "4.5.21", features = ["derive"]}
+clap-verbosity-flag = "2.2.3"
 cliclack = "0.3.5"
 colored = "2.1.0"
 crypto-bigint = "=0.5.5"
@@ -48,7 +48,7 @@ k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = {version = "0.54.0", features = ["identify"]}
 log = "0.4.22"
-octocrab = "0.41.2"
+octocrab = "0.42.0"
 primitive-types = "0.12.2"
 prost = "0.13.3"
 rand = "0.8.5"
@@ -57,9 +57,9 @@ regex = "1.11.1"
 reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
 revm = {version = "14.0.3", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
-rustls = "0.23.16"
+rustls = "0.23.17"
 serde = {version = "1.0.215", features = ["derive"]}
-serde_json = "1.0.128"
+serde_json = "1.0.133"
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
@@ -75,6 +75,7 @@ url = "2.5.3"
 zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.1"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
+scopeguard = "1.2.0"
 
 [build-dependencies]
 prost-build = "0.13.3"

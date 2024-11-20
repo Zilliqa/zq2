@@ -33,6 +33,7 @@ use crate::{
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
+    range_map::RangeMap,
     state::State,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -168,6 +169,8 @@ pub struct Consensus {
     early_proposal: Option<EarlyProposal>,
     /// Flag indicating that block creation should be postponed at least until empty_block_timeout is reached
     create_next_block_on_timeout: bool,
+    /// Timestamp of most recent view change
+    view_updated_at: SystemTime,
     pub new_blocks: broadcast::Sender<BlockHeader>,
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
@@ -332,6 +335,7 @@ impl Consensus {
             transaction_pool: Default::default(),
             early_proposal: None,
             create_next_block_on_timeout: false,
+            view_updated_at: SystemTime::now(),
             new_blocks: broadcast::Sender::new(4),
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
@@ -367,19 +371,56 @@ impl Consensus {
             )?;
         }
 
-        // If timestamp of when current view was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
+        // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
-        if let Some(latest_view_timestamp) = consensus.db.get_view_updated_at()? {
+        if let Some(latest_high_qc_timestamp) = consensus.db.get_high_qc_updated_at()? {
             let view_diff = Consensus::minimum_views_in_time_difference(
-                latest_view_timestamp.elapsed()?,
+                latest_high_qc_timestamp.elapsed()?,
                 consensus.config.consensus.consensus_timeout,
             );
-            let start_view_jumped_ahead = start_view + view_diff;
-            consensus.db.set_view(start_view_jumped_ahead)?;
-            debug!(
-                "Atleast {} views changed since last view was written. new start_view {}",
-                view_diff, start_view_jumped_ahead
-            );
+            let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
+            if min_view_since_high_qc_updated > start_view {
+                info!(
+                    "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
+                    latest_high_qc_timestamp.elapsed()?.as_secs(),
+                    view_diff,
+                    min_view_since_high_qc_updated
+                );
+                consensus.db.set_view(min_view_since_high_qc_updated)?;
+            }
+
+            // Remind block_store of our peers and request any potentially missing blocks
+            let high_block = consensus
+                .block_store
+                .get_block(high_qc.block_hash)?
+                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
+
+            let executed_block = BlockHeader {
+                number: high_block.header.number + 1,
+                ..Default::default()
+            };
+            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
+
+            // Grab last seen committee's peerIds in case others also went offline
+            let committee = state_at.get_stakers(executed_block)?;
+            let recent_peer_ids: Vec<_> = committee
+                .iter()
+                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
+                .filter_map(|&peer_public_key| {
+                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
+                })
+                .collect();
+
+            consensus
+                .block_store
+                .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
+            // It is likley that we missed the most recent proposal. Request it now
+            consensus
+                .block_store
+                .request_blocks(&RangeMap::from_closed_interval(
+                    high_block.view(),
+                    high_block.view() + 1,
+                ))?;
         }
 
         Ok(consensus)
@@ -554,7 +595,7 @@ impl Consensus {
 
     fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
         let time_since_last_view_change = SystemTime::now()
-            .duration_since(self.get_view_updated_at()?)
+            .duration_since(self.view_updated_at)
             .unwrap_or_default()
             .as_millis() as u64;
         let exponential_backoff_timeout = self.exponential_backoff_timeout(self.get_view()?);
@@ -1991,7 +2032,6 @@ impl Consensus {
                     new_high_qc_block_view + 1,
                     current_high_qc_view,
                 );
-                //TODO write high_qc and current_view in one db call
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
                 if new_high_qc_block_view >= view {
@@ -2538,12 +2578,14 @@ impl Consensus {
     }
 
     fn set_view(&mut self, view: u64) -> Result<()> {
-        if !self.db.set_view(view)? {
+        if self.db.set_view(view)? {
+            self.view_updated_at = SystemTime::now();
+        } else {
             warn!(
                 "Tried to set view to lower or same value - this is incorrect. value: {}",
                 view
             );
-        };
+        }
         Ok(())
     }
 
@@ -2551,13 +2593,6 @@ impl Consensus {
         Ok(self.db.get_view()?.unwrap_or_else(|| {
             warn!("no view found in table. Defaulting to 0");
             0
-        }))
-    }
-
-    pub fn get_view_updated_at(&self) -> Result<SystemTime> {
-        Ok(self.db.get_view_updated_at()?.unwrap_or_else(|| {
-            warn!("no view timestamp found. Defaulting to now");
-            SystemTime::now()
         }))
     }
 
@@ -2588,12 +2623,6 @@ impl Consensus {
             }
             views += 1;
         }
-
-        info!(
-            "Based on elapsed clock time of {} seconds since lastest view update, jump ahead {} views",
-            time_difference.as_secs(),
-            views
-        );
         views as u64
     }
 

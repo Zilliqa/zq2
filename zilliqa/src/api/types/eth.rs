@@ -331,6 +331,12 @@ pub struct TransactionReceipt {
     pub ty: u64,
     #[serde(serialize_with = "bool_as_int")]
     pub status: bool,
+    #[serde(serialize_with = "hex")]
+    pub v: u64,
+    #[serde(serialize_with = "hex")]
+    pub r: U256,
+    #[serde(serialize_with = "hex")]
+    pub s: U256,
 }
 
 /// A transaction receipt object, returned by the Ethereum API.

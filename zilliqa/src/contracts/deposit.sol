@@ -319,10 +319,11 @@ contract Deposit {
     ) public view returns (uint256) {
         require(blsPubKey.length == 48);
 
-        uint64 epoch = latestComputedEpoch > currentEpoch()
-            ? latestComputedEpoch
-            : currentEpoch();
-        Committee storage latestCommittee = _committee[epoch % 3];
+        // if `latestComputedEpoch > currentEpoch()`
+        // then `latestComputedEpoch` determines the future committee we need
+        // otherwise there are no committee changes after `currentEpoch()`
+        // i.e. `latestComputedEpoch` determines the most recent committee
+        Committee storage latestCommittee = _committee[latestComputedEpoch % 3];
 
         // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
         // balance will default to zero.
