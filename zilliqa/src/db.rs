@@ -246,10 +246,10 @@ impl Db {
         let journal_mode: String =
             connection.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
 
-        // limit the size of the journal
+        // retain journal size of 32MB - based on observations
         let journal_size_limit: i32 =
             connection
-                .pragma_update_and_check(None, "journal_size_limit", 1 << 22, |r| r.get(0))?;
+                .pragma_update_and_check(None, "journal_size_limit", 1 << 25, |r| r.get(0))?;
 
         tracing::info!(
             ?journal_mode,
