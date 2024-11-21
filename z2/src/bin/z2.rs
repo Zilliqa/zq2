@@ -90,9 +90,9 @@ enum DeployerCommands {
     Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
-    /// Backup locally a node data dir
+    /// Backup a node data dir
     Backup(DeployerBackupArgs),
-    /// Restore a node data dir from a local backup
+    /// Restore a node data dir from a backup
     Restore(DeployerRestoreArgs),
     /// Reset a network stopping all the nodes and cleaning the /data folder
     Reset(DeployerActionsArgs),
@@ -184,7 +184,7 @@ pub struct DeployerRpcArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerBackupArgs {
-    /// The path of the backup file
+    /// The local path of the backup file or the GCS bucket URI in the format gs://my-bucket/path/to/file
     #[clap(long, short)]
     file: String,
     /// The network deployer config file
@@ -193,7 +193,7 @@ pub struct DeployerBackupArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerRestoreArgs {
-    /// The path of the backup file
+    /// The local path of the backup file or the GCS bucket URI in the format gs://my-bucket/path/to/file
     #[clap(long, short)]
     file: String,
     /// Define the number of nodes to process in parallel. Default: 50
