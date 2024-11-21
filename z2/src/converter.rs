@@ -325,10 +325,7 @@ fn stop_scilla_docker(child: &mut Child) -> Result<ExitStatus> {
 }
 
 fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Result<()> {
-    let total_requested_amount = config
-        .consensus
-        .total_native_token_supply
-        .0
+    let total_requested_amount = 0_u128
         .checked_add(
             config
                 .consensus
