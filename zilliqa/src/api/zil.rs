@@ -31,9 +31,9 @@ use super::{
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
-        RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, TXBlockRateResult,
-        TransactionBody, TransactionStatusResponse, TxBlockListing, TxBlockListingResult,
-        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
+        RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, StateProofResponse,
+        TXBlockRateResult, TransactionBody, TransactionStatusResponse, TxBlockListing,
+        TxBlockListingResult, TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -1384,8 +1384,12 @@ fn get_soft_confirmed_transaction(
 }
 
 // GetStateProof
-fn get_state_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("API getstateproof is not implemented yet");
+fn get_state_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<StateProofResponse> {
+    // State proof isn't meaningful in ZQ2
+    Ok(StateProofResponse {
+        account_proof: vec![],
+        state_proof: vec![],
+    })
 }
 
 // GetTransactionStatus
