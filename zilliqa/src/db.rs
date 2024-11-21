@@ -58,7 +58,7 @@ macro_rules! sqlify_with_bincode_and_zstd {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
                 let v = bincode::serialize(self)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
-                let v = zstd::encode_all(v.as_slice(), zstd::DEFAULT_COMPRESSION_LEVEL)
+                let v = lz4::block::compress(v.as_slice(), None, true)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 Ok(ToSqlOutput::from(v))
             }
@@ -68,7 +68,8 @@ macro_rules! sqlify_with_bincode_and_zstd {
                 value: rusqlite::types::ValueRef<'_>,
             ) -> rusqlite::types::FromSqlResult<Self> {
                 let v = value.as_blob()?;
-                let v = zstd::decode_all(v).map_err(|e| FromSqlError::Other(Box::new(e)))?;
+                let v = lz4::block::decompress(v, None)
+                    .map_err(|e| FromSqlError::Other(Box::new(e)))?;
                 bincode::deserialize(v.as_slice()).map_err(|e| FromSqlError::Other(e))
             }
         }
@@ -1183,7 +1184,7 @@ impl eth_trie::DB for TrieStorage {
                 |row| row.get(0),
             )
             // decompress stored value
-            .map(|v: Vec<_>| zstd::decode_all(v.as_slice()).unwrap())
+            .map(|v: Vec<_>| lz4::block::decompress(v.as_slice(), None).unwrap())
             .optional()?;
 
         let mut cache = self.cache.lock().unwrap();
@@ -1197,7 +1198,7 @@ impl eth_trie::DB for TrieStorage {
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        let zvalue = zstd::encode_all(value.as_slice(), zstd::DEFAULT_COMPRESSION_LEVEL)
+        let zvalue = lz4::block::compress(value.as_slice(), None, true)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         // compress value for storage
         self.db.lock().unwrap().execute(
@@ -1237,7 +1238,7 @@ impl eth_trie::DB for TrieStorage {
             // compress all values for storage
             let zvalues = values
                 .iter()
-                .map(|v| zstd::encode_all(v.as_slice(), zstd::DEFAULT_COMPRESSION_LEVEL).unwrap())
+                .map(|v| lz4::block::compress(v.as_slice(), None, true).unwrap())
                 .collect_vec();
 
             let params = keys
