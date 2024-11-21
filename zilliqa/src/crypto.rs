@@ -217,7 +217,7 @@ impl TransactionPublicKey {
 /// The secret key type used as the basis of all cryptography in the node.
 /// Any of the `NodePublicKey` or `TransactionPublicKey`s, or a libp2p identity, can be derived
 /// from this.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy)]
 pub struct SecretKey {
     bytes: [u8; 32],
 }
@@ -379,8 +379,6 @@ impl HashBuilder {
 
 #[cfg(test)]
 mod tests {
-    use blsful::Pairing;
-
     use super::*;
 
     #[test]
