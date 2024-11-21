@@ -13,7 +13,7 @@ use std::{
 
 use alloy::{
     consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH},
-    primitives::{Address, Parity, Signature, TxKind, B256, U256},
+    primitives::{Address, Parity, PrimitiveSignature, TxKind, B256, U256},
 };
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, bitvec, order::Msb0};
@@ -817,12 +817,7 @@ fn infer_eth_signature(
         .context("Can retrieve s item from signature!")?;
 
     for y_is_odd in [false, true] {
-        let mut parity = Parity::Parity(y_is_odd);
-        // Legacy transactions should have the chain ID included in their parity.
-        if version == 2 {
-            parity = parity.with_chain_id(chain_id as u64);
-        }
-        let sig = Signature::from_rs_and_parity(r, s, parity)?;
+        let sig = PrimitiveSignature::new(r, s, y_is_odd);
         let payload = transaction
             .code
             .as_ref()

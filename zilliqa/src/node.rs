@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     fmt::Debug,
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
@@ -18,10 +17,7 @@ use alloy::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::{
-    primitives::{map::FxBuildHasher, ExecutionResult},
-    Inspector,
-};
+use revm::{primitives::ExecutionResult, Inspector};
 use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
     TransactionContext,
@@ -495,7 +491,7 @@ impl Node {
     pub fn trace_evm_transaction(
         &self,
         txn_hash: Hash,
-        trace_types: &HashSet<TraceType, FxBuildHasher>,
+        trace_types: &revm::primitives::HashSet<TraceType>,
     ) -> Result<TraceResults> {
         let txn = self
             .get_transaction_by_hash(txn_hash)?
