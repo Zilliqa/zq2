@@ -1117,7 +1117,7 @@ impl eth_trie::DB for TrieStorage {
             return Ok(Some(cached));
         }
 
-        let value = self
+        let value: Option<Vec<u8>> = self
             .db
             .lock()
             .unwrap()
@@ -1127,6 +1127,14 @@ impl eth_trie::DB for TrieStorage {
                 |row| row.get(0),
             )
             .optional()?;
+
+        let mut cache = self.cache.lock().unwrap();
+        if !cache.contains(key) {
+            if let Some(value) = &value {
+                let _ = cache.insert(key.to_vec(), value.clone());
+            }
+        }
+
         Ok(value)
     }
 
