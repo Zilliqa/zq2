@@ -25,7 +25,7 @@ use crate::{chain::Chain, github, utils};
 pub struct Validator {
     peer_id: libp2p::PeerId,
     public_key: zilliqa::crypto::NodePublicKey,
-    pop: blsful::ProofOfPossession<Bls12381G2Impl>,
+    pop: blsful::Signature<Bls12381G2Impl>,
 }
 
 impl Validator {
@@ -34,7 +34,7 @@ impl Validator {
             peer_id: PeerId::from_str(peer_id).unwrap(),
             public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
                 .unwrap(),
-            pop: blsful::ProofOfPossession::<Bls12381G2Impl>::try_from(
+            pop: blsful::Signature::<Bls12381G2Impl>::try_from(
                 hex::decode(pop_signature).unwrap().as_slice(),
             )?,
         })
@@ -195,7 +195,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
                 .encode_input(&[
                     Token::Bytes(stake.validator.public_key.as_bytes()),
                     Token::Bytes(stake.validator.peer_id.to_bytes()),
-                    Token::Bytes(stake.validator.pop.0.to_compressed().to_vec()),
+                    Token::Bytes(stake.validator.pop.as_raw_value().to_compressed().to_vec()),
                     Token::Address(stake.reward_address),
                 ])
                 .unwrap(),
