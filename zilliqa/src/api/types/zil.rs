@@ -33,8 +33,7 @@ pub struct TxBlock {
 }
 
 impl TxBlock {
-    pub fn new(block: &Block, proposer: Address) -> Self {
-        // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
+    pub fn new(block: &Block) -> Self {
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlock {
@@ -51,27 +50,22 @@ impl TxBlock {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_micros(),
-                mb_info_hash: B256::ZERO, // Appears obsolete in ZQ2
+                mb_info_hash: B256::ZERO, // Obsolete in ZQ2
                 state_root_hash: block.state_root_hash().into(),
-                state_delta_hash: B256::ZERO, // Appears obsolete in ZQ2
+                state_delta_hash: B256::ZERO, // Obsolete in ZQ2
                 num_txns: block.transactions.len() as u64,
                 num_pages: if block.transactions.is_empty() {
                     0
                 } else {
                     (block.transactions.len() / TRANSACTIONS_PER_PAGE) + 1
                 },
-                num_micro_blocks: 0, // Microblocks appear obsolete in ZQ2
-                miner_pub_key: proposer,
+                num_micro_blocks: 0, // Microblocks obsolete in ZQ2
                 ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
-                committee_hash: Some(B256::ZERO),
             },
             body: TxBlockBody {
-                header_sign: B512::ZERO, // Appears obsolete in ZQ2
+                header_sign: B512::ZERO, // Obsolete in ZQ2
                 block_hash: block.hash().into(),
                 micro_block_infos: vec![],
-                cosig_bitmap_1: vec![true; 8],
-                cosig_bitmap_2: vec![true; 8],
-                cosig_1: Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap()),
             },
         }
     }
@@ -81,9 +75,13 @@ impl TxBlock {
 #[serde(rename_all = "PascalCase")]
 pub struct TxBlockHeader {
     pub version: u8,
+    #[serde(with = "num_as_str")]
     pub gas_limit: ScillaGas,
+    #[serde(with = "num_as_str")]
     pub gas_used: ScillaGas,
+    #[serde(with = "num_as_str")]
     pub rewards: u128,
+    #[serde(with = "num_as_str")]
     pub txn_fees: u128,
     #[serde(serialize_with = "hex_no_prefix")]
     pub prev_block_hash: B256,
@@ -100,15 +98,90 @@ pub struct TxBlockHeader {
     pub num_txns: u64,
     pub num_pages: usize,
     pub num_micro_blocks: u8,
+    #[serde(rename = "DSBlockNum", with = "num_as_str")]
+    pub ds_block_num: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct TxBlockVerbose {
+    pub header: TxBlockVerboseHeader,
+    pub body: TxBlockVerboseBody,
+}
+
+impl TxBlockVerbose {
+    pub fn new(block: &Block, proposer: Address) -> Self {
+        let mut scalar = [0; 32];
+        scalar[31] = 1;
+        TxBlockVerbose {
+            header: TxBlockVerboseHeader {
+                non_verbose_header: TxBlockHeader {
+                    version: 1,                                    // To match ZQ1
+                    gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
+                    gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
+                    rewards: 0,
+                    txn_fees: 0,
+                    prev_block_hash: block.parent_hash().into(),
+                    block_num: block.number(),
+                    timestamp: block
+                        .timestamp()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros(),
+                    mb_info_hash: B256::ZERO, // Obsolete in ZQ2
+                    state_root_hash: block.state_root_hash().into(),
+                    state_delta_hash: B256::ZERO, // Obsolete in ZQ2
+                    num_txns: block.transactions.len() as u64,
+                    num_pages: if block.transactions.is_empty() {
+                        0
+                    } else {
+                        (block.transactions.len() / TRANSACTIONS_PER_PAGE) + 1
+                    },
+                    num_micro_blocks: 0, // Microblocks obsolete in ZQ2
+                    ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
+                },
+                miner_pub_key: proposer,
+                committee_hash: Some(B256::ZERO),
+            },
+            body: TxBlockVerboseBody {
+                header_sign: B512::ZERO, // Obsolete in ZQ2
+                block_hash: block.hash().into(),
+                micro_block_infos: vec![],
+                cosig_bitmap_1: vec![true; 8],
+                cosig_bitmap_2: vec![true; 8],
+                cosig_1: Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap()),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TxBlockVerboseHeader {
+    #[serde(flatten)]
+    pub non_verbose_header: TxBlockHeader,
     #[serde(serialize_with = "hex")]
     pub miner_pub_key: Address,
-    #[serde(rename = "DSBlockNum")]
-    pub ds_block_num: u64,
     #[serde(
         serialize_with = "option_hex_no_prefix",
         skip_serializing_if = "Option::is_none"
     )]
     pub committee_hash: Option<B256>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TxBlockVerboseBody {
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub header_sign: B512,
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub block_hash: B256,
+    pub micro_block_infos: Vec<MicroBlockInfo>,
+    #[serde(rename = "B1")]
+    pub cosig_bitmap_1: Vec<bool>,
+    #[serde(rename = "B2")]
+    pub cosig_bitmap_2: Vec<bool>,
+    #[serde(rename = "CS1")]
+    pub cosig_1: Option<schnorr::Signature>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -326,12 +399,6 @@ pub struct TxBlockBody {
     #[serde(serialize_with = "hex_no_prefix")]
     pub block_hash: B256,
     pub micro_block_infos: Vec<MicroBlockInfo>,
-    #[serde(rename = "B1", skip_serializing_if = "Vec::is_empty")]
-    pub cosig_bitmap_1: Vec<bool>,
-    #[serde(rename = "B2", skip_serializing_if = "Vec::is_empty")]
-    pub cosig_bitmap_2: Vec<bool>,
-    #[serde(rename = "CS1", skip_serializing_if = "Option::is_none")]
-    pub cosig_1: Option<schnorr::Signature>,
 }
 
 #[derive(Clone, Serialize)]
