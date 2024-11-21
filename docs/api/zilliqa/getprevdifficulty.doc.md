@@ -12,6 +12,8 @@ NeverImplemented
 
 # Description
 
+This is no longer a valid endpoint in Zilliqa 2.0 and always returns 0 for backwards compatibility.
+
 Returns the minimum shard difficulty of the previous block. This is represented as an `Number`. This is no longer required in Zilliqa 2.0 because of the change to proof of stake consensus.
 
 # Curl
