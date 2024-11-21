@@ -554,13 +554,15 @@ contract Deposit {
             futureCommittee.stakers[stakerKey].index != 0,
             "staker does not exist"
         );
-        require(futureCommittee.stakerKeys.length > 1, "too few stakers");
+
         require(
             futureCommittee.stakers[stakerKey].balance >= amount,
             "amount is greater than staked balance"
         );
 
         if (futureCommittee.stakers[stakerKey].balance - amount == 0) {
+            require(futureCommittee.stakerKeys.length > 1, "too few stakers");
+
             // Remove the staker from the future committee, because their staked amount has gone to zero.
             futureCommittee.totalStake -= amount;
 
