@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use zilliqa::{cfg::Checkpoint, crypto::Hash};
 
 pub async fn file_exists(file_name: impl AsRef<Path>) -> Result<bool> {
     Ok(tokio::fs::metadata(file_name).await.is_ok())
@@ -99,4 +100,24 @@ pub fn make_executable<P: AsRef<Path>>(file_path: &P) -> Result<()> {
     perms.set_mode(perms.mode() | 0o111);
     fs::set_permissions(file_path, perms)?;
     Ok(())
+}
+
+pub fn hash_from_hex(in_str: &str) -> Result<Hash> {
+    let bytes = hex::decode(in_str)?;
+    let result = Hash::try_from(bytes.as_slice())?;
+    Ok(result)
+}
+
+pub fn parse_checkpoint_spec(spec: &str) -> Result<Checkpoint> {
+    let components = spec.split(':').collect::<Vec<&str>>();
+    if components.len() != 2 {
+        Err(anyhow!(
+            "Checkpoint spec is not in form <file>:<hash> - {spec}"
+        ))
+    } else {
+        Ok(zilliqa::cfg::Checkpoint {
+            file: components[0].to_string(),
+            hash: hash_from_hex(components[1])?,
+        })
+    }
 }

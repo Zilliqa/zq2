@@ -400,7 +400,7 @@ mod tests {
 
     use alloy::{
         consensus::TxLegacy,
-        primitives::{Address, Bytes, Parity, Signature, TxKind, U256},
+        primitives::{Address, Bytes, PrimitiveSignature, TxKind, U256},
     };
     use anyhow::Result;
     use libp2p::PeerId;
@@ -429,12 +429,7 @@ mod tests {
                     value: U256::ZERO,
                     input: Bytes::new(),
                 },
-                sig: Signature::from_rs_and_parity(
-                    U256::from(1),
-                    U256::from(1),
-                    Parity::Parity(false),
-                )
-                .unwrap(),
+                sig: PrimitiveSignature::new(U256::from(1), U256::from(1), false),
             },
             signer: from_addr,
             hash: Hash::builder()

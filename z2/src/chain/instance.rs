@@ -12,6 +12,7 @@ use super::{
 pub struct ChainInstance {
     config: NetworkConfig,
     machines: Vec<Machine>,
+    persistence_url: Option<String>,
 }
 
 impl ChainInstance {
@@ -19,6 +20,7 @@ impl ChainInstance {
         Ok(Self {
             config: config.clone(),
             machines: Self::import_machines(&config.name, &config.project_id).await?,
+            persistence_url: None,
         })
     }
 
@@ -26,8 +28,18 @@ impl ChainInstance {
         self.config.name.clone()
     }
 
+    pub fn persistence_url(&self) -> Option<String> {
+        self.persistence_url.clone()
+    }
+
+    pub fn set_persistence_url(&mut self, persistence_url: Option<String>) {
+        self.persistence_url = persistence_url;
+    }
+
     pub fn machines(&self) -> Vec<Machine> {
-        self.machines.clone()
+        let mut machines = self.machines.clone();
+        machines.sort_by_key(|machine| machine.name.to_owned());
+        machines
     }
 
     pub fn machines_by_role(&self, role: NodeRole) -> Vec<Machine> {
@@ -132,6 +144,8 @@ impl ChainInstance {
             nodes.extend(chain_nodes);
         }
 
+        nodes.sort_by_key(|node| node.name());
+
         Ok(nodes)
     }
 
@@ -155,7 +169,7 @@ impl ChainInstance {
             retrieve_secret_by_role(&self.config.name, &self.config.project_id, "genesis").await?;
 
         if let Some(private_key) = private_keys.first() {
-            Ok(private_key.to_owned())
+            Ok(private_key.value().await?)
         } else {
             Err(anyhow!(
                 "No secrets with role genesis found in the network {}",

@@ -13,7 +13,7 @@ use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::instance::ChainInstance;
-use crate::{address::EthereumAddress, chain::Chain};
+use crate::{address::EthereumAddress, chain::Chain, secret::Secret};
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Components {
@@ -342,7 +342,7 @@ impl ChainNode {
             ));
         };
 
-        Ok(private_key.to_owned())
+        Ok(private_key.value().await?)
     }
 
     pub async fn get_wallet_private_key(&self) -> Result<String> {
@@ -368,7 +368,7 @@ impl ChainNode {
             ));
         };
 
-        Ok(private_key.to_owned())
+        Ok(private_key.value().await?)
     }
 
     async fn tag_machine(&self) -> Result<()> {
@@ -383,7 +383,7 @@ impl ChainNode {
         )
         .await?;
         let private_key = if let Some(private_key) = private_keys.first() {
-            private_key
+            private_key.value().await?
         } else {
             return Err(anyhow!(
                 "Found multiple private keys for the instance {}",
@@ -391,7 +391,7 @@ impl ChainNode {
             ));
         };
 
-        let ethereum_address = EthereumAddress::from_private_key(private_key)?;
+        let ethereum_address = EthereumAddress::from_private_key(&private_key)?;
 
         let mut labels = BTreeMap::<String, String>::new();
         labels.insert("peer-id".to_string(), ethereum_address.peer_id.clone());
@@ -578,16 +578,31 @@ impl ChainNode {
         let role_name = &self.role.to_string();
 
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
-
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
-
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
+
+        let private_key = if *role_name == NodeRole::Apps.to_string() {
+            ""
+        } else {
+            &self.get_private_key().await?
+        };
+
+        let genesis_key = if *role_name == NodeRole::Apps.to_string() {
+            &self.chain.genesis_wallet_private_key().await?
+        } else {
+            ""
+        };
+
+        let persistence_url = self.chain.persistence_url().unwrap_or_default();
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
         var_map.insert("docker_image", z2_image);
         var_map.insert("otterscan_image", otterscan_image);
         var_map.insert("spout_image", spout_image);
+        var_map.insert("secret_key", private_key);
+        var_map.insert("genesis_key", genesis_key);
+        var_map.insert("persistence_url", &persistence_url);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;
@@ -737,9 +752,8 @@ pub async fn retrieve_secret_by_role(
     chain_name: &str,
     project_id: &str,
     role_name: &str,
-) -> Result<Vec<String>> {
-    retrieve_secret(
-        chain_name,
+) -> Result<Vec<Secret>> {
+    Secret::get_secrets(
         project_id,
         format!(
             "labels.zq2-network={} AND labels.role={}",
@@ -754,12 +768,11 @@ async fn retrieve_secret_by_node_name(
     chain_name: &str,
     project_id: &str,
     node_name: &str,
-) -> Result<Vec<String>> {
-    retrieve_secret(
-        chain_name,
+) -> Result<Vec<Secret>> {
+    Secret::get_secrets(
         project_id,
         format!(
-            "labels.zq2-network={} AND labels.node-name={}",
+            "labels.zq2-network={} AND labels.node-name={} AND labels.is-private-key=true",
             chain_name, node_name
         )
         .as_str(),
@@ -771,82 +784,14 @@ async fn retrieve_wallet_secret_by_node_name(
     chain_name: &str,
     project_id: &str,
     node_name: &str,
-) -> Result<Vec<String>> {
-    retrieve_secret(
-        chain_name,
+) -> Result<Vec<Secret>> {
+    Secret::get_secrets(
         project_id,
         format!(
-            "labels.zq2-network={} AND labels.node-name={} AND labels.is_reward_wallet=true",
+            "labels.zq2-network={} AND labels.node-name={} AND labels.is-reward-wallet=true",
             chain_name, node_name
         )
         .as_str(),
     )
     .await
-}
-
-async fn retrieve_secret(chain_name: &str, project_id: &str, filter: &str) -> Result<Vec<String>> {
-    let mut secrets_found = Vec::<String>::new();
-
-    // List secrets with gcloud command
-    let output = zqutils::commands::CommandBuilder::new()
-        .silent()
-        .cmd(
-            "gcloud",
-            &[
-                "secrets",
-                "list",
-                "--project",
-                project_id,
-                "--format=json",
-                "--filter",
-                filter,
-            ],
-        )
-        .run()
-        .await?;
-
-    if !output.success {
-        return Err(anyhow!("listing secrets failed"));
-    }
-
-    // Parse the JSON output
-    let secrets: Vec<BTreeMap<String, serde_json::Value>> = serde_json::from_slice(&output.stdout)?;
-
-    // Iterate over the secrets and get their latest versions
-    for secret in secrets {
-        if let Some(secret_name) = secret.get("name").and_then(|v| v.as_str()) {
-            // Find the last '/' in the string
-            if let Some(last_slash_pos) = secret_name.rfind('/') {
-                let last_part = &secret_name[last_slash_pos + 1..];
-
-                let output = zqutils::commands::CommandBuilder::new()
-                    .silent()
-                    .cmd(
-                        "gcloud",
-                        &[
-                            "--project",
-                            project_id,
-                            "secrets",
-                            "versions",
-                            "access",
-                            "latest",
-                            "--secret",
-                            last_part,
-                        ],
-                    )
-                    .run()
-                    .await?;
-
-                if !output.success {
-                    return Err(anyhow!("Error executing the command to retrieve secrets with filter '{}' in the network {}", filter, chain_name));
-                }
-
-                secrets_found.push(std::str::from_utf8(&output.stdout)?.to_string());
-            } else {
-                return Err(anyhow!("Error: secret name {} malformed", secret_name));
-            }
-        }
-    }
-
-    Ok(secrets_found)
 }

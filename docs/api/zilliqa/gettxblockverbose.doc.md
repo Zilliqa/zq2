@@ -34,91 +34,73 @@ curl -d '{
   "id": "1",
   "jsonrpc": "2.0",
   "result": {
-    "B1": [
-      false,
-      false,
-      false
-      // Output truncated
-    ],
-    "B2": [
-      false,
-      false
-      // Output truncated
-    ],
-    "CS1": "FBA696961142862169D03EED67DD302EAB91333CBC4EEFE7EDB230515DA31DC1B9746EEEE5E7C105685E22C483B1021867B3775D30215CA66D5D81543E9FE8B5",
-    "PrevDSHash": "585373fb2c607b324afbe8f592e43b40d0091bbcef56c158e0879ced69648c8e",
-    "header": {
-      "BlockNum": "9000",
-      "CommitteeHash": "da38b3b21b26b71835bb1545246a0a248f97003de302ae20d70aeaf854403029",
-      "Difficulty": 95,
-      "DifficultyDS": 156,
-      "EpochNum": "899900",
-      "GasPrice": "2000000000",
-      "MembersEjected": [
-        "0x02572A2FCD59F8115297B399F76D7ACCFDA7E82AC53702063C3A61FB4D85E0D0C1",
-        "0x029933F07FF634654C2ECB17A90EAD00CF9EE9F75395E206660CCEFB21874ECEA1",
-        "0x02AAD92E5A3C9D8ECB364225719478B51026DD5C786BF7312C5C9765353BC4C98B"
+    "body": {
+      "B1": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        true,
+        true
+        // Output truncated
       ],
-      "PoWWinners": [
-        "0x0207184EB580333132787B360CA6D93290000C9F71E0B6A02C4412E7148FB1AF81",
-        "0x0285B572471A9D3BA729719ED2EEE86395D3B8F243572E9099A5E8B750F46092A7",
-        "0x02C1D8C0C7884E65A22FFD76DF9ACC2EA3551133E4ADD59C2DF74F327E09F709FF",
-        "0x02D728E77C8DA14E900BA8A2014A0D4B5512C6BABCCB77B83F21381437E0038F44",
-        "0x0321B0E1A20F02C99394DD24B34AB4E79AE6CBF0C689C222F246431A764D6B59DB",
-        "0x038A724504899CCCA068BD165AE15CE2947667225C72912039CEE4EF3992334843",
-        "0x03AB477A7A895DD4E84F240A2F1FCF5F86B1A3D59B6AD3065C18CD69729D089959",
-        "0x03B29C7F3F85329B0621914AB0367BA78135889FB8E4F937DDB7DAA8123AD4DF3C",
-        "0x03E82B00B53ECC10073404E844841C519152E500A655EEF1D8EAD6612ABDF5B552"
+      "B2": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        true
+        // Output truncated
       ],
-      "PoWWinnersIP": [
+      "BlockHash": "57996c6d950367a64cf6fe46a0c04441eee99e6014fc6336a0c970108fc5f4a1",
+      "CS1": "BF3D3B005DC7406E24F629103D34840719C198A1703784F835CAAC65D3FD486D041330A7C3A7D03225D7D0C317A5BBD97C75B53820EA6C565615DED9B0945C12",
+      "HeaderSign": "EC5E7E260C54909F905D74A52BDF683F70AFD4B6AE1EDE4E50F79527A598C953A7FA86892BECBD6C4D7E3BF015123D5AB4D43E41B764328F76131E9046EF7C9B",
+      "MicroBlockInfos": [
         {
-          "IP": "34.212.122.139",
-          "port": 33133
+          "MicroBlockHash": "5a904694af8ed81235309e802f1868699d7760c10c39b1626fca86ecc3689c4f",
+          "MicroBlockShardId": 0,
+          "MicroBlockTxnRootHash": "0000000000000000000000000000000000000000000000000000000000000000"
         },
         {
-          "IP": "34.214.85.15",
-          "port": 33133
+          "MicroBlockHash": "8b06628d337814eed480e8f49ba5be6d6e93593dea3b1413c48c99231536e29f",
+          "MicroBlockShardId": 1,
+          "MicroBlockTxnRootHash": "0000000000000000000000000000000000000000000000000000000000000000"
         },
         {
-          "IP": "54.148.246.51",
-          "port": 33133
+          "MicroBlockHash": "91141ac9ea2abf17adbf5797d49fa560072731df9dd81ea46f55446dfc46d1ae",
+          "MicroBlockShardId": 2,
+          "MicroBlockTxnRootHash": "0000000000000000000000000000000000000000000000000000000000000000"
         },
         {
-          "IP": "54.218.112.25",
-          "port": 33133
-        },
-        {
-          "IP": "54.184.108.224",
-          "port": 33133
-        },
-        {
-          "IP": "34.211.53.138",
-          "port": 33133
-        },
-        {
-          "IP": "44.234.38.187",
-          "port": 33133
-        },
-        {
-          "IP": "44.234.126.143",
-          "port": 33133
-        },
-        {
-          "IP": "34.223.254.106",
-          "port": 33133
+          "MicroBlockHash": "32f97f1c4afdd123f1cfdd5e3bbdfcd86bbb7fb499fdae4d27fe2ed328a19c00",
+          "MicroBlockShardId": 3,
+          "MicroBlockTxnRootHash": "0000000000000000000000000000000000000000000000000000000000000000"
         }
-      ],
-      "PrevHash": "585373fb2c607b324afbe8f592e43b40d0091bbcef56c158e0879ced69648c8e",
-      "ReservedField": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-      "SWInfo": {
-        "Scilla": [0, 0, 0, "0", 0],
-        "Zilliqa": [0, 0, 0, "0", 0]
-      },
-      "ShardingHash": "3216a33bfd4801e1907e72c7d529cef99c38d57cd281d0e9d726639fd9882d25",
-      "Timestamp": "1606443830834512",
-      "Version": 2
+      ]
     },
-    "signature": "7EE023C56602A17F2C8ABA2BEF290386D7C2CE1ABD8E3621573802FA67B243DE60B3EBEE5C4CCFDB697C80127B99CB384DAFEB44F70CD7569F2816DB950877BB"
+    "header": {
+      "BlockNum": "3167",
+      "CommitteeHash": "704380e65d66155ca878cfa607a26a919749acae0ac545f6f100f7a0ab20efee",
+      "DSBlockNum": "32",
+      "GasLimit": "2000000",
+      "GasUsed": "0",
+      "MbInfoHash": "dc1b3a968bdf92715af63e3da8bfc2560d2b7b15c17299fd2c07bd0778a0b66e",
+      "MinerPubKey": "0x0223E276FFF18295630C6C41BE9565DDC8E41B3B3E6E79CA1A6699616AD2C756AF",
+      "NumMicroBlocks": 4,
+      "NumPages": 0,
+      "NumTxns": 0,
+      "PrevBlockHash": "4476876bb0297ee6bf4d4b7aed176a1e270ba71b07c45740111368f945c8233d",
+      "Rewards": "0",
+      "StateDeltaHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "StateRootHash": "72219f58dab5e832a36eaf67b445831afd5e67f8f9dfac418cf792cb87fdac31",
+      "Timestamp": "1549336642054789",
+      "TxnFees": "0",
+      "Version": 1
+    }
   }
 }
 ```
@@ -131,5 +113,3 @@ curl -d '{
 | `jsonrpc` | string | Required | `"2.0"`                                                   |
 | `method`  | string | Required | `"GetTxBlockVerbose"`                                     |
 | `params`  | string | Required | Specified TX block number to return. Example: `"1002353"` |
-
-

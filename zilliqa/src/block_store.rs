@@ -420,9 +420,9 @@ pub struct BlockStore {
     failed_request_sleep_duration: Duration,
     /// Our block strategies.
     strategies: Vec<BlockStrategy>,
-    /// Last time we updated our availability - we do this at most once a second or so to avoid spam
-    available_blocks: Vec<BlockStrategy>,
-    available_blocks_updated: Option<SystemTime>,
+    /// The block views we have available. This is read once from the DB at start-up and incrementally updated whenever
+    /// we receive a new block. We do this because obtaining the data from the DB is expensive.
+    available_blocks: RangeMap,
 
     /// Buffered block proposals.
     buffered: BlockCache,
@@ -542,7 +542,6 @@ impl BlockStoreStatus {
             .iter()
             .map(|(k, v)| (format!("{:?}", k), PeerInfoStatus::new(v)))
             .collect::<Vec<_>>();
-
         Ok(Self {
             highest_known_view: block_store.highest_known_view,
             views_held: block_store.db.get_view_ranges()?,
@@ -587,6 +586,13 @@ impl BlockAvailability {
 
 impl BlockStore {
     pub fn new(config: &NodeConfig, db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
+        let available_blocks =
+            db.get_view_ranges()?
+                .iter()
+                .fold(RangeMap::new(), |mut range_map, range| {
+                    range_map.with_range(range);
+                    range_map
+                });
         Ok(BlockStore {
             db,
             block_cache: Arc::new(RwLock::new(LruCache::new(NonZeroUsize::new(5).unwrap()))),
@@ -596,8 +602,7 @@ impl BlockStore {
             max_blocks_in_flight: config.max_blocks_in_flight,
             failed_request_sleep_duration: config.failed_request_sleep_duration,
             strategies: vec![BlockStrategy::Latest(constants::RETAINS_LAST_N_BLOCKS)],
-            available_blocks: vec![],
-            available_blocks_updated: None,
+            available_blocks,
             buffered: BlockCache::new(config.max_blocks_in_flight),
             unserviceable_requests: None,
             message_sender,
@@ -605,6 +610,20 @@ impl BlockStore {
             started_syncing_at: 0,
             last_sync_flag: false,
         })
+    }
+
+    /// The data set here is held in memory. It can be useful to update manually
+    /// For example after a restart to remind block_store of its peers and height
+    pub fn set_peers_and_view(
+        &mut self,
+        highest_known_view: u64,
+        peer_ids: &Vec<PeerId>,
+    ) -> Result<()> {
+        for peer_id in peer_ids {
+            self.peer_info(*peer_id);
+        }
+        self.highest_known_view = highest_known_view;
+        Ok(())
     }
 
     /// Create a read-only clone of this [BlockStore]. The read-only property must be upheld by the caller - Calling
@@ -619,8 +638,7 @@ impl BlockStore {
             max_blocks_in_flight: 0,
             failed_request_sleep_duration: Duration::ZERO,
             strategies: self.strategies.clone(),
-            available_blocks: Vec::new(),
-            available_blocks_updated: None,
+            available_blocks: RangeMap::new(),
             buffered: BlockCache::new(0),
             unserviceable_requests: None,
             message_sender: self.message_sender.clone(),
@@ -646,24 +664,14 @@ impl BlockStore {
     /// We need to do this by view range, which means that we need to account for views where there was no block.
     /// So, the underlying db function finds the view lower and upper bounds of our contiguous block ranges and we
     /// advertise those.
-    /// This function overlays that with a timeout so we don't ask (and thus load the db) too often.
-    pub fn availability(&mut self) -> Result<Option<Vec<BlockStrategy>>> {
+    pub fn availability(&self) -> Result<Option<Vec<BlockStrategy>>> {
         let mut to_return = self.strategies.clone();
-        let now = SystemTime::now();
-        if self.available_blocks_updated.map_or(true, |x| {
-            now.duration_since(x).unwrap_or(Duration::ZERO)
-                > constants::RECOMPUTE_BLOCK_AVAILABILITY_AFTER
-        }) {
-            debug!("Updating available views");
-            self.available_blocks = self
-                .db
-                .get_view_ranges()?
+        to_return.extend(
+            self.available_blocks
+                .ranges
                 .iter()
-                .map(|x| BlockStrategy::CachedViewRange(x.clone(), None))
-                .collect();
-            self.available_blocks_updated = Some(now);
-        }
-        to_return.extend(self.available_blocks.iter().cloned());
+                .map(|range| BlockStrategy::CachedViewRange(range.clone(), None)),
+        );
         Ok(Some(to_return))
     }
 
@@ -1065,6 +1073,7 @@ impl BlockStore {
     ) -> Result<Vec<(PeerId, Proposal)>> {
         trace!(?from, number = block.number(), hash = ?block.hash(), "block_store::process_block() : starting");
         self.db.insert_block(&block)?;
+        self.available_blocks.with_elem(block.view());
 
         if let Some(from) = from {
             let peer = self.peer_info(from);

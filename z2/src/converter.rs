@@ -4,14 +4,16 @@ use std::{
     collections::BTreeMap,
     fs,
     path::PathBuf,
-    process::{self, Stdio},
+    process::{self, Child, ExitStatus, Stdio},
+    str::FromStr,
     sync::Arc,
+    thread::sleep,
     time::Duration,
 };
 
 use alloy::{
     consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH},
-    primitives::{Address, Parity, Signature, TxKind, B256, U256},
+    primitives::{Address, Parity, PrimitiveSignature, TxKind, B256, U256},
 };
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, bitvec, order::Msb0};
@@ -32,18 +34,19 @@ use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
 use zilliqa::{
     block_store::BlockStore,
-    cfg::Config,
+    cfg::{scilla_ext_libs_path_default, Amount, Config, NodeConfig},
     consensus::Validator,
+    constants::SCILLA_INVOKE_CHECKER,
     contracts,
     crypto::{self, Hash, SecretKey},
     db::Db,
-    exec::BaseFeeCheck,
+    exec::{store_external_libraries, BaseFeeCheck},
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
     schnorr,
-    scilla::{storage_key, ParamValue},
-    state::{contract_addr, Account, Code, State},
+    scilla::{storage_key, CheckOutput, ParamValue, Transition, TransitionParam},
+    state::{contract_addr, Account, Code, ContractInit, State},
     time::SystemTime,
     transaction::{
         EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
@@ -58,12 +61,47 @@ fn create_acc_query_prefix(address: Address) -> String {
 
 const ZQ1_STATE_KEY_SEPARATOR: u8 = 0x16;
 
+fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result<CheckOutput> {
+    let scilla = state.scilla();
+
+    let contract_init = ContractInit::new(init_data.into());
+
+    let scilla_ext_libs_path = scilla_ext_libs_path_default();
+
+    let (ext_libs_dir_in_zq2, ext_libs_dir_in_scilla) = store_external_libraries(
+        state,
+        &scilla_ext_libs_path,
+        contract_init.external_libraries()?,
+    )?;
+
+    let _cleanup_ext_libs_guard = scopeguard::guard((), |_| {
+        // We need to ensure that in any case, the external libs directory will be removed.
+        let _ = std::fs::remove_dir_all(ext_libs_dir_in_zq2.0);
+    });
+
+    scilla
+        .check_contract(
+            code,
+            ScillaGas(10000000),
+            &contract_init,
+            &ext_libs_dir_in_scilla,
+        )
+        .and_then(|inner_result| {
+            inner_result.map_err(|err| anyhow!("Contract check error: {:?}", err))
+        })
+        .map_err(|e| anyhow!("Failed to check contract code: {:?}", e))
+}
+
 #[allow(clippy::type_complexity)]
 fn convert_scilla_state(
     zq1_db: &zq1::Db,
     zq2_db: &Db,
+    state: &State,
+    code: &str,
+    init_data: &[ParamValue],
     address: Address,
-) -> Result<(B256, BTreeMap<String, (String, u8)>)> {
+) -> Result<(B256, BTreeMap<String, (String, u8)>, Vec<Transition>)> {
+    println!("contract address: {:?}", address);
     let prefix = create_acc_query_prefix(address);
 
     let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
@@ -84,15 +122,15 @@ fn convert_scilla_state(
             .collect::<Vec<_>>();
 
         if chunks.is_empty() {
-            warn!("Malformed key name in contract storage!");
+            warn!("Malformed key name: {} in contract storage!", key);
             continue;
         };
 
         // We handle this type of keys differently in zq2
-        if chunks[0].contains("_fields_map_depth")
-            || chunks[0].contains("_version")
-            || chunks[0].contains("_hasmap")
-            || chunks[0].contains("_addr")
+        if chunks[0].as_str() == "_fields_map_depth"
+            || chunks[0].as_str() == "_version"
+            || chunks[0].as_str() == "_hasmap"
+            || chunks[0].as_str() == "_addr"
         {
             continue;
         }
@@ -143,8 +181,24 @@ fn convert_scilla_state(
     }
 
     let storage_root = contract_trie.root_hash()?;
+    let checker_result = match invoke_checker(state, code, init_data) {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!(
+                "Checker failed for address {:?} with error: {:?}",
+                address, err
+            );
+            // Return default values
+            return Ok((
+                storage_root,
+                field_types,
+                Vec::new(), // Default empty transitions
+            ));
+        }
+    };
+    let transitions = checker_result.contract_info.unwrap().transitions;
 
-    Ok((storage_root, field_types))
+    Ok((storage_root, field_types, transitions))
 }
 
 fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<B256> {
@@ -167,7 +221,7 @@ fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<
             .collect::<Vec<_>>();
 
         if chunks.len() < 2 || chunks[0] != evm_prefix {
-            warn!("Malformed key name in contract storage!");
+            warn!("Malformed key name: {} in contract storage!", key);
             continue;
         };
 
@@ -187,7 +241,7 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
 
     let evm_prefix = b"EVM";
 
-    if code.len() > 3 && code[0..3] == evm_prefix[0..3] {
+    if code.len() >= 3 && code[0..3] == evm_prefix[0..3] {
         return Ok(Code::Evm(code[3..].to_vec()));
     }
 
@@ -206,13 +260,96 @@ fn get_contract_code(zq1_db: &zq1::Db, address: Address) -> Result<Code> {
         })?
     };
 
-    Ok(Code::Scilla {
-        code: String::from_utf8(code)
-            .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?,
+    let code = String::from_utf8(code)
+        .map_err(|err| anyhow!("Unable to convert scilla code into string: {err}"))?;
+
+    let scilla_code = Code::Scilla {
+        code: code.clone(),
         init_data: init_data_vec,
         types: BTreeMap::default(),
         transitions: vec![],
-    })
+    };
+
+    Ok(scilla_code)
+}
+
+fn run_scilla_docker() -> Result<Child> {
+    let name = "scilla-server";
+    let child = std::process::Command::new("docker")
+        .arg("run")
+        .arg("--name")
+        .arg(name)
+        .arg("--network")
+        .arg("host")
+        .arg("--init")
+        .arg("--rm")
+        .arg("-v")
+        .arg("/tmp:/scilla_ext_libs")
+        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72")
+        .arg("/scilla/0/bin/scilla-server-http")
+        .spawn()?;
+
+    // Wait for the container to be running.
+    for i in 0.. {
+        let status_output = std::process::Command::new("docker")
+            .arg("inspect")
+            .arg("-f")
+            .arg("{{.State.Status}}")
+            .arg(name)
+            .output()
+            .unwrap();
+        let status = String::from_utf8(status_output.stdout).unwrap();
+        if status.trim() == "running" {
+            break;
+        }
+        if i >= 1200 {
+            panic!("container is still not running");
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    Ok(child)
+}
+
+fn stop_scilla_docker(child: &mut Child) -> Result<ExitStatus> {
+    process::Command::new("docker")
+        .arg("stop")
+        .arg("--signal")
+        .arg("SIGKILL")
+        .arg("scilla-server")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    child
+        .wait()
+        .or(Err(anyhow!("Unable to stop docker container!")))
+}
+
+fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Result<()> {
+    let total_requested_amount = 0_u128
+        .checked_add(
+            config
+                .consensus
+                .genesis_accounts
+                .iter()
+                .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0),
+        )
+        .expect("Genesis accounts sum to more than max value of u128")
+        .checked_add(
+            config
+                .consensus
+                .genesis_deposits
+                .iter()
+                .fold(0, |acc, item| acc + item.stake.0),
+        )
+        .expect("Genesis accounts + genesis deposits sum to more than max value of u128");
+    state.mutate_account(Address::ZERO, |acc| {
+        acc.balance = acc.balance.checked_sub(total_requested_amount).expect("Sum of funds in genesis.deposit and genesis.accounts exceeds funds in ZeroAccount from zq1!");
+        Ok(())
+    })?;
+
+    // Flush any pending changes to db
+    let _ = state.root_hash()?;
+    Ok(())
 }
 
 pub async fn convert_persistence(
@@ -220,13 +357,10 @@ pub async fn convert_persistence(
     zq2_db: Db,
     zq2_config: Config,
     secret_key: SecretKey,
-    convert_accounts: bool,
-    convert_blocks: bool,
 ) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
-    )
-    .unwrap();
+    )?;
 
     let (outbound_message_sender, _a) = mpsc::unbounded_channel();
     let (local_message_sender, _b) = mpsc::unbounded_channel();
@@ -251,85 +385,83 @@ pub async fn convert_persistence(
         block_store,
     )?;
 
-    if convert_accounts {
-        // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
-        // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
-        let distance_sum: u64 = zq1_db
-            .accounts()
-            .map(|(addr, _)| addr)
-            .take(100)
-            .tuple_windows()
-            .map(|(a, b)| {
-                // Downsample the addresses to 8 bytes, treating them as `u64`s, for ease of computation.
-                let a = u64::from_be_bytes(a.as_slice()[..8].try_into().unwrap());
-                let b = u64::from_be_bytes(b.as_slice()[..8].try_into().unwrap());
+    let mut scilla_docker = run_scilla_docker()?;
+    // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
+    // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
+    let distance_sum: u64 = zq1_db
+        .accounts()
+        .map(|(addr, _)| addr)
+        .take(100)
+        .tuple_windows()
+        .map(|(a, b)| {
+            // Downsample the addresses to 8 bytes, treating them as `u64`s, for ease of computation.
+            let a = u64::from_be_bytes(a.as_slice()[..8].try_into().unwrap());
+            let b = u64::from_be_bytes(b.as_slice()[..8].try_into().unwrap());
 
-                b - a
-            })
-            .sum();
-        let average_distance = distance_sum as f64 / 99.;
-        let address_count = ((u64::MAX as f64) / average_distance) as u64;
+            b - a
+        })
+        .sum();
+    let average_distance = distance_sum as f64 / 99.;
+    let address_count = ((u64::MAX as f64) / average_distance) as u64;
 
-        let progress = ProgressBar::new(address_count)
-            .with_style(style.clone())
-            .with_message("collect accounts")
-            .with_finish(ProgressFinish::AndLeave);
+    let progress = ProgressBar::new(address_count)
+        .with_style(style.clone())
+        .with_message("collect accounts")
+        .with_finish(ProgressFinish::AndLeave);
 
-        let accounts: Vec<_> = zq1_db.accounts().progress_with(progress).collect();
+    let accounts: Vec<_> = zq1_db.accounts().progress_with(progress).collect();
 
-        let progress = ProgressBar::new(accounts.len() as u64)
-            .with_style(style.clone())
-            .with_message("convert accounts")
-            .with_finish(ProgressFinish::AndLeave);
+    let progress = ProgressBar::new(accounts.len() as u64)
+        .with_style(style.clone())
+        .with_message("convert accounts")
+        .with_finish(ProgressFinish::AndLeave);
 
-        for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
-            if address.is_zero() {
-                continue;
-            }
-            let zq1_account = zq1::Account::from_proto(zq1_account)?;
-
-            let code = get_contract_code(&zq1_db, address)?;
-
-            let (code, storage_root) = match code {
-                Code::Evm(evm_code) if !evm_code.is_empty() => {
-                    let storage_root = convert_evm_state(&zq1_db, &zq2_db, address)?;
-                    (Code::Evm(evm_code), storage_root)
-                }
-                Code::Scilla {
-                    code, init_data, ..
-                } => {
-                    let (storage_root, types) = convert_scilla_state(&zq1_db, &zq2_db, address)?;
-                    (
-                        Code::Scilla {
-                            code,
-                            init_data,
-                            types,
-                            // TODO: transitions were not part of zq1 storage (they have to be recreated with scilla-checker)
-                            transitions: vec![],
-                        },
-                        storage_root,
-                    )
-                }
-                _ => (code, EMPTY_ROOT_HASH),
-            };
-
-            let account = Account {
-                nonce: zq1_account.nonce,
-                balance: zq1_account.balance * 10u128.pow(6),
-                code,
-                storage_root,
-            };
-
-            state.save_account(address, account)?;
-            // Flush any pending changes to db
-            let _ = state.root_hash()?;
+    for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
+        if address.is_zero() {
+            continue;
         }
+        let zq1_account = zq1::Account::from_proto(zq1_account)?;
+
+        let code = get_contract_code(&zq1_db, address)?;
+
+        let (code, storage_root) = match code {
+            Code::Evm(evm_code) if !evm_code.is_empty() => {
+                let storage_root = convert_evm_state(&zq1_db, &zq2_db, address)?;
+                (Code::Evm(evm_code), storage_root)
+            }
+            Code::Scilla {
+                code, init_data, ..
+            } => {
+                let (storage_root, types, transitions) =
+                    convert_scilla_state(&zq1_db, &zq2_db, &state, &code, &init_data, address)?;
+                (
+                    Code::Scilla {
+                        code,
+                        init_data,
+                        types,
+                        transitions,
+                    },
+                    storage_root,
+                )
+            }
+            _ => (code, EMPTY_ROOT_HASH),
+        };
+
+        let account = Account {
+            nonce: zq1_account.nonce,
+            balance: zq1_account.balance * 10u128.pow(6),
+            code,
+            storage_root,
+        };
+
+        state.save_account(address, account)?;
+        // Flush any pending changes to db
+        let _ = state.root_hash()?;
     }
 
-    if !convert_blocks {
-        println!("Accounts converted. Skipping blocks.");
-        return Ok(());
-    }
+    stop_scilla_docker(&mut scilla_docker)?;
+
+    deduct_funds_from_zero_account(&mut state, node_config)?;
 
     let max_block = zq1_db
         .get_tx_blocks_aux("MaxTxBlockNumber")?
@@ -364,10 +496,10 @@ pub async fn convert_persistence(
         let mut transactions = Vec::new();
         let mut receipts = Vec::new();
 
-        let block = zq1::TxBlock::from_proto(block)?;
+        let zq1_block = zq1::TxBlock::from_proto(block)?;
         // TODO: Retain ZQ1 block hash, so we can return it in APIs.
 
-        let txn_hashes: Vec<_> = block
+        let txn_hashes: Vec<_> = zq1_block
             .mb_infos
             .iter()
             .filter_map(|mbi| {
@@ -386,7 +518,7 @@ pub async fn convert_persistence(
             secret_key,
             parent_hash,
             secret_key.node_public_key(),
-            block.block_num - 1,
+            zq1_block.block_num - 1,
         );
 
         let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -431,32 +563,36 @@ pub async fn convert_persistence(
             &[vote.signature()],
             bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
             parent_hash,
-            block.block_num - 1,
+            zq1_block.block_num - 1,
         );
         let block = Block::from_qc(
             secret_key,
-            block.block_num,
-            block.block_num,
+            zq1_block.block_num,
+            zq1_block.block_num,
             qc,
             None,
             state.root_hash()?,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             txn_hashes.iter().map(|h| Hash(h.0)).collect(),
-            SystemTime::UNIX_EPOCH + Duration::from_micros(block.timestamp),
-            ScillaGas(block.gas_used).into(),
-            ScillaGas(block.gas_limit).into(),
+            SystemTime::UNIX_EPOCH + Duration::from_micros(zq1_block.timestamp),
+            ScillaGas(zq1_block.gas_used).into(),
+            ScillaGas(zq1_block.gas_limit).into(),
         );
 
         // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
         for receipt in &mut receipts {
-            receipt.block_hash = block.hash();
+            receipt.block_hash = zq1_block.block_hash.into();
         }
 
-        parent_hash = block.hash();
+        parent_hash = zq1_block.block_hash.into();
 
         zq2_db.with_sqlite_tx(|sqlite_tx| {
-            zq2_db.insert_block_with_db_tx(sqlite_tx, &block)?;
+            zq2_db.insert_block_with_hash_with_db_tx(
+                sqlite_tx,
+                zq1_block.block_hash.into(),
+                &block,
+            )?;
             zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.header.qc)?;
             zq2_db.set_finalized_view_with_db_tx(sqlite_tx, block.view())?;
             trace!("{} block inserted", block.number());
@@ -601,7 +737,7 @@ fn try_with_zil_transaction(
             gas_price: ZilAmount::from_raw(transaction.gas_price),
             gas_limit: ScillaGas(transaction.gas_limit),
             to_addr: transaction.to_addr,
-            amount: ZilAmount::from_amount(transaction.amount),
+            amount: ZilAmount::from_raw(transaction.amount),
             code: transaction
                 .code
                 .map(String::from_utf8)
@@ -681,12 +817,7 @@ fn infer_eth_signature(
         .context("Can retrieve s item from signature!")?;
 
     for y_is_odd in [false, true] {
-        let mut parity = Parity::Parity(y_is_odd);
-        // Legacy transactions should have the chain ID included in their parity.
-        if version == 2 {
-            parity = parity.with_chain_id(chain_id as u64);
-        }
-        let sig = Signature::from_rs_and_parity(r, s, parity)?;
+        let sig = PrimitiveSignature::new(r, s, y_is_odd);
         let payload = transaction
             .code
             .as_ref()

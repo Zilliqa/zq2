@@ -3,10 +3,9 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use alloy::{
-    consensus::{TxEip1559, TxEip2930, TxLegacy},
-    eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash},
-    primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64},
-    rlp::{Decodable, Header},
+    consensus::{transaction::RlpEcdsaTx, TxEip1559, TxEip2930, TxLegacy},
+    eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
+    primitives::{Address, B256, U256, U64},
     rpc::types::{
         pubsub::{self, SubscriptionKind},
         FilteredParams,
@@ -34,7 +33,9 @@ use super::{
     },
 };
 use crate::{
+    api::zil::ZilAddress,
     crypto::Hash,
+    error::ensure_success,
     message::Block,
     node::Node,
     pool::TxAddResult,
@@ -182,7 +183,7 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    let ret = node.call_contract(
+    let result = node.call_contract(
         &block,
         call_params.from,
         call_params.to,
@@ -194,7 +195,10 @@ fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         call_params.value.to(),
     )?;
 
-    Ok(ret.to_hex())
+    match ensure_success(result) {
+        Ok(output) => Ok(output.to_hex()),
+        Err(err) => Err(ErrorObjectOwned::from(err).into()),
+    }
 }
 
 fn chain_id(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -228,7 +232,9 @@ fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
-    let address: Address = params.next()?;
+    let address: ZilAddress = params.next()?;
+    let address: Address = address.into();
+
     let block_id: BlockId = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
@@ -667,6 +673,9 @@ pub(super) fn get_transaction_receipt_inner(
         .collect();
 
     let from = signed_transaction.signer;
+    let v = signed_transaction.tx.sig_v();
+    let r = signed_transaction.tx.sig_r();
+    let s = signed_transaction.tx.sig_s();
     let transaction = signed_transaction.tx.into_transaction();
     let receipt = eth::TransactionReceipt {
         transaction_hash: hash.into(),
@@ -683,6 +692,9 @@ pub(super) fn get_transaction_receipt_inner(
         logs_bloom,
         ty: 0,
         status: receipt.success,
+        v,
+        r,
+        s,
     };
 
     Ok(Some(receipt))
@@ -751,94 +763,17 @@ fn parse_transaction(bytes: &[u8]) -> Result<SignedTransaction> {
 }
 
 fn parse_legacy_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
-    let mut bytes = Header::decode_bytes(&mut buf, true)?;
-
-    let nonce = u64::decode(&mut bytes)?;
-    let gas_price = u128::decode(&mut bytes)?;
-    let gas_limit = u64::decode(&mut bytes)?;
-    let to = TxKind::decode(&mut bytes)?;
-    let value = U256::decode(&mut bytes)?;
-    let input = Bytes::decode(&mut bytes)?;
-    let v = u64::decode(&mut bytes)?;
-    let r = U256::decode(&mut bytes)?;
-    let s = U256::decode(&mut bytes)?;
-
-    let sig = Signature::from_rs_and_parity(r, s, v)?;
-
-    let tx = TxLegacy {
-        chain_id: sig.v().chain_id(),
-        nonce,
-        gas_price,
-        gas_limit,
-        to,
-        value,
-        input,
-    };
-
+    let (tx, sig) = TxLegacy::rlp_decode_with_signature(&mut buf)?;
     Ok(SignedTransaction::Legacy { tx, sig })
 }
 
 fn parse_eip2930_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
-    let mut bytes = Header::decode_bytes(&mut buf, true)?;
-
-    let chain_id = u64::decode(&mut bytes)?;
-    let nonce = u64::decode(&mut bytes)?;
-    let gas_price = u128::decode(&mut bytes)?;
-    let gas_limit = u64::decode(&mut bytes)?;
-    let to = TxKind::decode(&mut bytes)?;
-    let value = U256::decode(&mut bytes)?;
-    let input = Bytes::decode(&mut bytes)?;
-    let access_list = AccessList::decode(&mut bytes)?;
-    let y_is_odd = bool::decode(&mut bytes)?;
-    let r = U256::decode(&mut bytes)?;
-    let s = U256::decode(&mut bytes)?;
-
-    let sig = Signature::from_rs_and_parity(r, s, Parity::Parity(y_is_odd))?;
-
-    let tx = TxEip2930 {
-        chain_id,
-        nonce,
-        gas_price,
-        gas_limit,
-        to,
-        value,
-        input,
-        access_list,
-    };
-
+    let (tx, sig) = TxEip2930::rlp_decode_with_signature(&mut buf)?;
     Ok(SignedTransaction::Eip2930 { tx, sig })
 }
 
 fn parse_eip1559_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
-    let mut bytes = Header::decode_bytes(&mut buf, true)?;
-
-    let chain_id = u64::decode(&mut bytes)?;
-    let nonce = u64::decode(&mut bytes)?;
-    let max_priority_fee_per_gas = u128::decode(&mut bytes)?;
-    let max_fee_per_gas = u128::decode(&mut bytes)?;
-    let gas_limit = u64::decode(&mut bytes)?;
-    let to = TxKind::decode(&mut bytes)?;
-    let value = U256::decode(&mut bytes)?;
-    let input = Bytes::decode(&mut bytes)?;
-    let access_list = AccessList::decode(&mut bytes)?;
-    let y_is_odd = bool::decode(&mut bytes)?;
-    let r = U256::decode(&mut bytes)?;
-    let s = U256::decode(&mut bytes)?;
-
-    let sig = Signature::from_rs_and_parity(r, s, Parity::Parity(y_is_odd))?;
-
-    let tx = TxEip1559 {
-        chain_id,
-        nonce,
-        max_priority_fee_per_gas,
-        max_fee_per_gas,
-        gas_limit,
-        to,
-        value,
-        input,
-        access_list,
-    };
-
+    let (tx, sig) = TxEip1559::rlp_decode_with_signature(&mut buf)?;
     Ok(SignedTransaction::Eip1559 { tx, sig })
 }
 

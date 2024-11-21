@@ -31,9 +31,9 @@ use super::{
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
-        RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, TXBlockRateResult,
-        TransactionBody, TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
-        TxnsForTxBlockExResponse,
+        RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, StateProofResponse,
+        TXBlockRateResult, TransactionBody, TransactionStatusResponse, TxBlockListing,
+        TxBlockListingResult, TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -44,7 +44,7 @@ use crate::{
     node::Node,
     pool::TxAddResult,
     schnorr,
-    scilla::{split_storage_key, ParamValue},
+    scilla::{split_storage_key, storage_key, ParamValue},
     state::Code,
     time::SystemTime,
     transaction::{
@@ -75,8 +75,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNetworkId", get_network_id),
             ("GetVersion", get_version),
             ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
-            ("GetTxBlock", |p, n| get_tx_block(p, n, false)),
-            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n, true)),
+            ("GetTxBlock", get_tx_block),
+            ("GetTxBlockVerbose", get_tx_block_verbose),
             ("GetSmartContracts", get_smart_contracts),
             ("GetDSBlock", get_ds_block),
             ("GetDSBlockVerbose", get_ds_block_verbose),
@@ -102,15 +102,18 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNumTxnsDSEpoch", get_num_txns_ds_epoch),
             ("GetTotalCoinSupply", get_total_coin_supply),
             ("GetTotalCoinSupplyAsInt", get_total_coin_supply_as_int),
-            ("GetMinerInfo", getminerinfo),
-            ("GetNodeType", getnodetype),
-            ("GetPrevDifficulty", getprevdifficulty),
-            ("GetPrevDSDifficulty", getprevdsdifficulty),
-            ("GetShardingStructure", getshardingstructure),
-            ("GetSmartContractSubState", getsmartcontractsubstate),
-            ("GetSoftConfirmedTransaction", getsoftconfirmedtransaction),
-            ("GetStateProof", getstateproof),
-            ("GetTransactionStatus", gettransactionstatus),
+            ("GetMinerInfo", get_miner_info),
+            ("GetNodeType", get_node_type),
+            ("GetPrevDifficulty", get_prev_difficulty),
+            ("GetPrevDSDifficulty", get_prev_ds_difficulty),
+            ("GetShardingStructure", get_sharding_structure),
+            ("GetSmartContractSubState", get_smart_contract_sub_state),
+            (
+                "GetSoftConfirmedTransaction",
+                get_soft_confirmed_transaction
+            ),
+            ("GetStateProof", get_state_proof),
+            ("GetTransactionStatus", get_transaction_status),
         ],
     )
 }
@@ -148,7 +151,7 @@ pub fn to_zil_checksum_string(address: &Address) -> String {
 
 #[derive(Deserialize)]
 #[serde(transparent)]
-struct ZilAddress {
+pub struct ZilAddress {
     #[serde(deserialize_with = "deserialize_zil_address")]
     inner: Address,
 }
@@ -436,7 +439,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
     let state = node.get_state(&block)?;
 
     if !state.has_account(address)? {
-        return Err(jsonrpsee::types::ErrorObject::owned(
+        return Err(ErrorObject::owned(
             RPCErrorCode::RpcInvalidAddressOrKey as i32,
             "Account is not created",
             None::<()>,
@@ -464,7 +467,8 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
-    Ok((&block).into())
+    let tx_block = zil::TxBlock::new(&block);
+    Ok(tx_block)
 }
 
 // GetMinimumGasPrice
@@ -524,7 +528,8 @@ fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 
 // GetSmartContractState
 fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
-    let address: ZilAddress = params.one()?;
+    let mut seq = params.sequence();
+    let address: ZilAddress = seq.next()?;
     let address: Address = address.into();
 
     let node = node.lock().unwrap();
@@ -550,7 +555,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
         unreachable!()
     };
 
-    let is_scilla = account.code.scilla_code_and_init_data().is_some();
+    let is_scilla = account.code.clone().scilla_code_and_init_data().is_some();
     if is_scilla {
         let limit = node.config.state_rpc_limit;
 
@@ -565,16 +570,32 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
             let (var_name, indices) = split_storage_key(&k)?;
             let mut var = result.entry(var_name.clone());
 
-            for index in indices {
+            for index in indices.iter() {
                 let next = var.or_insert_with(|| Value::Object(Default::default()));
                 let Value::Object(next) = next else {
                     unreachable!()
                 };
-                let key: String = serde_json::from_slice(&index)?;
+                let key: String = serde_json::from_slice(index)?;
                 var = next.entry(key.clone());
             }
 
-            var.or_insert(serde_json::from_slice(&v)?);
+            let code = &account.code;
+
+            let field_defs = match code {
+                Code::Scilla { types, .. } => types.clone(),
+                _ => unreachable!(),
+            };
+            let (_, depth) = field_defs.get(&var_name).unwrap();
+            let depth = *depth as usize;
+
+            let convert_result = serde_json::from_slice(&v);
+            if depth > 0 && indices.len() < depth {
+                if convert_result.is_err() {
+                    var.or_insert(Value::Object(Default::default()));
+                }
+            } else {
+                var.or_insert(convert_result?);
+            }
         }
     }
 
@@ -593,10 +614,12 @@ fn get_smart_contract_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<Va
     let state = node.get_state(&block)?;
 
     if !state.has_account(address)? {
-        return Err(anyhow!(
-            "Address does not exist: {}",
-            hex::encode(address.0)
-        ));
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            format!("Address does not exist: {}", address),
+            None::<()>,
+        )
+        .into());
     }
     let account = state.get_account(address)?;
 
@@ -617,7 +640,18 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
     let block = node
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
-    let account = node.get_state(&block)?.get_account(address)?;
+
+    let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist".to_string(),
+            None::<()>,
+        )
+        .into());
+    }
+    let account = state.get_account(address)?;
 
     let Some((_, init_data)) = account.code.scilla_code_and_init_data() else {
         return Err(anyhow!("Address does not exist"));
@@ -653,11 +687,7 @@ pub const TRANSACTIONS_PER_PAGE: usize = 2500;
 pub const TX_BLOCKS_PER_DS_BLOCK: u64 = 100;
 
 // GetTxBlock
-fn get_tx_block(
-    params: Params,
-    node: &Arc<Mutex<Node>>,
-    verbose: bool,
-) -> Result<Option<zil::TxBlock>> {
+fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::TxBlock>> {
     let block_number: String = params.one()?;
     let block_number: u64 = block_number.parse()?;
 
@@ -665,16 +695,27 @@ fn get_tx_block(
     let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
-    let mut block: zil::TxBlock = (&block).into();
+    let block: zil::TxBlock = zil::TxBlock::new(&block);
 
-    if verbose {
-        block.header.committee_hash = Some(B256::ZERO);
-        block.body.cosig_bitmap_1 = vec![true; 8];
-        block.body.cosig_bitmap_2 = vec![true; 8];
-        let mut scalar = [0; 32];
-        scalar[31] = 1;
-        block.body.cosig_1 = Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap());
-    }
+    Ok(Some(block))
+}
+
+// GetTxBlockVerbose
+fn get_tx_block_verbose(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<zil::TxBlockVerbose>> {
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block(block_number)? else {
+        return Ok(None);
+    };
+    let proposer = node
+        .get_proposer_reward_address(block.header)?
+        .expect("No proposer");
+    let block: zil::TxBlockVerbose = zil::TxBlockVerbose::new(&block, proposer);
 
     Ok(Some(block))
 }
@@ -822,6 +863,7 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     let base_blocknum = page_requested * 10;
     let end_blocknum = num_ds_blocks.min(base_blocknum + 10);
     let listings: Vec<DSBlockListing> = (base_blocknum..end_blocknum)
+        .rev()
         .map(|blocknum| DSBlockListing {
             block_num: blocknum,
             hash: "4DEED80AFDCC89D5B691DCB54CCB846AD9D823D448A56ACAC4DBE5E1213244C7".to_string(),
@@ -883,6 +925,7 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
     let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
 
     let listings: Vec<TxBlockListing> = (start_block..end_block)
+        .rev()
         .filter_map(|block_number| {
             node.get_block(block_number)
                 .ok()
@@ -1215,48 +1258,187 @@ fn get_total_coin_supply_as_int(_params: Params, node: &Arc<Mutex<Node>>) -> Res
 }
 
 // GetMinerInfo
-fn getminerinfo(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo> {
-    todo!("API getminerinfo is not implemented yet");
+fn get_miner_info(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<MinerInfo> {
+    // This endpoint was previously queries by DS block number, which no longer exists, and
+    // neither do DS committees, so it now returns placeholder data for all queries to stay ZQ1 compatible.
+
+    Ok(MinerInfo {
+        dscommittee: vec![],
+        shards: vec![],
+    })
 }
 
 // GetNodeType
-fn getnodetype(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<String> {
-    todo!("API getnodetype is not implemented yet");
+fn get_node_type(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok("Seed".into())
 }
 
 // GetPrevDifficulty
-fn getprevdifficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
-    todo!("API getprevdifficulty is not implemented yet");
+fn get_prev_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
+    Ok(0)
 }
 
 // GetPrevDSDifficulty
-fn getprevdsdifficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
-    todo!("API getprevdsdifficulty is not implemented yet");
+fn get_prev_ds_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
+    Ok(0)
 }
 
 // GetShardingStructure
-fn getshardingstructure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("API getshardingstructure is not implemented yet");
+fn get_sharding_structure(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<ShardingStructure> {
+    let node = _node.lock().unwrap();
+    let num_peers = node.get_peer_num();
+
+    Ok(ShardingStructure {
+        num_peers: vec![num_peers as u64],
+    })
 }
 
 // GetSmartContractSubState
-fn getsmartcontractsubstate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("API getsmartcontractsubstate is not implemented yet");
+fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<Value> {
+    let mut seq = params.sequence();
+    let address: ZilAddress = seq.next()?;
+    let address: Address = address.into();
+    let var_name: String = match seq.optional_next()? {
+        Some(x) => x,
+        None => return get_smart_contract_state(params, node),
+    };
+    let requested_indices: Vec<String> = seq.optional_next()?.unwrap_or_default();
+    let node = node.lock().unwrap();
+    if requested_indices.len() > node.config.state_rpc_limit {
+        return Err(anyhow!(
+            "Requested indices exceed the limit of {}",
+            node.config.state_rpc_limit
+        ));
+    }
+
+    // First get the account and check that its a scilla account
+    let block = node
+        .get_block(BlockId::latest())?
+        .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
+
+    let state = node.get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist".to_string(),
+            None::<()>,
+        )
+        .into());
+    }
+
+    let account = state.get_account(address)?;
+
+    let result = json!({
+        "_balance": ZilAmount::from_amount(account.balance).to_string(),
+    });
+    let Value::Object(mut result) = result else {
+        unreachable!()
+    };
+
+    if account.code.clone().scilla_code_and_init_data().is_some() {
+        let trie = state.get_account_trie(address)?;
+
+        let indicies_encoded = requested_indices
+            .iter()
+            .map(|x| serde_json::to_vec(&x))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let prefix = storage_key(&var_name, &indicies_encoded);
+        let mut n = 0;
+        for (k, v) in trie.iter_by_prefix(&prefix)? {
+            n += 1;
+            if n > node.config.state_rpc_limit {
+                return Err(anyhow!(
+                    "Requested indices exceed the limit of {}",
+                    node.config.state_rpc_limit
+                ));
+            }
+
+            let (var_name, indices) = split_storage_key(&k)?;
+            let mut var = result.entry(var_name.clone());
+
+            for index in indices.iter() {
+                let next = var.or_insert_with(|| Value::Object(Default::default()));
+                let Value::Object(next) = next else {
+                    unreachable!()
+                };
+                let key: String = serde_json::from_slice(index)?;
+                var = next.entry(key.clone());
+            }
+
+            let code = &account.code;
+
+            let field_defs = match code {
+                Code::Scilla { types, .. } => types.clone(),
+                _ => unreachable!(),
+            };
+            let (_, depth) = field_defs.get(&var_name).unwrap();
+            let depth = *depth as usize;
+
+            let convert_result = serde_json::from_slice(&v);
+            if depth > 0 && indices.len() < depth {
+                if convert_result.is_err() {
+                    var.or_insert(Value::Object(Default::default()));
+                }
+            } else {
+                var.or_insert(convert_result?);
+            }
+        }
+    }
+    Ok(result.into())
 }
 
 // GetSoftConfirmedTransaction
-fn getsoftconfirmedtransaction(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<GetTxResponse> {
-    todo!("API getsoftconfirmedtransaction is not implemented yet");
+fn get_soft_confirmed_transaction(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<GetTxResponse> {
+    get_transaction(params, node)
 }
 
 // GetStateProof
-fn getstateproof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("API getstateproof is not implemented yet");
+fn get_state_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<StateProofResponse> {
+    // State proof isn't meaningful in ZQ2
+    Ok(StateProofResponse {
+        account_proof: vec![],
+        state_proof: vec![],
+    })
 }
 
 // GetTransactionStatus
-fn gettransactionstatus(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("API gettransactionstatus is not implemented yet");
+fn get_transaction_status(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<TransactionStatusResponse> {
+    let jsonrpc_error_data: Option<String> = None;
+    let hash: B256 = params.one()?;
+    let hash: Hash = Hash(hash.0);
+
+    let node = node.lock().unwrap();
+    let transaction =
+        node.get_transaction_by_hash(hash)?
+            .ok_or(jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn Hash not found".to_string(),
+                jsonrpc_error_data.clone(),
+            ))?;
+    let receipt =
+        node.get_transaction_receipt(hash)?
+            .ok_or(jsonrpsee::types::ErrorObject::owned(
+                RPCErrorCode::RpcDatabaseError as i32,
+                "Txn receipt not found".to_string(),
+                jsonrpc_error_data.clone(),
+            ))?;
+    let block = node
+        .get_block(receipt.block_hash)?
+        .ok_or(jsonrpsee::types::ErrorObject::owned(
+            RPCErrorCode::RpcDatabaseError as i32,
+            "Block not found".to_string(),
+            jsonrpc_error_data.clone(),
+        ))?;
+
+    let res = TransactionStatusResponse::new(transaction, receipt, block)?;
+    Ok(res)
 }
 
 #[cfg(test)]

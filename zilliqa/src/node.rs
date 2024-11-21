@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     fmt::Debug,
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
@@ -18,7 +17,7 @@ use alloy::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::{primitives::map::FxBuildHasher, Inspector};
+use revm::{primitives::ExecutionResult, Inspector};
 use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
     TransactionContext,
@@ -188,7 +187,11 @@ impl Node {
             local_channel: local_sender_channel,
             request_id: RequestId::default(),
         };
-        let db = Arc::new(Db::new(config.data_dir.as_ref(), config.eth_chain_id)?);
+        let db = Arc::new(Db::new(
+            config.data_dir.as_ref(),
+            config.eth_chain_id,
+            config.state_cache_size,
+        )?);
         let node = Node {
             config: config.clone(),
             peer_id,
@@ -488,7 +491,7 @@ impl Node {
     pub fn trace_evm_transaction(
         &self,
         txn_hash: Hash,
-        trace_types: &HashSet<TraceType, FxBuildHasher>,
+        trace_types: &revm::primitives::HashSet<TraceType>,
     ) -> Result<TraceResults> {
         let txn = self
             .get_transaction_by_hash(txn_hash)?
@@ -769,7 +772,7 @@ impl Node {
         to_addr: Option<Address>,
         data: Vec<u8>,
         amount: u128,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<ExecutionResult> {
         trace!("call_contract: block={:?}", block);
 
         let state = self

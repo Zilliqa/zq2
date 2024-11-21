@@ -94,20 +94,6 @@ variable "network_tags" {
   nullable    = false
 }
 
-variable "generate_node_key" {
-  description = "Enable private key generation"
-  type        = bool
-  nullable    = false
-  default     = true
-}
-
-variable "generate_reward_wallet" {
-  description = "Enable reward wallet generation"
-  type        = bool
-  nullable    = false
-  default     = false
-}
-
 variable "node_dns_subdomain" {
   description = "Nodes DNS zone name (ie. zq2.dev)"
   type        = string

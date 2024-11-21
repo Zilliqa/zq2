@@ -8,9 +8,7 @@ state,proof,get
 
 # Description
 
-Returns the state proof for the corresponding TxBlock for a smart contract. Please note that this API only serve state proof for the last 50 TxBlock.
-
-This API is available from Zilliqa `V8.1.0` onwards.
+This API returns the state proof for the corresponding TxBlock for a smart contract.
 
 ## Proof Parameters
 
@@ -18,7 +16,7 @@ This API is available from Zilliqa `V8.1.0` onwards.
 | --------------- | ------ | -------- | --------------------------------------------------------------- |
 | `Address`       | string | Required | A smart contract address of 20 bytes.                           |
 | `Variable Hash` | string | Required | SHA256 hash of the state variable                               |
-| `TxBlock`       | string | Required | Can be a valid number or `latest` if looking for latest TxBlock 
+| `TxBlock`       | string | Required | Can be a valid number or `latest` if looking for latest TxBlock
 
 # Curl
 
@@ -80,4 +78,3 @@ func GetStateProof() {
 | `jsonrpc` | string | Required | `"2.0"`              |
 | `method`  | string | Required | `"GetStateProof"`    |
 | `params`  | array  | Required | `"Proof Parameters"` |
-

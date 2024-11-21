@@ -56,6 +56,9 @@ pub struct NodeConfig {
     /// The location of persistence data. If not set, uses a temporary path.
     #[serde(default)]
     pub data_dir: Option<String>,
+    /// Size of the in-memory state trie cache, in bytes. Defaults to 256 MiB.
+    #[serde(default = "state_cache_size_default")]
+    pub state_cache_size: usize,
     /// Persistence checkpoint to load.
     #[serde(default)]
     pub load_checkpoint: Option<Checkpoint>,
@@ -112,7 +115,11 @@ where
 }
 
 pub fn allowed_timestamp_skew_default() -> Duration {
-    Duration::from_secs(10)
+    Duration::from_secs(60)
+}
+
+pub fn state_cache_size_default() -> usize {
+    256 * 1024 * 1024 // 256 MiB
 }
 
 pub fn json_rpc_port_default() -> u16 {

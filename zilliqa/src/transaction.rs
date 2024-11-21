@@ -7,8 +7,8 @@ use std::{
 };
 
 use alloy::{
-    consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy},
-    primitives::{keccak256, Address, Signature, TxKind, B256, U256},
+    consensus::{transaction::RlpEcdsaTx, SignableTransaction, TxEip1559, TxEip2930, TxLegacy},
+    primitives::{keccak256, Address, PrimitiveSignature, TxKind, B256, U256},
     rlp::{Encodable, Header, EMPTY_STRING_CODE},
     sol_types::SolValue,
 };
@@ -30,8 +30,9 @@ use tracing::warn;
 
 use crate::{
     constants::{
-        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, ZIL_CONTRACT_CREATE_GAS,
-        ZIL_CONTRACT_INVOKE_GAS, ZIL_MAX_CODE_SIZE, ZIL_NORMAL_TXN_GAS,
+        EVM_MAX_INIT_CODE_SIZE, EVM_MAX_TX_INPUT_SIZE, EVM_MIN_GAS_UNITS, SCILLA_INVOKE_RUNNER,
+        SCILLA_TRANSFER, ZIL_CONTRACT_CREATE_GAS, ZIL_CONTRACT_INVOKE_GAS, ZIL_MAX_CODE_SIZE,
+        ZIL_NORMAL_TXN_GAS,
     },
     crypto::{self, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
@@ -130,17 +131,17 @@ pub enum SignedTransaction {
     Legacy {
         #[serde(with = "ser_rlp")]
         tx: TxLegacy,
-        sig: Signature,
+        sig: PrimitiveSignature,
     },
     Eip2930 {
         #[serde(with = "ser_rlp")]
         tx: TxEip2930,
-        sig: Signature,
+        sig: PrimitiveSignature,
     },
     Eip1559 {
         #[serde(with = "ser_rlp")]
         tx: TxEip1559,
-        sig: Signature,
+        sig: PrimitiveSignature,
     },
     Zilliqa {
         tx: TxZilliqa,
@@ -251,9 +252,9 @@ impl SignedTransaction {
 
     pub fn sig_v(&self) -> u64 {
         match self {
-            SignedTransaction::Legacy { sig, .. } => sig.v().to_u64(),
-            SignedTransaction::Eip2930 { sig, .. } => sig.v().to_u64(),
-            SignedTransaction::Eip1559 { sig, .. } => sig.v().to_u64(),
+            SignedTransaction::Legacy { sig, .. } => sig.v() as u64,
+            SignedTransaction::Eip2930 { sig, .. } => sig.v() as u64,
+            SignedTransaction::Eip1559 { sig, .. } => sig.v() as u64,
             SignedTransaction::Zilliqa { .. } => 0,
             SignedTransaction::Intershard { .. } => 0,
         }
@@ -346,7 +347,9 @@ impl SignedTransaction {
         }
     }
 
-    pub(crate) fn maximum_cost(&self) -> Result<u128> {
+    // We don't validate Zilliqa txns against their maximum cost, but against
+    // the deposit size.
+    pub(crate) fn maximum_validation_cost(&self) -> Result<u128> {
         match self {
             SignedTransaction::Legacy { tx, .. } => {
                 Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)
@@ -358,7 +361,23 @@ impl SignedTransaction {
                 Ok(tx.gas_limit as u128 * tx.max_fee_per_gas + u128::try_from(tx.value)?)
             }
             SignedTransaction::Zilliqa { tx, .. } => {
-                Ok(total_scilla_gas_price(tx.gas_limit, tx.gas_price).0)
+                // This is a copy of Transaction.h::GetTransactionType()
+                // We validate against slightly different thresholds since we don't have the
+                // mainnet constants to hand in Rust in zq2.
+                Ok(total_scilla_gas_price(
+                    if !tx.to_addr.is_zero() && !tx.data.is_empty() && tx.code.is_empty() {
+                        // It's a contract call (erm, probably)
+                        SCILLA_INVOKE_RUNNER
+                    } else if !tx.code.is_empty() && tx.to_addr.is_zero() {
+                        // create
+                        SCILLA_INVOKE_RUNNER
+                    } else {
+                        // Validate as an EOA
+                        SCILLA_TRANSFER
+                    },
+                    tx.gas_price,
+                )
+                .0)
             }
             SignedTransaction::Intershard { tx, .. } => Ok(tx.gas_price * tx.gas_limit.0 as u128),
         }
@@ -411,21 +430,9 @@ impl SignedTransaction {
     /// using [`Self::verify()`] and the `hash` field from [RecoveredTransaction].
     pub fn calculate_hash(&self) -> crypto::Hash {
         match self {
-            SignedTransaction::Legacy { tx, sig } => {
-                let mut out = BytesMut::with_capacity(1024);
-                tx.encode_with_signature_fields(sig, &mut out);
-                (keccak256(out)).into()
-            }
-            SignedTransaction::Eip2930 { tx, sig } => {
-                let mut out = BytesMut::with_capacity(1024);
-                tx.encode_with_signature(sig, &mut out, false);
-                (keccak256(out)).into()
-            }
-            SignedTransaction::Eip1559 { tx, sig } => {
-                let mut out = BytesMut::with_capacity(1024);
-                tx.encode_with_signature(sig, &mut out, false);
-                (keccak256(out)).into()
-            }
+            SignedTransaction::Legacy { tx, sig } => tx.tx_hash(sig).into(),
+            SignedTransaction::Eip2930 { tx, sig } => tx.tx_hash(sig).into(),
+            SignedTransaction::Eip1559 { tx, sig } => tx.tx_hash(sig).into(),
             SignedTransaction::Zilliqa { tx, key, .. } => {
                 let txn_data = encode_zilliqa_transaction(tx, *key);
                 crypto::Hash(Sha256::digest(txn_data).into())
@@ -512,28 +519,7 @@ impl SignedTransaction {
 
         // The following logic is taken from ZQ1
         if let SignedTransaction::Zilliqa { tx, .. } = self {
-            let required_gas: ScillaGas = {
-                // Contract call
-                if !tx.to_addr.is_zero() && !tx.data.is_empty() && tx.code.is_empty() {
-                    ScillaGas(max(ZIL_CONTRACT_INVOKE_GAS, tx.data.len()).try_into()?)
-                }
-                // Contract creation
-                else if tx.to_addr.is_zero() && !tx.code.is_empty() {
-                    ScillaGas(
-                        max(ZIL_CONTRACT_CREATE_GAS, tx.data.len() + tx.code.len()).try_into()?,
-                    )
-                }
-                // Transfer
-                else if !tx.to_addr.is_zero() && tx.data.is_empty() && tx.code.is_empty() {
-                    ScillaGas(ZIL_NORMAL_TXN_GAS.try_into()?)
-                } else {
-                    warn!(
-                        "transaction is none of: contract invocation, contract creation, transfer"
-                    );
-                    return Ok(ValidationOutcome::UnknownTransactionType);
-                }
-            };
-
+            let required_gas = tx.get_deposit_gas()?;
             if tx.gas_limit < required_gas {
                 warn!("Insufficient gas give for zil transaction, given: {}, required: {required_gas}!", tx.gas_limit);
                 return Ok(ValidationOutcome::InsufficientGasZil(
@@ -579,7 +565,7 @@ impl SignedTransaction {
     }
 
     fn validate_sender_account(&self, account: &Account) -> Result<ValidationOutcome> {
-        let txn_cost = self.maximum_cost()?;
+        let txn_cost = self.maximum_validation_cost()?;
         if txn_cost > account.balance {
             warn!("Insufficient funds");
             return Ok(ValidationOutcome::InsufficientFunds(
@@ -800,6 +786,30 @@ pub struct TxZilliqa {
     pub data: String,
 }
 
+impl TxZilliqa {
+    pub fn get_deposit_gas(&self) -> Result<ScillaGas> {
+        // Contract call
+        if !self.to_addr.is_zero() && !self.data.is_empty() && self.code.is_empty() {
+            Ok(ScillaGas(
+                max(ZIL_CONTRACT_INVOKE_GAS, self.data.len()).try_into()?,
+            ))
+        }
+        // Contract creation
+        else if self.to_addr.is_zero() && !self.code.is_empty() {
+            Ok(ScillaGas(
+                max(ZIL_CONTRACT_CREATE_GAS, self.data.len() + self.code.len()).try_into()?,
+            ))
+        }
+        // Transfer
+        else if !self.to_addr.is_zero() && self.data.is_empty() && self.code.is_empty() {
+            Ok(ScillaGas(ZIL_NORMAL_TXN_GAS.try_into()?))
+        } else {
+            warn!("transaction is none of: contract invocation, contract creation, transfer");
+            Err(anyhow!("Unknown transaction type"))
+        }
+    }
+}
+
 /// A wrapper for ZIL amounts in the Zilliqa API. These are represented in units of (10^-12) ZILs, rather than (10^-18)
 /// like in the rest of our code. The implementations of [Serialize], [Deserialize], [Display] and [FromStr] represent
 /// the amount in units of (10^-12) ZILs, so this type can be used in the Zilliqa API layer.
@@ -828,6 +838,14 @@ impl ZilAmount {
     /// Return the memory representation of this amount as a big-endian byte array.
     pub fn to_be_bytes(self) -> [u8; 16] {
         self.0.to_be_bytes()
+    }
+
+    pub fn checked_sub(&self, v: &Self) -> Option<Self> {
+        if v.0 < self.0 {
+            Some(ZilAmount(self.0 - v.0))
+        } else {
+            None
+        }
     }
 }
 

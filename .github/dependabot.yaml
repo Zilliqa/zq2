@@ -19,3 +19,13 @@ updates:
         - dependency-name: "semver"
         - dependency-name: "crates-io"
     open-pull-requests-limit: 100
+    groups:
+      opentelemetry:
+        applies-to: version-updates
+        patterns:
+          - "opentelemetry*"
+      alloy-revm:
+        applies-to: version-updates
+        patterns:
+          - "alloy*"
+          - "revm*"

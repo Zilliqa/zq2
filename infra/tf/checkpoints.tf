@@ -8,16 +8,12 @@ module "checkpoints" {
   config     = var.checkpoint
   chain_name = var.chain_name
 
-  role                   = "checkpoint"
-  labels                 = {}
-  network_tags           = []
-  generate_node_key      = true
-  generate_reward_wallet = false
+  role         = "checkpoint"
+  labels       = local.labels
+  network_tags = []
 
   metadata = {
-    persistence_url = base64encode(var.persistence_url)
-    subdomain       = base64encode("")
-    genesis_key     = base64encode("")
+    subdomain = base64encode("")
   }
 
   node_dns_subdomain       = var.node_dns_subdomain

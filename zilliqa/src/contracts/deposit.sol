@@ -144,6 +144,28 @@ struct InitialStaker {
 }
 
 contract Deposit {
+    // Emitted to inform that a new staker identified by `blsPubKey`
+    // is going to be added to the committee `atFutureBlock`, increasing
+    // the total stake by `newStake`
+    event StakerAdded(bytes blsPubKey, uint256 atFutureBlock, uint256 newStake);
+
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // is going to be removed from the committee `atFutureBlock`
+    event StakerRemoved(bytes blsPubKey, uint256 atFutureBlock);
+
+    // Emitted to inform that the deposited stake of the staker
+    // identified by `blsPubKey` is going to change to `newStake`
+    // at `atFutureBlock`
+    event StakeChanged(
+        bytes blsPubKey,
+        uint256 atFutureBlock,
+        uint256 newStake
+    );
+
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // has updated its data that can be refetched using `getStakerData()`
+    event StakerUpdated(bytes blsPubKey);
+
     // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
     // is stored at index (currentEpoch() % 3).
     Committee[3] _committee;
@@ -158,10 +180,19 @@ contract Deposit {
     // or withdrawals were made.
     uint64 latestComputedEpoch;
 
-    uint256 public minimumStake;
-    uint256 public maximumStakers;
+    uint256 public immutable minimumStake;
+    uint256 public immutable maximumStakers;
 
-    uint64 public blocksPerEpoch;
+    uint64 public immutable blocksPerEpoch;
+
+    modifier onlyControlAddress(bytes calldata blsPubKey) {
+        require(blsPubKey.length == 48);
+        require(
+            _stakersMap[blsPubKey].controlAddress == msg.sender,
+            "sender is not the control address"
+        );
+        _;
+    }
 
     constructor(
         uint256 _minimumStake,
@@ -217,6 +248,8 @@ contract Deposit {
                 currentCommittee.stakerKeys.length +
                 1;
             currentCommittee.stakerKeys.push(blsPubKey);
+
+            emit StakerAdded(blsPubKey, block.number, amount);
         }
     }
 
@@ -273,11 +306,16 @@ contract Deposit {
         return committee().stakerKeys;
     }
 
+    function getTotalStake() public view returns (uint256) {
+        return committee().totalStake;
+    }
+
     function getStakersData()
         public
         view
         returns (
             bytes[] memory stakerKeys,
+            uint256[] memory indices,
             uint256[] memory balances,
             Staker[] memory stakers
         )
@@ -288,9 +326,28 @@ contract Deposit {
         stakers = new Staker[](stakerKeys.length);
         for (uint i = 0; i < stakerKeys.length; i++) {
             bytes memory key = stakerKeys[i];
+            // The stakerKeys are not sorted by the stakers'
+            // index in the current committee, therefore we
+            // return the indices too, to help identify the
+            // stakers in the bit vectors stored along with
+            // BLS aggregate signatures
+            indices[i] = currentCommittee.stakers[key].index;
             balances[i] = currentCommittee.stakers[key].balance;
             stakers[i] = _stakersMap[key];
         }
+    }
+
+    function getStakerData(
+        bytes calldata blsPubKey
+    )
+        public
+        view
+        returns (uint256 index, uint256 balance, Staker memory staker)
+    {
+        Committee storage currentCommittee = committee();
+        index = currentCommittee.stakers[blsPubKey].index;
+        balance = currentCommittee.stakers[blsPubKey].balance;
+        staker = _stakersMap[blsPubKey];
     }
 
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
@@ -301,6 +358,22 @@ contract Deposit {
         return committee().stakers[blsPubKey].balance;
     }
 
+    function getFutureStake(
+        bytes calldata blsPubKey
+    ) public view returns (uint256) {
+        require(blsPubKey.length == 48);
+
+        // if `latestComputedEpoch > currentEpoch()`
+        // then `latestComputedEpoch` determines the future committee we need
+        // otherwise there are no committee changes after `currentEpoch()`
+        // i.e. `latestComputedEpoch` determines the most recent committee
+        Committee storage latestCommittee = _committee[latestComputedEpoch % 3];
+
+        // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
+        // balance will default to zero.
+        return latestCommittee.stakers[blsPubKey].balance;
+    }
+
     function getRewardAddress(
         bytes calldata blsPubKey
     ) public view returns (address) {
@@ -309,6 +382,32 @@ contract Deposit {
             revert("not staked");
         }
         return _stakersMap[blsPubKey].rewardAddress;
+    }
+
+    function getControlAddress(
+        bytes calldata blsPubKey
+    ) public view returns (address) {
+        require(blsPubKey.length == 48);
+        if (_stakersMap[blsPubKey].controlAddress == address(0)) {
+            revert("not staked");
+        }
+        return _stakersMap[blsPubKey].controlAddress;
+    }
+
+    function setRewardAddress(
+        bytes calldata blsPubKey,
+        address rewardAddress
+    ) public onlyControlAddress(blsPubKey) {
+        _stakersMap[blsPubKey].rewardAddress = rewardAddress;
+        emit StakerUpdated(blsPubKey);
+    }
+
+    function setControlAddress(
+        bytes calldata blsPubKey,
+        address controlAddress
+    ) public onlyControlAddress(blsPubKey) {
+        _stakersMap[blsPubKey].controlAddress = controlAddress;
+        emit StakerUpdated(blsPubKey);
     }
 
     function getPeerId(
@@ -366,6 +465,13 @@ contract Deposit {
 
             latestComputedEpoch = currentEpoch() + 2;
         }
+    }
+
+    // Returns the next block number at which new stakers are added,
+    // existing ones removed and/or deposits of existing stakers change
+    function nextUpdate() public view returns (uint256 blockNumber) {
+        if (latestComputedEpoch > currentEpoch())
+            blockNumber = latestComputedEpoch * blocksPerEpoch;
     }
 
     // keep in-sync with zilliqa/src/precompiles.rs
@@ -442,6 +548,8 @@ contract Deposit {
             futureCommittee.stakerKeys.length +
             1;
         futureCommittee.stakerKeys.push(blsPubKey);
+
+        emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
     }
 
     function depositTopup() public payable {
@@ -459,6 +567,12 @@ contract Deposit {
         );
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[stakerKey].balance += msg.value;
+
+        emit StakeChanged(
+            stakerKey,
+            nextUpdate(),
+            futureCommittee.stakers[stakerKey].balance
+        );
     }
 
     function unstake(uint256 amount) public {
@@ -476,13 +590,15 @@ contract Deposit {
             futureCommittee.stakers[stakerKey].index != 0,
             "staker does not exist"
         );
-        require(futureCommittee.stakerKeys.length > 1, "too few stakers");
+
         require(
             futureCommittee.stakers[stakerKey].balance >= amount,
             "amount is greater than staked balance"
         );
 
         if (futureCommittee.stakers[stakerKey].balance - amount == 0) {
+            require(futureCommittee.stakerKeys.length > 1, "too few stakers");
+
             // Remove the staker from the future committee, because their staked amount has gone to zero.
             futureCommittee.totalStake -= amount;
 
@@ -506,6 +622,8 @@ contract Deposit {
             delete futureCommittee.stakers[stakerKey];
 
             // Note that we leave the staker in `_stakersMap` forever.
+
+            emit StakerRemoved(stakerKey, nextUpdate());
         } else {
             require(
                 futureCommittee.stakers[stakerKey].balance - amount >=
@@ -516,6 +634,12 @@ contract Deposit {
             // Partial unstake. The staker stays in the committee, but with a reduced stake.
             futureCommittee.totalStake -= amount;
             futureCommittee.stakers[stakerKey].balance -= amount;
+
+            emit StakeChanged(
+                stakerKey,
+                nextUpdate(),
+                futureCommittee.stakers[stakerKey].balance
+            );
         }
 
         // Enqueue the withdrawal for this staker.
@@ -546,9 +670,10 @@ contract Deposit {
         _withdraw(count);
     }
 
-    function withdrawalPeriod() public pure returns (uint256) {
-        // 2 weeks
-        return 2 * 7 * 24 * 60 * 60;
+    function withdrawalPeriod() public view returns (uint256) {
+        // shorter unbonding period for testing deposit withdrawals
+        if (block.chainid == 33469) return 5 minutes;
+        return 2 weeks;
     }
 
     function _withdraw(uint256 count) internal {
