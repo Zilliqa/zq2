@@ -1396,8 +1396,10 @@ impl Consensus {
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
+        debug!("early_proposal_apply_transactions()");
         // Assemble new block with whatever is in the mempool
         while let Some(tx) = self.transaction_pool.best_transaction() {
+            debug!("Applying {tx:?}");
             // First - check if we have time left to process txns and give enough time for block propagation
             let (
                 time_since_last_view_change,

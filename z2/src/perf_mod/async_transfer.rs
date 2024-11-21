@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use rand::{self, prelude::*};
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,7 @@ impl perf::PerfMod for AsyncTransfer {
         rng: &mut StdRng,
         perf: &perf::Perf,
         txns: &Vec<TransactionResult>,
-        feeder_nonce: u64,
+        feeder_nonce: &Option<u64>,
     ) -> Result<PhaseResult> {
         let mut result = Vec::new();
         match phase {
@@ -63,19 +63,20 @@ impl perf::PerfMod for AsyncTransfer {
                 let amount_required = (self.config.amount_max + self.config.gas.gas_units())
                     * u128::from(self.config.nr_transfers);
                 println!("amount_required = {amount_required}");
+                let new_feeder_nonce = perf::next_nonce(feeder_nonce);
                 result.push(
                     perf.issue_transfer(
                         &self.source_of_funds.account,
                         &self.feeder,
                         amount_required,
-                        Some(feeder_nonce),
+                        Some(new_feeder_nonce),
                         &self.source_of_funds.gas,
                     )
                     .await?,
                 );
                 Ok(PhaseResult {
                     monitor: result,
-                    feeder_nonce: feeder_nonce + 1,
+                    feeder_nonce: Some(new_feeder_nonce),
                     keep_going_anyway: false,
                 })
             }
@@ -96,15 +97,21 @@ impl perf::PerfMod for AsyncTransfer {
                     }
                     let target = perf.gen_account(rng, AccountKind::Zil).await?;
                     // Send the transfer and go back.
-                    nonce += gap;
+                    if gap > 0 {
+                        if let Some(v) = nonce {
+                            nonce = Some(v + gap)
+                        } else {
+                            nonce = Some(0)
+                        }
+                    } else {
+                        return Err(anyhow!("gaps < 1 are not allowed. Contact the maintainer"));
+                    };
+                    println!(
+                        "issue_transfer from {0:?} to {1:?} send nonce {nonce:?}",
+                        self.feeder, target
+                    );
                     let transfer = perf
-                        .issue_transfer(
-                            &self.feeder,
-                            &target,
-                            amount,
-                            Some(nonce),
-                            &self.config.gas,
-                        )
+                        .issue_transfer(&self.feeder, &target, amount, nonce, &self.config.gas)
                         .await?;
                     // check gap == 1 here in case gap was 0 - a gap 0 txn doesn't succeed itself, but
                     // also doesn't stop other txns succeeding later (so we don't set !expect_success)
@@ -114,7 +121,7 @@ impl perf::PerfMod for AsyncTransfer {
                 }
                 Ok(PhaseResult {
                     monitor: result,
-                    feeder_nonce,
+                    feeder_nonce: *feeder_nonce,
                     keep_going_anyway: false,
                 })
             }
@@ -122,7 +129,7 @@ impl perf::PerfMod for AsyncTransfer {
                 let val: Vec<String> = Vec::new();
                 Ok(PhaseResult {
                     monitor: val,
-                    feeder_nonce,
+                    feeder_nonce: *feeder_nonce,
                     keep_going_anyway: false,
                 })
             }

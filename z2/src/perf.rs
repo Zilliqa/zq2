@@ -47,7 +47,7 @@ pub struct Perf {
 
 pub struct PhaseResult {
     pub monitor: Vec<String>,
-    pub feeder_nonce: u64,
+    pub feeder_nonce: Option<u64>,
     // Set this to true to keep going anyway - eg. because you are waiting for
     // a process to finish.
     pub keep_going_anyway: bool,
@@ -62,7 +62,7 @@ pub trait PerfMod {
         rng: &mut StdRng,
         perf: &Perf,
         txns: &Vec<TransactionResult>,
-        feeder_nonce: u64,
+        feeder_nonce: &Option<u64>,
     ) -> Result<PhaseResult>;
 }
 
@@ -430,7 +430,7 @@ impl Perf {
             for module in modules.iter_mut() {
                 let result = module
                     .module
-                    .gen_phase(phase, rng, self, &module.results, feeder_nonce)
+                    .gen_phase(phase, rng, self, &module.results, &feeder_nonce)
                     .await?;
                 feeder_nonce = result.feeder_nonce;
                 module.txns = result.monitor;
@@ -706,15 +706,20 @@ impl Perf {
         None
     }
 
-    pub async fn get_nonce(&self, account: &Account) -> Result<u64> {
+    pub async fn get_nonce(&self, account: &Account) -> Result<Option<u64>> {
         match account.kind {
-            AccountKind::Zil => Ok(self.get_balance(&account.get_address()?).await?.nonce),
+            AccountKind::Zil => Ok(Some(self.get_balance(&account.get_address()?).await?.nonce)),
             AccountKind::Eth => {
                 let provider = self.make_eth_provider()?;
-                Ok(provider
+                let next_nonce = provider
                     .get_transaction_count(account.get_eth_address()?, None)
                     .await?
-                    .as_u64())
+                    .as_u64();
+                Ok(if next_nonce > 0 {
+                    Some(next_nonce - 1)
+                } else {
+                    None
+                })
             }
         }
     }
@@ -745,4 +750,12 @@ impl Perf {
 
 pub fn zil_to_eth(zil_amt: u128) -> u128 {
     zil_amt * 1000000
+}
+
+pub fn next_nonce(current: &Option<u64>) -> u64 {
+    if let Some(v) = current {
+        *v + 1
+    } else {
+        0
+    }
 }

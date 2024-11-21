@@ -114,7 +114,7 @@ impl perf::PerfMod for Conform {
         _rng: &mut StdRng,
         perf: &perf::Perf,
         _txns: &Vec<TransactionResult>,
-        feeder_nonce: u64,
+        feeder_nonce: &Option<u64>,
     ) -> Result<PhaseResult> {
         let mut result = Vec::new();
         match phase {
@@ -130,14 +130,14 @@ impl perf::PerfMod for Conform {
                         &self.source_of_funds.account,
                         &self.feeder,
                         amount_required,
-                        Some(feeder_nonce + 1),
+                        Some(perf::next_nonce(feeder_nonce)),
                         &self.source_of_funds.gas,
                     )
                     .await?,
                 );
                 Ok(PhaseResult {
                     monitor: result,
-                    feeder_nonce: feeder_nonce + 1,
+                    feeder_nonce: Some(perf::next_nonce(feeder_nonce)),
                     keep_going_anyway: false,
                 })
             }
@@ -182,7 +182,7 @@ impl perf::PerfMod for Conform {
                 self.state = MachineState::BuildSigners;
                 Ok(PhaseResult {
                     monitor: Vec::new(),
-                    feeder_nonce,
+                    feeder_nonce: *feeder_nonce,
                     keep_going_anyway: true,
                 })
             }
@@ -193,7 +193,7 @@ impl perf::PerfMod for Conform {
                         // no. Wait..
                         return Ok(PhaseResult {
                             monitor: Vec::new(),
-                            feeder_nonce,
+                            feeder_nonce: *feeder_nonce,
                             keep_going_anyway: true,
                         });
                     }
@@ -216,13 +216,13 @@ impl perf::PerfMod for Conform {
                         self.state = MachineState::RunTests;
                         Ok(PhaseResult {
                             monitor: Vec::new(),
-                            feeder_nonce,
+                            feeder_nonce: *feeder_nonce,
                             keep_going_anyway: true,
                         })
                     }
                     MachineState::RunTests => Ok(PhaseResult {
                         monitor: Vec::new(),
-                        feeder_nonce,
+                        feeder_nonce: *feeder_nonce,
                         keep_going_anyway: false,
                     }),
                 }

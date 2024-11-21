@@ -608,6 +608,7 @@ impl State {
 
             self.apply_delta_scilla(&state)?;
 
+            info!("txn execution successful[0]");
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {
             let (ResultAndState { result, state }, scilla_state, env) = self
@@ -631,6 +632,7 @@ impl State {
             self.apply_delta_evm(&state)?;
             self.apply_delta_scilla(&scilla_state)?;
 
+            info!("txn execution successful");
             Ok(TransactionApplyResult::Evm(
                 ResultAndState { result, state },
                 env,
