@@ -337,14 +337,12 @@ contract Deposit {
         }
     }
 
-    function getStakerData(bytes calldata blsPubKey)
+    function getStakerData(
+        bytes calldata blsPubKey
+    )
         public
         view
-        returns (
-            uint256 index,
-            uint256 balance,
-            Staker memory staker
-        )
+        returns (uint256 index, uint256 balance, Staker memory staker)
     {
         Committee storage currentCommittee = committee();
         index = currentCommittee.stakers[blsPubKey].index;
