@@ -58,7 +58,7 @@ macro_rules! sqlify_with_bincode_and_zstd {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
                 let v = bincode::serialize(self)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
-                let v = zstd::bulk::compress(&v, zstd::DEFAULT_COMPRESSION_LEVEL)
+                let v = zstd::encode_all(v.as_slice(), zstd::DEFAULT_COMPRESSION_LEVEL)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 Ok(ToSqlOutput::from(v))
             }
@@ -68,13 +68,13 @@ macro_rules! sqlify_with_bincode_and_zstd {
                 value: rusqlite::types::ValueRef<'_>,
             ) -> rusqlite::types::FromSqlResult<Self> {
                 let v = value.as_blob()?;
-                let v = zstd::bulk::decompress(&v, v.len())
-                    .map_err(|e| FromSqlError::Other(Box::new(e)))?;
-                bincode::deserialize(&v).map_err(|e| FromSqlError::Other(e))
+                let v = zstd::decode_all(v).map_err(|e| FromSqlError::Other(Box::new(e)))?;
+                bincode::deserialize(v.as_slice()).map_err(|e| FromSqlError::Other(e))
             }
         }
     };
 }
+
 /// Creates a thin wrapper for a type with proper From traits. To ease implementing To/FromSql on
 /// foreign types.
 macro_rules! make_wrapper {
@@ -1183,7 +1183,7 @@ impl eth_trie::DB for TrieStorage {
                 |row| row.get(0),
             )
             // decompress stored value
-            .map(|v: Vec<_>| zstd::bulk::decompress(v.as_ref(), v.len()).unwrap())
+            .map(|v: Vec<_>| zstd::decode_all(v.as_slice()).unwrap())
             .optional()?;
 
         let mut cache = self.cache.lock().unwrap();
@@ -1197,7 +1197,8 @@ impl eth_trie::DB for TrieStorage {
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        let zvalue = zstd::bulk::compress(value.as_ref(), zstd::DEFAULT_COMPRESSION_LEVEL).unwrap();
+        let zvalue = zstd::encode_all(value.as_slice(), zstd::DEFAULT_COMPRESSION_LEVEL)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         // compress value for storage
         self.db.lock().unwrap().execute(
             "INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)",
@@ -1236,7 +1237,7 @@ impl eth_trie::DB for TrieStorage {
             // compress all values for storage
             let zvalues = values
                 .iter()
-                .map(|v| zstd::bulk::compress(v, zstd::DEFAULT_COMPRESSION_LEVEL).unwrap())
+                .map(|v| zstd::encode_all(v.as_slice(), zstd::DEFAULT_COMPRESSION_LEVEL).unwrap())
                 .collect_vec();
 
             let params = keys
