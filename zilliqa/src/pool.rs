@@ -149,7 +149,7 @@ impl TransactionPool {
                     .get(tx_index)
                     .ok_or(anyhow!("Unable to find txn in global index!"))?;
 
-                let tx_cost = txn.tx.maximum_cost()?;
+                let tx_cost = txn.tx.maximum_validation_cost()?;
                 let balance = state.must_get_account(txn.signer).balance;
 
                 // We're not going to propose txn this time
@@ -189,7 +189,7 @@ impl TransactionPool {
                 .cloned()
                 .unwrap_or(u128::default());
 
-            let tx_cost = txn.tx.maximum_cost()?;
+            let tx_cost = txn.tx.maximum_validation_cost()?;
 
             if cum_cost + tx_cost > state.get_account(txn.signer)?.balance {
                 continue;
