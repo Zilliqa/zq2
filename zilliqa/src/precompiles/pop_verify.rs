@@ -33,12 +33,11 @@ impl PopVerify {
             return Err(PrecompileError::Other("ABI inputs missing".into()).into());
         };
 
-        let Ok(pop_inner) = <blsful::Bls12381G2Impl as blsful::Pairing>::Signature::try_from(
+        let Ok(pop) = <blsful::Bls12381G2Impl as blsful::Pairing>::Signature::try_from(
             decoded[0].to_owned().into_bytes().unwrap(),
         ) else {
             return Err(PrecompileError::Other("ABI signature invalid".into()).into());
         };
-        let pop: blsful::Signature<Bls12381G2Impl> = blsful::Signature::Basic(pop_inner);
 
         let Ok(pk) = blsful::PublicKey::<Bls12381G2Impl>::try_from(
             decoded[1].to_owned().into_bytes().unwrap(),
@@ -46,9 +45,10 @@ impl PopVerify {
             return Err(PrecompileError::Other("ABI pubkey invalid".into()).into());
         };
 
-        let mut msg = [0u8; 50];
-        msg[..8].copy_from_slice(&_context.env.cfg.chain_id.to_le_bytes());
-        msg[8..].copy_from_slice(
+        // message which pop signs over
+        let mut pop_message = [0u8; 50];
+        pop_message[..8].copy_from_slice(&_context.env.cfg.chain_id.to_le_bytes());
+        pop_message[8..].copy_from_slice(
             &_context
                 .env
                 .tx
@@ -57,7 +57,9 @@ impl PopVerify {
                 .into_inner(),
         );
 
-        let result = pop.verify(&pk, msg).is_ok();
+        let result = blsful::Signature::Basic(pop)
+            .verify(&pk, pop_message)
+            .is_ok();
 
         // FIXME: Gas?
         let output = encode(&[Token::Bool(result)]);
