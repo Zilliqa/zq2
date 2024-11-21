@@ -27,29 +27,6 @@ resource "google_project_service" "cloud_dns" {
 }
 
 ################################################################################
-# GENESIS KEY
-################################################################################
-
-resource "random_bytes" "generate_genesis_key" {
-  length = 32
-}
-
-resource "google_secret_manager_secret" "genesis_key" {
-  secret_id = "${var.chain_name}-genesis-key"
-
-  labels = merge({ "role" = "genesis" }, local.labels)
-
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret_version" "genesis_key_version" {
-  secret      = google_secret_manager_secret.genesis_key.id
-  secret_data = random_bytes.generate_genesis_key.hex
-}
-
-################################################################################
 # PERSISTENCE BUCKET
 ################################################################################
 
@@ -66,6 +43,17 @@ resource "google_storage_bucket" "persistence" {
   versioning {
     enabled = true
   }
+}
+
+resource "google_storage_bucket_iam_binding" "persistence_bucket_viewers" {
+  bucket = google_storage_bucket.persistence.name
+  role   = "roles/storage.objectViewer"
+  members = [
+    "serviceAccount:${module.bootstraps.service_account.email}",
+    "serviceAccount:${module.validators.service_account.email}",
+    "serviceAccount:${module.apis.service_account.email}",
+    "serviceAccount:${module.checkpoints.service_account.email}"
+  ]
 }
 
 ################################################################################
@@ -132,16 +120,12 @@ module "bootstraps" {
   config     = var.bootstrap
   chain_name = var.chain_name
 
-  role                   = "bootstrap"
-  labels                 = {}
-  network_tags           = []
-  generate_node_key      = true
-  generate_reward_wallet = false
+  role         = "bootstrap"
+  labels       = local.labels
+  network_tags = []
 
   metadata = {
-    persistence_url = base64encode(var.persistence_url)
-    subdomain       = base64encode("")
-    genesis_key     = base64encode("")
+    subdomain = base64encode("")
   }
 
   node_dns_subdomain       = var.node_dns_subdomain
@@ -173,16 +157,12 @@ module "validators" {
   config     = var.validator
   chain_name = var.chain_name
 
-  role                   = "validator"
-  labels                 = {}
-  network_tags           = []
-  generate_node_key      = true
-  generate_reward_wallet = true
+  role         = "validator"
+  labels       = local.labels
+  network_tags = []
 
   metadata = {
-    persistence_url = base64encode(var.persistence_url)
-    subdomain       = base64encode("")
-    genesis_key     = base64encode("")
+    subdomain = base64encode("")
   }
 
   node_dns_subdomain       = var.node_dns_subdomain
@@ -214,16 +194,12 @@ module "apis" {
   config     = var.api
   chain_name = var.chain_name
 
-  role                   = "api"
-  labels                 = {}
-  network_tags           = []
-  generate_node_key      = true
-  generate_reward_wallet = false
+  role         = "api"
+  labels       = local.labels
+  network_tags = []
 
   metadata = {
-    persistence_url = base64encode(var.persistence_url)
-    subdomain       = base64encode("")
-    genesis_key     = base64encode("")
+    subdomain = base64encode("")
   }
 
   node_dns_subdomain       = var.node_dns_subdomain

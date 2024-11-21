@@ -7,6 +7,7 @@ use alloy::{
 use anyhow::Result;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
@@ -21,7 +22,7 @@ use crate::{
     serde_util::num_as_str,
     time::SystemTime,
     transaction::{
-        self, ScillaGas, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
+        ScillaGas, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
     },
 };
 
@@ -31,14 +32,15 @@ pub struct TxBlock {
     pub body: TxBlockBody,
 }
 
-impl From<&Block> for TxBlock {
-    fn from(block: &Block) -> Self {
-        // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
+impl TxBlock {
+    pub fn new(block: &Block) -> Self {
+        let mut scalar = [0; 32];
+        scalar[31] = 1;
         TxBlock {
             header: TxBlockHeader {
-                version: 0,
-                gas_limit: transaction::ScillaGas(0),
-                gas_used: 0,
+                version: 1,                                    // To match ZQ1
+                gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
+                gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
                 rewards: 0,
                 txn_fees: 0,
                 prev_block_hash: block.parent_hash().into(),
@@ -48,27 +50,22 @@ impl From<&Block> for TxBlock {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_micros(),
-                mb_info_hash: B256::ZERO,
+                mb_info_hash: B256::ZERO, // Obsolete in ZQ2
                 state_root_hash: block.state_root_hash().into(),
-                state_delta_hash: B256::ZERO,
+                state_delta_hash: B256::ZERO, // Obsolete in ZQ2
                 num_txns: block.transactions.len() as u64,
                 num_pages: if block.transactions.is_empty() {
                     0
                 } else {
                     (block.transactions.len() / TRANSACTIONS_PER_PAGE) + 1
                 },
-                num_micro_blocks: 0,
-                miner_pub_key: [0; 33],
+                num_micro_blocks: 0, // Microblocks obsolete in ZQ2
                 ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
-                committee_hash: None,
             },
             body: TxBlockBody {
-                header_sign: B512::ZERO,
+                header_sign: B512::ZERO, // Obsolete in ZQ2
                 block_hash: block.hash().into(),
                 micro_block_infos: vec![],
-                cosig_bitmap_1: vec![],
-                cosig_bitmap_2: vec![],
-                cosig_1: None,
             },
         }
     }
@@ -78,9 +75,13 @@ impl From<&Block> for TxBlock {
 #[serde(rename_all = "PascalCase")]
 pub struct TxBlockHeader {
     pub version: u8,
+    #[serde(with = "num_as_str")]
     pub gas_limit: ScillaGas,
-    pub gas_used: u64,
+    #[serde(with = "num_as_str")]
+    pub gas_used: ScillaGas,
+    #[serde(with = "num_as_str")]
     pub rewards: u128,
+    #[serde(with = "num_as_str")]
     pub txn_fees: u128,
     #[serde(serialize_with = "hex_no_prefix")]
     pub prev_block_hash: B256,
@@ -97,9 +98,69 @@ pub struct TxBlockHeader {
     pub num_txns: u64,
     pub num_pages: usize,
     pub num_micro_blocks: u8,
-    #[serde(serialize_with = "hex")]
-    pub miner_pub_key: [u8; 33],
+    #[serde(rename = "DSBlockNum", with = "num_as_str")]
     pub ds_block_num: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct TxBlockVerbose {
+    pub header: TxBlockVerboseHeader,
+    pub body: TxBlockVerboseBody,
+}
+
+impl TxBlockVerbose {
+    pub fn new(block: &Block, proposer: Address) -> Self {
+        let mut scalar = [0; 32];
+        scalar[31] = 1;
+        TxBlockVerbose {
+            header: TxBlockVerboseHeader {
+                non_verbose_header: TxBlockHeader {
+                    version: 1,                                    // To match ZQ1
+                    gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
+                    gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
+                    rewards: 0,
+                    txn_fees: 0,
+                    prev_block_hash: block.parent_hash().into(),
+                    block_num: block.number(),
+                    timestamp: block
+                        .timestamp()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros(),
+                    mb_info_hash: B256::ZERO, // Obsolete in ZQ2
+                    state_root_hash: block.state_root_hash().into(),
+                    state_delta_hash: B256::ZERO, // Obsolete in ZQ2
+                    num_txns: block.transactions.len() as u64,
+                    num_pages: if block.transactions.is_empty() {
+                        0
+                    } else {
+                        (block.transactions.len() / TRANSACTIONS_PER_PAGE) + 1
+                    },
+                    num_micro_blocks: 0, // Microblocks obsolete in ZQ2
+                    ds_block_num: (block.number() / TX_BLOCKS_PER_DS_BLOCK) + 1,
+                },
+                miner_pub_key: proposer,
+                committee_hash: Some(B256::ZERO),
+            },
+            body: TxBlockVerboseBody {
+                header_sign: B512::ZERO, // Obsolete in ZQ2
+                block_hash: block.hash().into(),
+                micro_block_infos: vec![],
+                cosig_bitmap_1: vec![true; 8],
+                cosig_bitmap_2: vec![true; 8],
+                cosig_1: Some(schnorr::Signature::from_scalars(scalar, scalar).unwrap()),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TxBlockVerboseHeader {
+    #[serde(flatten)]
+    pub non_verbose_header: TxBlockHeader,
+    #[serde(serialize_with = "hex")]
+    pub miner_pub_key: Address,
     #[serde(
         serialize_with = "option_hex_no_prefix",
         skip_serializing_if = "Option::is_none"
@@ -107,30 +168,44 @@ pub struct TxBlockHeader {
     pub committee_hash: Option<B256>,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TxBlockVerboseBody {
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub header_sign: B512,
+    #[serde(serialize_with = "hex_no_prefix")]
+    pub block_hash: B256,
+    pub micro_block_infos: Vec<MicroBlockInfo>,
+    #[serde(rename = "B1")]
+    pub cosig_bitmap_1: Vec<bool>,
+    #[serde(rename = "B2")]
+    pub cosig_bitmap_2: Vec<bool>,
+    #[serde(rename = "CS1")]
+    pub cosig_1: Option<schnorr::Signature>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTxResponse {
     #[serde(rename = "ID", serialize_with = "hex_no_prefix")]
-    id: B256,
+    pub id: B256,
     #[serde(with = "num_as_str")]
-    version: u32,
+    pub version: u32,
     #[serde(with = "num_as_str")]
-    nonce: u64,
+    pub nonce: u64,
     #[serde(serialize_with = "hex_no_prefix")]
-    to_addr: Address,
-    sender_pub_key: String,
+    pub to_addr: Address,
+    pub sender_pub_key: String,
     #[serde(with = "num_as_str")]
-    amount: ZilAmount,
-    signature: String,
-    receipt: GetTxResponseReceipt,
+    pub amount: ZilAmount,
+    pub signature: String,
+    pub receipt: GetTxResponseReceipt,
     #[serde(with = "num_as_str")]
-    gas_price: ZilAmount,
+    pub gas_price: ZilAmount,
     #[serde(with = "num_as_str")]
-    gas_limit: ScillaGas,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<String>,
+    pub gas_limit: ScillaGas,
+    pub code: Option<String>,
+    pub data: Option<String>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -143,25 +218,25 @@ pub struct CreateTransactionResponse {
     pub tran_id: B256,
 }
 
-#[derive(Clone, Serialize, Debug)]
-struct Transition {
-    addr: Address,
-    depth: u64,
-    msg: TransitionMessage,
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Transition {
+    pub addr: Address,
+    pub depth: u64,
+    pub msg: TransitionMessage,
 }
 
-#[derive(Clone, Serialize, Debug)]
-struct TransitionMessage {
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct TransitionMessage {
     #[serde(rename = "_amount", with = "num_as_str")]
-    amount: ZilAmount,
+    pub amount: ZilAmount,
     #[serde(rename = "_recipient")]
-    recipient: Address,
+    pub recipient: Address,
     #[serde(rename = "_tag")]
-    tag: String,
-    params: serde_json::Value,
+    pub tag: String,
+    pub params: serde_json::Value,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct EventLog {
     pub address: Address,
     #[serde(rename = "_eventname")]
@@ -169,23 +244,18 @@ pub struct EventLog {
     pub params: Vec<ParamValue>,
 }
 
-#[derive(Clone, Serialize, Debug)]
-struct GetTxResponseReceipt {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    accepted: Option<bool>,
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct GetTxResponseReceipt {
+    pub accepted: bool,
     #[serde(with = "num_as_str")]
-    cumulative_gas: ScillaGas,
+    pub cumulative_gas: ScillaGas,
     #[serde(with = "num_as_str")]
-    epoch_num: u64,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    transitions: Vec<Transition>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    event_logs: Vec<EventLog>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    errors: BTreeMap<u64, Vec<u64>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    exceptions: Vec<ScillaException>,
-    success: bool,
+    pub epoch_num: u64,
+    pub transitions: Vec<Transition>,
+    pub event_logs: Vec<EventLog>,
+    pub errors: BTreeMap<u64, Vec<u64>>,
+    pub exceptions: Vec<ScillaException>,
+    pub success: bool,
 }
 
 impl GetTxResponse {
@@ -194,12 +264,13 @@ impl GetTxResponse {
         receipt: TransactionReceipt,
         block_number: u64,
     ) -> Result<GetTxResponse> {
-        let nonce = tx.tx.nonce().unwrap_or_default();
         let amount = tx.tx.zil_amount();
         let gas_price = tx.tx.gas_price_per_scilla_gas();
         let gas_limit = tx.tx.gas_limit_scilla();
-        let (version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
+        // Some of these are returned as all caps in ZQ1, but that should be fine
+        let (nonce, version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
                 key.to_encoded_point(true).as_bytes().to_hex(),
@@ -208,6 +279,7 @@ impl GetTxResponse {
                 (!tx.data.is_empty()).then_some(tx.data),
             ),
             SignedTransaction::Legacy { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -218,6 +290,7 @@ impl GetTxResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip2930 { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 3,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -228,6 +301,7 @@ impl GetTxResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Eip1559 { tx, sig } => (
+                tx.nonce,
                 ((tx.chain_id as u32) << 16) | 4,
                 tx.to.to().copied().unwrap_or_default(),
                 sig.recover_from_prehash(&tx.signature_hash())?
@@ -238,6 +312,7 @@ impl GetTxResponse {
                 tx.to.is_call().then(|| hex::encode(&tx.input)),
             ),
             SignedTransaction::Intershard { tx, .. } => (
+                0,
                 ((tx.chain_id as u32) << 16) | 20,
                 tx.to_addr.unwrap_or_default(),
                 String::new(),
@@ -256,7 +331,7 @@ impl GetTxResponse {
             amount,
             signature,
             receipt: GetTxResponseReceipt {
-                cumulative_gas: receipt.cumulative_gas_used.into(),
+                cumulative_gas: ScillaGas(receipt.cumulative_gas_used.0),
                 epoch_num: block_number,
                 transitions: receipt
                     .transitions
@@ -288,7 +363,7 @@ impl GetTxResponse {
                     })
                     .collect(),
                 success: receipt.success,
-                accepted: receipt.accepted,
+                accepted: receipt.accepted.unwrap_or(false),
                 errors: receipt
                     .errors
                     .into_iter()
@@ -324,12 +399,6 @@ pub struct TxBlockBody {
     #[serde(serialize_with = "hex_no_prefix")]
     pub block_hash: B256,
     pub micro_block_infos: Vec<MicroBlockInfo>,
-    #[serde(rename = "B1", skip_serializing_if = "Vec::is_empty")]
-    pub cosig_bitmap_1: Vec<bool>,
-    #[serde(rename = "B2", skip_serializing_if = "Vec::is_empty")]
-    pub cosig_bitmap_2: Vec<bool>,
-    #[serde(rename = "CS1", skip_serializing_if = "Option::is_none")]
-    pub cosig_1: Option<schnorr::Signature>,
 }
 
 #[derive(Clone, Serialize)]
@@ -369,11 +438,11 @@ pub struct BlockchainInfo {
     pub sharding_structure: ShardingStructure,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ShardingStructure {
     #[serde(rename = "NumPeers")]
-    pub num_peers: Vec<u16>,
+    pub num_peers: Vec<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -618,6 +687,176 @@ pub struct TransactionReceiptResponse {
     pub success: bool,
 }
 
+// From https://github.com/Zilliqa/Zilliqa/blob/master/src/common/TxnStatus.h#L23
+#[derive(Serialize_repr, Deserialize_repr, Clone)]
+#[repr(u8)] // Because otherwise it's weird that 255 is a special case
+pub enum TxnStatusCode {
+    NotPresent = 0,
+    Dispatched = 1,
+    SoftConfirmed = 2,
+    Confirmed = 3,
+    // Pending
+    PresentNonceHigh = 4,
+    PresentGasExceeded = 5,
+    PresentValidConsensusNotReached = 6,
+    // RareDropped
+    MathError = 10,
+    FailScillaLib = 11,
+    FailContractInit = 12,
+    InvalidFromAccount = 13,
+    HighGasLimit = 14,
+    IncorrectTxnType = 15,
+    IncorrectShard = 16,
+    ContractCallWrongShard = 17,
+    HighByteSizeCode = 18,
+    VerifError = 19,
+    //
+    InsufficientGasLimit = 20,
+    InsufficientBalance = 21,
+    InsufficientGas = 22,
+    MempoolAlreadyPresent = 23,
+    MempoolSameNonceLowerGas = 24,
+    //
+    InvalidToAccount = 25,
+    FailContractAccountCreation = 26,
+    NonceTooLow = 27,
+    Error = 255, // MiscError
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TransactionStatusResponse {
+    #[serde(rename = "ID")]
+    pub id: String,
+    #[serde(rename = "_id")]
+    pub _id: serde_json::Value,
+    pub amount: String,
+    pub data: String,
+    #[serde(rename = "epochInserted")]
+    pub epoch_inserted: String,
+    #[serde(rename = "epochUpdated")]
+    pub epoch_updated: String,
+    #[serde(rename = "gasLimit")]
+    pub gas_limit: String,
+    #[serde(rename = "gasPrice")]
+    pub gas_price: String,
+    #[serde(rename = "lastModified")]
+    pub last_modified: String,
+    #[serde(rename = "modificationState")]
+    pub modification_state: u64,
+    pub status: TxnStatusCode,
+    pub nonce: String,
+    #[serde(rename = "senderAddr")]
+    pub sender_addr: String,
+    pub signature: String,
+    pub success: bool,
+    #[serde(rename = "toAddr")]
+    pub to_addr: String,
+    pub version: String,
+}
+
+impl TransactionStatusResponse {
+    pub fn new(tx: VerifiedTransaction, receipt: TransactionReceipt, block: Block) -> Result<Self> {
+        let amount = tx.tx.zil_amount();
+        let gas_price = tx.tx.gas_price_per_scilla_gas();
+        let gas_limit = tx.tx.gas_limit_scilla();
+        let (nonce, version, to_addr, sender_pub_key, signature, _code, data) = match tx.tx {
+            SignedTransaction::Zilliqa { tx, sig, key } => (
+                tx.nonce,
+                ((tx.chain_id as u32) << 16) | 1,
+                tx.to_addr,
+                key.to_encoded_point(true).as_bytes().to_hex(),
+                <[u8; 64]>::from(sig.to_bytes()).to_hex(),
+                (!tx.code.is_empty()).then_some(tx.code),
+                (!tx.data.is_empty()).then_some(tx.data),
+            ),
+            SignedTransaction::Legacy { tx, sig } => (
+                tx.nonce,
+                ((tx.chain_id.unwrap_or_default() as u32) << 16) | 2,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip2930 { tx, sig } => (
+                tx.nonce,
+                ((tx.chain_id as u32) << 16) | 3,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Eip1559 { tx, sig } => (
+                tx.nonce,
+                ((tx.chain_id as u32) << 16) | 4,
+                tx.to.to().copied().unwrap_or_default(),
+                sig.recover_from_prehash(&tx.signature_hash())?
+                    .to_sec1_bytes()
+                    .to_hex(),
+                sig.as_bytes().to_hex(),
+                tx.to.is_create().then(|| hex::encode(&tx.input)),
+                tx.to.is_call().then(|| hex::encode(&tx.input)),
+            ),
+            SignedTransaction::Intershard { tx, .. } => (
+                0,
+                ((tx.chain_id as u32) << 16) | 20,
+                tx.to_addr.unwrap_or_default(),
+                String::new(),
+                String::new(),
+                tx.to_addr.is_none().then(|| hex::encode(&tx.payload)),
+                tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
+            ),
+        };
+        let status_code = if receipt.accepted.is_some() && receipt.accepted.unwrap() {
+            TxnStatusCode::Confirmed
+        } else if receipt.accepted.is_none() {
+            TxnStatusCode::Dispatched
+        } else {
+            let errors: Vec<ScillaError> =
+                receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
+            if errors.len() == 1 {
+                match errors[0] {
+                    ScillaError::CallFailed => TxnStatusCode::FailScillaLib,
+                    ScillaError::CreateFailed => TxnStatusCode::Error,
+                    ScillaError::OutOfGas => TxnStatusCode::InsufficientGas,
+                    ScillaError::InsufficientBalance => TxnStatusCode::InsufficientBalance,
+                }
+            } else {
+                TxnStatusCode::Error
+            }
+        };
+        let modification_state = if receipt.accepted.is_none() { 0 } else { 2 };
+        Ok(Self {
+            id: tx.hash.to_string(),
+            _id: serde_json::Value::Null,
+            amount: amount.to_string(),
+            data: data.unwrap_or_default(),
+            epoch_inserted: block.number().to_string(),
+            epoch_updated: block.number().to_string(),
+            gas_limit: gas_limit.to_string(),
+            gas_price: gas_price.to_string(),
+            last_modified: block
+                .timestamp()
+                .duration_since(SystemTime::UNIX_EPOCH)?
+                .as_micros()
+                .to_string(),
+            modification_state,
+            status: status_code,
+            nonce: nonce.to_string(),
+            sender_addr: sender_pub_key,
+            signature,
+            success: receipt.success,
+            to_addr: to_addr.to_hex(),
+            version: version.to_string(),
+        })
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RecentTransactionsResponse {
     #[serde(rename = "TxnHashes")]
@@ -635,4 +874,12 @@ pub struct MinerInfo {
 pub struct ShardInfo {
     pub nodes: Vec<String>,
     pub size: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StateProofResponse {
+    #[serde(rename = "accountProof")]
+    pub account_proof: Vec<String>,
+    #[serde(rename = "stateProof")]
+    pub state_proof: Vec<String>,
 }

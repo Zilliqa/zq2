@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use alloy::primitives::BlockNumber;
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use lru::LruCache;
@@ -419,9 +420,9 @@ pub struct BlockStore {
     failed_request_sleep_duration: Duration,
     /// Our block strategies.
     strategies: Vec<BlockStrategy>,
-    /// Last time we updated our availability - we do this at most once a second or so to avoid spam
-    available_blocks: Vec<BlockStrategy>,
-    available_blocks_updated: Option<SystemTime>,
+    /// The block views we have available. This is read once from the DB at start-up and incrementally updated whenever
+    /// we receive a new block. We do this because obtaining the data from the DB is expensive.
+    available_blocks: RangeMap,
 
     /// Buffered block proposals.
     buffered: BlockCache,
@@ -431,6 +432,11 @@ pub struct BlockStore {
 
     /// Clock pointer - see request_blocks()
     clock: usize,
+
+    /// Where we last started syncing, so we can report it in get_sync_data()
+    started_syncing_at: BlockNumber,
+    /// Previous sync flag, so we can tell when it changes.
+    last_sync_flag: bool,
 }
 
 /// Data about block availability sent between peers
@@ -536,7 +542,6 @@ impl BlockStoreStatus {
             .iter()
             .map(|(k, v)| (format!("{:?}", k), PeerInfoStatus::new(v)))
             .collect::<Vec<_>>();
-
         Ok(Self {
             highest_known_view: block_store.highest_known_view,
             views_held: block_store.db.get_view_ranges()?,
@@ -581,6 +586,13 @@ impl BlockAvailability {
 
 impl BlockStore {
     pub fn new(config: &NodeConfig, db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
+        let available_blocks =
+            db.get_view_ranges()?
+                .iter()
+                .fold(RangeMap::new(), |mut range_map, range| {
+                    range_map.with_range(range);
+                    range_map
+                });
         Ok(BlockStore {
             db,
             block_cache: Arc::new(RwLock::new(LruCache::new(NonZeroUsize::new(5).unwrap()))),
@@ -590,13 +602,28 @@ impl BlockStore {
             max_blocks_in_flight: config.max_blocks_in_flight,
             failed_request_sleep_duration: config.failed_request_sleep_duration,
             strategies: vec![BlockStrategy::Latest(constants::RETAINS_LAST_N_BLOCKS)],
-            available_blocks: vec![],
-            available_blocks_updated: None,
+            available_blocks,
             buffered: BlockCache::new(config.max_blocks_in_flight),
             unserviceable_requests: None,
             message_sender,
             clock: 0,
+            started_syncing_at: 0,
+            last_sync_flag: false,
         })
+    }
+
+    /// The data set here is held in memory. It can be useful to update manually
+    /// For example after a restart to remind block_store of its peers and height
+    pub fn set_peers_and_view(
+        &mut self,
+        highest_known_view: u64,
+        peer_ids: &Vec<PeerId>,
+    ) -> Result<()> {
+        for peer_id in peer_ids {
+            self.peer_info(*peer_id);
+        }
+        self.highest_known_view = highest_known_view;
+        Ok(())
     }
 
     /// Create a read-only clone of this [BlockStore]. The read-only property must be upheld by the caller - Calling
@@ -611,12 +638,13 @@ impl BlockStore {
             max_blocks_in_flight: 0,
             failed_request_sleep_duration: Duration::ZERO,
             strategies: self.strategies.clone(),
-            available_blocks: Vec::new(),
-            available_blocks_updated: None,
+            available_blocks: RangeMap::new(),
             buffered: BlockCache::new(0),
             unserviceable_requests: None,
             message_sender: self.message_sender.clone(),
             clock: 0,
+            started_syncing_at: self.started_syncing_at,
+            last_sync_flag: self.last_sync_flag,
         })
     }
 
@@ -636,24 +664,14 @@ impl BlockStore {
     /// We need to do this by view range, which means that we need to account for views where there was no block.
     /// So, the underlying db function finds the view lower and upper bounds of our contiguous block ranges and we
     /// advertise those.
-    /// This function overlays that with a timeout so we don't ask (and thus load the db) too often.
-    pub fn availability(&mut self) -> Result<Option<Vec<BlockStrategy>>> {
+    pub fn availability(&self) -> Result<Option<Vec<BlockStrategy>>> {
         let mut to_return = self.strategies.clone();
-        let now = SystemTime::now();
-        if self.available_blocks_updated.map_or(true, |x| {
-            now.duration_since(x).unwrap_or(Duration::ZERO)
-                > constants::RECOMPUTE_BLOCK_AVAILABILITY_AFTER
-        }) {
-            debug!("Updating available views");
-            self.available_blocks = self
-                .db
-                .get_view_ranges()?
+        to_return.extend(
+            self.available_blocks
+                .ranges
                 .iter()
-                .map(|x| BlockStrategy::CachedViewRange(x.clone(), None))
-                .collect();
-            self.available_blocks_updated = Some(now);
-        }
-        to_return.extend(self.available_blocks.iter().cloned());
+                .map(|range| BlockStrategy::CachedViewRange(range.clone(), None)),
+        );
         Ok(Some(to_return))
     }
 
@@ -717,20 +735,13 @@ impl BlockStore {
         // when we discover that they are ahead of what we think the rest of the chain
         // has committed to - if we don't roll back here, we won't then fetch the canonical
         // versions of those blocks (thinking we already have them).
-        let current_view = self
-            .db
-            .get_canonical_block_by_number(
-                self.db
-                    .get_highest_canonical_block_number()?
-                    .ok_or_else(|| anyhow!("no highest block"))?,
-            )?
-            .ok_or_else(|| anyhow!("missing highest block"))?
-            .view();
-        // Take this opportunity to update the highest confirmed view.
-        self.highest_confirmed_view = current_view;
+        let (syncing, current_block) = self.am_syncing()?;
+        self.highest_confirmed_view = current_block.view();
+        let current_view = current_block.view();
         trace!(
-            "block_store::request_missing_blocks() : set highest_confirmed_view {0} (current = {current_view})",
-            self.highest_confirmed_view
+            "block_store::request_missing_blocks() : set highest_confirmed_view {0} (current = {1})",
+            self.highest_confirmed_view,
+            current_view,
         );
 
         // First off, let's load up the unserviceable requests.
@@ -745,7 +756,6 @@ impl BlockStore {
         // end up evicting the critical part of the chain..
         // @todo I can't think of a more elegant way than this, but it's horrid - we want to exclude views which
         // we might still be voting on.
-        let syncing = (self.highest_known_view + 2) > current_view;
         if syncing {
             trace!(
                 current_view,
@@ -783,6 +793,12 @@ impl BlockStore {
             );
             self.buffered.reset_fork_counter();
         }
+
+        if syncing && !self.last_sync_flag {
+            // We didn't used to be syncing; remember when we started.
+            self.started_syncing_at = current_block.number();
+        }
+        self.last_sync_flag = syncing;
 
         Ok(syncing)
     }
@@ -1057,6 +1073,7 @@ impl BlockStore {
     ) -> Result<Vec<(PeerId, Proposal)>> {
         trace!(?from, number = block.number(), hash = ?block.hash(), "block_store::process_block() : starting");
         self.db.insert_block(&block)?;
+        self.available_blocks.with_elem(block.view());
 
         if let Some(from) = from {
             let peer = self.peer_info(from);
@@ -1231,5 +1248,41 @@ impl BlockStore {
 
     pub fn received_process_proposal(&mut self, view: u64) {
         self.buffered.received_process_proposal(view);
+    }
+
+    /// Returns (am_syncing, current_highest_block)
+    pub fn am_syncing(&self) -> Result<(bool, Block)> {
+        let current_block = self
+            .db
+            .get_canonical_block_by_number(
+                self.db
+                    .get_highest_canonical_block_number()?
+                    .ok_or_else(|| anyhow!("no highest block"))?,
+            )?
+            .ok_or_else(|| anyhow!("missing highest block"))?;
+        Ok((
+            (self.highest_known_view + 2) > current_block.view(),
+            current_block,
+        ))
+    }
+
+    // Returns (starting_block, current_block,  highest_block) if we're syncing,
+    // None if we're not.
+    pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
+        let (flag, highest_block) = self.am_syncing()?;
+        if !flag {
+            Ok(None)
+        } else {
+            // Compute the highest block. We're going to do this by taking the difference between
+
+            // get an estimated block number if no more views were skipped.
+            let skipped_views = highest_block.view() - highest_block.number();
+            let expected_highest_block_number = self.highest_known_view - skipped_views;
+            Ok(Some((
+                self.started_syncing_at,
+                highest_block.number(),
+                expected_highest_block_number,
+            )))
+        }
     }
 }

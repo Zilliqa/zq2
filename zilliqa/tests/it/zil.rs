@@ -2,6 +2,7 @@ use std::{ops::DerefMut, str::FromStr};
 
 use alloy::primitives::Address;
 use anyhow::Result;
+use bech32::{Bech32, Hrp};
 use ethabi::{ParamType, Token};
 use ethers::{
     providers::{Middleware, ProviderError},
@@ -9,7 +10,7 @@ use ethers::{
     utils::keccak256,
 };
 use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U128};
 use prost::Message;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -24,6 +25,13 @@ use zilliqa::{
 use crate::{compile_contract, deploy_contract, Network, Wallet};
 
 pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
+    zilliqa_account_with_funds(network, 1000 * 10u128.pow(18)).await
+}
+
+pub async fn zilliqa_account_with_funds(
+    network: &mut Network,
+    funds: u128,
+) -> (schnorr::SecretKey, H160) {
     let wallet = network.genesis_wallet().await;
 
     // Generate a Zilliqa account.
@@ -33,7 +41,7 @@ pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160
     let address = H160::from_slice(&hashed[12..]);
 
     // Send the Zilliqa account some funds.
-    let tx = TransactionRequest::pay(address, 1000 * 10u128.pow(18));
+    let tx = TransactionRequest::pay(address, funds);
     let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     network
         .run_until_async(
@@ -55,7 +63,26 @@ pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160
         .request("GetBalance", [address])
         .await
         .unwrap();
-    assert_eq!(response["balance"].as_str().unwrap(), "1000000000000000");
+
+    let resp_eth = wallet
+        .provider()
+        .request::<[&str; 2], String>(
+            "eth_getBalance",
+            [
+                &Address::new(*address.as_fixed_bytes()).to_checksum(None),
+                "latest",
+            ],
+        )
+        .await
+        .unwrap();
+    let eth_balance: U128 =
+        U128::from_str_radix(resp_eth.strip_prefix("0x").unwrap_or(&resp_eth), 16).unwrap();
+
+    // This is in decimal!
+    let zil_balance = U128::from_str_radix(response["balance"].as_str().unwrap(), 10).unwrap();
+
+    assert_eq!(zil_balance * U128::from(10u128.pow(6)), funds.into());
+    assert_eq!(eth_balance, funds.into());
     assert_eq!(response["nonce"].as_u64().unwrap(), 0);
 
     (secret_key, address)
@@ -194,6 +221,102 @@ async fn send_transaction(
     assert_eq!(eth_receipt.status.unwrap().as_u32(), 1);
 
     (
+        eth_receipt.contract_address,
+        wallet
+            .provider()
+            .request("GetTransaction", [txn_hash])
+            .await
+            .unwrap(),
+    )
+}
+
+// Returns Err() if the txn fails.
+#[allow(clippy::too_many_arguments)]
+async fn send_transaction_for_status(
+    network: &mut Network,
+    secret_key: &schnorr::SecretKey,
+    nonce: u64,
+    to_addr: H160,
+    amount: u128,
+    gas_limit: u64,
+    code: Option<&str>,
+    data: Option<&str>,
+) -> (u32, Option<H160>, Value) {
+    let wallet = network.random_wallet().await;
+    let public_key = secret_key.public_key();
+
+    // Get the gas price via the Zilliqa API.
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+
+    let chain_id = wallet.get_chainid().await.unwrap().as_u32() - 0x8000;
+    let version = (chain_id << 16) | 1u32;
+    let proto = ProtoTransactionCoreInfo {
+        version,
+        toaddr: to_addr.as_bytes().to_vec(),
+        senderpubkey: Some(public_key.to_sec1_bytes().into()),
+        amount: Some(amount.to_be_bytes().to_vec().into()),
+        gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
+        gaslimit: gas_limit,
+        oneof2: Some(Nonce::Nonce(nonce)),
+        oneof8: code.map(|c| Code::Code(c.as_bytes().to_vec())),
+        oneof9: data.map(|d| Data::Data(d.as_bytes().to_vec())),
+    };
+    let txn_data = proto.encode_to_vec();
+    let signature = schnorr::sign(&txn_data, secret_key);
+
+    let mut request = json!({
+        "version": version,
+        "nonce": nonce,
+        "toAddr": Address::from_slice(to_addr.as_bytes()).to_checksum(None),
+        "amount": amount.to_string(),
+        "pubKey": hex::encode(public_key.to_sec1_bytes()),
+        "gasPrice": gas_price.to_string(),
+        "gasLimit": gas_limit.to_string(),
+        "signature": hex::encode(signature.to_bytes()),
+    });
+
+    if let Some(code) = code {
+        request["code"] = code.into();
+    }
+    if let Some(data) = data {
+        request["data"] = data.into();
+    }
+
+    let response: Value = wallet
+        .provider()
+        .request("CreateTransaction", [request])
+        .await
+        .unwrap();
+    let txn_hash: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+
+    network
+        .run_until_async(
+            || async {
+                wallet
+                    .get_transaction_receipt(txn_hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    let eth_receipt = wallet
+        .get_transaction_receipt(txn_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    // assert_eq!(eth_receipt.status.unwrap().as_u32(), 0);
+
+    (
+        eth_receipt.status.unwrap().as_u32(),
         eth_receipt.contract_address,
         wallet
             .provider()
@@ -414,6 +537,7 @@ async fn run_create_transaction_api_for_error(
         .provider()
         .request("CreateTransaction", [request])
         .await;
+
     if let Err(ProviderError::JsonRpcClientError(rpc_error)) = response {
         if let Some(json_error) = rpc_error.as_error_response() {
             return Some((json_error.code, json_error.message.to_string()));
@@ -531,6 +655,41 @@ async fn create_transaction(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn get_balance_via_eth_api(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let encoded_bech32 =
+        bech32::encode::<Bech32>(Hrp::parse("zil").unwrap(), to_addr.as_bytes()).unwrap();
+
+    let response: Value = wallet
+        .provider()
+        .request("eth_getBalance", [encoded_bech32, "latest".to_string()])
+        .await
+        .unwrap();
+
+    let stripped_str = response.as_str().unwrap().strip_prefix("0x").unwrap();
+    let returned = u128::from_str_radix(stripped_str, 16).unwrap();
+    assert_eq!(returned, 200u128 * 10u128.pow(18));
+}
+
+#[zilliqa_macros::test]
 async fn create_transaction_errors(mut network: Network) {
     let (secret_key, _) = zilliqa_account(&mut network).await;
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
@@ -595,6 +754,238 @@ async fn create_transaction_errors(mut network: Network) {
         assert!(msg.to_lowercase().contains("signature"));
         assert_eq!(code, -26)
     }
+
+    {
+        // Too little for the deposit.
+        let (no_funds_secret_key, _) =
+            zilliqa_account_with_funds(&mut network, 10u128.pow(6)).await;
+        let (code, msg) = run_create_transaction_api_for_error(
+            &mut network,
+            &no_funds_secret_key,
+            1,
+            ToAddr::Address(to_addr),
+            200u128 * 10u128.pow(12),
+            50_000,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(msg.to_lowercase().contains("insufficient"));
+        assert_eq!(code, -8)
+    }
+}
+
+#[zilliqa_macros::test]
+async fn get_transaction(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    // Create a Zilliqa account and get its secret key and address
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    // Define the recipient address
+    let address_string_w_prefix = "0x00000000000000000000000000000000deadbeef";
+    let to_addr: H160 = address_string_w_prefix.parse().unwrap();
+
+    // Send a transaction
+    let (_contract_address, returned_transaction) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    // Get the transaction ID from the returned transaction
+    let transaction_id = returned_transaction["ID"]
+        .as_str()
+        .expect("Failed to get ID from response");
+
+    // Wait for the transaction to be mined
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    // Use the GetTransaction API to retrieve the transaction details
+    let response: Value = wallet
+        .provider()
+        .request("GetTransaction", [transaction_id])
+        .await
+        .expect("Failed to call GetTransaction API");
+
+    // Check for keys
+    assert!(response["receipt"]["success"].is_boolean());
+    assert!(response["receipt"]["event_logs"].is_array());
+    assert!(response["receipt"]["transitions"].is_array());
+
+    // Check the string formats
+    assert!(!response["ID"].as_str().unwrap().starts_with("0x"));
+    assert!(!response["toAddr"].as_str().unwrap().starts_with("0x"));
+    assert!(response["senderPubKey"].as_str().unwrap().starts_with("0x"));
+    assert!(response["signature"].as_str().unwrap().starts_with("0x"));
+
+    // Verify the transaction details
+    assert_eq!(response["ID"].as_str().unwrap(), transaction_id);
+    assert_eq!(response["toAddr"].as_str().unwrap(), hex::encode(to_addr),);
+    assert_eq!(response["amount"].as_str().unwrap(), "200000000000000");
+    assert_eq!(response["gasLimit"].as_str().unwrap(), "50000");
+    assert_eq!(
+        response["senderPubKey"].as_str().unwrap(),
+        format!("0x{}", hex::encode(secret_key.public_key().to_sec1_bytes()))
+    );
+
+    let parsed_response = zilliqa::api::types::zil::GetTxResponse::deserialize(&response)
+        .expect("Failed to deserialize response");
+
+    // Verify the transaction details
+    assert_eq!(parsed_response.nonce, 1);
+    // Logic should be case independent
+    assert_eq!(
+        parsed_response.to_addr.to_string().to_lowercase(),
+        address_string_w_prefix
+    );
+    assert_eq!(parsed_response.amount.to_string(), "200000000000000");
+    assert_eq!(parsed_response.gas_limit.0, 50000);
+
+    let response_soft_confirmed: Value = wallet
+        .provider()
+        .request("GetSoftConfirmedTransaction", [transaction_id])
+        .await
+        .expect("Failed to call GetTransaction API");
+
+    assert_eq!(response, response_soft_confirmed);
+}
+
+#[zilliqa_macros::test]
+async fn create_transaction_high_gas_limit(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, address) = zilliqa_account_with_funds(&mut network, 60 * 10u128.pow(18)).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+
+    println!("gas_price {gas_price}");
+
+    // how much we can actually pay for.
+    // 50 = 60-10 (we're transferring 10)
+    let max_gas_we_can_pay_for = (50u128 * 10u128.pow(12)) / gas_price;
+    println!("max_gas {max_gas_we_can_pay_for}");
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        10 * 10u128.pow(12),
+        u128::try_into(max_gas_we_can_pay_for * 2).unwrap(),
+        None,
+        None,
+    )
+    .await;
+
+    // Verify the sender's nonce has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [address])
+        .await
+        .unwrap();
+    println!("GetBalance() after transfer = {response:?}");
+    assert_eq!(response["nonce"].as_u64().unwrap(), 1);
+
+    // Verify the receiver's balance has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [to_addr])
+        .await
+        .unwrap();
+    assert_eq!(
+        response["balance"]
+            .as_str()
+            .unwrap()
+            .parse::<u128>()
+            .unwrap(),
+        (10u128 * 10u128.pow(12))
+    );
+}
+
+#[zilliqa_macros::test]
+async fn zil_with_insufficient_gas_should_fail(mut network: Network) {
+    // Create a contract and check for lack of deposit rejection.
+    let (deployer_key, _) = zilliqa_account_with_funds(&mut network, 60 * 10u128.pow(18)).await;
+
+    let code = scilla_test_contract_code();
+    let wallet = network.random_wallet().await;
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    // Just over the 300 gas we need to invoke the runner.
+    // Enough to pay the deposit, but not the transaction fee.
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+    let zil_value: u128 = (301u128 * gas_price) / 10u128.pow(6);
+    let amount_to_request: u128 = zil_value * 10u128.pow(6);
+    let (caller_key, caller_address) =
+        zilliqa_account_with_funds(&mut network, amount_to_request).await;
+    let data = scilla_test_contract_data(caller_address);
+    let contract_address = deploy_scilla_contract(&mut network, &deployer_key, &code, &data).await;
+    let call = r#"{
+        "_tag": "setHello",
+        "params": [
+            {
+                "vname": "msg",
+                "value": "foobar",
+                "type": "String"
+            }
+        ]
+    }"#;
+
+    let max_gas_we_can_pay_for = (50u128 * 10u128.pow(12)) / gas_price;
+    let (status, addr, _) = send_transaction_for_status(
+        &mut network,
+        &caller_key,
+        1,
+        contract_address,
+        0,
+        // Doesn't actually need to be > the max gas we can pay for, but
+        // it might as well be.
+        u128::try_into(max_gas_we_can_pay_for * 2).unwrap(),
+        None,
+        Some(call),
+    )
+    .await;
+    assert_eq!(addr, None);
+    // The txn should fail.
+    assert_eq!(status, 0);
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [caller_address])
+        .await
+        .unwrap();
+    // Weirdly, Zilliqa native doesn't increment the nonce when a txn fails.
+    assert_eq!(response["nonce"].as_u64().unwrap(), 0);
+    // Or charge you the deposit - node that this is 10^6 smaller than the amt
+    // we requested because we requested in eth and are reading in zil.
+    assert_eq!(
+        response["balance"]
+            .as_str()
+            .unwrap()
+            .parse::<u128>()
+            .unwrap(),
+        zil_value
+    );
 }
 
 // We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
@@ -628,6 +1019,20 @@ async fn create_contract(mut network: Network) {
         .iter()
         .all(|d| api_data.contains(d)));
 
+    let wallet = network.random_wallet().await;
+    let old_balance: u128 = {
+        let bal_resp: Value = wallet
+            .provider()
+            .request("GetBalance", [address])
+            .await
+            .unwrap();
+        bal_resp["balance"]
+            .as_str()
+            .unwrap()
+            .parse::<u128>()
+            .unwrap()
+    };
+
     let call = r#"{
         "_tag": "setHello",
         "params": [
@@ -652,6 +1057,20 @@ async fn create_contract(mut network: Network) {
     let event = &txn["receipt"]["event_logs"][0];
     assert_eq!(event["_eventname"], "setHello");
     assert_eq!(event["params"][0]["value"], "2");
+    let new_balance: u128 = {
+        let bal_resp: Value = wallet
+            .provider()
+            .request("GetBalance", [address])
+            .await
+            .unwrap();
+        bal_resp["balance"]
+            .as_str()
+            .unwrap()
+            .parse::<u128>()
+            .unwrap()
+    };
+    // Let's check that we charged the right amount of gas.
+    assert_eq!(old_balance - new_balance, 690000005520u128);
 
     let call = r#"{
         "_tag": "getHello",
@@ -939,6 +1358,289 @@ async fn scilla_precompiles_zq1(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn get_tx_block(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Ensure there is at least one block in the chain
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    // Request the first block
+    let block_number = "1";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlock", [block_number])
+        .await
+        .expect("Failed to call GetTxBlock API");
+
+    dbg!(&response);
+
+    // Ensure the response is an object
+    assert!(response.is_object(), "Expected response to be an object");
+
+    // Verify header fields
+    let header = &response["header"];
+    assert_eq!(header["BlockNum"].as_str().unwrap(), block_number);
+    assert!(
+        header["DSBlockNum"].as_str().is_some(),
+        "Missing DSBlockNum"
+    );
+    assert!(header["GasLimit"].as_str().is_some(), "Missing GasLimit");
+    assert!(header["GasUsed"].as_str().is_some(), "Missing GasUsed");
+    assert!(
+        header["MbInfoHash"].as_str().is_some(),
+        "Missing MbInfoHash"
+    );
+    assert!(
+        header["NumMicroBlocks"].as_u64().is_some(),
+        "Missing NumMicroBlocks"
+    );
+    assert!(header["NumPages"].as_u64().is_some(), "Missing NumPages");
+    assert!(header["NumTxns"].as_u64().is_some(), "Missing NumTxns");
+    assert!(
+        header["PrevBlockHash"].as_str().is_some(),
+        "Missing PrevBlockHash"
+    );
+    assert!(header["Rewards"].as_str().is_some(), "Missing Rewards");
+    assert!(
+        header["StateDeltaHash"].as_str().is_some(),
+        "Missing StateDeltaHash"
+    );
+    assert!(
+        header["StateRootHash"].as_str().is_some(),
+        "Missing StateRootHash"
+    );
+    assert!(header["Timestamp"].as_str().is_some(), "Missing Timestamp");
+    assert!(header["TxnFees"].as_str().is_some(), "Missing TxnFees");
+    assert!(header["Version"].as_u64().is_some(), "Missing Version");
+
+    // Verify body fields
+    let body = &response["body"];
+    let block_hash = body["BlockHash"].as_str().expect("Missing BlockHash");
+    assert!(!block_hash.is_empty(), "BlockHash should not be empty");
+
+    assert!(body["HeaderSign"].as_str().is_some(), "Missing HeaderSign");
+
+    // Verify MicroBlockInfos
+    let micro_blocks = body["MicroBlockInfos"]
+        .as_array()
+        .expect("Expected MicroBlockInfos to be an array");
+    for micro_block in micro_blocks {
+        assert!(
+            micro_block["MicroBlockHash"].as_str().is_some(),
+            "Missing MicroBlockHash"
+        );
+        assert!(
+            micro_block["MicroBlockShardId"].as_u64().is_some(),
+            "Missing MicroBlockShardId"
+        );
+        assert!(
+            micro_block["MicroBlockTxnRootHash"].as_str().is_some(),
+            "Missing MicroBlockTxnRootHash"
+        );
+    }
+
+    // Additional validation of relationships between fields
+    let num_micro_blocks = header["NumMicroBlocks"].as_u64().unwrap();
+    assert_eq!(
+        micro_blocks.len() as u64,
+        num_micro_blocks,
+        "NumMicroBlocks should match length of MicroBlockInfos array"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_tx_block_verbose(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Ensure there is at least one block in the chain
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    // Request the first block
+    let block_number = "1";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlockVerbose", [block_number])
+        .await
+        .expect("Failed to call GetTxBlockVerbose API");
+
+    dbg!(&response);
+
+    // Ensure the response is an object
+    assert!(response.is_object(), "Expected response to be an object");
+
+    // Verify header fields
+    let header = &response["header"];
+    assert_eq!(header["BlockNum"].as_str().unwrap(), block_number);
+    assert!(
+        header["CommitteeHash"].as_str().is_some(),
+        "Missing CommitteeHash"
+    );
+    assert!(
+        header["DSBlockNum"].as_str().is_some(),
+        "Missing DSBlockNum"
+    );
+    assert!(header["GasLimit"].as_str().is_some(), "Missing GasLimit");
+    assert!(header["GasUsed"].as_str().is_some(), "Missing GasUsed");
+    assert!(
+        header["MbInfoHash"].as_str().is_some(),
+        "Missing MbInfoHash"
+    );
+    assert!(
+        header["MinerPubKey"].as_str().is_some(),
+        "Missing MinerPubKey"
+    );
+    assert!(
+        header["NumMicroBlocks"].as_u64().is_some(),
+        "Missing NumMicroBlocks"
+    );
+    assert!(header["NumPages"].as_u64().is_some(), "Missing NumPages");
+    assert!(header["NumTxns"].as_u64().is_some(), "Missing NumTxns");
+    assert!(
+        header["PrevBlockHash"].as_str().is_some(),
+        "Missing PrevBlockHash"
+    );
+    assert!(header["Rewards"].as_str().is_some(), "Missing Rewards");
+    assert!(
+        header["StateDeltaHash"].as_str().is_some(),
+        "Missing StateDeltaHash"
+    );
+    assert!(
+        header["StateRootHash"].as_str().is_some(),
+        "Missing StateRootHash"
+    );
+    assert!(header["Timestamp"].as_str().is_some(), "Missing Timestamp");
+    assert!(header["TxnFees"].as_str().is_some(), "Missing TxnFees");
+    assert!(header["Version"].as_u64().is_some(), "Missing Version");
+
+    // Verify body fields
+    let body = &response["body"];
+
+    // Verify B1 and B2 arrays
+    assert!(body["B1"].as_array().is_some(), "Missing B1 array");
+    assert!(body["B2"].as_array().is_some(), "Missing B2 array");
+
+    // Verify all B1 and B2 elements are booleans
+    for value in body["B1"].as_array().unwrap() {
+        assert!(value.is_boolean(), "B1 array element is not a boolean");
+    }
+    for value in body["B2"].as_array().unwrap() {
+        assert!(value.is_boolean(), "B2 array element is not a boolean");
+    }
+
+    let block_hash = body["BlockHash"].as_str().expect("Missing BlockHash");
+    assert!(!block_hash.is_empty(), "BlockHash should not be empty");
+
+    assert!(body["CS1"].as_str().is_some(), "Missing CS1");
+    assert!(body["HeaderSign"].as_str().is_some(), "Missing HeaderSign");
+
+    // Verify MicroBlockInfos
+    let micro_blocks = body["MicroBlockInfos"]
+        .as_array()
+        .expect("Expected MicroBlockInfos to be an array");
+    for micro_block in micro_blocks {
+        assert!(
+            micro_block["MicroBlockHash"].as_str().is_some(),
+            "Missing MicroBlockHash"
+        );
+        assert!(
+            micro_block["MicroBlockShardId"].as_u64().is_some(),
+            "Missing MicroBlockShardId"
+        );
+        assert!(
+            micro_block["MicroBlockTxnRootHash"].as_str().is_some(),
+            "Missing MicroBlockTxnRootHash"
+        );
+    }
+
+    // Additional validation of relationships between fields
+    let num_micro_blocks = header["NumMicroBlocks"].as_u64().unwrap();
+    assert_eq!(
+        micro_blocks.len() as u64,
+        num_micro_blocks,
+        "NumMicroBlocks should match length of MicroBlockInfos array"
+    );
+
+    // Verify hash formats
+    let is_valid_hash = |hash: &str| hash.len() == 64 || hash.starts_with("0x");
+    assert!(
+        is_valid_hash(header["CommitteeHash"].as_str().unwrap()),
+        "Invalid CommitteeHash format"
+    );
+    assert!(
+        is_valid_hash(header["MbInfoHash"].as_str().unwrap()),
+        "Invalid MbInfoHash format"
+    );
+    assert!(
+        is_valid_hash(header["PrevBlockHash"].as_str().unwrap()),
+        "Invalid PrevBlockHash format"
+    );
+    assert!(
+        is_valid_hash(header["StateDeltaHash"].as_str().unwrap()),
+        "Invalid StateDeltaHash format"
+    );
+    assert!(
+        is_valid_hash(header["StateRootHash"].as_str().unwrap()),
+        "Invalid StateRootHash format"
+    );
+
+    // Verify timestamp is a valid number
+    let timestamp = header["Timestamp"].as_str().unwrap();
+    assert!(timestamp.parse::<u64>().is_ok(), "Invalid Timestamp format");
+}
+
+#[zilliqa_macros::test]
+async fn get_smart_contract_init(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    // Deploy a Scilla contract
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+
+    // Test the success case
+    let response: Value = wallet
+        .provider()
+        .request("GetSmartContractInit", [contract_address])
+        .await
+        .expect("Failed to call GetSmartContractInit API");
+
+    let init_data: Vec<zilliqa::scilla::ParamValue> =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    // Assert the data returned from the API is a superset of the init data we passed.
+    let expected_data: Vec<Value> = serde_json::from_str(&data).unwrap();
+    for expected in expected_data {
+        assert!(init_data
+            .iter()
+            .any(|d| serde_json::to_value(d).unwrap() == expected));
+    }
+
+    // Test the error case with an invalid contract address
+    let invalid_contract_address: H160 = "0x0000000000000000000000000000000000000000"
+        .parse()
+        .unwrap();
+    let response: Result<Value, ProviderError> = wallet
+        .provider()
+        .request("GetSmartContractInit", [invalid_contract_address])
+        .await;
+
+    assert!(response.is_err());
+    if let Err(ProviderError::JsonRpcClientError(rpc_error)) = response {
+        if let Some(json_error) = rpc_error.as_error_response() {
+            assert_eq!(json_error.code, -32603); // Invalid params error code
+            assert!(json_error.message.contains("Address does not exist"));
+        } else {
+            panic!("Expected JSON-RPC error response");
+        }
+    } else {
+        panic!("Expected ProviderError::JsonRpcClientError");
+    }
+}
+
+#[zilliqa_macros::test]
 async fn get_ds_block(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -1103,13 +1805,13 @@ async fn tx_block_listing(mut network: Network) {
     );
 
     assert!(
-        tx_block_listing.data[0].block_num == 0,
-        "Expected BlockNum to be 0, got: {:?}",
+        tx_block_listing.data[0].block_num > 0,
+        "Expected BlockNum to be greater than 0, got: {:?}",
         tx_block_listing.data[0].block_num
     );
     assert!(
-        tx_block_listing.data[1].block_num > 0,
-        "Expected BlockNum to be greater than 0, got: {:?}",
+        tx_block_listing.data[1].block_num == 0,
+        "Expected BlockNum to be 0, got: {:?}",
         tx_block_listing.data[1].block_num
     );
     assert!(
@@ -1359,12 +2061,27 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
         .expect("Failed to call GetTransactionsForTxBlock API");
 
     let txns: Vec<Vec<String>> =
-        serde_json::from_value(response).expect("Failed to deserialize response");
+        serde_json::from_value(response.clone()).expect("Failed to deserialize response");
 
     assert!(
         !txns[0].is_empty(),
         "Expected Transactions length to be greater than or equal to 1"
     );
+
+    // Check it's an array of arrays of transaction hashes
+    assert!(response.is_array());
+    if let Some(shards) = response.as_array() {
+        if !shards.is_empty() {
+            assert!(shards[0].is_array());
+            if let Some(txns) = shards[0].as_array() {
+                if !txns.is_empty() {
+                    // Each hash should be a 32 byte hex string
+                    assert!(txns[0].is_string());
+                    assert_eq!(txns[0].as_str().unwrap().len(), 64);
+                }
+            }
+        }
+    }
 }
 
 #[zilliqa_macros::test]
@@ -1529,6 +2246,8 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
         .await
         .expect("Failed to call GetTxnBodiesForTxBlockEx API");
 
+    let result = response["result"].clone();
+
     let txn_bodies: zilliqa::api::types::zil::TxnBodiesForTxBlockExResponse =
         serde_json::from_value(response).expect("Failed to deserialize response");
 
@@ -1545,6 +2264,19 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
         !txn_bodies.transactions.is_empty(),
         "Expected Transactions length to be greater than or equal to 1"
     );
+
+    // Check transaction array structure
+    if let Some(shards) = result["Transactions"].as_array() {
+        if !shards.is_empty() && !shards[0].is_null() {
+            assert!(shards[0].is_array());
+            if let Some(txns) = shards[0].as_array() {
+                if !txns.is_empty() {
+                    assert!(txns[0].is_string());
+                    assert_eq!(txns[0].as_str().unwrap().len(), 64);
+                }
+            }
+        }
+    }
 }
 
 #[zilliqa_macros::test]
@@ -1944,47 +2676,413 @@ async fn combined_total_coin_supply_test(mut network: Network) {
     );
 }
 
-#[allow(dead_code)]
-async fn getminerinfo(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_miner_info(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetMinerInfo", ["5500"])
+        .await
+        .expect("Failed to call GetMinerInfo API");
+
+    zilliqa::api::types::zil::MinerInfo::deserialize(&response).unwrap();
+}
+
+#[zilliqa_macros::test]
+async fn get_node_type(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNodeType", [""])
+        .await
+        .expect("Failed to call GetNodeType API");
+
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+
+    let allowed_node_types = ["Seed"];
+    let response_str = response.as_str().expect("Expected response to be a string");
+
+    assert!(
+        allowed_node_types.contains(&response_str),
+        "Unexpected node type: {}",
+        response_str
+    );
 }
 
 #[allow(dead_code)]
-async fn getnodetype(mut _network: Network) {
-    todo!();
+async fn get_prev_difficulty(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetPrevDifficulty", [""])
+        .await
+        .expect("Failed to call GetPrevDifficulty API");
+
+    assert!(
+        response.is_u64(),
+        "Expected response to be a u64, got: {:?}",
+        response
+    );
+
+    let response_u64 = response.as_u64().expect("Expected response to be a u64");
+
+    assert_eq!(response_u64, 0);
 }
 
 #[allow(dead_code)]
-async fn getprevdifficulty(mut _network: Network) {
-    todo!();
+async fn get_prev_ds_difficulty(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetPrevDSDifficulty", [""])
+        .await
+        .expect("Failed to call GetPrevDSDifficulty API");
+
+    assert!(
+        response.is_u64(),
+        "Expected response to be a u64, got: {:?}",
+        response
+    );
+
+    let response_u64 = response.as_u64().expect("Expected response to be a u64");
+
+    assert_eq!(response_u64, 0);
 }
 
-#[allow(dead_code)]
-async fn getprevdsdifficulty(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_sharding_structure(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Get the sharding structure
+    let response: Value = wallet
+        .provider()
+        .request("GetShardingStructure", [""])
+        .await
+        .expect("Failed to call GetShardingStructure API");
+
+    // Deserialize the response into our expected type
+    let sharding_structure: zilliqa::api::types::zil::ShardingStructure =
+        serde_json::from_value(response).expect("Failed to deserialize response");
+
+    // Since Zilliqa 2.0 uses XShard instead of traditional sharding,
+    // we expect exactly one shard with the number of connected peers
+    assert_eq!(
+        sharding_structure.num_peers.len(),
+        1,
+        "Expected exactly one shard in sharding structure"
+    );
+
+    // Get the number of peers to verify
+    let num_peers_response: Value = wallet
+        .provider()
+        .request("GetNumPeers", [""])
+        .await
+        .expect("Failed to call GetNumPeers API");
+
+    let num_peers = num_peers_response
+        .as_u64()
+        .expect("Expected GetNumPeers to return a number");
+
+    // Verify that the number of peers matches
+    assert_eq!(
+        sharding_structure.num_peers[0], num_peers,
+        "Number of peers in sharding structure doesn't match GetNumPeers"
+    );
 }
 
-#[allow(dead_code)]
-async fn getshardingstructure(mut _network: Network) {
-    todo!();
+// We need to restrict the concurrency level of this test, because each node in the network will spawn a TCP listener
+// once it invokes Scilla. When many tests are run in parallel, this results in "Too many open files" errors.
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn get_smart_contract_sub_state(mut network: Network) {
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+
+    let api_code: Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetSmartContractCode", [contract_address])
+        .await
+        .unwrap();
+    assert_eq!(code, api_code["code"]);
+
+    let api_data: Vec<Value> = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetSmartContractInit", [contract_address])
+        .await
+        .unwrap();
+    // Assert the data returned from the API is a superset of the init data we passed.
+    assert!(serde_json::from_str::<Vec<Value>>(&data)
+        .unwrap()
+        .iter()
+        .all(|d| api_data.contains(d)));
+
+    let call = r#"{
+        "_tag": "setHello",
+        "params": [
+            {
+                "vname": "msg",
+                "value": "foobar",
+                "type": "String"
+            }
+        ]
+    }"#;
+    let (_, txn) = send_transaction(
+        &mut network,
+        &secret_key,
+        2,
+        ToAddr::Address(contract_address),
+        0,
+        50_000,
+        None,
+        Some(call),
+    )
+    .await;
+    let event = &txn["receipt"]["event_logs"][0];
+    assert_eq!(event["_eventname"], "setHello");
+    assert_eq!(event["params"][0]["value"], "2");
+
+    let call = r#"{
+        "_tag": "getHello",
+        "params": []
+    }"#;
+    let (_, txn) = send_transaction(
+        &mut network,
+        &secret_key,
+        3,
+        ToAddr::Address(contract_address),
+        0,
+        50_000,
+        None,
+        Some(call),
+    )
+    .await;
+    for event in txn["receipt"]["event_logs"].as_array().unwrap() {
+        assert_eq!(event["_eventname"], "getHello");
+        assert_eq!(event["params"][0]["value"], "foobar");
+    }
+
+    let state: serde_json::Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetSmartContractState", [contract_address])
+        .await
+        .unwrap();
+    assert_eq!(state["welcome_msg"], "foobar");
+
+    let substate0: serde_json::Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request("GetSmartContractSubState", [contract_address])
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+    assert_eq!(substate0, state);
+
+    let substate1: serde_json::Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request(
+            "GetSmartContractSubState",
+            (contract_address, "welcome_msg"),
+        )
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+    assert_eq!(substate1["welcome_msg"], "foobar");
+    assert!(substate1.get("welcome_map").is_none());
+
+    let substate2: serde_json::Value = network
+        .random_wallet()
+        .await
+        .provider()
+        .request(
+            "GetSmartContractSubState",
+            (contract_address, "welcome_map", ["1", "2"]),
+        )
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+    assert_eq!(
+        substate2["welcome_map"]["1"]["2"].as_str().unwrap(),
+        "foobar"
+    );
+    assert!(substate2.get("welcome_msg").is_none());
 }
 
-#[allow(dead_code)]
-async fn getsmartcontractsubstate(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_state_proof(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let contract_address = "6d84363526a2d764835f8cf52dfeefe80a360fac";
+    let variable_hash = "A0BD91DE66D97E6930118179BA4F1836C366C4CB3309A6B354D26F52ABB2AAC6";
+    let tx_block = "39";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetStateProof", [contract_address, variable_hash, tx_block])
+        .await
+        .expect("Failed to call GetStateProof API");
+
+    let _state_proof: zilliqa::api::types::zil::StateProofResponse =
+        serde_json::from_value(response).expect("Failed to deserialize response");
 }
 
-#[allow(dead_code)]
-async fn getsoftconfirmedtransaction(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_transaction_status(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    let (_contract_address_1, returned_transaction_1) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let returned_transaction_1_id = returned_transaction_1["ID"]
+        .as_str()
+        .expect("Failed to get ID from response");
+
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    let (_contract_address_2, returned_transaction_2) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    let returned_transaction_2_id = returned_transaction_2["ID"]
+        .as_str()
+        .expect("Failed to get ID from response");
+
+    //    network.run_until_block(&wallet, 2.into(), 50).await;
+
+    let response_1: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [returned_transaction_1_id])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_1: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_1).expect("Failed to deserialize response");
+
+    assert_eq!(tx_status_1.id.to_string(), returned_transaction_1_id);
+    assert!(
+        tx_status_1.amount.parse::<f64>().is_ok(),
+        "Invalid amount format"
+    );
+    assert!(
+        tx_status_1.gas_limit.parse::<u64>().is_ok(),
+        "Invalid gasLimit format"
+    );
+    assert!(
+        tx_status_1.gas_price.parse::<u64>().is_ok(),
+        "Invalid gasPrice format"
+    );
+    assert!(
+        tx_status_1.nonce.parse::<u64>().is_ok(),
+        "Invalid nonce format"
+    );
+
+    let response_2: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [returned_transaction_2_id])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_2: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_2).expect("Failed to deserialize response");
+
+    assert_eq!(tx_status_2.id.to_string(), returned_transaction_2_id);
+    assert!(
+        tx_status_2.amount.parse::<f64>().is_ok(),
+        "Invalid amount format"
+    );
+    assert!(
+        tx_status_2.gas_limit.parse::<u64>().is_ok(),
+        "Invalid gasLimit format"
+    );
+    assert!(
+        tx_status_2.gas_price.parse::<u64>().is_ok(),
+        "Invalid gasPrice format"
+    );
+    assert!(
+        tx_status_2.nonce.parse::<u64>().is_ok(),
+        "Invalid nonce format"
+    );
 }
 
-#[allow(dead_code)]
-async fn getstateproof(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_blockchain_info_structure(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let result: Value = wallet
+        .provider()
+        .request("GetBlockchainInfo", [""])
+        .await
+        .expect("Failed to call GetBlockchainInfo API");
+
+    // Verify all required fields exist and have correct types
+    assert!(result["CurrentDSEpoch"].is_string());
+    assert!(result["CurrentMiniEpoch"].is_string());
+    assert!(result["DSBlockRate"].is_number());
+    assert!(result["NumDSBlocks"].is_string());
+    assert!(result["NumPeers"].is_number());
+    assert!(result["NumTransactions"].is_string());
+    assert!(result["NumTxBlocks"].is_string());
+    assert!(result["NumTxnsDSEpoch"].is_string());
+    assert!(result["NumTxnsTxEpoch"].is_string());
+    assert!(result["TransactionRate"].is_number());
+    assert!(result["TxBlockRate"].is_number());
+
+    // Verify ShardingStructure
+    assert!(result["ShardingStructure"]["NumPeers"].is_array());
 }
 
-#[allow(dead_code)]
-async fn gettransactionstatus(mut _network: Network) {
-    todo!();
+#[zilliqa_macros::test]
+async fn get_num_tx_blocks_structure(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumTxBlocks", [""])
+        .await
+        .expect("Failed to call GetNumTxBlocks API");
+
+    // Should be a string containing a number
+    assert!(response.is_string());
+    assert!(response.as_str().unwrap().parse::<u64>().is_ok());
 }

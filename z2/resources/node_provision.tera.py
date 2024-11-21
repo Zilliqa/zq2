@@ -31,9 +31,9 @@ def query_metadata_key(key: str) -> str:
 ZQ2_IMAGE="{{ docker_image }}"
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
 SPOUT_IMAGE="{{ spout_image }}"
-SECRET_KEY=base64.b64decode(query_metadata_key("secret_key")).decode('utf-8')
-PERSISTENCE_URL=base64.b64decode(query_metadata_key("persistence_url")).decode('utf-8')
-GENESIS_KEY=base64.b64decode(query_metadata_key("genesis_key")).decode('utf-8')
+SECRET_KEY="{{ secret_key }}"
+GENESIS_KEY="{{ genesis_key }}"
+PERSISTENCE_URL="{{ persistence_url }}"
 SUBDOMAIN=base64.b64decode(query_metadata_key("subdomain")).decode('utf-8')
 
 VERSIONS={
@@ -545,8 +545,6 @@ def create_zq2_start_script():
 
 def install_zilliqa():
     create_zq2_start_script()
-    if os.path.exists("/etc/systemd/system/zilliqa.service"):
-        return 0
     with open("/tmp/zilliqa.service", "w") as f:
         f.write(ZQ2_SERVICE_DESC)
     run_or_die(["sudo","cp","/tmp/zilliqa.service","/etc/systemd/system/zilliqa.service"])
@@ -601,6 +599,7 @@ def configure_logrotate():
 def download_persistence():
     if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
         PERSISTENCE_DIR="/data"
+        run_or_die(["rm", "-rf", f"{PERSISTENCE_DIR}"])
         PERSISTENCE_FILENAME = os.path.basename(urlparse(PERSISTENCE_URL).path)
         os.makedirs(PERSISTENCE_DIR, exist_ok=True)
         run_or_die(["gsutil", "-m", "cp", f"{PERSISTENCE_URL}", f"{PERSISTENCE_DIR}/{PERSISTENCE_FILENAME}"])

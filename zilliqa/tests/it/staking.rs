@@ -443,7 +443,7 @@ async fn validators_can_unstake(mut network: Network) {
 // TODO: Tests for:
 // * partial unstaking staying above the minimum
 // * partial unstaking under the minimum (should fail)
-// * increase stake
-// * updating staker details (reward address)
+// * increase stake (deposit topup)
+// * updating staker details (reward address, control address)
 // * disallow access to callers other than the controlAddress
 // * withdraw stake after 2 weeks (exercise the circular buffer logic or test it separately if difficult to do here)

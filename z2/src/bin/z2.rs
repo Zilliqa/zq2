@@ -14,7 +14,7 @@ use z2lib::{
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
-use zilliqa::crypto::{Hash, SecretKey};
+use zilliqa::crypto::SecretKey;
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -98,6 +98,12 @@ enum DeployerCommands {
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
+    /// Generate the validators reward wallets. --force to replace if already existing
+    GenerateRewardWallets(DeployerGenerateActionsArgs),
+    /// Generate the node private keys. --force to replace if already existing
+    GeneratePrivateKeys(DeployerGenerateActionsArgs),
+    /// Generate the genesis key. --force to replace if already existing
+    GenerateGenesisKey(DeployerGenerateGenesisArgs),
 }
 
 #[derive(Args, Debug)]
@@ -135,6 +141,9 @@ pub struct DeployerInstallArgs {
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
+    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    #[clap(long)]
+    persistence_url: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -194,6 +203,27 @@ pub struct DeployerRestoreArgs {
     config_file: Option<String>,
 }
 
+#[derive(Args, Debug)]
+pub struct DeployerGenerateActionsArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// Generate and replace the existing key
+    #[clap(long)]
+    force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerGenerateGenesisArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Generate and replace the existing key
+    #[clap(long)]
+    force: bool,
+}
+
 #[derive(Subcommand, Debug)]
 enum ConverterCommands {
     /// Convert Zilliqa 1 to Zilliqa 2 persistence format.
@@ -211,20 +241,7 @@ struct ConvertConfigStruct {
     zq2_config_file: String,
     #[arg(value_parser = SecretKey::from_hex)]
     secret_key: SecretKey,
-    #[clap(flatten)]
-    convert_type_group: ConvertTypeGroup,
 }
-#[derive(Args, Debug)]
-#[group(required = true, multiple = false)]
-pub struct ConvertTypeGroup {
-    #[clap(long)]
-    #[arg(default_value_t = false)]
-    convert_accounts: bool,
-    #[clap(long)]
-    #[arg(default_value_t = false)]
-    convert_blocks: bool,
-}
-
 #[derive(Args, Debug)]
 struct ConverterPrintTransactionConfigStruct {
     zq1_persistence_directory: String,
@@ -458,7 +475,10 @@ struct JoinNodeStruct {
     config_dir: String,
     /// The network to join (devnet, infratest, perftest, .. )
     network: String,
+
     #[clap(long)]
+    checkpoint: Option<String>,
+
     #[clap(default_value = "warn")]
     log_level: LogLevel,
 
@@ -541,12 +561,6 @@ fn nodespec_from_arg(arg: &Option<String>) -> Result<Option<NodeSpec>> {
     } else {
         Ok(None)
     }
-}
-
-fn hash_from_hex(in_str: &str) -> Result<Hash> {
-    let bytes = hex::decode(in_str)?;
-    let result = Hash::try_from(bytes.as_slice())?;
-    Ok(result)
 }
 
 #[tokio::main]
@@ -711,11 +725,16 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_install(&config_file, arg.select, arg.max_parallel)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer install command: {}", err)
-                    })?;
+                plumbing::run_deployer_install(
+                    &config_file,
+                    arg.select,
+                    arg.max_parallel,
+                    arg.persistence_url.clone(),
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer install command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::Upgrade(ref arg) => {
@@ -837,6 +856,54 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
+            DeployerCommands::GenerateGenesisKey(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_genesis_key(&config_file, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer generate-genesis-key command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GeneratePrivateKeys(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_private_keys(&config_file, arg.select, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer generate-private-keys command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GenerateRewardWallets(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_reward_wallets(&config_file, arg.select, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer generate-reward-wallets command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
         },
         Commands::Converter(converter_command) => match &converter_command {
             ConverterCommands::Convert(ref arg) => {
@@ -845,8 +912,6 @@ async fn main() -> Result<()> {
                     &arg.zq2_data_dir,
                     &arg.zq2_config_file,
                     arg.secret_key,
-                    arg.convert_type_group.convert_accounts,
-                    arg.convert_type_group.convert_blocks,
                 )
                 .await?;
                 Ok(())
@@ -911,24 +976,12 @@ async fn main() -> Result<()> {
                 to_run.insert(Component::Scilla);
             }
             let checkpoints = if let Some(v) = &args.checkpoint {
-                let components = v.split(':').collect::<Vec<&str>>();
-                if components.len() != 2 {
-                    return Err(anyhow!(
-                        "Checkpoint spec is not in form <file>:<hash> - {v}"
-                    ));
-                } else {
-                    let mut c = HashMap::new();
-                    for id in spec.nodes.keys() {
-                        c.insert(
-                            *id,
-                            zilliqa::cfg::Checkpoint {
-                                file: components[0].to_string(),
-                                hash: hash_from_hex(components[1])?,
-                            },
-                        );
-                    }
-                    Some(c)
+                let mut c = HashMap::new();
+                let point = utils::parse_checkpoint_spec(v)?;
+                for id in spec.nodes.keys() {
+                    c.insert(*id, point.clone());
                 }
+                Some(c)
             } else {
                 None
             };
@@ -976,6 +1029,13 @@ async fn main() -> Result<()> {
                 &arg.trace_modules,
             )?;
             let chain = chain::Chain::from_str(&arg.network)?;
+            let checkpoints = if let Some(v) = &arg.checkpoint {
+                let mut table = HashMap::new();
+                table.insert(0, utils::parse_checkpoint_spec(v)?);
+                Some(table)
+            } else {
+                None
+            };
             plumbing::run_net(
                 &plumbing::NetworkType::Deployed(chain),
                 &base_dir,
@@ -986,7 +1046,7 @@ async fn main() -> Result<()> {
                 // Not relevant for joining existing networks.
                 false,
                 arg.watch,
-                &None,
+                &checkpoints,
                 Some(secret_key_hex),
             )
             .await?;

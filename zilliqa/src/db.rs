@@ -13,6 +13,7 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, Context, Result};
 use eth_trie::{EthTrie, Trie};
 use itertools::Itertools;
+use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
 use rusqlite::{
     named_params,
@@ -181,11 +182,12 @@ const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
 #[derive(Debug)]
 pub struct Db {
     db: Arc<Mutex<Connection>>,
+    state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
 }
 
 impl Db {
-    pub fn new<P>(data_dir: Option<P>, shard_id: u64) -> Result<Self>
+    pub fn new<P>(data_dir: Option<P>, shard_id: u64, state_cache_size: usize) -> Result<Self>
     where
         P: AsRef<Path>,
     {
@@ -209,6 +211,7 @@ impl Db {
 
         Ok(Db {
             db: Arc::new(Mutex::new(connection)),
+            state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
             path,
         })
     }
@@ -254,8 +257,8 @@ impl Db {
             CREATE TABLE IF NOT EXISTS tip_info (
                 finalized_view INTEGER,
                 view INTEGER,
-                view_updated_at BLOB,
                 high_qc BLOB,
+                high_qc_updated_at BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL);
             ",
@@ -454,6 +457,7 @@ impl Db {
     pub fn state_trie(&self) -> Result<TrieStorage> {
         Ok(TrieStorage {
             db: self.db.clone(),
+            cache: self.state_cache.clone(),
         })
     }
 
@@ -501,11 +505,8 @@ impl Db {
     /// Write view and timestamp to table if view is larger than current. Return true if write was successful
     pub fn set_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
         let res = sqlite_tx
-            .execute("INSERT INTO tip_info (view, view_updated_at) VALUES (:view, :timestamp) ON CONFLICT(_single_row) DO UPDATE SET view = :view, view_updated_at = :timestamp WHERE tip_info.view < :view",
-                    named_params! {
-                        ":view": view,
-                        ":timestamp": SystemTimeSqlable(SystemTime::now())
-                    })?;
+            .execute("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view < ?1",
+                    [view])?;
         Ok(res != 0)
     }
 
@@ -521,19 +522,6 @@ impl Db {
             .query_row("SELECT view FROM tip_info", (), |row| row.get(0))
             .optional()
             .unwrap_or(None))
-    }
-
-    pub fn get_view_updated_at(&self) -> Result<Option<SystemTime>> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .query_row("SELECT view_updated_at FROM tip_info", (), |row| {
-                row.get::<_, SystemTimeSqlable>(0)
-            })
-            .optional()
-            .unwrap_or(None)
-            .map(Into::<SystemTime>::into))
     }
 
     // Deliberately not named get_highest_block_number() because there used to be one
@@ -581,9 +569,11 @@ impl Db {
         high_qc: QuorumCertificate,
     ) -> Result<()> {
         sqlite_tx.execute(
-            "INSERT INTO tip_info (high_qc) VALUES (?1) ON CONFLICT DO UPDATE SET high_qc = ?1",
-            [high_qc],
-        )?;
+            "INSERT INTO tip_info (high_qc, high_qc_updated_at) VALUES (:high_qc, :timestamp) ON CONFLICT DO UPDATE SET high_qc = :high_qc, high_qc_updated_at = :timestamp",
+            named_params! {
+                ":high_qc": high_qc,
+                ":timestamp": SystemTimeSqlable(SystemTime::now())
+            })?;
         Ok(())
     }
 
@@ -599,6 +589,19 @@ impl Db {
             .query_row("SELECT high_qc FROM tip_info", (), |row| row.get(0))
             .optional()?
             .flatten())
+    }
+
+    pub fn get_high_qc_updated_at(&self) -> Result<Option<SystemTime>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT high_qc_updated_at FROM tip_info", (), |row| {
+                row.get::<_, SystemTimeSqlable>(0)
+            })
+            .optional()
+            .unwrap_or(None)
+            .map(Into::<SystemTime>::into))
     }
 
     pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
@@ -690,12 +693,21 @@ impl Db {
     }
 
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
+        self.insert_block_with_hash_with_db_tx(sqlite_tx, block.hash(), block)
+    }
+
+    pub fn insert_block_with_hash_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        hash: Hash,
+        block: &Block,
+    ) -> Result<()> {
         sqlite_tx.execute(
             "INSERT INTO blocks
                 (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, is_canonical)
             VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, TRUE)",
             named_params! {
-                ":block_hash": block.header.hash,
+                ":block_hash": hash,
                 ":view": block.header.view,
                 ":height": block.header.number,
                 ":qc": block.header.qc,
@@ -1094,13 +1106,18 @@ fn decompress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path:
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
     db: Arc<Mutex<Connection>>,
+    cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
 }
 
 impl eth_trie::DB for TrieStorage {
     type Error = rusqlite::Error;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        let value = self
+        if let Some(cached) = self.cache.lock().unwrap().get(key).map(|v| v.to_vec()) {
+            return Ok(Some(cached));
+        }
+
+        let value: Option<Vec<u8>> = self
             .db
             .lock()
             .unwrap()
@@ -1110,14 +1127,23 @@ impl eth_trie::DB for TrieStorage {
                 |row| row.get(0),
             )
             .optional()?;
+
+        let mut cache = self.cache.lock().unwrap();
+        if !cache.contains(key) {
+            if let Some(value) = &value {
+                let _ = cache.insert(key.to_vec(), value.clone());
+            }
+        }
+
         Ok(value)
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
         self.db.lock().unwrap().execute(
             "INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)",
-            (key, value),
+            (key, &value),
         )?;
+        let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
         Ok(())
     }
 
@@ -1151,6 +1177,13 @@ impl eth_trie::DB for TrieStorage {
                 .lock()
                 .unwrap()
                 .execute(&query, rusqlite::params_from_iter(params))?;
+            for (key, value) in keys.iter().zip(values) {
+                let _ = self
+                    .cache
+                    .lock()
+                    .unwrap()
+                    .insert(key.to_vec(), value.to_vec());
+            }
         }
 
         Ok(())
@@ -1184,7 +1217,7 @@ mod tests {
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0).unwrap();
+        let db = Db::new(Some(base_path), 0, 1024).unwrap();
 
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);

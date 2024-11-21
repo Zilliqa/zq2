@@ -15,12 +15,12 @@ use libp2p::{
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
     kad::{self, store::MemoryStore},
-    mdns,
     multiaddr::{Multiaddr, Protocol},
     request_response::{self, OutboundFailure, ProtocolSupport},
     swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
     PeerId, StreamProtocol, Swarm,
 };
+use rand::rngs::OsRng;
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
@@ -46,8 +46,8 @@ type DirectMessage = (u64, ExternalMessage);
 struct Behaviour {
     request_response: request_response::cbor::Behaviour<DirectMessage, ExternalMessage>,
     gossipsub: gossipsub::Behaviour,
-    mdns: mdns::tokio::Behaviour,
-    autonat: libp2p::autonat::Behaviour,
+    autonat_client: autonat::v2::client::Behaviour,
+    autonat_server: autonat::v2::server::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
 }
@@ -119,15 +119,22 @@ impl P2pNode {
                             .map_err(|e| anyhow!(e))?,
                     )
                     .map_err(|e| anyhow!(e))?,
-                    mdns: mdns::Behaviour::new(Default::default(), peer_id)?,
-                    autonat: autonat::Behaviour::new(peer_id, Default::default()),
+                    autonat_client: autonat::v2::client::Behaviour::new(OsRng, Default::default()),
+                    autonat_server: autonat::v2::server::Behaviour::new(OsRng),
                     identify: identify::Behaviour::new(identify::Config::new(
-                        "/ipfs/id/1.0.0".to_owned(),
+                        "/zilliqa/1.0.0".to_owned(),
                         key_pair.public(),
                     )),
                     kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
                 })
             })?
+            // Set the idle connection timeout to 10 seconds. Some protocols (such as autonat) rely on using a
+            // connection shortly after an event has been emitted from the `Swarm`, but don't use it immediately
+            // meaning the connection is immediately closed before the protocol can use it. libp2p may change the
+            // default in the future to 10 seconds too (https://github.com/libp2p/rust-libp2p/pull/4967).
+            .with_swarm_config(|config| {
+                config.with_idle_connection_timeout(Duration::from_secs(10))
+            })
             .build();
 
         Ok(Self {
@@ -213,32 +220,25 @@ impl P2pNode {
                 .with(Protocol::QuicV1),
         )?;
 
-        if let Some(bootstrap_address) = &self.config.bootstrap_address {
-            self.swarm
-                .behaviour_mut()
-                .autonat
-                .add_server(bootstrap_address.0, Some(bootstrap_address.1.clone()));
-        }
-
         if let Some(external_address) = &self.config.external_address {
             self.swarm.add_external_address(external_address.clone());
         }
 
         if let Some((peer, address)) = &self.config.bootstrap_address {
-            self.swarm.dial(
-                DialOpts::peer_id(*peer)
-                    .override_role() // hole-punch
-                    .addresses(vec![address.clone()])
-                    .build(),
-            )?;
-            self.swarm
-                .behaviour_mut()
-                .kademlia
-                .add_address(peer, address.clone());
+            if self.swarm.local_peer_id() != peer {
+                self.swarm.dial(
+                    DialOpts::peer_id(*peer)
+                        .override_role() // hole-punch
+                        .addresses(vec![address.clone()])
+                        .build(),
+                )?;
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(peer, address.clone());
+                self.swarm.behaviour_mut().kademlia.bootstrap()?;
+            }
         }
-
-        // Bootstrap Kademlia every 5 minutes to discover new nodes.
-        let mut bootstrap = tokio::time::interval(Duration::from_secs(5 * 60));
 
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
 
@@ -251,46 +251,24 @@ impl P2pNode {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                            for (peer_id, addr) in list {
-                                info!(%peer_id, %addr, "discovered peer via mDNS");
-                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
-                                self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                        SwarmEvent::NewExternalAddrOfPeer { peer_id, address } => {
+                            let is_non_global = address.iter().any(|p| match p {
+                                Protocol::Ip4(a) => a.is_loopback() || a.is_private(),
+                                Protocol::Ip6(a) => a.is_loopback(),
+                                _ => false,
+                            });
+                            // HACK: If the address is non-global, ignore it. When the next version of libp2p is
+                            // released, use the `hide_listen_addrs` in `identify::Config` to prevent nodes advertising
+                            // their local addresses and remove this hack.
+                            if is_non_global {
+                                continue;
                             }
-                        }
-                        SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-                            for (peer_id, addr) in list {
-                                self.swarm.behaviour_mut().kademlia.remove_address(&peer_id, &addr);
-                            }
-                        }
-                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { info: identify::Info { listen_addrs, .. }, peer_id, .. })) => {
-                            for addr in listen_addrs {
-                                // If the node is advertising a non-global address, ignore it.
-                                let is_non_global = addr.iter().any(|p| match p {
-                                    Protocol::Ip4(addr) => addr.is_loopback() || addr.is_private(),
-                                    Protocol::Ip6(addr) => addr.is_loopback(),
-                                    _ => false,
-                                });
-                                if is_non_global {
-                                    continue;
-                                }
 
-                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
-                            }
+                            self.swarm
+                                .behaviour_mut()
+                                .kademlia
+                                .add_address(&peer_id, address.clone());
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::Autonat(libp2p::autonat::Event::StatusChanged{old, new})) => {
-                            info!("Autonat status changed from {:?} to {:?}", old, new);
-                            match new {
-                                autonat::NatStatus::Public(_) => (), // Autonat will add this automatically
-                                autonat::NatStatus::Private => {
-                                    let external_addresses: Vec<_> = self.swarm.external_addresses().cloned().collect();
-                                    for addr in external_addresses {
-                                        self.swarm.remove_external_address(&addr);
-                                    }
-                                },
-                                autonat::NatStatus::Unknown => (),
-                            };
-                        },
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                             message_id: msg_id,
                             message: gossipsub::Message {
@@ -366,9 +344,6 @@ impl P2pNode {
                         _ => {},
                     }
                 },
-                _ = bootstrap.tick() => {
-                    let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
-                }
                 message = self.local_message_receiver.next() => {
                     let (source, destination, message) = message.expect("message stream should be infinite");
                     match message {

@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, BlockNumber, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
@@ -33,6 +33,7 @@ use crate::{
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
+    range_map::RangeMap,
     state::State,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -168,6 +169,8 @@ pub struct Consensus {
     early_proposal: Option<EarlyProposal>,
     /// Flag indicating that block creation should be postponed at least until empty_block_timeout is reached
     create_next_block_on_timeout: bool,
+    /// Timestamp of most recent view change
+    view_updated_at: SystemTime,
     pub new_blocks: broadcast::Sender<BlockHeader>,
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
@@ -188,8 +191,6 @@ impl Consensus {
             config.eth_chain_id
         );
 
-        let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
-
         // Start chain from checkpoint. Load data file and initialise data in tables
         let mut checkpoint_data = None;
         if let Some(checkpoint) = &config.load_checkpoint {
@@ -200,6 +201,10 @@ impl Consensus {
                 config.eth_chain_id,
             )?;
         }
+
+        // It is important to create the `BlockStore` after the checkpoint has been loaded into the DB. The
+        // `BlockStore` pre-loads and caches information about the currently stored blocks.
+        let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
 
         let latest_block = db
             .get_finalized_view()?
@@ -250,7 +255,7 @@ impl Consensus {
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
-                    let mut start_view = db
+                    let start_view = db
                         .get_view()?
                         .or_else(|| {
                             Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
@@ -258,21 +263,11 @@ impl Consensus {
                         .unwrap();
 
                     trace!(
-                        "recovery: high_block view {0}, finalized_number {1} , start_view {2}",
+                        "recovery: high_block view {0}, finalized_number {1}, start_view {2}",
                         high_block.view(),
                         finalized_number,
                         start_view
                     );
-
-                    // If timestamp of when current view was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
-                    if let Some(latest_view_timestamp) = db.get_view_updated_at()? {
-                        let view_diff = Consensus::minimum_views_in_time_difference(
-                            latest_view_timestamp.elapsed()?,
-                            config.consensus.consensus_timeout,
-                        );
-                        start_view += view_diff;
-                        debug!("Atleast {} views changed since last view was written. new start_view {}", view_diff, start_view);
-                    }
 
                     if finalized_number > high_block.view() {
                         // We know of a finalized view higher than the view in finalized_number; start there.
@@ -340,6 +335,7 @@ impl Consensus {
             transaction_pool: Default::default(),
             early_proposal: None,
             create_next_block_on_timeout: false,
+            view_updated_at: SystemTime::now(),
             new_blocks: broadcast::Sender::new(4),
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
@@ -348,7 +344,7 @@ impl Consensus {
         consensus.db.set_view(start_view)?;
         consensus.set_finalized_view(finalized_view)?;
 
-        // If we're at genesis, add the genesis block.
+        // If we're at genesis, add the genesis block and return
         if latest_block_view == 0 {
             if let Some(genesis) = latest_block {
                 // The genesis block might already be stored and we were interrupted before we got a
@@ -359,6 +355,7 @@ impl Consensus {
             }
             // treat genesis as finalized
             consensus.set_finalized_view(latest_block_view)?;
+            return Ok(consensus);
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
@@ -374,7 +371,77 @@ impl Consensus {
             )?;
         }
 
+        // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
+        // This is useful in scenarios in which consensus has failed since this node went down
+        if let Some(latest_high_qc_timestamp) = consensus.db.get_high_qc_updated_at()? {
+            let view_diff = Consensus::minimum_views_in_time_difference(
+                latest_high_qc_timestamp.elapsed()?,
+                consensus.config.consensus.consensus_timeout,
+            );
+            let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
+            if min_view_since_high_qc_updated > start_view {
+                info!(
+                    "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
+                    latest_high_qc_timestamp.elapsed()?.as_secs(),
+                    view_diff,
+                    min_view_since_high_qc_updated
+                );
+                consensus.db.set_view(min_view_since_high_qc_updated)?;
+            }
+
+            // Remind block_store of our peers and request any potentially missing blocks
+            let high_block = consensus
+                .block_store
+                .get_block(high_qc.block_hash)?
+                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
+
+            let executed_block = BlockHeader {
+                number: high_block.header.number + 1,
+                ..Default::default()
+            };
+            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
+
+            // Grab last seen committee's peerIds in case others also went offline
+            let committee = state_at.get_stakers(executed_block)?;
+            let recent_peer_ids: Vec<_> = committee
+                .iter()
+                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
+                .filter_map(|&peer_public_key| {
+                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
+                })
+                .collect();
+
+            consensus
+                .block_store
+                .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
+            // It is likley that we missed the most recent proposal. Request it now
+            consensus
+                .block_store
+                .request_blocks(&RangeMap::from_closed_interval(
+                    high_block.view(),
+                    high_block.view() + 1,
+                ))?;
+        }
+
         Ok(consensus)
+    }
+
+    /// Build NewView message for this view
+    fn build_new_view(&mut self) -> Result<NetworkMessage> {
+        let view = self.get_view()?;
+        let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
+            anyhow!("missing block corresponding to our high qc - this should never happen")
+        })?;
+        let leader = self.leader_at_block(&block, view);
+        Ok((
+            leader.map(|leader| leader.peer_id),
+            ExternalMessage::NewView(Box::new(NewView::new(
+                self.secret_key,
+                self.high_qc,
+                view,
+                self.secret_key.node_public_key(),
+            ))),
+        ))
     }
 
     pub fn public_key(&self) -> NodePublicKey {
@@ -477,6 +544,17 @@ impl Consensus {
                 time_since_last_view_change,
                 exponential_backoff_timeout
             );
+
+            // Resend NewView message for this view if timeout period is a multiple of consensus_timeout
+            if (time_since_last_view_change
+                > self.config.consensus.consensus_timeout.as_millis() as u64)
+                && (Duration::from_millis(time_since_last_view_change).as_secs()
+                    % self.config.consensus.consensus_timeout.as_secs())
+                    == 0
+            {
+                return Ok(Some(self.build_new_view()?));
+            }
+
             return Ok(None);
         }
 
@@ -511,26 +589,13 @@ impl Consensus {
         );
 
         self.set_view(next_view)?;
-        let Some(leader) = self.leader_at_block(&block, next_view) else {
-            return Ok(None);
-        };
-
-        let new_view = NewView::new(
-            self.secret_key,
-            self.high_qc,
-            next_view,
-            self.secret_key.node_public_key(),
-        );
-
-        Ok(Some((
-            Some(leader.peer_id),
-            ExternalMessage::NewView(Box::new(new_view)),
-        )))
+        let new_view = self.build_new_view()?;
+        Ok(Some(new_view))
     }
 
     fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
         let time_since_last_view_change = SystemTime::now()
-            .duration_since(self.get_view_updated_at()?)
+            .duration_since(self.view_updated_at)
             .unwrap_or_default()
             .as_millis() as u64;
         let exponential_backoff_timeout = self.exponential_backoff_timeout(self.get_view()?);
@@ -1968,7 +2033,6 @@ impl Consensus {
                     new_high_qc_block_view + 1,
                     current_high_qc_view,
                 );
-                //TODO write high_qc and current_view in one db call
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
                 if new_high_qc_block_view >= view {
@@ -2515,12 +2579,14 @@ impl Consensus {
     }
 
     fn set_view(&mut self, view: u64) -> Result<()> {
-        if !self.db.set_view(view)? {
+        if self.db.set_view(view)? {
+            self.view_updated_at = SystemTime::now();
+        } else {
             warn!(
                 "Tried to set view to lower or same value - this is incorrect. value: {}",
                 view
             );
-        };
+        }
         Ok(())
     }
 
@@ -2528,13 +2594,6 @@ impl Consensus {
         Ok(self.db.get_view()?.unwrap_or_else(|| {
             warn!("no view found in table. Defaulting to 0");
             0
-        }))
-    }
-
-    pub fn get_view_updated_at(&self) -> Result<SystemTime> {
-        Ok(self.db.get_view_updated_at()?.unwrap_or_else(|| {
-            warn!("no view timestamp found. Defaulting to now");
-            SystemTime::now()
         }))
     }
 
@@ -2565,12 +2624,6 @@ impl Consensus {
             }
             views += 1;
         }
-
-        info!(
-            "Based on elapsed clock time of {} seconds since lastest view update, jump ahead {} views",
-            time_difference.as_secs(),
-            views
-        );
         views as u64
     }
 
@@ -3226,6 +3279,10 @@ impl Consensus {
     ) -> Result<()> {
         self.block_store
             .buffer_lack_of_proposals(from_view, proposals)
+    }
+
+    pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
+        self.block_store.get_sync_data()
     }
 }
 

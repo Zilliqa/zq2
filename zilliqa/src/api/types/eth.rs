@@ -107,7 +107,7 @@ impl Block {
     pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
         Block {
             header: Header::from_header(block.header, miner, block_gas_limit),
-            size: 0,
+            size: block.size() as u64,
             transactions: block
                 .transactions
                 .iter()
@@ -331,6 +331,12 @@ pub struct TransactionReceipt {
     pub ty: u64,
     #[serde(serialize_with = "bool_as_int")]
     pub status: bool,
+    #[serde(serialize_with = "hex")]
+    pub v: u64,
+    #[serde(serialize_with = "hex")]
+    pub r: U256,
+    #[serde(serialize_with = "hex")]
+    pub s: U256,
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
@@ -446,6 +452,21 @@ pub struct CallParams {
 pub struct TxPoolContent {
     pub pending: HashMap<Address, HashMap<u64, Transaction>>,
     pub queued: HashMap<Address, HashMap<u64, Transaction>>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncingStruct {
+    pub starting_block: u64,
+    pub current_block: u64,
+    pub highest_block: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(untagged)]
+pub enum SyncingResult {
+    Bool(bool),
+    Struct(SyncingStruct),
 }
 
 #[cfg(test)]

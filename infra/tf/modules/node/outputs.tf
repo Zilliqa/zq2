@@ -25,16 +25,6 @@ output "network_ip" {
   value       = { for instance in google_compute_instance.this : instance.name => instance.network_interface[0].network_ip }
 }
 
-output "node_key" {
-  description = "The secret ID of the node private key in GCP Secrets Manager"
-  value       = [for secret in google_secret_manager_secret_version.node_key_version : secret.id]
-}
-
-output "reward_wallet" {
-  description = "The secret ID of the node private key in GCP Secrets Manager"
-  value       = [for secret in google_secret_manager_secret_version.reward_wallet_version : secret.id]
-}
-
 output "zones" {
   description = "The GCP zones where the instances are deployed in"
   value = distinct(flatten([

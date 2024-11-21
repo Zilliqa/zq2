@@ -7,8 +7,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
-use opentelemetry_sdk::runtime;
-use tokio::time::Duration;
+use opentelemetry_sdk::{metrics::PeriodicReader, runtime};
 use tracing_subscriber::EnvFilter;
 use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 
@@ -103,18 +102,17 @@ async fn main() -> Result<()> {
 
     if let Some(endpoint) = &config.otlp_collector_endpoint {
         let export_config = ExportConfig {
-            endpoint: endpoint.clone(),
+            endpoint: Some(endpoint.clone()),
             ..Default::default()
         };
-        opentelemetry_otlp::new_pipeline()
-            .metrics(runtime::Tokio)
-            .with_period(Duration::from_secs(10))
-            .with_exporter(
-                opentelemetry_otlp::new_exporter()
-                    .tonic()
-                    .with_export_config(export_config),
-            )
+        let exporter = opentelemetry_otlp::MetricExporter::builder()
+            .with_tonic()
+            .with_export_config(export_config)
             .build()?;
+        let reader = PeriodicReader::builder(exporter, runtime::Tokio).build();
+        opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+            .with_reader(reader)
+            .build();
     };
 
     let mut node = P2pNode::new(args.secret_key, config.clone())?;

@@ -1,60 +1,6 @@
 # Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
 # changes and any instance groups containing them are updated.
 
-resource "random_bytes" "generate_node_key" {
-  for_each = var.generate_node_key ? local.instances_map : {}
-
-  length = 32
-}
-
-resource "google_secret_manager_secret" "node_key" {
-  for_each = var.generate_node_key ? local.instances_map : {}
-
-  secret_id = "${each.value.resource_name}-pk"
-
-  labels = merge(local.labels, { "node-name" = each.value.resource_name })
-
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret_version" "node_key_version" {
-  for_each = var.generate_node_key ? local.instances_map : {}
-
-  secret      = google_secret_manager_secret.node_key[each.value.resource_id].id
-  secret_data = random_bytes.generate_node_key[each.value.resource_id].hex
-}
-
-resource "random_bytes" "generate_reward_wallet" {
-  for_each = var.generate_reward_wallet ? local.instances_map : {}
-
-  length = 32
-}
-
-resource "google_secret_manager_secret" "reward_wallet" {
-  for_each = var.generate_reward_wallet ? local.instances_map : {}
-
-  secret_id = "${each.value.resource_name}-wallet-pk"
-
-  labels = merge(
-    local.labels,
-    { "node-name" = each.value.resource_name },
-    { "is_reward_wallet" = true },
-  )
-
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret_version" "reward_wallet_version" {
-  for_each = var.generate_reward_wallet ? local.instances_map : {}
-
-  secret      = google_secret_manager_secret.reward_wallet[each.value.resource_id].id
-  secret_data = random_bytes.generate_reward_wallet[each.value.resource_id].hex
-}
-
 resource "random_id" "name_suffix" {
   byte_length = 2
 
@@ -147,7 +93,6 @@ resource "google_compute_instance" "this" {
     {
       "enable-guest-attributes" = "TRUE"
       "enable-osconfig"         = "TRUE"
-      "secret_key"              = !var.generate_node_key ? "" : base64encode(google_secret_manager_secret_version.node_key_version[each.value.resource_id].secret_data)
     },
     var.metadata,
   )

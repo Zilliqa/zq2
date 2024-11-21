@@ -1,0 +1,5 @@
+requests
+colorama
+tabulate
+deepdiff
+

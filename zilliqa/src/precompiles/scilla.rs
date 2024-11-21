@@ -24,8 +24,8 @@ use scilla_parser::{
 
 use crate::{
     cfg::scilla_ext_libs_path_default,
-    constants::ZIL_CONTRACT_INVOKE_GAS,
-    exec::{scilla_call, PendingState, ScillaError, SCILLA_INVOKE_RUNNER},
+    constants::{SCILLA_INVOKE_RUNNER, ZIL_CONTRACT_INVOKE_GAS},
+    exec::{scilla_call, PendingState, ScillaError},
     inspector::ScillaInspector,
     state::{Code, CreatedAtBlock},
     transaction::{EvmGas, ScillaGas, ZilAmount},
@@ -367,7 +367,6 @@ pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>
         };
 
         let gas = Gas::new(gas_limit);
-        println!("GIVEN evm gas to precompile: {}", inputs.gas_limit);
         let outcome =
             scilla_call_precompile(&inputs, gas.limit(), &mut ctx.evm.inner, &mut ctx.external);
 

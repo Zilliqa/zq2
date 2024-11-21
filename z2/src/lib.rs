@@ -16,6 +16,7 @@ pub mod perf;
 pub mod perf_mod;
 pub mod plumbing;
 pub mod scilla;
+mod secret;
 pub mod setup;
 pub mod spout;
 pub mod utils;
