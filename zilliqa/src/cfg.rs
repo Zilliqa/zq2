@@ -115,7 +115,7 @@ where
 }
 
 pub fn allowed_timestamp_skew_default() -> Duration {
-    Duration::from_secs(10)
+    Duration::from_secs(60)
 }
 
 pub fn state_cache_size_default() -> usize {
