@@ -37,9 +37,17 @@ pub enum MachineState {
     RunTests,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConformConfig {
+    pub zilliqa_source: String,
+    pub signer_count: u32,
+    pub signer_amount: u128,
+    pub gas: perf::GasParams,
+}
+
 pub struct Conform {
-    source_of_funds: perf::Account,
-    config: perf::ConformConfig,
+    source_of_funds: perf::SourceOfFunds,
+    config: ConformConfig,
     feeder: perf::Account,
     test_source: String,
     current_command: Option<u32>,
@@ -51,8 +59,8 @@ impl Conform {
     pub async fn new(
         perf: &perf::Perf,
         rng: &mut StdRng,
-        source_of_funds: &perf::Account,
-        config: &perf::ConformConfig,
+        source_of_funds: &perf::SourceOfFunds,
+        config: &ConformConfig,
     ) -> Result<Self> {
         let mut test_path = PathBuf::from(&config.zilliqa_source);
         let network_name = perf.config.network_name.as_deref().unwrap_or("zq2");
@@ -115,14 +123,15 @@ impl perf::PerfMod for Conform {
                 // The +4, *2 here is because EvmAcceptanceTests seem to require it.
                 let amount_required =
                     (u128::from(self.config.signer_count + 4) * (self.config.signer_amount) * 2)
-                        + perf.config.gas.gas_units();
+                        + self.config.gas.gas_units();
                 println!("Funding with {amount_required}");
                 result.push(
                     perf.issue_transfer(
-                        &self.source_of_funds,
+                        &self.source_of_funds.account,
                         &self.feeder,
                         amount_required,
                         Some(feeder_nonce + 1),
+                        &self.source_of_funds.gas,
                     )
                     .await?,
                 );

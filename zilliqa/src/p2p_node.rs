@@ -21,7 +21,6 @@ use libp2p::{
     swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
     PeerId, StreamProtocol, Swarm,
 };
-use rand::rngs::OsRng;
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
@@ -263,10 +262,10 @@ impl P2pNode {
                                 Protocol::Ip4(a) => {
                                     if let Some((net, mask)) = self.config.listening_subnet {
                                         let left = net.bitand(mask);
-                                        let right = addr.bitand(mask);
+                                        let right = a.bitand(mask);
                                         info!("Left = {left} right={right}");
                                         if left == right {
-                                            info!("{addr:?} is in the listening subnet - passing");
+                                            info!("{a:?} is in the listening subnet - passing");
                                             return false;
                                         }
                                     }
@@ -281,9 +280,7 @@ impl P2pNode {
                             if is_non_global {
                                 continue;
                             }
-                            info!("Adding peer {peer_id:?} with {addr:?}");
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
-
+                            info!("Adding peer {peer_id:?} with {address:?}");
                             self.swarm
                                 .behaviour_mut()
                                 .kademlia

@@ -1,15 +1,33 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use rand::{self, prelude::*};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     perf,
     perf::{AccountKind, PhaseResult, TransactionResult},
 };
 
+/// This test transfers a bulk amount from the source of funds to a
+/// random account, then starts a thread which triggers a bunch of
+/// asynchronous transfers from the source of funds. If
+/// gap_min=gap_max=1, these are all sequential and we expect them to
+/// succeed.  If gap_max > 1, we don't expect them to succeed, but we
+/// do expect the chain to still be working at the end of it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AsyncTransferConfig {
+    pub nr_transfers: u32,
+    pub gap_min: u64,
+    pub gap_max: u64,
+    pub amount_min: u128,
+    pub amount_max: u128,
+    pub kind: AccountKind,
+    pub gas: perf::GasParams,
+}
+
 pub struct AsyncTransfer {
-    source_of_funds: perf::Account,
-    config: perf::AsyncTransferConfig,
+    source_of_funds: perf::SourceOfFunds,
+    config: AsyncTransferConfig,
     feeder: perf::Account,
 }
 
@@ -17,8 +35,8 @@ impl AsyncTransfer {
     pub async fn new(
         perf: &perf::Perf,
         rng: &mut StdRng,
-        source_of_funds: &perf::Account,
-        config: &perf::AsyncTransferConfig,
+        source_of_funds: &perf::SourceOfFunds,
+        config: &crate::perf_mod::async_transfer::AsyncTransferConfig,
     ) -> Result<Self> {
         Ok(Self {
             source_of_funds: source_of_funds.clone(),
@@ -42,15 +60,16 @@ impl perf::PerfMod for AsyncTransfer {
         match phase {
             0 => {
                 // Feed the feeder.
-                let amount_required = (self.config.amount_max + perf.config.gas.gas_units())
+                let amount_required = (self.config.amount_max + self.config.gas.gas_units())
                     * u128::from(self.config.nr_transfers);
                 println!("amount_required = {amount_required}");
                 result.push(
                     perf.issue_transfer(
-                        &self.source_of_funds,
+                        &self.source_of_funds.account,
                         &self.feeder,
                         amount_required,
                         Some(feeder_nonce),
+                        &self.source_of_funds.gas,
                     )
                     .await?,
                 );
@@ -79,7 +98,13 @@ impl perf::PerfMod for AsyncTransfer {
                     // Send the transfer and go back.
                     nonce += gap;
                     let transfer = perf
-                        .issue_transfer(&self.feeder, &target, amount, Some(nonce))
+                        .issue_transfer(
+                            &self.feeder,
+                            &target,
+                            amount,
+                            Some(nonce),
+                            &self.config.gas,
+                        )
                         .await?;
                     // check gap == 1 here in case gap was 0 - a gap 0 txn doesn't succeed itself, but
                     // also doesn't stop other txns succeeding later (so we don't set !expect_success)

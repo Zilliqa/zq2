@@ -10,6 +10,8 @@ use std::{
     sync::RwLock,
 };
 
+use crate::perf_mod::async_transfer::AsyncTransferConfig;
+use crate::perf_mod::conform::ConformConfig;
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use clap::ValueEnum;
@@ -28,9 +30,15 @@ use zilliqa_rs::{
 /// Stolen from z blockchain perf, partly so external contributors can also run it.
 use crate::{perf_mod, utils};
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SourceOfFunds {
+    pub account: Account,
+    pub gas: GasParams,
+}
+
 pub struct Perf {
     pub config: Config,
-    pub source_of_funds: Account,
+    pub source_of_funds: SourceOfFunds,
     pub provider: Provider<Http>,
     pub effective_url: String,
     pub effective_chainid: u32,
@@ -59,6 +67,12 @@ pub trait PerfMod {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigSourceOfFunds {
+    pub account: ConfigAccount,
+    pub gas: GasParams,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub network_name: Option<String>,
     pub rpc_url: String,
@@ -66,8 +80,7 @@ pub struct Config {
     pub seed: u64,
     pub attempts: u32,
     pub sleep_ms: u64,
-    pub gas: GasParams,
-    pub source_of_funds: Option<ConfigAccount>,
+    pub source_of_funds: Option<ConfigSourceOfFunds>,
     pub steps: Vec<ConfigSet>,
 }
 
@@ -82,9 +95,9 @@ pub struct ConfigSet {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ConfigModule {
     #[serde(rename = "async_transfer")]
-    AsyncTransfer(AsyncTransferConfig),
+    AsyncTransfer(perf_mod::async_transfer::AsyncTransferConfig),
     #[serde(rename = "conformance")]
-    Conformance(ConformConfig),
+    Conformance(perf_mod::conform::ConformConfig),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -263,29 +276,6 @@ pub struct ModuleRecord {
     offset: usize,
 }
 
-/// This test transfers a bulk amount from the source of funds to a
-/// random account, then starts a thread which triggers a bunch of
-/// asynchronous transfers from the source of funds. If
-/// gap_min=gap_max=1, these are all sequential and we expect them to
-/// succeed.  If gap_max > 1, we don't expect them to succeed, but we
-/// do expect the chain to still be working at the end of it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AsyncTransferConfig {
-    pub nr_transfers: u32,
-    pub gap_min: u64,
-    pub gap_max: u64,
-    pub amount_min: u128,
-    pub amount_max: u128,
-    pub kind: AccountKind,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConformConfig {
-    pub zilliqa_source: String,
-    pub signer_count: u32,
-    pub signer_amount: u128,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Params {
     pub rpc_url: Option<String>,
@@ -325,20 +315,27 @@ impl Perf {
             config_obj.rpc_url.to_string()
         };
         let provider = Provider::<Http>::try_from(effective_url.as_str())?;
-        let source_of_funds = if let Some(v) = &params.account {
+        let source_account = if let Some(v) = &params.account {
             v.clone()
         } else {
             config_obj
                 .source_of_funds
                 .as_ref()
-                .map(Account::try_from)
-                .transpose()?
-                .ok_or(anyhow!("No source of funds provided."))?
+                .map(|x| Account::try_from(&x.account))
+                .ok_or(anyhow!("No source of funds provided."))??
         };
         if let Some(v) = &params.seed {
             config_obj.seed = *v;
         }
-
+        let source_of_funds = SourceOfFunds {
+            account: source_account,
+            gas: config_obj
+                .source_of_funds
+                .as_ref()
+                .ok_or(anyhow!("No source of funds provided"))?
+                .gas
+                .clone(),
+        };
         let config_chain_id = config_obj.chainid;
         Ok(Perf {
             config: config_obj,
@@ -429,7 +426,7 @@ impl Perf {
             // Construct the list of txns to monitor
             let mut monitor = vec![];
             let mut continue_anyway = false;
-            let mut feeder_nonce = self.get_nonce(&self.source_of_funds).await?;
+            let mut feeder_nonce = self.get_nonce(&self.source_of_funds.account).await?;
             for module in modules.iter_mut() {
                 let result = module
                     .module
@@ -548,6 +545,7 @@ impl Perf {
         to: &Account,
         amt_zil: u128,
         nonce: Option<u64>,
+        gas: &GasParams,
     ) -> Result<String> {
         match from.kind {
             AccountKind::Zil => {
@@ -559,8 +557,8 @@ impl Perf {
                 let middleware = self.get_zil_middleware(from).await?;
                 let mut txn = zilliqa_rs::transaction::builder::TransactionBuilder::default()
                     .chain_id(self.zil_chainid().try_into()?)
-                    .gas_price(self.config.gas.gas_price)
-                    .gas_limit(self.config.gas.gas_limit)
+                    .gas_price(gas.gas_price)
+                    .gas_limit(gas.gas_limit)
                     .pay(amt_zil, to.get_address_as_zil()?);
                 txn = match nonce {
                     Some(val) => txn.nonce(val),
@@ -583,7 +581,7 @@ impl Perf {
                 let mut txn =
                     ethers::types::TransactionRequest::pay(to.get_address_as_eth()?, amt_eth)
                         .chain_id(self.eth_chainid())
-                        .gas_price(self.config.gas.gas_price);
+                        .gas_price(gas.gas_price);
                 txn = match nonce {
                     Some(val) => txn.nonce(val),
                     None => txn,
@@ -605,7 +603,9 @@ impl Perf {
         amt: u128,
         nonce: Option<u64>,
     ) -> Result<()> {
-        let tran_id = self.issue_transfer(from, to, amt, nonce).await?;
+        let tran_id = self
+            .issue_transfer(from, to, amt, nonce, &self.source_of_funds.gas)
+            .await?;
         println!("Sent {tran_id:?}");
         let result = self.monitor_one(&tran_id).await?;
         println!("Result {result:?}");
@@ -708,7 +708,7 @@ impl Perf {
 
     pub async fn get_nonce(&self, account: &Account) -> Result<u64> {
         match account.kind {
-            AccountKind::Zil => Ok(self.get_balance(&account.get_address()?).await?.nonce + 1),
+            AccountKind::Zil => Ok(self.get_balance(&account.get_address()?).await?.nonce),
             AccountKind::Eth => {
                 let provider = self.make_eth_provider()?;
                 Ok(provider
