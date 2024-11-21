@@ -470,6 +470,7 @@ mod tests {
             eth_chain_id: 0,
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
+            state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
             do_checkpoints: false,
             disable_rpc: disable_rpc_default(),
