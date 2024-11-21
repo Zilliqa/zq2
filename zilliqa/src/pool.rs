@@ -515,7 +515,7 @@ mod tests {
             request_id: RequestId::default(),
         };
 
-        let db = Db::new::<PathBuf>(None, 0)?;
+        let db = Db::new::<PathBuf>(None, 0, 0)?;
         let db = Arc::new(db);
 
         let block_store = BlockStore::new(&node_config, db.clone(), message_sender.clone())?;
