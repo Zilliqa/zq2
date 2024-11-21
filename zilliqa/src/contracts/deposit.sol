@@ -145,16 +145,18 @@ struct InitialStaker {
 
 contract Deposit {
     // Emitted to inform that a new staker identified by `blsPubKey`
-    // is going to be added to the committee `atFutureBlock`
-    event StakerAdded(bytes blsPubKey, uint256 atFutureBlock);
+    // is going to be added to the committee `atFutureBlock`, increasing
+    // the total stake by `newStake`
+    event StakerAdded(bytes blsPubKey, uint256 atFutureBlock, uint256 newStake);
 
     // Emitted to inform that the staker identified by `blsPubKey`
     // is going to be removed from the committee `atFutureBlock`
     event StakerRemoved(bytes blsPubKey, uint256 atFutureBlock);
 
     // Emitted to inform that the deposited stake of the staker
-    // identified by `blsPubKey` is going to change `atFutureBlock`
-    event StakeChanged(bytes blsPubKey, uint256 atFutureBlock);
+    // identified by `blsPubKey` is going to change to `newStake`
+    // at `atFutureBlock`
+    event StakeChanged(bytes blsPubKey, uint256 atFutureBlock, uint256 newStake);
 
     // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
     // is stored at index (currentEpoch() % 3).
@@ -239,7 +241,7 @@ contract Deposit {
                 1;
             currentCommittee.stakerKeys.push(blsPubKey);
 
-            emit StakerAdded(blsPubKey, block.number);
+            emit StakerAdded(blsPubKey, block.number, amount);
         }
     }
 
@@ -517,7 +519,7 @@ contract Deposit {
             1;
         futureCommittee.stakerKeys.push(blsPubKey);
 
-        emit StakerAdded(blsPubKey, nextUpdate());
+        emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
     }
 
     function depositTopup() public payable {
@@ -536,7 +538,11 @@ contract Deposit {
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[stakerKey].balance += msg.value;
 
-        emit StakeChanged(stakerKey, nextUpdate());
+        emit StakeChanged(
+            stakerKey,
+            nextUpdate(),
+            futureCommittee.stakers[stakerKey].balance
+        );
     }
 
     function unstake(uint256 amount) public {
@@ -599,7 +605,11 @@ contract Deposit {
             futureCommittee.totalStake -= amount;
             futureCommittee.stakers[stakerKey].balance -= amount;
 
-            emit StakeChanged(stakerKey, nextUpdate());
+            emit StakeChanged(
+                stakerKey,
+                nextUpdate(),
+                futureCommittee.stakers[stakerKey].balance
+            );
         }
 
         // Enqueue the withdrawal for this staker.
