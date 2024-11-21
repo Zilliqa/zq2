@@ -808,3 +808,11 @@ pub struct ShardInfo {
     pub nodes: Vec<String>,
     pub size: u64,
 }
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct StateProofResponse {
+    #[serde(rename = "accountProof")]
+    pub account_proof: Vec<String>,
+    #[serde(rename = "stateProof")]
+    pub state_proof: Vec<String>,
+}
