@@ -162,6 +162,10 @@ contract Deposit {
         uint256 newStake
     );
 
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // has updated its data that can be refetched using `getStakerData()`
+    event StakerUpdated(bytes blsPubKey);
+
     // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
     // is stored at index (currentEpoch() % 3).
     Committee[3] _committee;
@@ -311,6 +315,7 @@ contract Deposit {
         view
         returns (
             bytes[] memory stakerKeys,
+            uint256[] memory indices,
             uint256[] memory balances,
             Staker[] memory stakers
         )
@@ -321,9 +326,30 @@ contract Deposit {
         stakers = new Staker[](stakerKeys.length);
         for (uint i = 0; i < stakerKeys.length; i++) {
             bytes memory key = stakerKeys[i];
+            // The stakerKeys are not sorted by the stakers'
+            // index in the current committee, therefore we
+            // return the indices too, to help identify the
+            // stakers in the bit vectors stored along with
+            // BLS aggregate signatures
+            indices[i] = currentCommittee.stakers[key].index;
             balances[i] = currentCommittee.stakers[key].balance;
             stakers[i] = _stakersMap[key];
         }
+    }
+
+    function getStakerData(bytes calldata blsPubKey)
+        public
+        view
+        returns (
+            uint256 index,
+            uint256 balance,
+            Staker memory staker
+        )
+    {
+        Committee storage currentCommittee = committee();
+        index = currentCommittee.stakers[blsPubKey].index;
+        balance = currentCommittee.stakers[blsPubKey].balance;
+        staker = _stakersMap[blsPubKey];
     }
 
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
@@ -375,6 +401,7 @@ contract Deposit {
         address rewardAddress
     ) public onlyControlAddress(blsPubKey) {
         _stakersMap[blsPubKey].rewardAddress = rewardAddress;
+        emit StakerUpdated(blsPubKey);
     }
 
     function setControlAddress(
@@ -382,6 +409,7 @@ contract Deposit {
         address controlAddress
     ) public onlyControlAddress(blsPubKey) {
         _stakersMap[blsPubKey].controlAddress = controlAddress;
+        emit StakerUpdated(blsPubKey);
     }
 
     function getPeerId(
