@@ -10,9 +10,6 @@ blockchain,info,get
 
 Returns the current network statistics for the specified network. See [https://chainlist.org/?search=zilliqa&testnets=true](https://chainlist.org/?search=zilliqa&testnets=true) for details of deployed chains.
 
-!!! note
-
-    `CHAIN_ID` from `2` to `9` are reserved for Zilliqa Core use.
 
 # Curl
 
