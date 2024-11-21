@@ -34,9 +34,12 @@ impl Validator {
             peer_id: PeerId::from_str(peer_id).unwrap(),
             public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
                 .unwrap(),
-            pop: blsful::Signature::<Bls12381G2Impl>::try_from(
-                hex::decode(pop_signature).unwrap().as_slice(),
-            )?,
+            pop: blsful::Signature::Basic(
+                <blsful::Bls12381G2Impl as blsful::Pairing>::Signature::try_from(
+                    hex::decode(pop_signature).unwrap(),
+                )
+                .unwrap(),
+            ),
         })
     }
 }
