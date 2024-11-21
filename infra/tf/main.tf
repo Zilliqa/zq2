@@ -273,7 +273,7 @@ resource "google_compute_managed_ssl_certificate" "api" {
   name = "${var.chain_name}-api"
 
   managed {
-    domains = var.alternative_subdomain == "" ? ["api.${var.subdomain}"] : concat(["api.${var.subdomain}"], ["api.${var.alternative_subdomain}"])
+    domains = var.alternative_subdomain == "" || var.alternative_subdomain == null ? ["api.${var.subdomain}"] : concat(["api.${var.subdomain}"], ["api.${var.alternative_subdomain}"])
   }
 }
 
