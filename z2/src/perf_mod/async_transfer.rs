@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use rand::{self, prelude::*};
 use serde::{Deserialize, Serialize};
+use tokio::task::JoinSet;
 
 use crate::{
     perf,
@@ -41,7 +42,7 @@ impl AsyncTransfer {
         Ok(Self {
             source_of_funds: source_of_funds.clone(),
             config: config.clone(),
-            feeder: perf.gen_account(rng, config.kind).await?,
+            feeder: perf.issuer()?.gen_account(rng, config.kind).await?,
         })
     }
 }
@@ -65,14 +66,15 @@ impl perf::PerfMod for AsyncTransfer {
                 println!("amount_required = {amount_required}");
                 let new_feeder_nonce = perf::next_nonce(feeder_nonce);
                 result.push(
-                    perf.issue_transfer(
-                        &self.source_of_funds.account,
-                        &self.feeder,
-                        amount_required,
-                        Some(new_feeder_nonce),
-                        &self.source_of_funds.gas,
-                    )
-                    .await?,
+                    perf.issuer()?
+                        .issue_transfer(
+                            &self.source_of_funds.account,
+                            &self.feeder,
+                            amount_required,
+                            Some(new_feeder_nonce),
+                            &self.source_of_funds.gas,
+                        )
+                        .await?,
                 );
                 Ok(PhaseResult {
                     monitor: result,
@@ -84,7 +86,7 @@ impl perf::PerfMod for AsyncTransfer {
                 perf::TransactionResult::assert_all_successful(txns)?;
                 let mut nonce = perf.get_nonce(&self.feeder).await?;
                 let mut expect_success = true;
-                // Grab the accounts to send into.
+                let mut join_set = JoinSet::new();
                 for _ in 0..self.config.nr_transfers {
                     let gap;
                     let amount;
@@ -95,7 +97,8 @@ impl perf::PerfMod for AsyncTransfer {
                     if gap > 1 {
                         expect_success = false;
                     }
-                    let target = perf.gen_account(rng, AccountKind::Zil).await?;
+                    let issuer = perf.issuer()?;
+                    let target = issuer.gen_account(rng, AccountKind::Zil).await?;
                     // Send the transfer and go back.
                     if gap > 0 {
                         if let Some(v) = nonce {
@@ -104,26 +107,47 @@ impl perf::PerfMod for AsyncTransfer {
                             nonce = Some(0)
                         }
                     } else {
-                        return Err(anyhow!("gaps < 1 are not allowed. Contact the maintainer"));
+                        // Gaps of zero don't set the flag, but don't succeed either, unless they are the
+                        // first txn.
                     };
-                    println!(
-                        "issue_transfer from {0:?} to {1:?} send nonce {nonce:?}",
-                        self.feeder, target
-                    );
-                    let transfer = perf
-                        .issue_transfer(&self.feeder, &target, amount, nonce, &self.config.gas)
-                        .await?;
-                    // check gap == 1 here in case gap was 0 - a gap 0 txn doesn't succeed itself, but
-                    // also doesn't stop other txns succeeding later (so we don't set !expect_success)
-                    if gap == 1 && expect_success {
-                        result.push(transfer)
-                    }
+                    let local_feeder = self.feeder.clone();
+                    let local_gas = self.config.gas.clone();
+                    let expect_txn_to_succeed = expect_success && (gap == 1 || nonce.is_none());
+                    join_set.spawn(async move {
+                        println!(
+                            "issue_transfer from {0:?} to {1:?} send nonce {nonce:?}",
+                            local_feeder, target
+                        );
+                        let transfer = issuer
+                            .issue_transfer(&local_feeder, &target, amount, nonce, &local_gas)
+                            .await;
+                        if let Ok(v) = transfer {
+                            (true, expect_txn_to_succeed, Some(v))
+                        } else {
+                            println!("Transfer failed - {transfer:?}");
+                            (false, expect_txn_to_succeed, None)
+                        }
+                    });
                 }
-                Ok(PhaseResult {
-                    monitor: result,
-                    feeder_nonce: *feeder_nonce,
-                    keep_going_anyway: false,
-                })
+                // Grab the accounts to send into.
+                let joined = join_set.join_all().await;
+                // Fail if any txn failed.
+                let any_failures = joined.iter().fold(false, |acc, (f, _, _)| acc | !f);
+                if any_failures {
+                    Err(anyhow!("One or more transactions failed to send"))
+                } else {
+                    let monitor = joined
+                        .iter()
+                        .filter_map(
+                            |(_, expect, result)| if *expect { result.clone() } else { None },
+                        )
+                        .collect();
+                    Ok(PhaseResult {
+                        monitor,
+                        feeder_nonce: *feeder_nonce,
+                        keep_going_anyway: false,
+                    })
+                }
             }
             _ => {
                 let val: Vec<String> = Vec::new();

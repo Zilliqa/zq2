@@ -80,10 +80,11 @@ impl Conform {
         // Chain name is random
 
         let chain_name = zqutils::security::generate_id(rng, 16)?;
+        let issuer = perf.issuer()?;
         Ok(Self {
             source_of_funds: source_of_funds.clone(),
             config: config.clone(),
-            feeder: perf.gen_account(rng, AccountKind::Zil).await?,
+            feeder: issuer.gen_account(rng, AccountKind::Zil).await?,
             test_source,
             current_command: None,
             chain_name,
@@ -117,6 +118,7 @@ impl perf::PerfMod for Conform {
         feeder_nonce: &Option<u64>,
     ) -> Result<PhaseResult> {
         let mut result = Vec::new();
+        let issuer = perf.issuer()?;
         match phase {
             0 => {
                 // Feed the feeder
@@ -126,14 +128,15 @@ impl perf::PerfMod for Conform {
                         + self.config.gas.gas_units();
                 println!("Funding with {amount_required}");
                 result.push(
-                    perf.issue_transfer(
-                        &self.source_of_funds.account,
-                        &self.feeder,
-                        amount_required,
-                        Some(perf::next_nonce(feeder_nonce)),
-                        &self.source_of_funds.gas,
-                    )
-                    .await?,
+                    issuer
+                        .issue_transfer(
+                            &self.source_of_funds.account,
+                            &self.feeder,
+                            amount_required,
+                            Some(perf::next_nonce(feeder_nonce)),
+                            &self.source_of_funds.gas,
+                        )
+                        .await?,
                 );
                 Ok(PhaseResult {
                     monitor: result,

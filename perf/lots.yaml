@@ -3,12 +3,13 @@ chainid: 700
 attempts: 600
 sleep_ms: 1000
 source_of_funds:
-  from_env: PRIV_KEY
-  kind: eth
+  account:
+    from_env: PRIV_KEY
+    kind: eth
+  gas:
+    gas_price: 4761904800000
+    gas_limit: 10000
 seed: 0
-gas:
-  gas_price: 2000000000
-  gas_limit: 10000
 steps:
   - name: 0
     modules:
@@ -19,6 +20,9 @@ steps:
         amount_min: 100
         amount_max: 10000
         kind: zil
+        gas:
+          gas_price: 200000000000
+          gas_limit: 10000
       - !async_transfer
         nr_transfers: 1000
         gap_min: 1
@@ -26,6 +30,9 @@ steps:
         amount_min: 100
         amount_max: 10000
         kind: zil
+        gas:
+          gas_price: 200000000000
+          gas_limit: 10000
       - !async_transfer
         nr_transfers: 1000
         gap_min: 1
@@ -33,3 +40,6 @@ steps:
         amount_min: 100
         amount_max: 10000
         kind: zil
+        gas:
+          gas_price: 200000000000
+          gas_limit: 10000

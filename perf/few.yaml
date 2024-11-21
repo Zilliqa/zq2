@@ -14,7 +14,7 @@ steps:
   - name: 0
     modules:
       - !async_transfer
-        nr_transfers: 10
+        nr_transfers: 100
         gap_min: 1
         gap_max: 1
         amount_min: 100

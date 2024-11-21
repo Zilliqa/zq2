@@ -8,6 +8,7 @@ use std::{
     path::Path,
     str::FromStr,
     sync::RwLock,
+    time::Instant,
 };
 
 use crate::perf_mod::async_transfer::AsyncTransferConfig;
@@ -40,9 +41,8 @@ pub struct Perf {
     pub config: Config,
     pub source_of_funds: SourceOfFunds,
     pub provider: Provider<Http>,
-    pub effective_url: String,
-    pub effective_chainid: u32,
     pub step: usize,
+    pub issuer: Issuer,
 }
 
 pub struct PhaseResult {
@@ -300,6 +300,158 @@ impl Params {
     }
 }
 
+/// A cloneable struct that allows you to issue transactions
+pub struct Issuer {
+    pub provider: Provider<Http>,
+    pub effective_url: String,
+    pub effective_chainid: u32,
+}
+
+impl Issuer {
+    pub fn new(effective_url: &str, effective_chainid: u32) -> Result<Self> {
+        let provider = Provider::<Http>::try_from(effective_url)?;
+        Ok(Self {
+            provider,
+            effective_url: effective_url.to_string(),
+            effective_chainid,
+        })
+    }
+
+    pub fn duplicate(&self) -> Result<Self> {
+        Self::new(&self.effective_url, self.effective_chainid)
+    }
+
+    pub fn make_zil_provider(&self) -> Result<Provider<Http>> {
+        Ok(Provider::<Http>::try_from(self.effective_url.as_str())?)
+    }
+
+    pub fn zil_chainid(&self) -> u32 {
+        self.effective_chainid
+    }
+
+    pub fn eth_chainid(&self) -> u64 {
+        u64::from(self.effective_chainid | 0x8000)
+    }
+
+    pub fn make_eth_provider(
+        &self,
+    ) -> Result<ethers::providers::Provider<ethers::providers::Http>> {
+        Ok(
+            ethers::providers::Provider::<ethers::providers::Http>::try_from(
+                self.effective_url.as_str(),
+            )?,
+        )
+    }
+
+    pub async fn gen_account(&self, rng: &mut StdRng, acc_type: AccountKind) -> Result<Account> {
+        const CHARSET: &[u8] = b"0123456789abcdef";
+        // Horrid use of unwrap(), but hard to avoid here (and to be
+        // fair, if this happens it is indeed a logic error in the
+        // program - rrw 2023-11-28
+        let get_one = || CHARSET[rng.gen_range(0..CHARSET.len())] as char;
+        let privkey = iter::repeat_with(get_one).take(64).collect();
+        // println!("Invented privkey = {privkey}");
+        Ok(Account {
+            privkey,
+            kind: acc_type,
+        })
+    }
+
+    pub async fn get_zil_middleware(
+        &self,
+        from: &Account,
+    ) -> Result<
+        zilliqa_rs::middlewares::signer::SignerMiddleware<
+            Provider<Http>,
+            zilliqa_rs::signers::LocalWallet,
+        >,
+    > {
+        let wallet = zilliqa_rs::signers::LocalWallet::from_str(&from.privkey)?;
+        let provider = self.make_zil_provider()?;
+        Ok(zilliqa_rs::middlewares::signer::SignerMiddleware::new(
+            provider, wallet,
+        ))
+    }
+
+    pub async fn get_eth_middleware(
+        &self,
+        from: &Account,
+    ) -> Result<
+        ethers::middleware::signer::SignerMiddleware<
+            ethers::providers::Provider<ethers::providers::Http>,
+            ethers::signers::LocalWallet,
+        >,
+    > {
+        let provider = self.make_eth_provider()?;
+        Ok(ethers::middleware::SignerMiddleware::new(
+            provider,
+            from.get_eth_wallet()?.with_chain_id(self.eth_chainid()),
+        ))
+    }
+
+    pub async fn issue_transfer(
+        &self,
+        from: &Account,
+        to: &Account,
+        amt_zil: u128,
+        nonce: Option<u64>,
+        gas: &GasParams,
+    ) -> Result<String> {
+        match from.kind {
+            AccountKind::Zil => {
+                println!(
+                    "💰 ZIL Transfer {0} -> {1} : {amt_zil} / {nonce:?} ",
+                    from.get_zq_address()?,
+                    to.get_address()?
+                );
+                let middleware = self.get_zil_middleware(from).await?;
+                let mut txn = zilliqa_rs::transaction::builder::TransactionBuilder::default()
+                    .chain_id(self.zil_chainid().try_into()?)
+                    .gas_price(gas.gas_price)
+                    .gas_limit(gas.gas_limit)
+                    .pay(amt_zil, to.get_address_as_zil()?);
+                txn = match nonce {
+                    Some(val) => txn.nonce(val),
+                    None => txn,
+                };
+                let start = Instant::now();
+                let txn_sent = middleware
+                    .send_transaction_without_confirm::<zilliqa_rs::core::types::CreateTransactionResponse>(
+                        txn.build(),
+                    )
+                    .await?;
+                let duration = start.elapsed();
+                println!("Send txn in {duration:?}");
+                Ok(txn_sent.tran_id.to_string())
+            }
+            AccountKind::Eth => {
+                let amt_eth = zil_to_eth(amt_zil);
+                println!(
+                    "💰 ETH Transfer {0:#032x} -> {1}: {amt_eth} / {nonce:?} ",
+                    from.get_eth_address()?,
+                    to.get_address()?
+                );
+                let mut txn =
+                    ethers::types::TransactionRequest::pay(to.get_address_as_eth()?, amt_eth)
+                        .chain_id(self.eth_chainid())
+                        .gas_price(gas.gas_price);
+                txn = match nonce {
+                    Some(val) => txn.nonce(val),
+                    None => txn,
+                };
+                println!("privkey {0}", from.privkey);
+                let mware = self.get_eth_middleware(from).await?;
+                println!("Got mware");
+                let start = Instant::now();
+                let txn_sent = mware.send_transaction(txn, None).await?;
+                let duration = start.elapsed();
+                println!("Sent txn in {duration:?}");
+                Ok(hex::encode(txn_sent.tx_hash()))
+            }
+        }
+    }
+}
+
 impl Perf {
     pub fn from_file(config_file: &str) -> Result<Self> {
         Perf::from_file_with_params(config_file, &Params::default())
@@ -337,36 +489,19 @@ impl Perf {
                 .clone(),
         };
         let config_chain_id = config_obj.chainid;
+        let effective_chainid = params.eth_chain_id.map_or(config_chain_id, |x| x & !0x8000);
+        let issuer = Issuer::new(&effective_url, effective_chainid)?;
         Ok(Perf {
             config: config_obj,
             provider,
-            effective_url,
-            effective_chainid: params.eth_chain_id.map_or(config_chain_id, |x| x & !0x8000),
             step: 0,
             source_of_funds,
+            issuer,
         })
     }
 
-    pub fn zil_chainid(&self) -> u32 {
-        self.effective_chainid
-    }
-
-    pub fn eth_chainid(&self) -> u64 {
-        u64::from(self.effective_chainid | 0x8000)
-    }
-
-    pub fn make_zil_provider(&self) -> Result<Provider<Http>> {
-        Ok(Provider::<Http>::try_from(self.effective_url.as_str())?)
-    }
-
-    pub fn make_eth_provider(
-        &self,
-    ) -> Result<ethers::providers::Provider<ethers::providers::Http>> {
-        Ok(
-            ethers::providers::Provider::<ethers::providers::Http>::try_from(
-                self.effective_url.as_str(),
-            )?,
-        )
+    pub fn issuer(&self) -> Result<Issuer> {
+        self.issuer.duplicate()
     }
 
     pub fn make_rng(&self) -> Result<StdRng> {
@@ -480,20 +615,6 @@ impl Perf {
         Ok(())
     }
 
-    pub async fn gen_account(&self, rng: &mut StdRng, acc_type: AccountKind) -> Result<Account> {
-        const CHARSET: &[u8] = b"0123456789abcdef";
-        // Horrid use of unwrap(), but hard to avoid here (and to be
-        // fair, if this happens it is indeed a logic error in the
-        // program - rrw 2023-11-28
-        let get_one = || CHARSET[rng.gen_range(0..CHARSET.len())] as char;
-        let privkey = iter::repeat_with(get_one).take(64).collect();
-        println!("Invented privkey = {privkey}");
-        Ok(Account {
-            privkey,
-            kind: acc_type,
-        })
-    }
-
     pub async fn gen_accounts(
         &self,
         rng: &mut StdRng,
@@ -502,98 +623,13 @@ impl Perf {
     ) -> Result<Vec<Account>> {
         let mut result = vec![];
         for _ in 0..nr {
-            result.push(self.gen_account(rng, acc_type).await?)
+            result.push(self.issuer.gen_account(rng, acc_type).await?)
         }
         Ok(result)
     }
 
-    pub async fn get_zil_middleware(
-        &self,
-        from: &Account,
-    ) -> Result<
-        zilliqa_rs::middlewares::signer::SignerMiddleware<
-            Provider<Http>,
-            zilliqa_rs::signers::LocalWallet,
-        >,
-    > {
-        let wallet = zilliqa_rs::signers::LocalWallet::from_str(&from.privkey)?;
-        let provider = self.make_zil_provider()?;
-        Ok(zilliqa_rs::middlewares::signer::SignerMiddleware::new(
-            provider, wallet,
-        ))
-    }
-
-    pub async fn get_eth_middleware(
-        &self,
-        from: &Account,
-    ) -> Result<
-        ethers::middleware::signer::SignerMiddleware<
-            ethers::providers::Provider<ethers::providers::Http>,
-            ethers::signers::LocalWallet,
-        >,
-    > {
-        let provider = self.make_eth_provider()?;
-        Ok(ethers::middleware::SignerMiddleware::new(
-            provider,
-            from.get_eth_wallet()?.with_chain_id(self.eth_chainid()),
-        ))
-    }
-
-    pub async fn issue_transfer(
-        &self,
-        from: &Account,
-        to: &Account,
-        amt_zil: u128,
-        nonce: Option<u64>,
-        gas: &GasParams,
-    ) -> Result<String> {
-        match from.kind {
-            AccountKind::Zil => {
-                println!(
-                    "💰 ZIL Transfer {0} -> {1} : {amt_zil} / {nonce:?} ",
-                    from.get_zq_address()?,
-                    to.get_address()?
-                );
-                let middleware = self.get_zil_middleware(from).await?;
-                let mut txn = zilliqa_rs::transaction::builder::TransactionBuilder::default()
-                    .chain_id(self.zil_chainid().try_into()?)
-                    .gas_price(gas.gas_price)
-                    .gas_limit(gas.gas_limit)
-                    .pay(amt_zil, to.get_address_as_zil()?);
-                txn = match nonce {
-                    Some(val) => txn.nonce(val),
-                    None => txn,
-                };
-                let txn_sent = middleware
-                    .send_transaction_without_confirm::<zilliqa_rs::core::types::CreateTransactionResponse>(
-                        txn.build(),
-                    )
-                    .await?;
-                Ok(txn_sent.tran_id.to_string())
-            }
-            AccountKind::Eth => {
-                let amt_eth = zil_to_eth(amt_zil);
-                println!(
-                    "💰 ETH Transfer {0:#032x} -> {1}: {amt_eth} / {nonce:?} ",
-                    from.get_eth_address()?,
-                    to.get_address()?
-                );
-                let mut txn =
-                    ethers::types::TransactionRequest::pay(to.get_address_as_eth()?, amt_eth)
-                        .chain_id(self.eth_chainid())
-                        .gas_price(gas.gas_price);
-                txn = match nonce {
-                    Some(val) => txn.nonce(val),
-                    None => txn,
-                };
-                println!("privkey {0}", from.privkey);
-                let mware = self.get_eth_middleware(from).await?;
-                println!("Got mware");
-                let txn_sent = mware.send_transaction(txn, None).await?;
-                println!("Sent txn");
-                Ok(hex::encode(txn_sent.tx_hash()))
-            }
-        }
+    pub async fn monitor_one(&self, txn: &str) -> Result<TransactionResult> {
+        Ok(self.monitor(&[txn.to_string()]).await?[0].clone())
     }
 
     pub async fn transfer(
@@ -602,9 +638,11 @@ impl Perf {
         to: &Account,
         amt: u128,
         nonce: Option<u64>,
+        gas: &GasParams,
     ) -> Result<()> {
         let tran_id = self
-            .issue_transfer(from, to, amt, nonce, &self.source_of_funds.gas)
+            .issuer
+            .issue_transfer(from, to, amt, nonce, &gas)
             .await?;
         println!("Sent {tran_id:?}");
         let result = self.monitor_one(&tran_id).await?;
@@ -616,10 +654,6 @@ impl Perf {
                 Err(anyhow!("Transaction failed (insufficient balance?)"))
             }
         }
-    }
-
-    pub async fn monitor_one(&self, txn: &str) -> Result<TransactionResult> {
-        Ok(self.monitor(&[txn.to_string()]).await?[0].clone())
     }
 
     /// Monitor a transaction until it either completes or fails.
@@ -710,7 +744,7 @@ impl Perf {
         match account.kind {
             AccountKind::Zil => Ok(Some(self.get_balance(&account.get_address()?).await?.nonce)),
             AccountKind::Eth => {
-                let provider = self.make_eth_provider()?;
+                let provider = self.issuer.make_eth_provider()?;
                 let next_nonce = provider
                     .get_transaction_count(account.get_eth_address()?, None)
                     .await?
