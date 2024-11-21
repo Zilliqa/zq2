@@ -156,7 +156,11 @@ contract Deposit {
     // Emitted to inform that the deposited stake of the staker
     // identified by `blsPubKey` is going to change to `newStake`
     // at `atFutureBlock`
-    event StakeChanged(bytes blsPubKey, uint256 atFutureBlock, uint256 newStake);
+    event StakeChanged(
+        bytes blsPubKey,
+        uint256 atFutureBlock,
+        uint256 newStake
+    );
 
     // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
     // is stored at index (currentEpoch() % 3).
