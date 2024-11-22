@@ -56,21 +56,20 @@ macro_rules! sqlify_with_bincode_and_zstd {
     ($type: ty) => {
         impl ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-                let v = bincode::serialize(self)
+                let data = bincode::serialize(self)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
-                let v = lz4::block::compress(v.as_slice(), None, true)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                Ok(ToSqlOutput::from(v))
+                let blob =
+                    lz4::block::compress(data.as_slice(), None, true).unwrap_or_else(|_| data); // compressed or raw data
+                Ok(ToSqlOutput::from(blob))
             }
         }
         impl FromSql for $type {
             fn column_result(
                 value: rusqlite::types::ValueRef<'_>,
             ) -> rusqlite::types::FromSqlResult<Self> {
-                let v = value.as_blob()?;
-                let v = lz4::block::decompress(v, None)
-                    .map_err(|e| FromSqlError::Other(Box::new(e)))?;
-                bincode::deserialize(v.as_slice()).map_err(|e| FromSqlError::Other(e))
+                let blob = value.as_blob()?;
+                let data = lz4::block::decompress(blob, None).unwrap_or_else(|_| blob.into()); // decompressed or raw blob
+                bincode::deserialize(data.as_slice()).map_err(|e| FromSqlError::Other(e))
             }
         }
     };
@@ -1184,7 +1183,7 @@ impl eth_trie::DB for TrieStorage {
                 |row| row.get(0),
             )
             // decompress stored value
-            .map(|v: Vec<_>| lz4::block::decompress(v.as_slice(), None).unwrap())
+            .map(|blob: Vec<_>| lz4::block::decompress(blob.as_slice(), None).unwrap_or(blob)) // decompressed, or raw blob
             .optional()?;
 
         let mut cache = self.cache.lock().unwrap();
@@ -1198,12 +1197,12 @@ impl eth_trie::DB for TrieStorage {
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        let zvalue = lz4::block::compress(value.as_slice(), None, true)
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-        // compress value for storage
+        // compressed or raw data
+        let blob =
+            lz4::block::compress(value.as_slice(), None, true).unwrap_or_else(|_| value.clone());
         self.db.lock().unwrap().execute(
             "INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)",
-            (key, &zvalue),
+            (key, &blob),
         )?;
         let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
         Ok(())
@@ -1236,15 +1235,14 @@ impl eth_trie::DB for TrieStorage {
                 format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
 
             // compress all values for storage
-            let zvalues = values
+            let blobs = values
                 .iter()
-                .map(|v| lz4::block::compress(v.as_slice(), None, true).unwrap())
+                .map(|v| {
+                    lz4::block::compress(v.as_slice(), None, true).unwrap_or_else(|_| v.clone())
+                })
                 .collect_vec();
 
-            let params = keys
-                .iter()
-                .zip(zvalues.as_slice())
-                .flat_map(|(k, v)| [k, v]);
+            let params = keys.iter().zip(blobs.as_slice()).flat_map(|(k, v)| [k, v]);
             self.db
                 .lock()
                 .unwrap()
