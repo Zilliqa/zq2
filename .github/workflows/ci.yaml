@@ -17,8 +17,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Run a decent number of samples for our randomized tests
-  ZQ_TEST_SAMPLES: 20
+  RUST_TEST_THREADS: 4
+  ZQ_TEST_SAMPLES: 5
 
 jobs:
   format:

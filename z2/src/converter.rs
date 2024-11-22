@@ -20,7 +20,7 @@ use zilliqa::{
     cfg::{Amount, Config, NodeConfig, scilla_ext_libs_path_default},
     consensus::annotate_receipt_with_log_indices,
     crypto::{Hash, SecretKey},
-    db::Db,
+    db::{ArcDb, Db},
     exec::store_external_libraries,
     message::{Block, MAX_COMMITTEE_SIZE, QuorumCertificate, Vote},
     schnorr,
@@ -72,7 +72,7 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
 #[allow(clippy::type_complexity)]
 fn convert_scilla_state(
     zq1_db: &zq1::Db,
-    zq2_db: &Db,
+    zq2_db: &Arc<Db>,
     state: &State,
     code: &str,
     init_data: &[ParamValue],
@@ -180,7 +180,7 @@ fn convert_scilla_state(
     Ok((storage_root, field_types, transitions))
 }
 
-fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<B256> {
+fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Arc<Db>, address: Address) -> Result<B256> {
     let prefix = create_acc_query_prefix(address);
 
     let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
@@ -438,7 +438,7 @@ pub async fn convert_persistence(
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();
 
-    let current_block = zq2_db.get_finalized_view()?.unwrap_or(1);
+    let current_block = zq2_db.read()?.finalized_view()?.get()?.unwrap_or(1);
 
     let progress = ProgressBar::new(max_block)
         .with_style(style.clone())
@@ -542,7 +542,7 @@ pub async fn convert_persistence(
             parent_hash,
             zq1_block.block_num - 1,
         );
-        let block = Block::from_qc(
+        let mut block = Block::from_qc(
             secret_key,
             zq1_block.block_num,
             zq1_block.block_num,
@@ -556,6 +556,7 @@ pub async fn convert_persistence(
             ScillaGas(zq1_block.gas_used).into(),
             ScillaGas(zq1_block.gas_limit).into(),
         );
+        block.header.hash = zq1_block.block_hash.into();
 
         // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
         for receipt in &mut receipts {
@@ -570,54 +571,42 @@ pub async fn convert_persistence(
 
         parent_hash = zq1_block.block_hash.into();
 
-        zq2_db.with_sqlite_tx(|sqlite_tx| {
-            zq2_db.insert_block_with_hash_with_db_tx(
-                sqlite_tx,
-                zq1_block.block_hash.into(),
-                &block,
-            )?;
-            zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.header.qc)?;
-            zq2_db.set_finalized_view_with_db_tx(sqlite_tx, block.view())?;
-            trace!("{} block inserted", block.number());
+        let write = zq2_db.write()?;
 
-            for (hash, transaction) in &transactions {
-                if let Err(err) = zq2_db.insert_transaction_with_db_tx(sqlite_tx, hash, transaction)
-                {
-                    warn!(
-                        "Unable to insert transaction with id: {:?} to db, err: {:?}",
-                        *hash, err
-                    );
-                }
+        write.blocks()?.insert(&block)?;
+        write.high_qc()?.set(&block.header.qc)?;
+        write.finalized_view()?.set(block.view())?;
+        trace!("{} block inserted", block.number());
+        {
+            let mut transactions_table = write.transactions()?;
+            for (hash, txn) in &transactions {
+                transactions_table.insert(*hash, txn)?;
             }
+            let mut receipts_table = write.receipts()?;
             for receipt in &receipts {
-                if let Err(err) =
-                    zq2_db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt.to_owned())
-                {
-                    warn!(
-                        "Unable to insert receipt with id: {:?} into db, err: {:?}",
-                        receipt.tx_hash, err
-                    );
-                }
+                receipts_table.insert(receipt)?;
             }
-            Ok(())
-        })?;
+        }
+        write.commit()?;
     }
 
     // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
-    let highest_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
-    let highest_block = zq2_db.get_block_by_view(highest_block)?.unwrap();
+    let highest_block = zq2_db.read()?.blocks()?.max_canonical_by_view()?.unwrap();
 
-    zq2_db.with_sqlite_tx(|sqlite_tx| {
-        let empty_high_qc_block =
-            create_empty_block_from_parent(&highest_block, secret_key, state.root_hash()?);
-        zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
-        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.header.qc)?;
-        Ok(())
-    })?;
+    let write = zq2_db.write()?;
+    let empty_high_qc_block =
+        create_empty_block_from_parent(&highest_block, secret_key, state.root_hash()?);
+    write.blocks()?.insert(&empty_high_qc_block)?;
+    write.high_qc()?.set(&empty_high_qc_block.header.qc)?;
 
     println!(
         "Persistence conversion done up to block {}",
-        zq2_db.get_highest_canonical_block_number()?.unwrap_or(0)
+        zq2_db
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .map(|b| b.number())
+            .unwrap_or(0)
     );
 
     Ok(())

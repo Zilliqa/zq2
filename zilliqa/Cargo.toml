@@ -83,6 +83,11 @@ lru-mem = "0.3.0"
 opentelemetry-semantic-conventions = { version = "0.28.0", features = ["semconv_experimental"] }
 semver = "1.0.23"
 foundry-compilers = { version = "0.14.1", features = ["svm-solc"] }
+redb = { version = "2.4.0", features = ["logging"] }
+bytesize = "2.0.1"
+rayon = "1.10.0"
+rustc-hash = "2.1.1"
+indicatif = { version = "0.17.11", features = ["rayon"] }
 
 [dev-dependencies]
 alloy = { version = "0.12.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
