@@ -236,6 +236,10 @@ impl P2pNode {
                     .behaviour_mut()
                     .kademlia
                     .add_address(peer, address.clone());
+                self.swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .add_explicit_peer(&peer_id);
                 self.swarm.behaviour_mut().kademlia.bootstrap()?;
             }
         }
