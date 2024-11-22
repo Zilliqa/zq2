@@ -414,7 +414,10 @@ impl DatabaseRef for &State {
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         Ok(self
-            .get_canonical_block_by_number(number)?
+            .sql
+            .read()?
+            .blocks()?
+            .canonical_by_height(number)?
             .map(|block| B256::new(block.hash().0))
             .unwrap_or_default())
     }
@@ -627,7 +630,7 @@ impl State {
         current_block: BlockHeader,
         inspector: impl ScillaInspector,
     ) -> Result<ScillaResultAndState> {
-        let mut state = PendingState::new(self.try_clone()?);
+        let mut state = PendingState::new(self.clone());
 
         // Issue 1509 - for Scilla transitions, follow the legacy ZQ1 behaviour of deducting a small amount
         // of gas for the invocation and the rest of the gas once the txn has run.
@@ -683,7 +686,7 @@ impl State {
                 new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
             {
                 trace!("scilla_txn: cannot deduct remaining gas - txn failed");
-                let mut failed_state = PendingState::new(self.try_clone()?);
+                let mut failed_state = PendingState::new(self.clone());
                 return Ok((result, failed_state.finalize()));
             }
         }
@@ -1323,11 +1326,21 @@ impl PendingState {
     }
 
     pub fn get_canonical_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
-        self.pre_state.get_canonical_block_by_number(block_number)
+        self.pre_state
+            .sql
+            .read()?
+            .blocks()?
+            .canonical_by_height(block_number)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
-        self.pre_state.get_highest_canonical_block_number()
+        Ok(self
+            .pre_state
+            .sql
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .map(|b| b.number()))
     }
 
     pub fn touch(&mut self, address: Address) {
