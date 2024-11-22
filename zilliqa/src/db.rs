@@ -32,26 +32,6 @@ use crate::{
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
 
-macro_rules! sqlify_with_bincode {
-    ($type: ty) => {
-        impl ToSql for $type {
-            fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-                Ok(ToSqlOutput::from(
-                    bincode::serialize(self)
-                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?,
-                ))
-            }
-        }
-        impl FromSql for $type {
-            fn column_result(
-                value: rusqlite::types::ValueRef<'_>,
-            ) -> rusqlite::types::FromSqlResult<Self> {
-                bincode::deserialize(value.as_blob()?).map_err(|e| FromSqlError::Other(e))
-            }
-        }
-    };
-}
-
 macro_rules! sqlify_with_bincode_and_lz4 {
     ($type: ty) => {
         impl ToSql for $type {
@@ -59,7 +39,7 @@ macro_rules! sqlify_with_bincode_and_lz4 {
                 let data = bincode::serialize(self)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
                 let blob =
-                    lz4::block::compress(data.as_slice(), None, true).unwrap_or_else(|_| data); // compressed or raw data
+                    lz4::block::compress(data.as_slice(), None, true).unwrap_or(data); // compressed or raw data
                 Ok(ToSqlOutput::from(blob))
             }
         }
@@ -98,24 +78,21 @@ macro_rules! make_wrapper {
     };
 }
 
-// Careful about choosing which blobs to LZ4
-// e.g. it may impact search on a column that is LZ4-ed.
-
 sqlify_with_bincode_and_lz4!(AggregateQc);
 sqlify_with_bincode_and_lz4!(QuorumCertificate);
 sqlify_with_bincode_and_lz4!(NodeSignature);
 sqlify_with_bincode_and_lz4!(SignedTransaction);
 
 make_wrapper!(Vec<ScillaException>, VecScillaExceptionSqlable);
-sqlify_with_bincode!(VecScillaExceptionSqlable);
+sqlify_with_bincode_and_lz4!(VecScillaExceptionSqlable);
 make_wrapper!(BTreeMap<u64, Vec<ScillaError>>, MapScillaErrorSqlable);
-sqlify_with_bincode!(MapScillaErrorSqlable);
+sqlify_with_bincode_and_lz4!(MapScillaErrorSqlable);
 
 make_wrapper!(Vec<Log>, VecLogSqlable);
-sqlify_with_bincode!(VecLogSqlable);
+sqlify_with_bincode_and_lz4!(VecLogSqlable);
 
 make_wrapper!(Vec<ScillaTransition>, VecScillaTransitionSqlable);
-sqlify_with_bincode!(VecScillaTransitionSqlable);
+sqlify_with_bincode_and_lz4!(VecScillaTransitionSqlable);
 
 make_wrapper!(SystemTime, SystemTimeSqlable);
 impl ToSql for SystemTimeSqlable {
