@@ -91,6 +91,125 @@ pub struct Sync {
     headers_downloaded: usize,
     blocks_downloaded: usize,
     active_sync_count: usize,
+    segments: Segments,
+}
+
+#[derive(Debug, Default)]
+struct Segments(BTreeMap<u64, Segment>);
+
+impl Segments {
+    /// Returns the lowest block number of stored sync segments
+    fn last_sync_block_number(&self) -> u64 {
+        self.0.keys().min().copied().unwrap_or_default()
+    }
+
+    /// Returns the number of stored sync segments
+    fn count_sync_segments(&self) -> usize {
+        self.0.iter().filter(|(_, s)| s.peer.is_some()).count()
+    }
+
+    /// Retrieves bulk metadata information from the given block_hash (inclusive)
+    fn get_sync_segment(&self, mut hash: Hash) -> Vec<Hash> {
+        let mut result = vec![];
+
+        // This implementation skips the final segment in the chain. I don't know if that's intended or not.
+        while let Some((_, segment)) = self.0.iter().find(|(_, s)| s.block_hash == hash) {
+            result.push(hash);
+            hash = segment.parent_hash;
+        }
+
+        result
+    }
+
+    /// Peeks into the top of the segment stack.
+    fn last_sync_segment(&self) -> Option<(BlockHeader, PeerInfo)> {
+        let (_, segment) = self
+            .0
+            .iter()
+            .filter(|(_, s)| s.peer.is_some())
+            .min_by_key(|(n, _)| **n)?;
+        let peer_info = PeerInfo {
+            score: u32::MAX,
+            peer_id: segment.peer.unwrap(),
+            last_used: Instant::now(),
+            version: segment.version,
+        };
+        Some((segment.header, peer_info))
+    }
+
+    /// Pushes a particular segment into the stack.
+    fn push_sync_segment(&mut self, peer: &PeerInfo, meta: &BlockHeader) {
+        self.0.insert(
+            meta.number,
+            Segment {
+                block_hash: meta.hash,
+                parent_hash: meta.qc.block_hash,
+                version: peer.version,
+                peer: Some(peer.peer_id),
+                header: *meta,
+            },
+        );
+    }
+
+    /// Bulk inserts a bunch of metadata.
+    fn insert_sync_metadata(&mut self, metas: &Vec<BlockHeader>) {
+        for meta in metas {
+            self.0.insert(
+                meta.number,
+                Segment {
+                    block_hash: meta.hash,
+                    parent_hash: meta.qc.block_hash,
+                    version: PeerVer::V2, // ???
+                    peer: None,
+                    header: *meta,
+                },
+            );
+        }
+    }
+
+    /// Empty the metadata table.
+    fn empty_sync_metadata(&mut self) {
+        self.0.clear();
+    }
+
+    /// Pops a segment from the stack; and bulk removes all metadata associated with it.
+    fn pop_sync_segment(&mut self) {
+        let Some((num, segment)) = self
+            .0
+            .iter_mut()
+            .filter(|(_, s)| s.peer.is_some())
+            .min_by_key(|(n, _)| **n)
+        else {
+            return;
+        };
+
+        // update marker
+        segment.peer = None;
+
+        // remove segment
+        let mut block_nums = vec![];
+        let mut block_hash = segment.parent_hash;
+        let mut block_num = *num;
+        // This implementation skips the final segment in the chain. I don't know if that's intended or not.
+        while let Some((num, segment)) = self.0.iter().find(|(_, s)| s.block_hash == block_hash) {
+            block_nums.push(block_num);
+            block_hash = segment.parent_hash;
+            block_num = *num;
+        }
+
+        for block_num in block_nums {
+            self.0.remove(&block_num);
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Segment {
+    block_hash: Hash,
+    parent_hash: Hash,
+    version: PeerVer,
+    peer: Option<PeerId>,
+    header: BlockHeader,
 }
 
 impl Sync {
@@ -116,12 +235,8 @@ impl Sync {
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
 
-        // Start from reset, or continue sync
-        let state = if db.count_sync_segments()? == 0 {
-            SyncState::Phase0
-        } else {
-            SyncState::Retry1 // continue sync
-        };
+        // Start from reset
+        let state = SyncState::Phase0;
 
         let latest_block_number = latest_block
             .as_ref()
@@ -149,6 +264,7 @@ impl Sync {
             active_sync_count: 0,
             p1_response: BTreeMap::new(),
             checkpoint_at: u64::MIN,
+            segments: Segments::default(),
         })
     }
 
@@ -245,7 +361,7 @@ impl Sync {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
-                if !self.db.contains_block(&parent_hash)? {
+                if !self.db.read()?.blocks()?.contains_hash(parent_hash)? {
                     self.active_sync_count += self.active_sync_count.saturating_add(1);
                     // No parent block, trigger sync
                     tracing::debug!("sync::DoSync : syncing from {parent_hash}",);
@@ -271,7 +387,7 @@ impl Sync {
             // Wait till 99% synced, zip it up!
             SyncState::Phase3 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
-                if self.db.contains_block(&ancestor_hash)? {
+                if self.db.read()?.blocks()?.contains_hash(ancestor_hash)? {
                     tracing::info!(
                         "sync::DoSync : finishing {} blocks from {}",
                         self.recent_proposals.len(),
@@ -281,7 +397,7 @@ impl Sync {
                     let proposals = self.recent_proposals.drain(..).collect_vec();
                     self.inject_proposals(proposals)?;
                 }
-                self.db.empty_sync_metadata()?;
+                self.segments.empty_sync_metadata();
                 self.state = SyncState::Phase0;
             }
             // Retry to fix sync issues e.g. peers that are now offline
@@ -304,11 +420,9 @@ impl Sync {
     fn update_started_at(&mut self) -> Result<()> {
         let highest_block = self
             .db
-            .get_canonical_block_by_number(
-                self.db
-                    .get_highest_canonical_block_number()?
-                    .expect("no highest canonical block"),
-            )?
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
             .expect("missing canonical block");
         self.started_at = highest_block.number();
         Ok(())
@@ -321,7 +435,16 @@ impl Sync {
         let txs = block
             .transactions
             .iter()
-            .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
+            .map(|hash| {
+                self.db
+                    .read()
+                    .unwrap()
+                    .transactions()
+                    .unwrap()
+                    .get(*hash)
+                    .unwrap()
+                    .unwrap()
+            })
             // handle verification on the client-side
             .map(|tx| {
                 let hash = tx.calculate_hash();
@@ -341,7 +464,7 @@ impl Sync {
     /// If this function is called many times, it will eventually restart from Phase 0.
     fn retry_phase1(&mut self) -> Result<()> {
         self.retry_count = self.retry_count.saturating_add(1);
-        let segment_count = self.db.count_sync_segments()?;
+        let segment_count = self.segments.count_sync_segments();
         if segment_count == 0 {
             tracing::error!("sync::Retry1 : no metadata segments");
             self.state = SyncState::Phase0;
@@ -351,8 +474,8 @@ impl Sync {
         tracing::debug!("sync::Retry1 : retrying segment #{segment_count}");
 
         // remove the last segment from the chain metadata
-        let (meta, _) = self.db.last_sync_segment()?.unwrap();
-        self.db.pop_sync_segment()?;
+        let (meta, _) = self.segments.last_sync_segment().unwrap();
+        self.segments.pop_sync_segment();
         self.inject_at = None;
         self.state = SyncState::Phase1(meta);
         Ok(())
@@ -434,14 +557,14 @@ impl Sync {
             .collect_vec();
 
         if self.inject_proposals(proposals)? {
-            self.db.pop_sync_segment()?;
+            self.segments.pop_sync_segment();
         } else {
             // sync is stuck, cancel sync and restart, should be fast for peers that are already near the tip.
             self.state = SyncState::Phase3;
             return Ok(());
         };
 
-        if self.db.count_sync_segments()? == 0 {
+        if self.segments.count_sync_segments() == 0 {
             self.state = SyncState::Phase3;
         } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
             self.request_missing_blocks()?;
@@ -471,7 +594,7 @@ impl Sync {
         let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
         for hash in request {
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(block) = self.db.read()?.blocks()?.by_hash(hash)? else {
                 break; // that's all we have!
             };
             proposals.push(self.block_to_proposal(block));
@@ -507,8 +630,8 @@ impl Sync {
             self.peers.reinsert_peer(peer)?;
 
             // If we have no chain_segments, we have nothing to do
-            if let Some((meta, peer_info)) = self.db.last_sync_segment()? {
-                let request_hashes = self.db.get_sync_segment(meta.qc.block_hash)?;
+            if let Some((meta, peer_info)) = self.segments.last_sync_segment() {
+                let request_hashes = self.segments.get_sync_segment(meta.qc.block_hash);
 
                 // Checksum of the request hashes
                 let checksum = request_hashes
@@ -518,7 +641,7 @@ impl Sync {
                     })
                     .finalize();
                 let range = Range {
-                    start: self.db.last_sync_block_number()?,
+                    start: self.segments.last_sync_block_number(),
                     end: meta.number.saturating_sub(1),
                 };
 
@@ -698,10 +821,10 @@ impl Sync {
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
         // Record the constructed chain metadata
-        self.db.insert_sync_metadata(&segment)?;
+        self.segments.insert_sync_metadata(&segment);
 
         // Record landmark(s), including peer that has this set of blocks
-        self.db.push_sync_segment(&segment_peer, meta)?;
+        self.segments.push_sync_segment(&segment_peer, meta);
 
         // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
         let mut block_size = 0;
@@ -722,7 +845,7 @@ impl Sync {
                 false
             }
         }) {
-            self.db.push_sync_segment(&segment_peer, header)?;
+            self.segments.push_sync_segment(&segment_peer, header);
         }
 
         // Record the oldest block in the segment
@@ -733,7 +856,7 @@ impl Sync {
         let block_hash = segment.last().as_ref().unwrap().hash;
 
         // If the segment hits our history, turnaround to Phase 2.
-        if checkpointed || self.db.contains_block(&block_hash)? {
+        if checkpointed || self.db.read()?.blocks()?.contains_hash(block_hash)? {
             self.state = SyncState::Phase2((Hash::ZERO, Range::default()));
             // drop all pending requests
             for p in self.in_flight.drain(..) {
@@ -776,7 +899,12 @@ impl Sync {
         let batch_size = Self::MAX_BATCH_SIZE
             .min(request.to_height.saturating_sub(request.from_height) as usize);
         let mut metas = Vec::with_capacity(batch_size);
-        let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
+        let Some(block) = self
+            .db
+            .read()?
+            .blocks()?
+            .canonical_by_height(request.to_height)?
+        else {
             tracing::warn!("sync::MetadataRequest : unknown block height");
             return Ok(ExternalMessage::MetaDataResponse(vec![]));
         };
@@ -784,7 +912,7 @@ impl Sync {
         let mut hash = block.hash();
         while metas.len() <= batch_size {
             // grab the parent
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(block) = self.db.read()?.blocks()?.by_hash(hash)? else {
                 break; // that's all we have!
             };
             hash = block.parent_hash();
@@ -936,7 +1064,10 @@ impl Sync {
 
         let highest_number = self
             .db
-            .get_highest_canonical_block_number()?
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .map(|b| b.number())
             .unwrap_or_default();
 
         // Output some stats
@@ -999,7 +1130,7 @@ impl Sync {
     pub fn am_syncing(&self) -> Result<bool> {
         Ok(self.in_pipeline != 0
             || !matches!(self.state, SyncState::Phase0)
-            || self.db.count_sync_segments()? != 0)
+            || self.segments.count_sync_segments() != 0)
     }
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,
@@ -1011,8 +1142,11 @@ impl Sync {
 
         let current_block = self
             .db
-            .get_highest_canonical_block_number()?
-            .expect("no highest block");
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .expect("no highest block")
+            .number();
 
         let peer_count = self.peers.count() + self.in_flight.len();
 
@@ -1242,7 +1376,7 @@ impl std::fmt::Display for SyncState {
 ///
 /// V1 - peers that support original sync algorithm in `block_store.rs`
 /// V2 - peers that support new sync algorithm in `sync.rs`
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum PeerVer {
     V1 = 1,
     V2 = 2,

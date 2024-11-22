@@ -1567,6 +1567,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytesize"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3c8f83209414aacf0eeae3cf730b18d6981697fba62f200fcfb92b9f082acba"
+
+[[package]]
 name = "bzip2"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5468,15 +5474,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lru-mem"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf5c8c26d903a41c80d4cc171940a57a4d1bc51139ebd6aad87e2f9ae3774780"
-dependencies = [
- "hashbrown 0.14.5",
-]
-
-[[package]]
 name = "lz4"
 version = "1.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7003,6 +7000,16 @@ dependencies = [
  "ring 0.16.20",
  "time",
  "yasna",
+]
+
+[[package]]
+name = "redb"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea0a72cd7140de9fc3e318823b883abf819c20d478ec89ce880466dc2ef263c6"
+dependencies = [
+ "libc",
+ "log",
 ]
 
 [[package]]
@@ -10438,6 +10445,7 @@ dependencies = [
  "blsful",
  "bs58",
  "bytes",
+ "bytesize",
  "cbor4ii 1.0.0",
  "cfg-if",
  "clap",
@@ -10456,7 +10464,6 @@ dependencies = [
  "jsonrpsee",
  "k256",
  "libp2p",
- "lru-mem",
  "lz4",
  "once_cell",
  "opentelemetry",
@@ -10469,6 +10476,7 @@ dependencies = [
  "prost 0.13.5",
  "rand",
  "rand_chacha",
+ "redb",
  "revm",
  "revm-inspectors",
  "rusqlite",

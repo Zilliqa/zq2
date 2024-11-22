@@ -19,8 +19,8 @@ use tokio::fs;
 use zilliqa::{
     api,
     cfg::{
-        genesis_fork_default, max_rpc_response_size_default, staker_withdrawal_period_default,
-        state_cache_size_default, ApiServer,
+        cache_size_default, genesis_fork_default, max_rpc_response_size_default,
+        staker_withdrawal_period_default, ApiServer,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
@@ -515,7 +515,7 @@ impl Setup {
                 }],
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
-                state_cache_size: state_cache_size_default(),
+                cache_size: cache_size_default(),
                 load_checkpoint: None,
                 do_checkpoints: false,
                 eth_chain_id: eth_chain_id_default(),
