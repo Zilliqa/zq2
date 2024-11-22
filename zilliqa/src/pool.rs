@@ -411,7 +411,7 @@ mod tests {
         block_store::BlockStore,
         cfg::NodeConfig,
         crypto::Hash,
-        db::Db,
+        db::{ArcDb, Db},
         node::{MessageSender, RequestId},
         state::State,
         transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
