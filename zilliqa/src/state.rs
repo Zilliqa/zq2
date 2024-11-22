@@ -574,7 +574,7 @@ mod tests {
         api::to_hex::ToHex,
         block_store::BlockStore,
         cfg::NodeConfig,
-        db::Db,
+        db::{ArcDb, Db},
         message::BlockHeader,
         node::{MessageSender, RequestId},
     };

@@ -141,15 +141,14 @@ impl BlockCache {
 
     pub fn destructive_proposals_from_parent_hashes(
         &mut self,
-        hashes: &Vec<Hash>,
+        hashes: impl Iterator<Item = Hash>,
     ) -> Vec<(PeerId, Proposal)> {
         // For each hash, find the list of blocks that have it as the parent.
         let cache_keys = hashes
-            .iter()
-            .filter_map(|x| self.by_parent_hash.remove(x))
+            .filter_map(|x| self.by_parent_hash.remove(&x))
             .flatten()
             .collect::<Vec<u128>>();
-        trace!("block_store::destructive.. : parent hashes {hashes:?} maps to keys {cache_keys:?}");
+        trace!("block_store::destructive.. : parent hashes maps to keys {cache_keys:?}");
         let maybe = cache_keys
             .iter()
             .filter_map(|key| {
@@ -173,7 +172,7 @@ impl BlockCache {
             self.fork_counter = 0;
         }
         trace!(
-            "block_store::destructive.. : pulled blocks for parent hashes {hashes:?} - {}",
+            "block_store::destructive.. : pulled blocks for parent hashes - {}",
             maybe
                 .iter()
                 .map(|(_, v)| format!("v={} b={}", v.header.view, v.header.number))
@@ -513,64 +512,6 @@ impl PeerInfo {
     }
 }
 
-/// Data about a peer
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PeerInfoStatus {
-    availability: BlockAvailability,
-    availability_updated_at: Option<u64>,
-    pending_requests: Vec<(String, SystemTime, u64, u64)>,
-    last_request_failed_at: Option<u64>,
-}
-
-/// Data about the block store, used for debugging.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct BlockStoreStatus {
-    highest_known_view: u64,
-    views_held: Vec<Range<u64>>,
-    peers: Vec<(String, PeerInfoStatus)>,
-    availability: Option<Vec<BlockStrategy>>,
-}
-
-impl BlockStoreStatus {
-    pub fn new(block_store: &mut BlockStore) -> Result<Self> {
-        let peers = block_store
-            .peers
-            .iter()
-            .map(|(k, v)| (format!("{:?}", k), PeerInfoStatus::new(v)))
-            .collect::<Vec<_>>();
-        Ok(Self {
-            highest_known_view: block_store.highest_known_view,
-            views_held: block_store.db.get_view_ranges()?,
-            peers,
-            availability: block_store.availability()?,
-        })
-    }
-}
-
-impl PeerInfoStatus {
-    // Annoyingly, this can't (easily) be allowed to fail without making generating debug info hard.
-    fn new(info: &PeerInfo) -> Self {
-        fn s_from_time(q: Option<SystemTime>) -> Option<u64> {
-            q.map(|z| {
-                z.duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap_or(Duration::ZERO)
-                    .as_secs()
-            })
-        }
-        let pending_requests = info
-            .pending_requests
-            .iter()
-            .map(|(k, v)| (format!("{:?}", k), v.0, v.1, v.2))
-            .collect::<Vec<_>>();
-        Self {
-            availability: info.availability.clone(),
-            availability_updated_at: s_from_time(info.availability_updated_at),
-            pending_requests,
-            last_request_failed_at: s_from_time(info.last_request_failed_at),
-        }
-    }
-}
-
 impl BlockAvailability {
     pub fn new() -> Self {
         Self {
@@ -582,13 +523,14 @@ impl BlockAvailability {
 
 impl BlockStore {
     pub fn new(config: &NodeConfig, db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
-        let available_blocks =
-            db.get_view_ranges()?
-                .iter()
-                .fold(RangeMap::new(), |mut range_map, range| {
-                    range_map.with_range(range);
-                    range_map
-                });
+        let read = db.read()?;
+        let blocks = read.blocks()?;
+        let min = blocks.min_by_view()?.map(|b| b.view()).unwrap_or_default();
+        let max = blocks
+            .max_canonical_by_view()?
+            .map(|b| b.view())
+            .unwrap_or_default();
+        let available_blocks = RangeMap::from_closed_interval(min, max);
         Ok(BlockStore {
             db,
             block_cache: Arc::new(RwLock::new(LruCache::new(NonZeroUsize::new(5).unwrap()))),
@@ -1032,7 +974,7 @@ impl BlockStore {
         if let Some(block) = block_cache.get(&hash) {
             return Ok(Some(block.clone()));
         }
-        let Some(block) = self.db.get_block_by_hash(&hash)? else {
+        let Some(block) = self.db.read()?.blocks()?.by_hash(hash)? else {
             return Ok(None);
         };
         block_cache.put(hash, block.clone());
@@ -1040,18 +982,15 @@ impl BlockStore {
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        let Some(hash) = self.db.get_block_hash_by_view(view)? else {
-            return Ok(None);
-        };
-        self.get_block(hash)
+        self.db.read()?.blocks()?.by_view(view)
     }
 
-    pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
-        self.db.get_highest_canonical_block_number()
+    pub fn get_highest_block(&self) -> Result<Option<Block>> {
+        self.db.read()?.blocks()?.max_canonical_by_view()
     }
 
     pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.db.get_canonical_block_by_number(number)
+        self.db.read()?.blocks()?.canonical_by_height(number)
     }
 
     /// Called to process a block which can be added to the chain.
@@ -1068,7 +1007,9 @@ impl BlockStore {
         block: Block,
     ) -> Result<Vec<(PeerId, Proposal)>> {
         trace!(?from, number = block.number(), hash = ?block.hash(), "block_store::process_block() : starting");
-        self.db.insert_block(&block)?;
+        let write = self.db.write()?;
+        write.blocks()?.insert(&block)?;
+        write.commit()?;
         self.available_blocks.with_elem(block.view());
 
         if let Some(from) = from {
@@ -1082,7 +1023,7 @@ impl BlockStore {
         // There are two sets
         let result = self
             .buffered
-            .destructive_proposals_from_parent_hashes(&vec![block.hash()]);
+            .destructive_proposals_from_parent_hashes(std::iter::once(block.hash()));
 
         // Update highest_confirmed_view, but don't trim the cache if
         // we're not changing anything.
@@ -1115,25 +1056,21 @@ impl BlockStore {
         self.peers.entry(peer).or_insert_with(PeerInfo::new)
     }
 
-    pub fn forget_block_range(&mut self, blocks: Range<u64>) -> Result<()> {
-        self.db.forget_block_range(blocks)
-    }
-
-    pub fn contains_block(&mut self, block_hash: &Hash) -> Result<bool> {
-        self.db.contains_block(block_hash)
+    pub fn contains_block(&mut self, view: u64) -> Result<bool> {
+        self.db.read()?.blocks()?.contains(view)
     }
 
     // Retrieve the plausible next blocks for the block with this hash
     // Because of forks there might be many of these.
     pub fn obtain_child_block_candidates_for(
         &mut self,
-        hashes: &Vec<Hash>,
+        blocks: &[Block],
     ) -> Result<Vec<(PeerId, Proposal)>> {
-        trace!("block_store::obtain_child_block_candidates_for :  {hashes:?}");
+        trace!("block_store::obtain_child_block_candidates_for");
         // The easy case is that there's something in the buffer with us as its parent hash.
         let with_parent_hashes = self
             .buffered
-            .destructive_proposals_from_parent_hashes(hashes);
+            .destructive_proposals_from_parent_hashes(blocks.iter().map(|b| b.hash()));
         if with_parent_hashes.is_empty() {
             // There isn't. There are three cases:
             //
@@ -1148,7 +1085,13 @@ impl BlockStore {
             // In any case, deleting any cached block that calls itself the next block is
             // the right thing to do - if it really was the next block, we would not be
             // executing this branch.
-            if let Some(highest_block_number) = self.db.get_highest_canonical_block_number()? {
+            if let Some(highest_block_number) = self
+                .db
+                .read()?
+                .blocks()?
+                .max_canonical_by_view()?
+                .map(|b| b.number())
+            {
                 self.buffered.delete_blocks_up_to(highest_block_number + 1);
                 trace!(
                     "block_store::obtain_child_block_candidates : deleted cached blocks up to and including {0}",
@@ -1158,12 +1101,17 @@ impl BlockStore {
 
             let fork_elems =
                 self.buffered.inc_fork_counter() * (1 + constants::EXAMINE_BLOCKS_PER_FORK_COUNT);
-            let parent_hashes = self.db.get_highest_block_hashes(fork_elems)?;
+            let parents = self
+                .db
+                .read()?
+                .blocks()?
+                .max_canonical_by_view_count(fork_elems)?;
+            let parent_hashes = parents.iter().map(|b| b.hash());
             let revised = self
                 .buffered
-                .destructive_proposals_from_parent_hashes(&parent_hashes);
+                .destructive_proposals_from_parent_hashes(parent_hashes);
             trace!(
-                "block_store::obtain_child_block_candidates : fork evasion of {fork_elems} elements - {parent_hashes:?} produces {revised:?}"
+                "block_store::obtain_child_block_candidates : fork evasion of {fork_elems} elements produces {revised:?}"
             );
             if !revised.is_empty() {
                 // Found some!
@@ -1181,7 +1129,9 @@ impl BlockStore {
         self.obtain_child_block_candidates_for(
             &self
                 .db
-                .get_highest_block_hashes(constants::EXAMINE_BLOCKS_PER_FORK_COUNT)?,
+                .read()?
+                .blocks()?
+                .max_canonical_by_view_count(constants::EXAMINE_BLOCKS_PER_FORK_COUNT)?,
         )
     }
 
@@ -1229,8 +1179,8 @@ impl BlockStore {
         Ok(())
     }
 
-    pub fn get_num_transactions(&self) -> Result<usize> {
-        let count = self.db.get_total_transaction_count()?;
+    pub fn get_num_transactions(&self) -> Result<u64> {
+        let count = self.db.read()?.transactions()?.count()?;
         Ok(count)
     }
 
@@ -1248,13 +1198,10 @@ impl BlockStore {
 
     /// Returns (am_syncing, current_highest_block)
     pub fn am_syncing(&self) -> Result<(bool, Block)> {
-        let current_block = self
-            .db
-            .get_canonical_block_by_number(
-                self.db
-                    .get_highest_canonical_block_number()?
-                    .ok_or_else(|| anyhow!("no highest block"))?,
-            )?
+        let read = self.db.read()?;
+        let current_block = read
+            .blocks()?
+            .max_canonical_by_view()?
             .ok_or_else(|| anyhow!("missing highest block"))?;
         Ok((
             (self.highest_known_view + 2) > current_block.view(),
