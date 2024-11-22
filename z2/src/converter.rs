@@ -17,6 +17,7 @@ use alloy::{
 };
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, bitvec, order::Msb0};
+use bitvec::macros::internal::funty::Integral;
 use clap::{Parser, Subcommand};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use ethabi::Token;
@@ -342,6 +343,12 @@ fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Res
                 .fold(0, |acc, item| acc + item.stake.0),
         )
         .expect("Genesis accounts + genesis deposits sum to more than max value of u128");
+    println!("Requested amount: {}", total_requested_amount);
+    let zero_acc = state.get_account(Address::ZERO)?;
+
+    println!("Zero address balance as per zq2: {}", zero_acc.balance);
+
+    println!("After subtraction the balance will be: {}", zero_acc.balance.checked_sub(total_requested_amount).expect("Underflow!"));
     state.mutate_account(Address::ZERO, |acc| {
         acc.balance = acc.balance.checked_sub(total_requested_amount).expect("Sum of funds in genesis.deposit and genesis.accounts exceeds funds in ZeroAccount from zq1!");
         Ok(())
@@ -358,6 +365,13 @@ pub async fn convert_persistence(
     zq2_config: Config,
     secret_key: SecretKey,
 ) -> Result<()> {
+
+    let zero_acc = zq1_db.get_account(Address::ZERO)?.unwrap();
+    let zero_acc = zq1::Account::from_proto(zero_acc)?;
+
+    println!("Zero acc balance as per zq1: {:?}", zero_acc.balance);
+    println!("Zero acc balance as per zq2: {:?}", zero_acc.balance * 10u128.pow(6));
+
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
     )?;
