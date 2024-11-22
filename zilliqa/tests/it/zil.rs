@@ -2669,91 +2669,92 @@ async fn get_recent_transactions_1(mut network: Network) {
     assert_eq!(recent_transactions.number, 4);
 }
 
-// #[zilliqa_macros::test] // Disabled since API is currently not working
-// async fn get_num_transactions_0(mut network: Network) {
-//     let wallet = network.genesis_wallet().await;
+#[zilliqa_macros::test]
+async fn get_num_transactions_0(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let response: Value = wallet
+        .provider()
+        .request("GetNumTransactions", [""])
+        .await
+        .expect("Failed to call GetNumTransactions API");
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
+    response
+        .as_str()
+        .expect("Expected response to be a string")
+        .parse::<u64>()
+        .expect("Failed to parse response as u64");
+}
 
-//     let response: Value = wallet
-//         .provider()
-//         .request("GetNumTransactions", [""])
-//         .await
-//         .expect("Failed to call GetNumTransactions API");
+#[zilliqa_macros::test]
+async fn get_num_transactions_1(mut network: Network) {
+    let wallet = network.random_wallet().await;
 
-//     assert!(
-//         response.is_string(),
-//         "Expected response to be a string, got: {:?}",
-//         response
-//     );
-//     response
-//         .as_str()
-//         .expect("Expected response to be a string")
-//         .parse::<u64>()
-//         .expect("Failed to parse response as u64");
-// }
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
-// Disabled since API is currently not working
-// #[zilliqa_macros::test] // Disabled since API is currently not working
-// async fn get_num_transactions_1(mut network: Network) {
-//     let wallet = network.random_wallet().await;
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
 
-//     let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (_, _address) = zilliqa_account(&mut network, &wallet).await;
 
-//     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
-//         .parse()
-//         .unwrap();
-//     send_transaction(
-//         &mut network,
-//         &secret_key,
-//         1,
-//         ToAddr::Address(to_addr),
-//         200u128 * 10u128.pow(12),
-//         50_000,
-//         None,
-//         None,
-//     )
-//     .await;
+    network.run_until_block_finalized(1u64, 100).await.unwrap();
 
-//     network.run_until_block_finalized(1u64, 100).await.unwrap();
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
-//     let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
 
-//     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
-//         .parse()
-//         .unwrap();
-//     send_transaction(
-//         &mut network,
-//         &secret_key,
-//         1,
-//         ToAddr::Address(to_addr),
-//         200u128 * 10u128.pow(12),
-//         50_000,
-//         None,
-//         None,
-//     )
-//     .await;
+    network.run_until_block_finalized(8u64, 300).await.unwrap();
 
-//     network.run_until_block_finalized(8u64, 300).await.unwrap();
+    let response: Value = wallet
+        .provider()
+        .request("GetNumTransactions", [""])
+        .await
+        .expect("Failed to call GetNumTransactions API");
 
-//     let response: Value = wallet
-//         .provider()
-//         .request("GetNumTransactions", [""])
-//         .await
-//         .expect("Failed to call GetNumTransactions API");
+    assert!(
+        response.is_string(),
+        "Expected response to be a string, got: {:?}",
+        response
+    );
 
-//     assert!(
-//         response.is_string(),
-//         "Expected response to be a string, got: {:?}",
-//         response
-//     );
+    let response_num = response
+        .as_str()
+        .expect("Expected response to be a string")
+        .parse::<u64>()
+        .expect("Failed to parse response as u64");
 
-//     let response_num = response
-//         .as_str()
-//         .expect("Expected response to be a string")
-//         .parse::<u64>()
-//         .expect("Failed to parse response as u64");
-
-//     assert_eq!(response_num, 4);
-// }
+    assert_eq!(response_num, 4);
+}
 
 #[zilliqa_macros::test]
 async fn get_num_txns_ds_epoch_0(mut network: Network) {
