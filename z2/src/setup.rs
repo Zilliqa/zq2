@@ -18,7 +18,7 @@ use tokio::fs;
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::{
     api,
-    cfg::{state_cache_size_default, ApiServer},
+    cfg::{cache_size_default, ApiServer},
     crypto::{SecretKey, TransactionPublicKey},
 };
 use zilliqa::{
@@ -513,7 +513,7 @@ impl Setup {
                 }],
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
-                state_cache_size: state_cache_size_default(),
+                cache_size: cache_size_default(),
                 load_checkpoint: None,
                 do_checkpoints: false,
                 eth_chain_id: eth_chain_id_default(),
