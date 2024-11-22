@@ -191,7 +191,7 @@ impl Node {
         let db = Arc::new(Db::new(
             config.data_dir.as_ref(),
             config.eth_chain_id,
-            config.state_cache_size,
+            config.cache_size,
         )?);
         let node = Node {
             config: config.clone(),
@@ -445,10 +445,11 @@ impl Node {
             BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
             BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
             BlockNumberOrTag::Finalized => {
-                let Some(view) = self.db.get_finalized_view()? else {
+                let read = self.db.read()?;
+                let Some(view) = read.finalized_view()?.get()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
-                let Some(block) = self.db.get_block_by_view(view)? else {
+                let Some(block) = read.blocks()?.by_view(view)? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
                 Ok(Some(block))
@@ -871,13 +872,6 @@ impl Node {
 
     pub fn get_chain_tip(&self) -> u64 {
         self.consensus.head_block().header.number
-    }
-
-    pub fn get_transaction_receipts_in_block(
-        &self,
-        block_hash: Hash,
-    ) -> Result<Vec<TransactionReceipt>> {
-        self.db.get_transaction_receipts_in_block(&block_hash)
     }
 
     pub fn get_finalized_height(&self) -> Result<u64> {

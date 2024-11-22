@@ -26,7 +26,7 @@ use crate::{
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     contracts,
     crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
-    db::{self, Db},
+    db::{self, ArcDb, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
@@ -211,7 +211,9 @@ impl Consensus {
         let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
 
         let latest_block = db
-            .get_finalized_view()?
+            .read()?
+            .finalized_view()?
+            .get()?
             .map(|view| {
                 block_store
                     .get_block_by_view(view)?
@@ -245,22 +247,28 @@ impl Consensus {
         };
 
         let (start_view, finalized_view, high_qc) = {
-            match db.get_high_qc()? {
-                Some(qc) => {
+            match db.read()?.high_qc()?.get()? {
+                Some((qc, _)) => {
                     let high_block = block_store
                         .get_block(qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
 
                     let finalized_number = db
-                        .get_finalized_view()?
+                        .read()?
+                        .finalized_view()?
+                        .get()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
                     let finalized_block = db
-                        .get_block_by_view(finalized_number)?
+                        .read()?
+                        .blocks()?
+                        .by_view(finalized_number)?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
                     let start_view = db
-                        .get_view()?
+                        .read()?
+                        .view()?
+                        .get()?
                         .or_else(|| {
                             Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
                         })
@@ -283,14 +291,13 @@ impl Consensus {
 
                     // If we have newer blocks, erase them
                     // @todo .. more elegantly :-)
+                    let write = db.write()?;
                     loop {
-                        let highest_block_number = db
-                            .get_highest_canonical_block_number()?
-                            .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
-
-                        let head_block = block_store
-                            .get_canonical_block_by_number(highest_block_number)?
+                        let head_block = write
+                            .blocks()?
+                            .max_canonical_by_view()?
                             .ok_or_else(|| anyhow!("missing head block!"))?;
+                        let highest_block_number = head_block.number();
                         trace!(
                             "recovery: highest_block_number {highest_block_number} view {0}",
                             head_block.view()
@@ -299,13 +306,16 @@ impl Consensus {
                         if head_block.view() > high_block.view()
                             && head_block.view() > finalized_number
                         {
+                            for txn_hash in &head_block.transactions {
+                                write.delete_transaction(*txn_hash)?;
+                            }
+                            write.blocks()?.delete(head_block.view())?;
                             trace!("recovery: stored block {0} reverted", highest_block_number);
-                            db.remove_transactions_executed_in_block(&head_block.hash())?;
-                            db.remove_block(&head_block)?;
                         } else {
                             break;
                         }
                     }
+                    write.commit()?;
 
                     info!(
                         "During recovery, starting consensus at view {}, finalised view {}",
@@ -346,8 +356,10 @@ impl Consensus {
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
         };
-        consensus.db.set_view(start_view)?;
-        consensus.set_finalized_view(finalized_view)?;
+        let write = consensus.db.write()?;
+        write.view()?.set(start_view)?;
+        write.finalized_view()?.set(finalized_view)?;
+        write.commit()?;
 
         // If we're at genesis, add the genesis block and return
         if latest_block_view == 0 {
@@ -378,7 +390,9 @@ impl Consensus {
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
         // This is useful in scenarios in which consensus has failed since this node went down
-        if let Some(latest_high_qc_timestamp) = consensus.db.get_high_qc_updated_at()? {
+        if let Some(latest_high_qc_timestamp) =
+            consensus.db.read()?.high_qc()?.get()?.map(|(_, t)| t)
+        {
             let view_diff = Consensus::minimum_views_in_time_difference(
                 latest_high_qc_timestamp.elapsed()?,
                 consensus.config.consensus.consensus_timeout,
@@ -391,7 +405,9 @@ impl Consensus {
                     view_diff,
                     min_view_since_high_qc_updated
                 );
-                consensus.db.set_view(min_view_since_high_qc_updated)?;
+                let write = consensus.db.write()?;
+                write.view()?.set(min_view_since_high_qc_updated)?;
+                write.commit()?;
             }
 
             // Remind block_store of our peers and request any potentially missing blocks
@@ -457,13 +473,12 @@ impl Consensus {
     }
 
     pub fn head_block(&self) -> Block {
-        let highest_block_number = self
-            .block_store
-            .get_highest_canonical_block_number()
+        self.db
+            .read()
             .unwrap()
-            .unwrap();
-        self.block_store
-            .get_canonical_block_by_number(highest_block_number)
+            .blocks()
+            .unwrap()
+            .max_canonical_by_view()
             .unwrap()
             .unwrap()
     }
@@ -645,7 +660,7 @@ impl Consensus {
             block.hash()
         );
 
-        if self.block_store.contains_block(&block.hash())? {
+        if self.block_store.contains_block(block.view())? {
             trace!("ignoring block proposal, block store contains this block already");
             return Ok(None);
         }
@@ -987,7 +1002,7 @@ impl Consensus {
             return Err(anyhow!("Otterscan indices are disabled"));
         }
 
-        self.db.get_touched_transactions(address)
+        self.db.read()?.touched_address_index()?.get(address)
     }
 
     /// Clear up anything in memory that is no longer required. This is to avoid memory leaks.
@@ -1293,14 +1308,13 @@ impl Consensus {
         let (qc, parent) = match agg {
             // Create dummy QC for now if aggQC not provided
             None => {
-                // Start with highest canonical block
-                let num = self
-                    .db
-                    .get_highest_canonical_block_number()?
-                    .context("no canonical blocks")?; // get highest canonical block number
+                // Start with highest block
                 let block = self
-                    .get_canonical_block_by_number(num)?
-                    .context("missing canonical block")?; // retrieve highest canonical block
+                    .db
+                    .read()?
+                    .blocks()?
+                    .max_canonical_by_view()?
+                    .ok_or(anyhow!("no blocks"))?;
                 (
                     QuorumCertificate::new_with_identity(block.hash(), block.view()),
                     block,
@@ -1466,13 +1480,14 @@ impl Consensus {
             }
         }
         let (_, applied_txs, _, _) = self.early_proposal.as_ref().unwrap();
-        self.db.with_sqlite_tx(|sqlite_tx| {
+        let write = self.db.write()?;
+        {
+            let mut transactions = write.transactions()?;
             for tx in applied_txs {
-                self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
+                transactions.insert(tx.hash, &tx.tx)?;
             }
-            Ok(())
-        })?;
+        }
+        write.commit()?;
 
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
@@ -1531,14 +1546,13 @@ impl Consensus {
     }
     /// Assembles a Pending block.
     fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
-        // Start with highest canonical block
-        let num = self
-            .db
-            .get_highest_canonical_block_number()?
-            .context("no canonical blocks")?; // get highest canonical block number
+        // Start with highest block
         let block = self
-            .get_canonical_block_by_number(num)?
-            .context("missing canonical block")?; // retrieve highest canonical block
+            .db
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .ok_or(anyhow!("no blocks"))?;
 
         // Generate early QC
         let early_qc = QuorumCertificate::new_with_identity(block.hash(), block.view());
@@ -1599,7 +1613,9 @@ impl Consensus {
                 inspector::noop(),
                 false,
             )?;
-            self.db.insert_transaction(&txn.hash, &txn.tx)?;
+            let write = self.db.write()?;
+            write.transactions()?.insert(txn.hash, &txn.tx)?;
+            write.commit()?;
 
             // Skip transactions whose execution resulted in an error
             let Some(result) = result else {
@@ -1904,7 +1920,7 @@ impl Consensus {
     /// Returns (flag, outcome).
     /// flag is true if the transaction was newly added to the pool - ie. if it validated correctly and has not been seen before.
     pub fn new_transaction(&mut self, txn: VerifiedTransaction) -> Result<TxAddResult> {
-        if self.db.contains_transaction(&txn.hash)? {
+        if self.db.read()?.transactions()?.contains(txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
             return Ok(TxAddResult::Duplicate(txn.hash));
         }
@@ -1961,20 +1977,16 @@ impl Consensus {
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         Ok(self
             .db
-            .get_transaction(&hash)?
+            .read()?
+            .transactions()?
+            .get(hash)?
             .map(|tx| tx.verify())
             .transpose()?
             .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        let Some(block_hash) = self.db.get_block_hash_reverse_index(hash)? else {
-            return Ok(None);
-        };
-        let block_receipts = self.db.get_transaction_receipts_in_block(&block_hash)?;
-        Ok(block_receipts
-            .into_iter()
-            .find(|receipt| receipt.tx_hash == *hash))
+        self.db.read()?.receipts()?.get(*hash)
     }
 
     fn update_high_qc_and_view(
@@ -1993,7 +2005,9 @@ impl Consensus {
 
         if self.high_qc.block_hash == Hash::ZERO {
             trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
-            self.db.set_high_qc(new_high_qc)?;
+            let write = self.db.write()?;
+            write.high_qc()?.set(&new_high_qc)?;
+            write.commit()?;
             self.high_qc = new_high_qc;
         } else {
             let current_high_qc_view = self
@@ -2010,7 +2024,9 @@ impl Consensus {
                     current_view = view,
                     "updating high qc"
                 );
-                self.db.set_high_qc(new_high_qc)?;
+                let write = self.db.write()?;
+                write.high_qc()?.set(&new_high_qc)?;
+                write.commit()?;
                 self.high_qc = new_high_qc;
                 if new_high_qc_view >= view {
                     self.set_view(new_high_qc_view + 1)?;
@@ -2156,7 +2172,16 @@ impl Consensus {
         );
         self.set_finalized_view(block.view())?;
 
-        let receipts = self.db.get_transaction_receipts_in_block(&block.hash())?;
+        let read = self.db.read()?;
+        let receipts: Vec<_> = block
+            .transactions
+            .iter()
+            .map(|txn_hash| {
+                read.receipts()?
+                    .get(*txn_hash)?
+                    .ok_or(anyhow!("missing receipt"))
+            })
+            .collect::<Result<_>>()?;
 
         for (destination_shard, intershard_call) in blockhooks::get_cross_shard_messages(&receipts)?
         {
@@ -2187,17 +2212,16 @@ impl Consensus {
             && self.epoch_is_checkpoint(self.epoch_number(block.number()))
         {
             if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
-                let parent = self
-                    .db
-                    .get_block_by_hash(&block.parent_hash())?
-                    .ok_or(anyhow!(
-                        "Trying to checkpoint block, but we don't have its parent"
-                    ))?;
+                let read = self.db.read()?;
+                let parent = read
+                    .blocks()?
+                    .by_hash(block.parent_hash())?
+                    .ok_or(anyhow!("missing block"))?;
                 let transactions: Vec<SignedTransaction> = block
                     .transactions
                     .iter()
                     .map(|txn_hash| {
-                        let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
+                        let tx = read.transactions()?.get(*txn_hash)?.ok_or(anyhow!(
                             "failed to fetch transaction {} for checkpoint parent {}",
                             txn_hash,
                             parent.hash()
@@ -2229,7 +2253,9 @@ impl Consensus {
             .ok_or(anyhow!("No such block number {block_number}"))?;
         let parent = self
             .db
-            .get_block_by_hash(&block.parent_hash())?
+            .read()?
+            .blocks()?
+            .by_hash(block.parent_hash())?
             .ok_or(anyhow!(
                 "Trying to checkpoint block, but we don't have its parent"
             ))?;
@@ -2237,11 +2263,16 @@ impl Consensus {
             .transactions
             .iter()
             .map(|txn_hash| {
-                let tx = self.db.get_transaction(txn_hash)?.ok_or(anyhow!(
-                    "failed to fetch transaction {} for checkpoint parent {}",
-                    txn_hash,
-                    parent.hash()
-                ))?;
+                let tx = self
+                    .db
+                    .read()?
+                    .transactions()?
+                    .get(*txn_hash)?
+                    .ok_or(anyhow!(
+                        "failed to fetch transaction {} for checkpoint parent {}",
+                        txn_hash,
+                        parent.hash()
+                    ))?;
                 Ok::<_, anyhow::Error>(tx)
             })
             .collect::<Result<Vec<SignedTransaction>>>()?;
@@ -2541,18 +2572,21 @@ impl Consensus {
     }
 
     fn set_finalized_view(&mut self, view: u64) -> Result<()> {
-        self.db.set_finalized_view(view)
+        let write = self.db.write()?;
+        write.finalized_view()?.set(view)?;
+        write.commit()
     }
 
     pub fn get_finalized_view(&self) -> Result<u64> {
-        Ok(self.db.get_finalized_view()?.unwrap_or_else(|| {
+        Ok(self.db.read()?.finalized_view()?.get()?.unwrap_or_else(|| {
             warn!("no finalised view found in table. Defaulting to 0");
             0
         }))
     }
 
     fn set_view(&mut self, view: u64) -> Result<()> {
-        if self.db.set_view(view)? {
+        let write = self.db.write()?;
+        if write.view()?.set(view)? {
             self.view_updated_at = SystemTime::now();
         } else {
             warn!(
@@ -2560,11 +2594,11 @@ impl Consensus {
                 view
             );
         }
-        Ok(())
+        write.commit()
     }
 
     pub fn get_view(&self) -> Result<u64> {
-        Ok(self.db.get_view()?.unwrap_or_else(|| {
+        Ok(self.db.read()?.view()?.get()?.unwrap_or_else(|| {
             warn!("no view found in table. Defaulting to 0");
             0
         }))
@@ -2811,28 +2845,24 @@ impl Consensus {
         // Then, revert the blocks from the head block to the common ancestor
         // Then, apply the blocks (forward) from the common ancestor to the parent of the new block
         let mut head = self.head_block();
-        let mut head_height = head.number();
         let mut proposed_block = block.clone();
-        let mut proposed_block_height = block.number();
         trace!(
             "Dealing with fork: from block {} (height {}), back to block {} (height {})",
             head.hash(),
-            head_height,
+            head.number(),
             proposed_block.hash(),
-            proposed_block_height
+            proposed_block.number(),
         );
 
         // Need to make sure both pointers are at the same height
-        while head_height > proposed_block_height {
+        while head.number() > proposed_block.number() {
             trace!("Stepping back head block pointer");
             head = self.get_block(&head.parent_hash())?.unwrap();
-            head_height = head.number();
         }
 
-        while proposed_block_height > head_height {
+        while proposed_block.number() > head.number() {
             trace!("Stepping back proposed block pointer");
             proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
-            proposed_block_height = proposed_block.number();
         }
 
         // We now have both hash pointers at the same height, we can walk back until they are equal.
@@ -2876,6 +2906,7 @@ impl Consensus {
                 self.transaction_pool.insert_transaction(txn, account_nonce);
             }
 
+            let write = self.db.write()?;
             // block transactions need to be removed from self.transactions and re-injected
             for tx_hash in &head_block.transactions {
                 let orig_tx = self.get_transaction_by_hash(*tx_hash)?.unwrap();
@@ -2884,13 +2915,13 @@ impl Consensus {
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
                 self.transaction_pool
                     .insert_transaction(orig_tx, account_nonce);
+                // purge from the db
+                write.delete_transaction(*tx_hash)?;
             }
-            // then purge them all from the db, including receipts and indexes
-            self.db
-                .remove_transactions_executed_in_block(&head_block.hash())?;
 
             // this block is no longer in the main chain
-            self.db.mark_block_as_non_canonical(head_block.hash())?;
+            write.blocks()?.set_non_canonical(head_block.view())?;
+            write.commit()?;
         }
 
         // Now, we execute forward from the common ancestor to the new block parent which can
@@ -2966,6 +2997,7 @@ impl Consensus {
 
             let mut block_receipts = Vec::new();
 
+            let write = self.db.write()?;
             for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
                 let (receipt, addresses) = self
                     .receipts_cache
@@ -2977,9 +3009,10 @@ impl Consensus {
 
                 // Apply 'touched-address' from cache
                 for address in addresses {
-                    self.db.add_touched_address(address, *txn_hash)?;
+                    write.touched_address_index()?.insert(address, *txn_hash)?;
                 }
             }
+            write.commit()?;
             // fast-forward state
             self.state.set_to_root(block.state_root_hash().into());
 
@@ -3060,17 +3093,18 @@ impl Consensus {
             debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
-        self.db.with_sqlite_tx(|sqlite_tx| {
+        let write = self.db.write()?;
+        {
+            let mut transactions = write.transactions()?;
             for txn in &verified_txns {
-                self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, &txn.tx)?;
+                transactions.insert(txn.hash, &txn.tx)?;
             }
+            let mut touched_address_index = write.touched_address_index()?;
             for (addr, txn_hash) in touched_addresses {
-                self.db
-                    .add_touched_address_with_db_tx(sqlite_tx, addr, txn_hash)?;
+                touched_address_index.insert(addr, txn_hash)?;
             }
-            Ok(())
-        })?;
+        }
+        write.commit()?;
 
         if cumulative_gas_used != block.gas_used() {
             warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
@@ -3157,25 +3191,20 @@ impl Consensus {
         // Important - only add blocks we are going to execute because they can potentially
         // overwrite the mapping of block height to block, which there should only be one of.
         // for example, this HAS to be after the deal with fork call
-        if !self.db.contains_block(&block.hash())? {
+        if !self.db.read()?.blocks()?.contains(block.view())? {
             // Only tell the block store where this block came from if it wasn't from ourselves.
             let from = from.filter(|peer_id| *peer_id != self.peer_id());
             // If we were the proposer we would've already processed the block, hence the check
             self.add_block(from, block.clone())?;
         }
-        {
-            // helper scope to shadow db, to avoid moving it into the closure
-            // closure has to be move to take ownership of block_receipts
-            let db = &self.db;
-            self.db.with_sqlite_tx(move |sqlite_tx| {
-                for (receipt, _) in block_receipts {
-                    db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt)?;
-                }
-                Ok(())
-            })?;
+
+        let write = self.db.write()?;
+        for (receipt, _) in block_receipts {
+            write.receipts()?.insert(&receipt)?;
         }
 
-        self.db.mark_block_as_canonical(block.hash())?;
+        write.blocks()?.set_canonical(block.view())?;
+        write.commit()?;
 
         Ok(())
     }

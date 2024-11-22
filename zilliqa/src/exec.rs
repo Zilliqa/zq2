@@ -1208,9 +1208,11 @@ impl PendingState {
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
-        self.pre_state
+        Ok(self
+            .pre_state
             .block_store
-            .get_highest_canonical_block_number()
+            .get_highest_block()?
+            .map(|b| b.number()))
     }
 
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
