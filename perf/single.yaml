@@ -23,23 +23,3 @@ steps:
         gas:
           gas_price: 200000000000
           gas_limit: 10000
-      - !async_transfer
-        nr_transfers: 10
-        gap_min: 1
-        gap_max: 1
-        amount_min: 100
-        amount_max: 10000
-        kind: zil
-        gas:
-          gas_price: 200000000000
-          gas_limit: 10000
-      - !async_transfer
-        nr_transfers: 10
-        gap_min: 1
-        gap_max: 1
-        amount_min: 100
-        amount_max: 10000
-        kind: zil
-        gas:
-          gas_price: 200000000000
-          gas_limit: 1000

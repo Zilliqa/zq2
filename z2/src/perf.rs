@@ -2,6 +2,7 @@
 
 use std::{
     cell::{RefCell, RefMut},
+    collections::HashMap,
     fmt, fs,
     io::{Cursor, Write},
     iter,
@@ -20,7 +21,10 @@ use ethers::{middleware::Middleware as _, signers::Signer, types::U256};
 use lazy_static::lazy_static;
 use rand::{self, distributions::DistString as _, prelude::*};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tempfile;
+use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 use tokio::time::{sleep, Duration};
 use url::Url;
 use zilliqa_rs::{
@@ -47,10 +51,8 @@ pub struct Perf {
 
 pub struct PhaseResult {
     pub monitor: Vec<String>,
-    pub feeder_nonce: Option<u64>,
-    // Set this to true to keep going anyway - eg. because you are waiting for
-    // a process to finish.
-    pub keep_going_anyway: bool,
+    // "I'm done. Don't try for the next phase - just terminate me now"
+    pub end_now: bool,
 }
 
 #[async_trait]
@@ -58,11 +60,11 @@ pub struct PhaseResult {
 pub trait PerfMod {
     async fn gen_phase(
         &mut self,
-        phase: u32,
+        phase: u64,
         rng: &mut StdRng,
-        perf: &Perf,
+        issuer: Issuer,
         txns: &Vec<TransactionResult>,
-        feeder_nonce: &Option<u64>,
+        feeder_nonce: Arc<Mutex<Option<u64>>>,
     ) -> Result<PhaseResult>;
 }
 
@@ -78,7 +80,7 @@ pub struct Config {
     pub rpc_url: String,
     pub chainid: u32,
     pub seed: u64,
-    pub attempts: u32,
+    pub attempts: usize,
     pub sleep_ms: u64,
     pub source_of_funds: Option<ConfigSourceOfFunds>,
     pub steps: Vec<ConfigSet>,
@@ -126,10 +128,20 @@ pub struct ConfigAccount {
     pub kind: AccountKind,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     pub privkey: String,
     pub kind: AccountKind,
+}
+
+impl std::fmt::Debug for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_struct("Account")
+            .field("privkey", &self.privkey)
+            .field("kind", &self.kind)
+            .field("addr", &self.get_address().unwrap_or("???".to_string()))
+            .finish()
+    }
 }
 
 impl std::convert::TryFrom<&ConfigAccount> for Account {
@@ -266,16 +278,6 @@ impl TransactionResult {
     }
 }
 
-pub struct ModuleRecord {
-    module: Box<dyn PerfMod + Send>,
-    // Results from the last phase.
-    results: Vec<TransactionResult>,
-    // Txns to monitor in the next phase.
-    txns: Vec<String>,
-    // Where in the overall monitoring vector do our txns start?
-    offset: usize,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Params {
     pub rpc_url: Option<String>,
@@ -305,20 +307,38 @@ pub struct Issuer {
     pub provider: Provider<Http>,
     pub effective_url: String,
     pub effective_chainid: u32,
+    pub chain_name: String,
+    pub attempts: usize,
+    pub sleep_ms: u64,
 }
 
 impl Issuer {
-    pub fn new(effective_url: &str, effective_chainid: u32) -> Result<Self> {
+    pub fn new(
+        effective_url: &str,
+        effective_chainid: u32,
+        attempts: usize,
+        sleep_ms: u64,
+        chain_name: &str,
+    ) -> Result<Self> {
         let provider = Provider::<Http>::try_from(effective_url)?;
         Ok(Self {
             provider,
             effective_url: effective_url.to_string(),
             effective_chainid,
+            chain_name: chain_name.to_string(),
+            attempts,
+            sleep_ms,
         })
     }
 
     pub fn duplicate(&self) -> Result<Self> {
-        Self::new(&self.effective_url, self.effective_chainid)
+        Self::new(
+            &self.effective_url,
+            self.effective_chainid,
+            self.attempts,
+            self.sleep_ms,
+            &self.chain_name,
+        )
     }
 
     pub fn make_zil_provider(&self) -> Result<Provider<Http>> {
@@ -450,6 +470,88 @@ impl Issuer {
             }
         }
     }
+
+    pub async fn get_balance(&self, address: &str) -> Result<Balance> {
+        match &self.provider.get_balance(address).await {
+            Ok(bal) => Ok(Balance {
+                nonce: bal.nonce,
+                balance: bal.balance,
+            }),
+            Err(val) => match val {
+                zilliqa_rs::Error::JsonRpcError(val2) => match val2 {
+                    jsonrpsee::core::ClientError::Call(callerr) => {
+                        if callerr.code() == -5 {
+                            // Account didn't exist.
+                            Ok(Balance::new())
+                        } else {
+                            Err(anyhow!("{callerr}"))
+                        }
+                    }
+                    _ => Err(anyhow!("{val2}")),
+                },
+                _ => Err(anyhow!("{val}")),
+            },
+        }
+    }
+
+    pub async fn get_nonce(&self, account: &Account) -> Result<Option<u64>> {
+        match account.kind {
+            AccountKind::Zil => Ok(Some(self.get_balance(&account.get_address()?).await?.nonce)),
+            AccountKind::Eth => {
+                let provider = self.make_eth_provider()?;
+                let next_nonce = provider
+                    .get_transaction_count(account.get_eth_address()?, None)
+                    .await?
+                    .as_u64();
+                Ok(if next_nonce > 0 {
+                    Some(next_nonce - 1)
+                } else {
+                    None
+                })
+            }
+        }
+    }
+
+    pub async fn monitor_one(&self, txn: &str) -> Result<TransactionResult> {
+        for attempt in 0..self.attempts {
+            // This relies on the behaviour that a Zilliqa get_transaction() returns status for EVM txns.
+            let status = self
+                .provider
+                .get_transaction(&zilliqa_rs::core::TxHash::from_str(txn)?)
+                .await;
+            match status {
+                Ok(val) => {
+                    if val.receipt.success {
+                        println!(".. ✅ {attempt}/{0} {txn}", self.attempts);
+                        return Ok(TransactionResult::Success {
+                            hash: txn.to_string(),
+                            receipt: val.receipt,
+                        });
+                    } else {
+                        println!(".. ❌ {attempt}/{0} {txn}", self.attempts);
+                        return Ok(TransactionResult::Failure {
+                            hash: txn.to_string(),
+                            receipt: val.receipt,
+                        });
+                    }
+                }
+                Err(err) => {
+                    if let Some(val) = Perf::get_server_error(&err) {
+                        if val != (zilliqa_rs::providers::RPCErrorCode::RpcDatabaseError as i32) {
+                            print!(".. ⏰ {attempt}/{0} {txn}", self.attempts);
+                            return Ok(TransactionResult::TimedOut);
+                        }
+                    }
+                }
+            }
+            println!("⌛ {txn}");
+            sleep(Duration::from_millis(self.sleep_ms)).await;
+        }
+        Err(anyhow!(
+            "❌❌ Failed to wait for {txn} - {0} attempts timed out",
+            self.attempts
+        ))
+    }
 }
 
 impl Perf {
@@ -490,7 +592,18 @@ impl Perf {
         };
         let config_chain_id = config_obj.chainid;
         let effective_chainid = params.eth_chain_id.map_or(config_chain_id, |x| x & !0x8000);
-        let issuer = Issuer::new(&effective_url, effective_chainid)?;
+        let network_name = if let Some(v) = &config_obj.network_name {
+            v.to_string()
+        } else {
+            "unknown".to_string()
+        };
+        let issuer = Issuer::new(
+            &effective_url,
+            effective_chainid,
+            config_obj.attempts,
+            config_obj.sleep_ms,
+            &network_name,
+        )?;
         Ok(Perf {
             config: config_obj,
             provider,
@@ -519,6 +632,17 @@ impl Perf {
     }
 
     pub async fn step(&self, rng: &mut StdRng, step: &ConfigSet) -> Result<()> {
+        struct ModuleRecord {
+            module: Arc<Mutex<dyn PerfMod + Send>>,
+            // transactions.
+            txns: HashMap<String, Option<TransactionResult>>,
+            // Phase of this module
+            phase: u64,
+            // In progress?
+            in_progress: bool,
+            // Terminate now
+            end_now: bool,
+        }
         let mut modules: Vec<ModuleRecord> = vec![];
 
         // Construct the modules.
@@ -533,10 +657,11 @@ impl Perf {
                     )
                     .await?;
                     modules.push(ModuleRecord {
-                        module: Box::new(this_mod),
-                        results: vec![],
-                        txns: vec![],
-                        offset: 0,
+                        module: Arc::new(Mutex::new(this_mod)),
+                        txns: HashMap::new(),
+                        phase: 0,
+                        in_progress: false,
+                        end_now: false,
                     });
                 }
                 ConfigModule::Conformance(conf_config) => {
@@ -548,67 +673,142 @@ impl Perf {
                     )
                     .await?;
                     modules.push(ModuleRecord {
-                        module: Box::new(this_mod),
-                        results: vec![],
-                        txns: vec![],
-                        offset: 0,
+                        module: Arc::new(Mutex::new(this_mod)),
+                        txns: HashMap::new(),
+                        phase: 0,
+                        in_progress: false,
+                        end_now: false,
                     });
                 }
             }
         }
-        let mut phase = 0;
+        let mut modules_in_progress: JoinSet<(usize, Result<PhaseResult, anyhow::Error>)> =
+            JoinSet::new();
+        let mut txn_checks_in_progress: JoinSet<(usize, String, Option<TransactionResult>)> =
+            JoinSet::new();
         loop {
-            // Construct the list of txns to monitor
-            let mut monitor = vec![];
-            let mut continue_anyway = false;
-            let mut feeder_nonce = self.get_nonce(&self.source_of_funds.account).await?;
-            for module in modules.iter_mut() {
-                let result = module
-                    .module
-                    .gen_phase(phase, rng, self, &module.results, &feeder_nonce)
-                    .await?;
-                feeder_nonce = result.feeder_nonce;
-                module.txns = result.monitor;
-                continue_anyway = continue_anyway || result.keep_going_anyway;
-                module.offset = monitor.len();
-                monitor.extend_from_slice(&module.txns);
-            }
-            // Now clear the old results
-            for this_mod in modules.iter_mut() {
-                this_mod.results = vec![];
-            }
-            // We're done if we have asked everyone and there is nothing to wait for anymore.
-            if monitor.is_empty() {
-                if continue_anyway {
-                    // Sleep for a bit ..
-                    //println!(
-                    //    "> phase {phase} with {0} transactions - sleeping",
-                    //    monitor.len()
-                    //);
-                    sleep(Duration::from_millis(self.config.sleep_ms)).await;
-                } else {
-                    break;
+            let feeder_nonce = Arc::new(Mutex::new(
+                self.issuer.get_nonce(&self.source_of_funds.account).await?,
+            ));
+            // Kick off the next phase for every module that can support it.
+            // this is currently fast enough that I don't mind polling, but one day we can flag modules that
+            // might have changed.
+            let len = modules.len();
+            for idx in 0..len {
+                let rec = &mut modules[idx];
+
+                // We're still running this phase, or have nothing more to do.
+                if rec.in_progress || rec.end_now {
+                    continue;
                 }
-            } else {
+
+                let module = rec.module.clone();
+                // If all the results are in, we can spawn a task to start the next phase.
+                let all_ok = rec.txns.iter().fold(true, |acc, (_, r)| acc && r.is_some());
+                let outstanding_txns = rec
+                    .txns
+                    .iter()
+                    .filter_map(|(k, r)| {
+                        if let Some(rv) = r {
+                            match rv {
+                                TransactionResult::Pending => Some(k.to_string()),
+                                _ => None,
+                            }
+                        } else {
+                            Some(k.to_string())
+                        }
+                    })
+                    .collect::<Vec<String>>();
                 println!(
-                    "> phase {phase} with {0} transactions and {1} modules",
-                    monitor.len(),
-                    modules.len()
+                    "📳 Module {idx} phase={2} end_now={0} all_ok={all_ok} awaiting = {1}",
+                    rec.end_now,
+                    outstanding_txns.join(" "),
+                    rec.phase
                 );
-                // OK. Now we have everything, wait for it ..
-                let result = self.monitor(&monitor).await?;
-                // Now slice it all up again.
-                for this_mod in modules.iter_mut() {
-                    // This is much more self-explanatory (to me, at least), than faffing
-                    // with iterators.
-                    #[allow(clippy::needless_range_loop)]
-                    for val in this_mod.offset..this_mod.offset + this_mod.txns.len() {
-                        this_mod.results.push(result[val].clone())
+                if all_ok {
+                    let txn_results = rec
+                        .txns
+                        .iter()
+                        .filter_map(|(_, r)| r.clone())
+                        .collect::<Vec<TransactionResult>>();
+                    let phase = rec.phase;
+                    rec.in_progress = true;
+                    let feeder_nonce_copy = feeder_nonce.clone();
+                    let mut local_rng = StdRng::from_rng(&mut *rng)?;
+                    let issuer = self.issuer()?;
+                    println!("📳 Module {idx} running phase={phase}");
+                    modules_in_progress.spawn(async move {
+                        (
+                            idx,
+                            module
+                                .lock()
+                                .await
+                                .gen_phase(
+                                    phase,
+                                    &mut local_rng,
+                                    issuer,
+                                    &txn_results,
+                                    feeder_nonce_copy,
+                                )
+                                .await,
+                        )
+                    });
+                }
+            }
+            // If there are no checks in progress, we can quit
+            if txn_checks_in_progress.is_empty() && modules_in_progress.is_empty() {
+                println!("Nothing left to do. Exiting");
+                break;
+            }
+            tokio::select! {
+                xval = txn_checks_in_progress.join_next() => {
+                    if let Some(val) = xval {
+                        match val {
+                            Ok((idx, txn_id, txn_result)) => {
+                                println!("Got result for idx = {idx} , txn = {txn_id} - {txn_result:?}");
+                                modules.get_mut(idx).map(|v: &mut ModuleRecord| v.txns.insert(txn_id, txn_result.clone()));
+                            },
+                            Err(e) => {
+                                println!("txn check task failed - {e:?}");
+                            }
+                        }
+                    }
+                },
+                xval = modules_in_progress.join_next() => {
+                    if let Some(val) = xval {
+                        match val {
+                            Ok((idx, result)) => {
+                                match result {
+                                    Ok(phase_result) => {
+                                        println!("📳 module {idx} completed phase {1} with {0} txns to monitor",  phase_result.monitor.len(), modules[idx].phase);
+                                        for txn_id in phase_result.monitor {
+                                            modules[idx].txns.insert(txn_id.to_string(), None);
+                                            let local_txn_id = txn_id.to_string();
+                                            let local_issuer = self.issuer()?;
+                                            txn_checks_in_progress.spawn(async move {
+                                                if let Ok(result) = local_issuer.monitor_one(&local_txn_id).await {
+                                                    (idx, local_txn_id, Some(result))
+                                                } else {
+                                                    (idx, local_txn_id, None)
+                                                }
+                                            });
+                                        }
+                                        modules[idx].in_progress = false;
+                                        modules[idx].phase += 1;
+                                        modules[idx].end_now = phase_result.end_now;
+                                    },
+                                    Err(e) => {
+                                        println!("module step failed[0] - {e:?}");
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                println!("module step failed - {e:?}");
+                            }
+                        }
                     }
                 }
             }
-            phase += 1;
-            // Go round again.
         }
         // If we got here, we're OK.
 
@@ -739,51 +939,18 @@ impl Perf {
         }
         None
     }
-
-    pub async fn get_nonce(&self, account: &Account) -> Result<Option<u64>> {
-        match account.kind {
-            AccountKind::Zil => Ok(Some(self.get_balance(&account.get_address()?).await?.nonce)),
-            AccountKind::Eth => {
-                let provider = self.issuer.make_eth_provider()?;
-                let next_nonce = provider
-                    .get_transaction_count(account.get_eth_address()?, None)
-                    .await?
-                    .as_u64();
-                Ok(if next_nonce > 0 {
-                    Some(next_nonce - 1)
-                } else {
-                    None
-                })
-            }
-        }
-    }
-
-    pub async fn get_balance(&self, address: &str) -> Result<Balance> {
-        match &self.provider.get_balance(address).await {
-            Ok(bal) => Ok(Balance {
-                nonce: bal.nonce,
-                balance: bal.balance,
-            }),
-            Err(val) => match val {
-                zilliqa_rs::Error::JsonRpcError(val2) => match val2 {
-                    jsonrpsee::core::ClientError::Call(callerr) => {
-                        if callerr.code() == -5 {
-                            // Account didn't exist.
-                            Ok(Balance::new())
-                        } else {
-                            Err(anyhow!("{callerr}"))
-                        }
-                    }
-                    _ => Err(anyhow!("{val2}")),
-                },
-                _ => Err(anyhow!("{val}")),
-            },
-        }
-    }
 }
 
 pub fn zil_to_eth(zil_amt: u128) -> u128 {
     zil_amt * 1000000
+}
+
+/// Increment the nonce in the mutex and return it.
+pub async fn inc_nonce(current: &Arc<Mutex<Option<u64>>>) -> u64 {
+    let mut val = current.lock().await;
+    let next = next_nonce(&*val);
+    *val = Some(next);
+    next
 }
 
 pub fn next_nonce(current: &Option<u64>) -> u64 {

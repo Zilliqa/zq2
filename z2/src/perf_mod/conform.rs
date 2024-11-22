@@ -16,7 +16,9 @@ use futures::task::Poll;
 use lazy_static::lazy_static;
 use rand::{self, distributions::DistString as _, prelude::*};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tempfile;
+use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use url::Url;
 use zilliqa_rs::{
@@ -92,16 +94,19 @@ impl Conform {
         })
     }
 
-    pub fn get_chain_env(&self, perf: &perf::Perf) -> Result<HashMap<String, String>> {
+    pub fn get_chain_env(&self, issuer: &perf::Issuer) -> Result<HashMap<String, String>> {
         let mut env: HashMap<String, String> = HashMap::new();
 
-        env.insert("CHAIN_URL".to_string(), perf.config.rpc_url.to_string());
+        env.insert("CHAIN_URL".to_string(), issuer.effective_url.to_string());
         env.insert(
             "CHAIN_WEBSOCKET".to_string(),
-            perf.config.rpc_url.to_string(),
+            issuer.effective_url.to_string(),
         );
         env.insert("CHAIN_NAME".to_string(), self.chain_name.to_string());
-        env.insert("CHAIN_ID".to_string(), format!("{}", perf.config.chainid));
+        env.insert(
+            "CHAIN_ID".to_string(),
+            format!("{}", issuer.effective_chainid),
+        );
 
         Ok(env)
     }
@@ -111,14 +116,13 @@ impl Conform {
 impl perf::PerfMod for Conform {
     async fn gen_phase(
         &mut self,
-        phase: u32,
+        phase: u64,
         _rng: &mut StdRng,
-        perf: &perf::Perf,
+        issuer: perf::Issuer,
         _txns: &Vec<TransactionResult>,
-        feeder_nonce: &Option<u64>,
+        feeder_nonce: Arc<Mutex<Option<u64>>>,
     ) -> Result<PhaseResult> {
         let mut result = Vec::new();
-        let issuer = perf.issuer()?;
         match phase {
             0 => {
                 // Feed the feeder
@@ -127,21 +131,21 @@ impl perf::PerfMod for Conform {
                     (u128::from(self.config.signer_count + 4) * (self.config.signer_amount) * 2)
                         + self.config.gas.gas_units();
                 println!("Funding with {amount_required}");
+                let new_feeder_nonce = perf::next_nonce(&*feeder_nonce.lock().await);
                 result.push(
                     issuer
                         .issue_transfer(
                             &self.source_of_funds.account,
                             &self.feeder,
                             amount_required,
-                            Some(perf::next_nonce(feeder_nonce)),
+                            Some(new_feeder_nonce),
                             &self.source_of_funds.gas,
                         )
                         .await?,
                 );
                 Ok(PhaseResult {
                     monitor: result,
-                    feeder_nonce: Some(perf::next_nonce(feeder_nonce)),
-                    keep_going_anyway: false,
+                    end_now: false,
                 })
             }
             1 => {
@@ -178,30 +182,25 @@ impl perf::PerfMod for Conform {
                                 "from_env",
                             ],
                         )
-                        .env(&self.get_chain_env(perf)?)
+                        .env(&self.get_chain_env(&issuer)?)
                         .spawn_logged()
                         .await?,
                 )?);
                 self.state = MachineState::BuildSigners;
                 Ok(PhaseResult {
                     monitor: Vec::new(),
-                    feeder_nonce: *feeder_nonce,
-                    keep_going_anyway: true,
+                    end_now: false,
                 })
             }
             _ => {
-                // Has my process finished yet?
+                // Just wait for the process to finish and then go through
+                // to check state.
                 if let Some(pid) = &self.current_command {
-                    if zqutils::process::is_running(pid)? {
-                        // no. Wait..
-                        return Ok(PhaseResult {
-                            monitor: Vec::new(),
-                            feeder_nonce: *feeder_nonce,
-                            keep_going_anyway: true,
-                        });
+                    while zqutils::process::is_running(pid)? {
+                        // Wait for it.
+                        sleep(Duration::from_millis(100)).await;
                     }
                 }
-
                 match self.state {
                     MachineState::Feeding => {
                         return Err(anyhow!("Entered phase in invalid Feeding state"))
@@ -212,21 +211,19 @@ impl perf::PerfMod for Conform {
                             CommandBuilder::new()
                                 .cwd(&self.test_source)
                                 .cmd("npx", &["hardhat", "test", "--network", "from_env"])
-                                .env(&self.get_chain_env(perf)?)
+                                .env(&self.get_chain_env(&issuer)?)
                                 .spawn_logged()
                                 .await?,
                         )?);
                         self.state = MachineState::RunTests;
                         Ok(PhaseResult {
                             monitor: Vec::new(),
-                            feeder_nonce: *feeder_nonce,
-                            keep_going_anyway: true,
+                            end_now: true,
                         })
                     }
                     MachineState::RunTests => Ok(PhaseResult {
                         monitor: Vec::new(),
-                        feeder_nonce: *feeder_nonce,
-                        keep_going_anyway: false,
+                        end_now: true,
                     }),
                 }
             }

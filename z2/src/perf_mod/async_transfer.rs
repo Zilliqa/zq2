@@ -2,7 +2,8 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use rand::{self, prelude::*};
 use serde::{Deserialize, Serialize};
-use tokio::task::JoinSet;
+use std::sync::Arc;
+use tokio::{sync::Mutex, task::JoinSet};
 
 use crate::{
     perf,
@@ -51,11 +52,11 @@ impl AsyncTransfer {
 impl perf::PerfMod for AsyncTransfer {
     async fn gen_phase(
         &mut self,
-        phase: u32,
+        phase: u64,
         rng: &mut StdRng,
-        perf: &perf::Perf,
+        issuer: perf::Issuer,
         txns: &Vec<TransactionResult>,
-        feeder_nonce: &Option<u64>,
+        feeder_nonce: Arc<Mutex<Option<u64>>>,
     ) -> Result<PhaseResult> {
         let mut result = Vec::new();
         match phase {
@@ -64,9 +65,9 @@ impl perf::PerfMod for AsyncTransfer {
                 let amount_required = (self.config.amount_max + self.config.gas.gas_units())
                     * u128::from(self.config.nr_transfers);
                 println!("amount_required = {amount_required}");
-                let new_feeder_nonce = perf::next_nonce(feeder_nonce);
+                let new_feeder_nonce = perf::inc_nonce(&feeder_nonce).await;
                 result.push(
-                    perf.issuer()?
+                    issuer
                         .issue_transfer(
                             &self.source_of_funds.account,
                             &self.feeder,
@@ -78,13 +79,12 @@ impl perf::PerfMod for AsyncTransfer {
                 );
                 Ok(PhaseResult {
                     monitor: result,
-                    feeder_nonce: Some(new_feeder_nonce),
-                    keep_going_anyway: false,
+                    end_now: false,
                 })
             }
             1 => {
                 perf::TransactionResult::assert_all_successful(txns)?;
-                let mut nonce = perf.get_nonce(&self.feeder).await?;
+                let mut nonce = issuer.get_nonce(&self.feeder).await?;
                 let mut expect_success = true;
                 let mut join_set = JoinSet::new();
                 for _ in 0..self.config.nr_transfers {
@@ -97,8 +97,8 @@ impl perf::PerfMod for AsyncTransfer {
                     if gap > 1 {
                         expect_success = false;
                     }
-                    let issuer = perf.issuer()?;
-                    let target = issuer.gen_account(rng, AccountKind::Zil).await?;
+                    let local_issuer = issuer.duplicate()?;
+                    let target = local_issuer.gen_account(rng, AccountKind::Zil).await?;
                     // Send the transfer and go back.
                     if gap > 0 {
                         if let Some(v) = nonce {
@@ -113,18 +113,20 @@ impl perf::PerfMod for AsyncTransfer {
                     let local_feeder = self.feeder.clone();
                     let local_gas = self.config.gas.clone();
                     let expect_txn_to_succeed = expect_success && (gap == 1 || nonce.is_none());
+                    let id = rng.next_u32();
                     join_set.spawn(async move {
                         println!(
-                            "issue_transfer from {0:?} to {1:?} send nonce {nonce:?}",
+                            "💻 {id:#08x} issue_transfer from {0:?} to {1:?} send nonce {nonce:?}",
                             local_feeder, target
                         );
-                        let transfer = issuer
+                        let transfer = local_issuer
                             .issue_transfer(&local_feeder, &target, amount, nonce, &local_gas)
                             .await;
                         if let Ok(v) = transfer {
+                            println!("💻 {id:#08x} issue_transfer - OK");
                             (true, expect_txn_to_succeed, Some(v))
                         } else {
-                            println!("Transfer failed - {transfer:?}");
+                            println!("💻 {id:#08x} Transfer failed - {transfer:?}");
                             (false, expect_txn_to_succeed, None)
                         }
                     });
@@ -144,8 +146,7 @@ impl perf::PerfMod for AsyncTransfer {
                         .collect();
                     Ok(PhaseResult {
                         monitor,
-                        feeder_nonce: *feeder_nonce,
-                        keep_going_anyway: false,
+                        end_now: false,
                     })
                 }
             }
@@ -153,8 +154,7 @@ impl perf::PerfMod for AsyncTransfer {
                 let val: Vec<String> = Vec::new();
                 Ok(PhaseResult {
                     monitor: val,
-                    feeder_nonce: *feeder_nonce,
-                    keep_going_anyway: false,
+                    end_now: true,
                 })
             }
         }
