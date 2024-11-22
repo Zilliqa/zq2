@@ -239,7 +239,7 @@ impl P2pNode {
                 self.swarm
                     .behaviour_mut()
                     .gossipsub
-                    .add_explicit_peer(&peer_id);
+                    .add_explicit_peer(&peer);
                 self.swarm.behaviour_mut().kademlia.bootstrap()?;
             }
         }
