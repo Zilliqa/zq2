@@ -52,7 +52,7 @@ macro_rules! sqlify_with_bincode {
     };
 }
 
-macro_rules! sqlify_with_bincode_and_zstd {
+macro_rules! sqlify_with_bincode_and_lz4 {
     ($type: ty) => {
         impl ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
@@ -98,10 +98,13 @@ macro_rules! make_wrapper {
     };
 }
 
-sqlify_with_bincode!(AggregateQc);
-sqlify_with_bincode!(QuorumCertificate);
-sqlify_with_bincode!(NodeSignature);
-sqlify_with_bincode_and_zstd!(SignedTransaction);
+// Careful about choosing which blobs to LZ4
+// e.g. it may impact search on a column that is LZ4-ed.
+
+sqlify_with_bincode_and_lz4!(AggregateQc);
+sqlify_with_bincode_and_lz4!(QuorumCertificate);
+sqlify_with_bincode_and_lz4!(NodeSignature);
+sqlify_with_bincode_and_lz4!(SignedTransaction);
 
 make_wrapper!(Vec<ScillaException>, VecScillaExceptionSqlable);
 sqlify_with_bincode!(VecScillaExceptionSqlable);
