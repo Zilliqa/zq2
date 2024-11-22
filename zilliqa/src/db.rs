@@ -38,8 +38,7 @@ macro_rules! sqlify_with_bincode_and_lz4 {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
                 let data = bincode::serialize(self)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
-                let blob =
-                    lz4::block::compress(data.as_slice(), None, true).unwrap_or(data); // compressed or raw data
+                let blob = lz4::block::compress(data.as_slice(), None, true).unwrap_or(data); // compressed or raw data
                 Ok(ToSqlOutput::from(blob))
             }
         }
@@ -1162,8 +1161,8 @@ impl eth_trie::DB for TrieStorage {
                 [key],
                 |row| row.get(0),
             )
-            // decompress stored value
-            .map(|blob: Vec<_>| lz4::block::decompress(blob.as_slice(), None).unwrap_or(blob)) // decompressed, or raw blob
+            // decompressed or raw blob
+            .map(|blob: Vec<_>| lz4::block::decompress(blob.as_slice(), None).unwrap_or(blob))
             .optional()?;
 
         let mut cache = self.cache.lock().unwrap();
