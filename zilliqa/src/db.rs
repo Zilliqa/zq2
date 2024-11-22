@@ -307,7 +307,7 @@ impl Db {
                 transitions BLOB,
                 accepted INTEGER,
                 errors BLOB,
-                exceptions BLOB) WITHOUT ROWID;
+                exceptions BLOB);
             CREATE INDEX IF NOT EXISTS block_hash_index ON receipts (block_hash);
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
