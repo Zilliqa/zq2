@@ -110,9 +110,10 @@ async fn main() -> Result<()> {
             .with_export_config(export_config)
             .build()?;
         let reader = PeriodicReader::builder(exporter, runtime::Tokio).build();
-        opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
             .with_reader(reader)
             .build();
+        opentelemetry::global::set_meter_provider(provider);
     };
 
     let mut node = P2pNode::new(args.secret_key, config.clone())?;
