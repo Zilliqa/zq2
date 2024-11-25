@@ -32,8 +32,9 @@ use super::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
         RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, StateProofResponse,
-        TXBlockRateResult, TransactionBody, TransactionStatusResponse, TxBlockListing,
-        TxBlockListingResult, TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
+        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionStatusResponse,
+        TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
+        TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -1036,6 +1037,11 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
         let receipt = node
             .get_transaction_receipt(*hash)?
             .ok_or(anyhow!("Transaction receipt missing"))?;
+        let receipt_response = TransactionReceiptResponse {
+            cumulative_gas: ScillaGas(receipt.cumulative_gas_used.0).to_string(),
+            epoch_num: block.number().to_string(),
+            success: receipt.success,
+        };
         let (version, to_addr, sender_pub_key, signature, _code, _data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 ((tx.chain_id as u32) << 16) | 1,
@@ -1090,7 +1096,7 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
             gas_limit: gas_limit.to_string(),
             gas_price: gas_price.to_string(),
             nonce: nonce.to_string(),
-            receipt,
+            receipt: receipt_response,
             sender_pub_key,
             signature,
             to_addr: to_addr.to_string(),

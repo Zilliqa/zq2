@@ -671,7 +671,7 @@ pub struct TransactionBody {
     #[serde(rename = "gasPrice")]
     pub gas_price: String,
     pub nonce: String,
-    pub receipt: TransactionReceipt,
+    pub receipt: TransactionReceiptResponse,
     #[serde(rename = "senderPubKey")]
     pub sender_pub_key: String,
     pub signature: String,
