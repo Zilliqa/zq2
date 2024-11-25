@@ -469,6 +469,34 @@ pub enum SyncingResult {
     Struct(SyncingStruct),
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct StorageProof {
+    #[serde(serialize_with = "hex")]
+    pub key: B256,
+    #[serde(serialize_with = "hex")]
+    pub value: Vec<u8>,
+    #[serde(serialize_with = "vec_hex")]
+    pub proof: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Proof {
+    #[serde(serialize_with = "hex")]
+    pub address: Address,
+    #[serde(serialize_with = "hex")]
+    pub balance: u128,
+    #[serde(rename = "codeHash", serialize_with = "hex")]
+    pub code_hash: B256,
+    #[serde(serialize_with = "hex")]
+    pub nonce: u64,
+    #[serde(rename = "storageHash", serialize_with = "hex")]
+    pub storage_hash: B256,
+    #[serde(rename = "accountProof", serialize_with = "vec_hex")]
+    pub account_proof: Vec<Vec<u8>>,
+    #[serde(rename = "storageProof")]
+    pub storage_proof: Vec<StorageProof>,
+}
+
 #[cfg(test)]
 mod tests {
     use alloy::primitives::B256;

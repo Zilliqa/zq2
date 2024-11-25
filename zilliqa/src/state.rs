@@ -13,7 +13,7 @@ use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-
+use tracing::info;
 use crate::{
     block_store::BlockStore,
     cfg::{Amount, NodeConfig, ScillaExtLibsPath},
@@ -25,6 +25,19 @@ use crate::{
     serde_util::vec_param_value,
     transaction::EvmGas,
 };
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct StorageProof {
+    pub key: B256,
+    pub value: Vec<u8>,
+    pub proof: Vec<Vec<u8>>,
+}
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct Proof {
+    pub account: Account,
+    pub account_proof: Vec<Vec<u8>>,
+    pub storage_proofs: Vec<StorageProof>,
+}
 
 #[derive(Clone, Debug)]
 /// The state of the blockchain, consisting of:
@@ -323,6 +336,42 @@ impl State {
             &Self::account_key(address).0,
             &bincode::serialize(&account)?,
         )?)
+    }
+
+    pub fn get_proof(&self, address: Address, storage_keys: &[B256]) -> Result<Proof> {
+        if !self.has_account(address)? {
+            return Ok(Proof::default());
+        };
+
+        // get_proof() requires &mut so clone state and don't mutate the origin
+        let mut state = self.clone();
+
+        let _root = state.root_hash()?;
+        info!("Enforced root is: {:?}", _root);
+
+        let account = state.get_account(address)?;
+
+        let account_proof = state.accounts.get_proof(Self::account_key(address).as_slice())?;
+
+        let mut storage_trie = state.get_account_trie(address.into())?;
+
+        let storage_proofs = {
+            let mut storage_proofs = Vec::new();
+            for key in storage_keys {
+                let Some(value) = storage_trie.get(key.as_slice())? else {
+                    continue;
+                };
+                let proof = storage_trie.get_proof(key.as_slice())?;
+                storage_proofs.push(StorageProof { proof, key: *key, value });
+            }
+            storage_proofs
+        };
+
+        Ok(Proof {
+            account,
+            account_proof,
+            storage_proofs,
+        })
     }
 }
 

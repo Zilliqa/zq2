@@ -24,6 +24,7 @@ use jsonrpsee::{
     },
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
+use revm::primitives::Bytecode;
 use serde::Deserialize;
 use tracing::*;
 
@@ -44,6 +45,7 @@ use crate::{
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction},
 };
+use crate::api::types::eth::{Proof, StorageProof};
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = super::declare_module!(
@@ -59,6 +61,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_getStorageAt", get_storage_at),
             ("eth_getTransactionCount", get_transaction_count),
             ("eth_gasPrice", get_gas_price),
+            ("eth_getProof", get_proof),
             ("eth_getBlockByNumber", get_block_by_number),
             ("eth_getBlockByHash", get_block_by_hash),
             (
@@ -90,6 +93,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_syncing", syncing),
             ("net_peerCount", net_peer_count),
             ("net_listening", net_listening),
+
         ],
     );
 
@@ -892,6 +896,46 @@ fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
 
 fn net_listening(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
     Ok(true)
+}
+
+fn get_proof(params: Params, node: &Arc<Mutex<Node>>) -> Result<Proof> {
+    let mut params = params.sequence();
+    let address: Address = params.next()?;
+    let storage_keys: Vec<U256> = params.next()?;
+    let storage_keys = storage_keys
+        .into_iter()
+        .map(|key| B256::new(key.to_be_bytes()))
+        .collect::<Vec<_>>();
+    let block_id: BlockId = params.next()?;
+    expect_end_of_params(&mut params, 3, 3)?;
+
+    let node = node.lock().unwrap();
+
+    let block = node.get_block(block_id)?;
+
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
+    let state = node.consensus.state().at_root(block.state_root_hash().into());
+
+    let computed_proof = state.get_proof(address, &storage_keys)?;
+
+    let acc_code = Bytecode::new_raw(computed_proof.account.code.evm_code().unwrap_or_default().into());
+
+    info!("Block state root is: {:?}", block.state_root_hash());
+
+    Ok(Proof {
+        address,
+        account_proof: computed_proof.account_proof,
+        storage_proof: computed_proof.storage_proofs.into_iter().map(|single_item| StorageProof {
+            proof: single_item.proof,
+            key: single_item.key,
+            value: single_item.value
+        }).collect(),
+        nonce: computed_proof.account.nonce,
+        balance: computed_proof.account.balance,
+        storage_hash: computed_proof.account.storage_root,
+        code_hash: acc_code.hash_slow()
+    })
 }
 
 #[allow(clippy::redundant_allocation)]

@@ -1,5 +1,6 @@
+use tracing::info;
 use std::{fmt::Debug, ops::DerefMut};
-
+use std::sync::Arc;
 use alloy::primitives::{hex, Address};
 use ethabi::{ethereum_types::U64, Token};
 use ethers::{
@@ -18,9 +19,11 @@ use ethers::{
 };
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
+use alloy::primitives::B256;
 use serde::{Deserialize, Serialize};
-
-use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
+use eth_trie::{EthTrie, MemoryDB, Trie};
+use zilliqa::state::{Account, State};
+use crate::{deploy_contract, node, LocalRpcClient, Network, Wallet};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
@@ -1436,4 +1439,47 @@ async fn test_eth_syncing(mut network: Network) {
         .await
         .unwrap();
     assert_eq!(result, SyncingResult::Bool(false))
+}
+
+#[zilliqa_macros::test]
+async fn test_eth_get_proof(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/Storage.sol",
+        "Storage",
+        &wallet,
+        &mut network,
+    )
+        .await;
+
+    let sender_address = wallet.address();
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    let latest_block = wallet.get_block_number().await.unwrap();
+
+    let latest_block = wallet.get_block(latest_block).await.unwrap().unwrap();
+    info!("In test latest bloock root hash is: {:?}", latest_block.state_root);
+
+    let proof = wallet.get_proof(contract_address, vec![], None).await.unwrap();
+
+    let memdb = Arc::new(MemoryDB::new(true));
+    let mut trie = EthTrie::new(Arc::clone(&memdb));
+
+    let account_proof = proof.account_proof.iter().map(|elem| elem.to_vec()).collect::<Vec<_>>();
+
+    let _verif_result = trie.verify_proof(B256::from_slice(latest_block.state_root.as_bytes()), State::account_key(Address::from(contract_address.0)).as_slice(), account_proof).unwrap().unwrap();
+
+    let recovered_account = bincode::deserialize::<Account>(&_verif_result).unwrap();
+    assert_eq!(recovered_account.balance, 0);
+
+    let node = &network.nodes[0];
+    let _second = node.inner.lock().unwrap().consensus.state().get_proof(Address::from(contract_address.0), &*vec![]);
+
+    let _value = trie.get(contract_address.as_bytes()).unwrap();
+
+
+    assert_eq!(proof.address, contract_address);
 }
