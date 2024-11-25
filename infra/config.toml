@@ -1,6 +1,6 @@
 bootstrap_address = [
     "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU",
-    "/ip4/198.51.100.100/udp/5643/quic-v1",
+    "/ip4/127.0.0.1/udp/5643/quic-v1",
 ]
 p2p_port = 5643
 
