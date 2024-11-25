@@ -355,7 +355,7 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
     if !full {
         let miner = node.get_proposer_reward_address(block.header)?;
-        let block_gas_limit = node.config.consensus.eth_block_gas_limit;
+        let block_gas_limit = block.gas_limit();
         Ok(eth::Block::from_block(
             block,
             miner.unwrap_or_default(),
@@ -372,7 +372,7 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
             .collect::<Result<_>>()?;
         let miner = node.get_proposer_reward_address(block.header)?;
-        let block_gas_limit = node.config.consensus.eth_block_gas_limit;
+        let block_gas_limit = block.gas_limit();
         let block = eth::Block::from_block(block, miner.unwrap_or_default(), block_gas_limit);
         Ok(eth::Block {
             transactions,
