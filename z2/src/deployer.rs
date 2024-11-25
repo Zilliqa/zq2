@@ -16,6 +16,8 @@ use crate::{
     validators,
 };
 
+const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
+
 pub async fn new(
     network_name: &str,
     eth_chain_id: u64,
@@ -244,7 +246,7 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
         "\t--reward-address {} \\",
         node_reward_ethereum_address.address
     );
-    println!("\t--amount 100\n");
+    println!("\t--amount {VALIDATOR_DEPOSIT_IN_MILLIONS}\n");
 
     Ok(())
 }
@@ -298,7 +300,7 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         )?;
         let stake = validators::StakeDeposit::new(
             validator,
-            100,
+            VALIDATOR_DEPOSIT_IN_MILLIONS,
             chain.name().parse()?,
             &genesis_private_key,
             &node_reward_ethereum_address.address,

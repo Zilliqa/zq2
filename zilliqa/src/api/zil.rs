@@ -31,9 +31,9 @@ use super::{
     types::zil::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
-        RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, TXBlockRateResult,
-        TransactionBody, TransactionStatusResponse, TxBlockListing, TxBlockListingResult,
-        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
+        RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, StateProofResponse,
+        TXBlockRateResult, TransactionBody, TransactionStatusResponse, TxBlockListing,
+        TxBlockListingResult, TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -75,8 +75,8 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("GetNetworkId", get_network_id),
             ("GetVersion", get_version),
             ("GetTransactionsForTxBlock", get_transactions_for_tx_block),
-            ("GetTxBlock", |p, n| get_tx_block(p, n)),
-            ("GetTxBlockVerbose", |p, n| get_tx_block(p, n)),
+            ("GetTxBlock", get_tx_block),
+            ("GetTxBlockVerbose", get_tx_block_verbose),
             ("GetSmartContracts", get_smart_contracts),
             ("GetDSBlock", get_ds_block),
             ("GetDSBlockVerbose", get_ds_block_verbose),
@@ -467,11 +467,7 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
-    let proposer = node
-        .get_proposer_reward_address(block.header)?
-        .expect("No proposer");
-
-    let tx_block = zil::TxBlock::new(&block, proposer);
+    let tx_block = zil::TxBlock::new(&block);
     Ok(tx_block)
 }
 
@@ -699,10 +695,27 @@ fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::T
     let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
+    let block: zil::TxBlock = zil::TxBlock::new(&block);
+
+    Ok(Some(block))
+}
+
+// GetTxBlockVerbose
+fn get_tx_block_verbose(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<zil::TxBlockVerbose>> {
+    let block_number: String = params.one()?;
+    let block_number: u64 = block_number.parse()?;
+
+    let node = node.lock().unwrap();
+    let Some(block) = node.get_block(block_number)? else {
+        return Ok(None);
+    };
     let proposer = node
         .get_proposer_reward_address(block.header)?
         .expect("No proposer");
-    let block: zil::TxBlock = zil::TxBlock::new(&block, proposer);
+    let block: zil::TxBlockVerbose = zil::TxBlockVerbose::new(&block, proposer);
 
     Ok(Some(block))
 }
@@ -1262,12 +1275,12 @@ fn get_node_type(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<String> {
 
 // GetPrevDifficulty
 fn get_prev_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
-    todo!("API getprevdifficulty is not implemented yet");
+    Ok(0)
 }
 
 // GetPrevDSDifficulty
 fn get_prev_ds_difficulty(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<u64> {
-    todo!("API getprevdsdifficulty is not implemented yet");
+    Ok(0)
 }
 
 // GetShardingStructure
@@ -1384,8 +1397,12 @@ fn get_soft_confirmed_transaction(
 }
 
 // GetStateProof
-fn get_state_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("API getstateproof is not implemented yet");
+fn get_state_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<StateProofResponse> {
+    // State proof isn't meaningful in ZQ2
+    Ok(StateProofResponse {
+        account_proof: vec![],
+        state_proof: vec![],
+    })
 }
 
 // GetTransactionStatus

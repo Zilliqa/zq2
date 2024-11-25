@@ -28,7 +28,7 @@ Modify the config_mainnet.json file to include your specific API parameters and 
 Run the script by executing:
 
 ```bash
-python zilliqa_api_test.py
+python validate_zq1_zq2.py
 ```
 
 Usage Guide
@@ -49,7 +49,3 @@ Detailed JSON Comparison: Saves detailed differences between JSON responses to t
 Color-coded Console Output: Displays matched and mismatched values with color highlighting. If the ZQ2 API response time exceeds that of ZQ1, it appears in red for easy identification.
 
 Pagination for Large Outputs: Automatically paginates JSON output for manageable viewing.
-
-
-
-
