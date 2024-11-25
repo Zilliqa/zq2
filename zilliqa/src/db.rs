@@ -505,7 +505,7 @@ impl Db {
     /// Write view and timestamp to table if view is larger than current. Return true if write was successful
     pub fn set_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
         let res = sqlite_tx
-            .execute("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view < ?1",
+            .execute("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view IS NULL OR tip_info.view < ?1",
                     [view])?;
         Ok(res != 0)
     }
