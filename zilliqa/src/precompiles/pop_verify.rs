@@ -13,6 +13,7 @@ use crate::exec::PendingState;
 
 pub struct PopVerify;
 
+/// A custom Proof of Possession in which the bls public key, an evm address and a chain_id are signed over
 // keep in-sync with zilliqa/src/contracts/deposit.sol
 impl PopVerify {
     const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
@@ -46,9 +47,10 @@ impl PopVerify {
         };
 
         // message which pop signs over
-        let mut pop_message = [0u8; 50];
-        pop_message[..8].copy_from_slice(&_context.env.cfg.chain_id.to_le_bytes());
-        pop_message[8..].copy_from_slice(
+        let mut pop_message = [0u8; 98];
+        pop_message[..48].copy_from_slice(&pk.0.to_compressed());
+        pop_message[48..56].copy_from_slice(&_context.env.cfg.chain_id.to_le_bytes());
+        pop_message[56..].copy_from_slice(
             &_context
                 .env
                 .tx
