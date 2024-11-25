@@ -114,6 +114,8 @@ def generate_short_diff_filename(method, params):
     return f"{method}_{unique_suffix}_diff.txt"
     
 def pretty_print_with_jq(file_path):
+    file_path = os.path.join(LOGS_DIR, file_path) if not os.path.isabs(file_path) else file_path
+
     try:
         result = subprocess.run(['jq', '.', file_path], capture_output=True, text=True)
         if result.returncode == 0:
@@ -147,6 +149,9 @@ def paginated_print(text, lines_per_page=20):
                 break
 
 def compare_json_files(file1, file2):
+    # Ensure file paths include the logs directory
+    file1 = os.path.join(LOGS_DIR, file1) if not os.path.isabs(file1) else file1
+    file2 = os.path.join(LOGS_DIR, file2) if not os.path.isabs(file2) else file2
     try:
         with open(file1, 'r') as f1, open(file2, 'r') as f2:
             json1 = json.load(f1)
@@ -282,6 +287,7 @@ def format_params(params):
     elif isinstance(params, list):
         return ', '.join(truncate_param(p) for p in params)
     return truncate_param(params)
+
 def prompt_to_view_difference(mismatched_apis):
     if not mismatched_apis:
         print(Fore.GREEN + "\nAll API calls matched.")
@@ -304,14 +310,26 @@ def prompt_to_view_difference(mismatched_apis):
                 diff = compare_json_files(selected_api["local_file"], selected_api["zilliqa_file"])
                 display_key_differences(diff, selected_api["method"], selected_api["params"])
 
-                view_outputs = input(f"\nDo you want to view the outputs for {selected_api['method']} ({selected_api['params'][0]})? (y/n): ").strip().lower()
+                # Validate "y" or "n" input for viewing outputs
+                while True:
+                    view_outputs = input(f"\nDo you want to view the outputs for {selected_api['method']} ({selected_api['params'][0]})? (y/n): ").strip().lower()
+                    if view_outputs in {'y', 'n'}:
+                        break
+                    print("Invalid input. Please enter 'y' or 'n'.")
+
                 if view_outputs == 'y':
                     print(f"\n ZQ2 Output ({selected_api['local_file']}):")
                     pretty_print_with_jq(selected_api["local_file"])
                     print(f"\n ZQ1 Output ({selected_api['zilliqa_file']}):")
                     pretty_print_with_jq(selected_api["zilliqa_file"])
 
-                more = input("\nDo you want to view another mismatch? (y/n): ").strip().lower()
+                # Validate "y" or "n" input for continuing mismatches
+                while True:
+                    more = input("\nDo you want to view another mismatch? (y/n): ").strip().lower()
+                    if more in {'y', 'n'}:
+                        break
+                    print("Invalid input. Please enter 'y' or 'n'.")
+
                 if more != 'y':
                     return
             else:
