@@ -811,7 +811,16 @@ impl Consensus {
                 let next_leader = self.leader_at_block(&block, view);
 
                 if self.create_next_block_on_timeout || self.early_proposal.is_some() {
-                    warn!("Early proposal exists but we are not leader. Clearing proposal");
+                    if self.create_next_block_on_timeout {
+                        warn!("Create block on timeout set. Clearing");
+                    }
+                    if self.early_proposal.is_some() {
+                        let (_, txns, _, _ ) = self.early_proposal.as_ref().unwrap();
+                        for txn in txns.into_iter().rev() {
+                            self.transaction_pool.insert_ready_transaction(txn.clone())?;
+                        }
+                        warn!("Early proposal exists but we are not leader. Clearing proposal");
+                    }
                     self.create_next_block_on_timeout = false;
                     self.early_proposal = None;
                 }
@@ -1410,7 +1419,7 @@ impl Consensus {
                     proposal.header.view,
                 );
                 // out of gas, undo last transaction
-                info!(nonce = tx.tx.nonce(), "gas limit reached",);
+                debug!(nonce = tx.tx.nonce(), "gas limit reached",);
                 state.set_to_root(updated_root_hash.into());
                 break;
             };
@@ -1661,7 +1670,7 @@ impl Consensus {
             return Ok(None);
         };
 
-        trace!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, "######### proposing block");
+        info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
         Ok(Some((final_block, broadcasted_transactions)))
     }
@@ -3034,7 +3043,7 @@ impl Consensus {
 
             transactions_trie.insert(tx_hash.as_bytes(), tx_hash.as_bytes())?;
 
-            info!(?receipt, "applied transaction {:?}", receipt);
+            debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
 

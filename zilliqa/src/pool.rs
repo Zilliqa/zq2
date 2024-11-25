@@ -5,7 +5,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     crypto::Hash,
@@ -150,10 +150,11 @@ impl TransactionPool {
                     .ok_or(anyhow!("Unable to find txn in global index!"))?;
 
                 let tx_cost = txn.tx.maximum_validation_cost()?;
-                let balance = state.must_get_account(txn.signer).balance;
+                let account = state.must_get_account(txn.signer);
+                //let balance = state.must_get_account(txn.signer).balance;
 
                 // We're not going to propose txn this time
-                if tx_cost > balance {
+                if tx_cost > account.balance || txn.tx.nonce().unwrap() > account.nonce {
                     continue;
                 }
 
@@ -272,7 +273,7 @@ impl TransactionPool {
             // with the current bridge design it is not possible to broadcast a different one while
             // keeping the same nonce. So for those, it will always discard the new (identical)
             // one.
-            if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
+            if ReadyItem::from(existing_txn) > ReadyItem::from(&txn) {
                 debug!("Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}", txn.hash, txn.signer, txn.tx.nonce(), txn.tx.gas_price_per_evm_gas());
                 return TxAddResult::SameNonceButLowerGasPrice;
             }
@@ -372,12 +373,16 @@ impl TransactionPool {
     /// will be left indefinitely in the pool.
     pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
         let tx_index = txn.mempool_index();
+        let nonce = txn.tx.nonce().unwrap();
         self.transactions.remove(&tx_index);
         self.hash_to_index.remove(&txn.hash);
         Self::remove_from_gas_index(&mut self.gas_index, txn);
 
         if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
             Self::add_to_gas_index(&mut self.gas_index, next);
+        }
+        else {
+            //info!("Not pushing new txn for execution by current nonce: {}", nonce);
         }
     }
 

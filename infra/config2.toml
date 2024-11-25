@@ -2,7 +2,7 @@ bootstrap_address = [
     "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU",
     "/ip4/198.51.100.100/udp/5643/quic-v1",
 ]
-p2p_port = 5643
+p2p_port = 5644
 
 [[nodes]]
 # These (public key, peerId, stake, rewardAddress) tuples correspond to the private keys of all four nodes in `docker-compose.yaml`.
@@ -80,3 +80,4 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "1_000_000"
+disable_rpc=true

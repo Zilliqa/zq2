@@ -26,7 +26,7 @@ use sha3::{
     },
     Digest, Keccak256,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{
     constants::{
@@ -578,7 +578,7 @@ impl SignedTransaction {
             return Ok(ValidationOutcome::Success);
         };
         if nonce < account.nonce {
-            warn!("Nonce is too low");
+            debug!("Nonce is too low");
             return Ok(ValidationOutcome::NonceTooLow(nonce, account.nonce));
         }
         Ok(ValidationOutcome::Success)

@@ -409,7 +409,7 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
         let hash = txn.calculate_hash();
 
-        info!(?hash, "seen new txn {:?}", txn);
+        debug!(?hash, "seen new txn {:?}", txn);
 
         let result = self.consensus.handle_new_transaction(txn.clone())?;
         if result.was_added() {
