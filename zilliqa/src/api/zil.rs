@@ -1038,7 +1038,7 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
             .get_transaction_receipt(*hash)?
             .ok_or(anyhow!("Transaction receipt missing"))?;
         let receipt_response = TransactionReceiptResponse {
-            cumulative_gas: ScillaGas(receipt.cumulative_gas_used.0).to_string(),
+            cumulative_gas: ScillaGas::from(receipt.cumulative_gas_used).to_string(),
             epoch_num: block.number().to_string(),
             success: receipt.success,
         };

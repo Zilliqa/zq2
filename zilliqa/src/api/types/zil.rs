@@ -331,7 +331,7 @@ impl GetTxResponse {
             amount,
             signature,
             receipt: GetTxResponseReceipt {
-                cumulative_gas: ScillaGas(receipt.cumulative_gas_used.0),
+                cumulative_gas: receipt.cumulative_gas_used.into(),
                 epoch_num: block_number,
                 transitions: receipt
                     .transitions
