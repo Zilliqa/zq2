@@ -32,14 +32,13 @@ use crate::{
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
 
-macro_rules! sqlify_with_bincode_and_lz4 {
+macro_rules! sqlify_with_bincode {
     ($type: ty) => {
         impl ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
                 let data = bincode::serialize(self)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
-                let blob = lz4::block::compress(data.as_slice(), None, true).unwrap_or(data); // compressed or raw data
-                Ok(ToSqlOutput::from(blob))
+                Ok(ToSqlOutput::from(data))
             }
         }
         impl FromSql for $type {
@@ -47,8 +46,7 @@ macro_rules! sqlify_with_bincode_and_lz4 {
                 value: rusqlite::types::ValueRef<'_>,
             ) -> rusqlite::types::FromSqlResult<Self> {
                 let blob = value.as_blob()?;
-                let data = lz4::block::decompress(blob, None).unwrap_or_else(|_| blob.into()); // decompressed or raw blob
-                bincode::deserialize(data.as_slice()).map_err(|e| FromSqlError::Other(e))
+                bincode::deserialize(blob).map_err(|e| FromSqlError::Other(e))
             }
         }
     };
@@ -77,21 +75,21 @@ macro_rules! make_wrapper {
     };
 }
 
-sqlify_with_bincode_and_lz4!(AggregateQc);
-sqlify_with_bincode_and_lz4!(QuorumCertificate);
-sqlify_with_bincode_and_lz4!(NodeSignature);
-sqlify_with_bincode_and_lz4!(SignedTransaction);
+sqlify_with_bincode!(AggregateQc);
+sqlify_with_bincode!(QuorumCertificate);
+sqlify_with_bincode!(NodeSignature);
+sqlify_with_bincode!(SignedTransaction);
 
 make_wrapper!(Vec<ScillaException>, VecScillaExceptionSqlable);
-sqlify_with_bincode_and_lz4!(VecScillaExceptionSqlable);
+sqlify_with_bincode!(VecScillaExceptionSqlable);
 make_wrapper!(BTreeMap<u64, Vec<ScillaError>>, MapScillaErrorSqlable);
-sqlify_with_bincode_and_lz4!(MapScillaErrorSqlable);
+sqlify_with_bincode!(MapScillaErrorSqlable);
 
 make_wrapper!(Vec<Log>, VecLogSqlable);
-sqlify_with_bincode_and_lz4!(VecLogSqlable);
+sqlify_with_bincode!(VecLogSqlable);
 
 make_wrapper!(Vec<ScillaTransition>, VecScillaTransitionSqlable);
-sqlify_with_bincode_and_lz4!(VecScillaTransitionSqlable);
+sqlify_with_bincode!(VecScillaTransitionSqlable);
 
 make_wrapper!(SystemTime, SystemTimeSqlable);
 impl ToSql for SystemTimeSqlable {
@@ -1161,8 +1159,6 @@ impl eth_trie::DB for TrieStorage {
                 [key],
                 |row| row.get(0),
             )
-            // decompressed or raw blob
-            .map(|blob: Vec<_>| lz4::block::decompress(blob.as_slice(), None).unwrap_or(blob))
             .optional()?;
 
         let mut cache = self.cache.lock().unwrap();
@@ -1176,12 +1172,9 @@ impl eth_trie::DB for TrieStorage {
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> Result<(), Self::Error> {
-        // compressed or raw data
-        let blob =
-            lz4::block::compress(value.as_slice(), None, true).unwrap_or_else(|_| value.clone());
         self.db.lock().unwrap().execute(
             "INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)",
-            (key, &blob),
+            (key, &value),
         )?;
         let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
         Ok(())
@@ -1213,15 +1206,7 @@ impl eth_trie::DB for TrieStorage {
             let query =
                 format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
 
-            // compress all values for storage
-            let blobs = values
-                .iter()
-                .map(|v| {
-                    lz4::block::compress(v.as_slice(), None, true).unwrap_or_else(|_| v.clone())
-                })
-                .collect_vec();
-
-            let params = keys.iter().zip(blobs.as_slice()).flat_map(|(k, v)| [k, v]);
+            let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
             self.db
                 .lock()
                 .unwrap()
