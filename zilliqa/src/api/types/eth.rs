@@ -98,9 +98,6 @@ pub struct Block {
     pub size: u64,
     pub transactions: Vec<HashOrTransaction>,
     pub uncles: Vec<B256>,
-    pub quorum_certificate: QuorumCertificate,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub aggregate_quorum_certificate: Option<AggregateQc>,
 }
 
 impl Block {
@@ -113,9 +110,7 @@ impl Block {
                 .iter()
                 .map(|h| HashOrTransaction::Hash((*h).into()))
                 .collect(),
-            uncles: vec![],
-            quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
-            aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
+            uncles: vec![], // Uncles do not exist in ZQ2
         }
     }
 }
@@ -126,17 +121,15 @@ pub struct Header {
     #[serde(serialize_with = "hex")]
     pub number: u64,
     #[serde(serialize_with = "hex")]
-    pub view: u64,
-    #[serde(serialize_with = "hex")]
     pub hash: B256,
     #[serde(serialize_with = "hex")]
     pub parent_hash: B256,
     #[serde(serialize_with = "hex")]
     pub nonce: [u8; 8],
     #[serde(serialize_with = "hex")]
-    pub sha_3_uncles: B256,
+    pub sha_3_uncles: B256, // Uncles do not exist in ZQ2
     #[serde(serialize_with = "hex")]
-    pub logs_bloom: [u8; 256],
+    pub logs_bloom: [u8; 256], // Zilliqa blocks do not have logs of their own
     #[serde(serialize_with = "hex")]
     pub transactions_root: B256,
     #[serde(serialize_with = "hex")]
@@ -146,9 +139,9 @@ pub struct Header {
     #[serde(serialize_with = "hex")]
     pub miner: Address,
     #[serde(serialize_with = "hex")]
-    pub difficulty: u64,
+    pub difficulty: u64, // Difficulty does not exist in ZQ2
     #[serde(serialize_with = "hex")]
-    pub total_difficulty: u64,
+    pub total_difficulty: u64, // Difficulty does not exist in ZQ2
     #[serde(serialize_with = "hex")]
     pub extra_data: Vec<u8>,
     #[serde(serialize_with = "hex")]
@@ -157,8 +150,6 @@ pub struct Header {
     pub gas_used: EvmGas,
     #[serde(serialize_with = "hex")]
     pub timestamp: u64,
-    #[serde(serialize_with = "hex")]
-    pub mix_hash: B256,
 }
 
 impl Header {
@@ -170,19 +161,17 @@ impl Header {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
             number: header.number,
-            view: header.view,
             hash: header.hash.into(),
             parent_hash: header.qc.block_hash.into(),
-            mix_hash: B256::ZERO,
             nonce: [0; 8],
-            sha_3_uncles: B256::ZERO,
-            logs_bloom: [0; 256],
+            sha_3_uncles: B256::ZERO, // Uncles do not exist in ZQ2
+            logs_bloom: [0; 256],     // Zilliqa blocks do not have logs of their own
             transactions_root: header.transactions_root_hash.into(),
             state_root: header.state_root_hash.into(),
             receipts_root: header.receipts_root_hash.into(),
             miner,
-            difficulty: 0,
-            total_difficulty: 0,
+            difficulty: 0,       // Difficulty does not exist in ZQ2
+            total_difficulty: 0, // Difficulty does not exist in ZQ2
             extra_data: vec![],
             gas_limit: block_gas_limit,
             gas_used: header.gas_used,
