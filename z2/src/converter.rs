@@ -417,9 +417,6 @@ pub async fn convert_persistence(
         .with_finish(ProgressFinish::AndLeave);
 
     for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
-        if address.is_zero() {
-            continue;
-        }
         let zq1_account = zq1::Account::from_proto(zq1_account)?;
 
         let code = get_contract_code(&zq1_db, address)?;
