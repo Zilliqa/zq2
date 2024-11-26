@@ -549,14 +549,27 @@ mod tests {
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
         pool.mark_executed(&tx);
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 1);
         pool.mark_executed(&tx);
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 2);
         pool.mark_executed(&tx);
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
+
         Ok(())
     }
 
@@ -582,6 +595,10 @@ mod tests {
             let tx = pool.best_transaction(&state)?.unwrap().clone();
             assert_eq!(tx.tx.nonce().unwrap(), i);
             pool.mark_executed(&tx);
+            state.mutate_account(from, |acc| {
+                acc.nonce += 1;
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -641,6 +658,10 @@ mod tests {
         pool.insert_transaction(transaction(from, 1, 0), 0);
 
         pool.mark_executed(&transaction(from, 0, 0));
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
 
         assert_eq!(
             pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
@@ -665,6 +686,10 @@ mod tests {
             0
         );
         pool.mark_executed(&transaction(from, 0, 1));
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
 
         // Sender has insufficient funds at this point
         assert_eq!(pool.best_transaction(&state)?, None);
