@@ -208,7 +208,8 @@ impl Node {
 
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
-        // We only expect `Proposal`s and `NewTransaction`s to be broadcast.
+        // We only expect `NewTransaction`s to be broadcast.
+        // `Proposals` are re-routed to `handle_request()`.
         match message {
             ExternalMessage::NewTransaction(t) => {
                 // Don't process again txn sent by this node (it's already in the mempool)
