@@ -1419,27 +1419,32 @@ fn scilla_create(
         let _ = std::fs::remove_dir_all(ext_libs_dir_in_zq2.0);
     });
 
-    let check_output =
-        match scilla.check_contract(&txn.code, gas, &contract_init, &ext_libs_dir_in_scilla)? {
-            Ok(o) => o,
-            Err(e) => {
-                warn!(?e, "transaction failed");
-                let gas = gas.min(e.gas_remaining);
-                return Ok((
-                    ScillaResult {
-                        success: false,
-                        contract_address: Some(contract_address),
-                        logs: vec![],
-                        gas_used: (txn.gas_limit - gas).into(),
-                        transitions: vec![],
-                        accepted: Some(false),
-                        errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
-                        exceptions: e.errors.into_iter().map(Into::into).collect(),
-                    },
-                    state,
-                ));
-            }
-        };
+    let check_output = match scilla.check_contract(
+        &txn.code,
+        gas,
+        &contract_init,
+        &state.pre_state,
+        &ext_libs_dir_in_scilla,
+    )? {
+        Ok(o) => o,
+        Err(e) => {
+            warn!(?e, "transaction failed");
+            let gas = gas.min(e.gas_remaining);
+            return Ok((
+                ScillaResult {
+                    success: false,
+                    contract_address: Some(contract_address),
+                    logs: vec![],
+                    gas_used: (txn.gas_limit - gas).into(),
+                    transitions: vec![],
+                    accepted: Some(false),
+                    errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                    exceptions: e.errors.into_iter().map(Into::into).collect(),
+                },
+                state,
+            ));
+        }
+    };
 
     info!(?check_output);
 

@@ -40,7 +40,7 @@ use crate::{
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
-    state::{Code, ContractInit},
+    state::{Code, ContractInit, State},
     time::SystemTime,
     transaction::{ScillaGas, ZilAmount},
 };
@@ -200,6 +200,7 @@ impl ScillaServerRequestBuilder {
             ScillaServerRequestType::Run => "run",
         };
 
+        println!("\n\n{args:?}\n\n");
         let mut params = ObjectParams::new();
         params.insert("argv", args)?;
 
@@ -300,11 +301,13 @@ impl Scilla {
         code: &str,
         gas_limit: ScillaGas,
         init: &ContractInit,
+        state: &State,
         ext_libs_dir: &ScillaExtLibsPathInScilla,
     ) -> Result<Result<CheckOutput, ErrorResponse>> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
             .init(init.to_string())
             .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+            .ipc_address(self.state_server_addr())
             .code(code.to_owned())
             .gas_limit(gas_limit)
             .contract_info(true)
@@ -312,11 +315,18 @@ impl Scilla {
             .is_library(init.is_library()?)
             .build()?;
 
-        self.request_tx.send(request)?;
-        let response = self.response_rx.lock().unwrap().recv()?;
+        let (response, _) = self.state_server.lock().unwrap().active_call(
+            Address::default(),
+            PendingState::new(state.clone()),
+            || {
+                self.request_tx.send(request)?;
+                Ok(self.response_rx.lock().unwrap().recv()?)
+            },
+        )?;
 
         trace!(?response, "check response");
 
+        println!("RESPONSE: {response:?}");
         let response: Value = match response {
             Ok(r) => r,
             Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
@@ -592,10 +602,12 @@ struct StateServer {
 
 impl StateServer {
     async fn new() -> Result<StateServer> {
+        println!("StateServer::new");
         let server = jsonrpsee::server::Server::builder()
             .build((Ipv4Addr::UNSPECIFIED, 0))
             .await?;
         let addr = server.local_addr()?;
+        println!("SERVER ADDR: {addr:?}");
 
         let mut module = RpcModule::new(());
 
@@ -653,10 +665,12 @@ impl StateServer {
                     query: Vec<u8>,
                 }
 
+                println!("HERERERERERERERER: {params:?}");
                 let Params { addr, query } = params.parse()?;
                 let ProtoScillaQuery { name, indices, .. } =
                     ProtoScillaQuery::decode(query.as_slice()).map_err(err)?;
 
+                println!("HERERERERERERERER: {addr} {name}");
                 let mut active_call = active_call.lock().unwrap();
                 let Some(active_call) = active_call.as_mut() else {
                     return Err(err("no active call"));
@@ -874,6 +888,7 @@ impl ActiveCall {
             }
         }
 
+        println!("****** fetch_external_state_value: {addr} {name}");
         let account = self.state.load_account(addr)?;
         match name.as_str() {
             "_balance" => {
@@ -903,6 +918,15 @@ impl ActiveCall {
 
                 let val = scilla_val(format!("\"0x{}\"", hash.encode_hex()).into_bytes());
                 Ok(Some((val, "ByStr32".to_owned())))
+            }
+            "_code" => {
+                println!("FETCH code: {addr}");
+                if let Code::Scilla { code, .. } = &account.account.code {
+                    let val = scilla_val(format!("\"{code}\"").into_bytes());
+                    Ok(Some((val, "String".to_owned())))
+                } else {
+                    Err(anyhow!("Contract is not a scilla library"))
+                }
             }
             _ => self.fetch_value_inner(addr, name.clone(), indices.clone()),
         }

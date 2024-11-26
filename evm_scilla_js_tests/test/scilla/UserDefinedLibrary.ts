@@ -35,8 +35,8 @@ describe("Importing and calling external scilla libraries", () => {
 
   it("Should be possible to deploy TestContract1 which imports AdditionLib and MutualLib", async () => {
     contract1 = await parallelizer.deployScillaContractWithLibrary("TestContract1", [
-      {name: "AdditionLib.scillib", address: additionLibAddress!.toLocaleLowerCase()},
-      {name: "MutualLib.scillib", address: mutualLibAddress!.toLocaleLowerCase()}
+      {name: "AdditionLib", address: additionLibAddress!.toLocaleLowerCase()},
+      {name: "MutualLib", address: mutualLibAddress!.toLocaleLowerCase()}
     ]);
 
     expect(contract1.address).to.be.properAddress;
@@ -45,7 +45,7 @@ describe("Importing and calling external scilla libraries", () => {
 
   it("Should be possible to deploy TestContract2 which imports MutualLib", async () => {
     contract2 = await parallelizer.deployScillaContractWithLibrary("TestContract2", [
-      {name: "MutualLib.scillib", address: mutualLibAddress!}
+      {name: "MutualLib", address: mutualLibAddress!}
     ]);
 
     expect(contract2.address).to.be.properAddress;
