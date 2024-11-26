@@ -214,7 +214,10 @@ impl Node {
                 self.handle_proposal(from, m)?;
             }
             ExternalMessage::NewTransaction(t) => {
-                self.consensus.handle_new_transaction(t)?;
+                // Don't process again txn sent by this node (it's already in the mempool)
+                if self.peer_id != from {
+                    self.consensus.handle_new_transaction(t)?;
+                }
             }
             _ => {
                 warn!("unexpected message type");

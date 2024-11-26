@@ -111,7 +111,8 @@ impl P2pNode {
                     gossipsub: gossipsub::Behaviour::new(
                         MessageAuthenticity::Signed(key_pair.clone()),
                         gossipsub::ConfigBuilder::default()
-                            .max_transmit_size(524288)
+                            // 1MB is sufficient to accommodate proposal with 4000 simple transfers (block gas limit)
+                            .max_transmit_size(1024 * 1024)
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
                             .duplicate_cache_time(Duration::from_secs(300))
