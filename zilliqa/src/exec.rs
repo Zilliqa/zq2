@@ -597,7 +597,7 @@ impl State {
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
-        debug!(?hash, ?txn, "executing txn");
+        info!(?hash, ?txn, "executing txn");
 
         let blessed = BLESSED_TRANSACTIONS.contains(&hash);
 

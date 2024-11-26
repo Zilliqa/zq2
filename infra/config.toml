@@ -1,6 +1,6 @@
 bootstrap_address = [
-    "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU",
-    "/ip4/127.0.0.1/udp/5643/quic-v1",
+    "12D3KooWPXw2dXBRH1bT4vcNos9f6W2KoFTiarqptBuTzxaXg7zu",
+    "/ip4/198.51.100.103/udp/5643/quic-v1",
 ]
 p2p_port = 5643
 
@@ -79,4 +79,4 @@ consensus.blocks_per_hour = 3600
 consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
-consensus.gas_price = "1_000_000"
+consensus.gas_price = "4_761_904_800_000"

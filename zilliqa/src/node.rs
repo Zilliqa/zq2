@@ -214,7 +214,10 @@ impl Node {
                 self.handle_proposal(from, m)?;
             }
             ExternalMessage::NewTransaction(t) => {
-                self.consensus.handle_new_transaction(t)?;
+                // Don't process txn that this node sent since it already has it in the mempool
+                if self.peer_id != from {
+                    self.consensus.handle_new_transaction(t)?;
+                }
             }
             _ => {
                 warn!("unexpected message type");
@@ -409,7 +412,7 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
         let hash = txn.calculate_hash();
 
-        debug!(?hash, "seen new txn {:?}", txn);
+        info!(?hash, "seen new txn {:?}", txn);
 
         let result = self.consensus.handle_new_transaction(txn.clone())?;
         if result.was_added() {
