@@ -8,6 +8,7 @@ use alloy::primitives::B256;
 use anyhow::{anyhow, Context, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use tracing_subscriber::EnvFilter;
 use z2lib::{
     chain,
     components::Component,
@@ -25,6 +26,10 @@ struct Cli {
     /// Define the console output verbosity. Default is info. Use -v to enable `debug` and -vv to enable `trace`
     #[command(flatten)]
     verbose: Verbosity<InfoLevel>,
+    #[clap(long)]
+    rust_log: bool,
+    #[clap(long)]
+    log_json: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -622,10 +627,21 @@ async fn main() -> Result<()> {
     };
     let cli = Cli::parse();
 
-    env_logger::Builder::new()
-        .filter_level(cli.verbose.log_level_filter())
-        .format_target(false)
-        .init();
+    if cli.rust_log {
+        let builder = tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::from_default_env())
+            .with_line_number(true);
+        if cli.log_json {
+            builder.json().init();
+        } else {
+            builder.init();
+        }
+    } else {
+        env_logger::Builder::new()
+            .filter_level(cli.verbose.log_level_filter())
+            .format_target(false)
+            .init();
+    }
 
     match &cli.command {
         Commands::Only(ref arg) => {

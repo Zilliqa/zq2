@@ -26,6 +26,7 @@ use tempfile;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time::{sleep, Duration};
+use tracing::info;
 use url::Url;
 use zilliqa_rs::{
     middlewares::Middleware,
@@ -370,7 +371,6 @@ impl Issuer {
         // program - rrw 2023-11-28
         let get_one = || CHARSET[rng.gen_range(0..CHARSET.len())] as char;
         let privkey = iter::repeat_with(get_one).take(64).collect();
-        // println!("Invented privkey = {privkey}");
         Ok(Account {
             privkey,
             kind: acc_type,
@@ -419,7 +419,7 @@ impl Issuer {
     ) -> Result<String> {
         match from.kind {
             AccountKind::Zil => {
-                println!(
+                info!(
                     "💰 ZIL Transfer {0} -> {1} : {amt_zil} / {nonce:?} ",
                     from.get_zq_address()?,
                     to.get_address()?
@@ -441,12 +441,12 @@ impl Issuer {
                     )
                     .await?;
                 let duration = start.elapsed();
-                println!("Send txn in {duration:?}");
+                info!("Send txn in {duration:?}");
                 Ok(txn_sent.tran_id.to_string())
             }
             AccountKind::Eth => {
                 let amt_eth = zil_to_eth(amt_zil);
-                println!(
+                info!(
                     "💰 ETH Transfer {0:#032x} -> {1}: {amt_eth} / {nonce:?} ",
                     from.get_eth_address()?,
                     to.get_address()?
@@ -459,13 +459,12 @@ impl Issuer {
                     Some(val) => txn.nonce(val),
                     None => txn,
                 };
-                println!("privkey {0}", from.privkey);
+                info!("privkey {0}", from.privkey);
                 let mware = self.get_eth_middleware(from).await?;
-                println!("Got mware");
                 let start = Instant::now();
                 let txn_sent = mware.send_transaction(txn, None).await?;
                 let duration = start.elapsed();
-                println!("Sent txn in {duration:?}");
+                info!("Sent txn in {duration:?}");
                 Ok(hex::encode(txn_sent.tx_hash()))
             }
         }
@@ -522,13 +521,13 @@ impl Issuer {
             match status {
                 Ok(val) => {
                     if val.receipt.success {
-                        println!(".. ✅ {attempt}/{0} {txn}", self.attempts);
+                        info!(".. ✅ {attempt}/{0} {txn}", self.attempts);
                         return Ok(TransactionResult::Success {
                             hash: txn.to_string(),
                             receipt: val.receipt,
                         });
                     } else {
-                        println!(".. ❌ {attempt}/{0} {txn}", self.attempts);
+                        info!(".. ❌ {attempt}/{0} {txn}", self.attempts);
                         return Ok(TransactionResult::Failure {
                             hash: txn.to_string(),
                             receipt: val.receipt,
@@ -544,7 +543,7 @@ impl Issuer {
                     }
                 }
             }
-            println!("⌛ {txn}");
+            info!("⌛ {txn}");
             sleep(Duration::from_millis(self.sleep_ms)).await;
         }
         Err(anyhow!(
@@ -624,7 +623,7 @@ impl Perf {
     pub async fn run(&self, rng: &mut StdRng) -> Result<()> {
         // Run the steps, one by one.
         for (index, step) in self.config.steps.iter().enumerate() {
-            println!("🎄 running step {index}: {0} .. ", &step.name);
+            info!("🎄 running step {index}: {0} .. ", &step.name);
             self.step(rng, step).await?;
         }
 
@@ -686,10 +685,10 @@ impl Perf {
             JoinSet::new();
         let mut txn_checks_in_progress: JoinSet<(usize, String, Option<TransactionResult>)> =
             JoinSet::new();
+        let feeder_nonce = Arc::new(Mutex::new(
+            self.issuer.get_nonce(&self.source_of_funds.account).await?,
+        ));
         loop {
-            let feeder_nonce = Arc::new(Mutex::new(
-                self.issuer.get_nonce(&self.source_of_funds.account).await?,
-            ));
             // Kick off the next phase for every module that can support it.
             // this is currently fast enough that I don't mind polling, but one day we can flag modules that
             // might have changed.
@@ -705,26 +704,26 @@ impl Perf {
                 let module = rec.module.clone();
                 // If all the results are in, we can spawn a task to start the next phase.
                 let all_ok = rec.txns.iter().fold(true, |acc, (_, r)| acc && r.is_some());
-                let outstanding_txns = rec
-                    .txns
-                    .iter()
-                    .filter_map(|(k, r)| {
-                        if let Some(rv) = r {
-                            match rv {
-                                TransactionResult::Pending => Some(k.to_string()),
-                                _ => None,
-                            }
-                        } else {
-                            Some(k.to_string())
-                        }
-                    })
-                    .collect::<Vec<String>>();
-                println!(
-                    "📳 Module {idx} phase={2} end_now={0} all_ok={all_ok} awaiting = {1}",
-                    rec.end_now,
-                    outstanding_txns.join(" "),
-                    rec.phase
-                );
+                // let outstanding_txns = rec
+                //     .txns
+                //     .iter()
+                //     .filter_map(|(k, r)| {
+                //         if let Some(rv) = r {
+                //             match rv {
+                //                 TransactionResult::Pending => Some(k.to_string()),
+                //                 _ => None,
+                //             }
+                //         } else {
+                //             Some(k.to_string())
+                //         }
+                //     })
+                //     .collect::<Vec<String>>();
+                //info!(
+                //    "📳 Module {idx} phase={2} end_now={0} all_ok={all_ok} awaiting = {1}",
+                //    rec.end_now,
+                //    outstanding_txns.join(" "),
+                //    rec.phase
+                //);
                 if all_ok {
                     let txn_results = rec
                         .txns
@@ -736,7 +735,7 @@ impl Perf {
                     let feeder_nonce_copy = feeder_nonce.clone();
                     let mut local_rng = StdRng::from_rng(&mut *rng)?;
                     let issuer = self.issuer()?;
-                    println!("📳 Module {idx} running phase={phase}");
+                    info!("📳 Module {idx} running phase={phase}");
                     modules_in_progress.spawn(async move {
                         (
                             idx,
@@ -757,58 +756,66 @@ impl Perf {
             }
             // If there are no checks in progress, we can quit
             if txn_checks_in_progress.is_empty() && modules_in_progress.is_empty() {
-                println!("Nothing left to do. Exiting");
+                info!("Nothing left to do. Exiting");
                 break;
             }
-            tokio::select! {
-                xval = txn_checks_in_progress.join_next() => {
-                    if let Some(val) = xval {
-                        match val {
-                            Ok((idx, txn_id, txn_result)) => {
-                                println!("Got result for idx = {idx} , txn = {txn_id} - {txn_result:?}");
-                                modules.get_mut(idx).map(|v: &mut ModuleRecord| v.txns.insert(txn_id, txn_result.clone()));
-                            },
-                            Err(e) => {
-                                println!("txn check task failed - {e:?}");
-                            }
+            // I did originally use select!() for this, but it was appallingly slow at terminating tasks that
+            // had notionally finished. So let's try this ..
+            let mut did_anything = true;
+            while did_anything {
+                did_anything = false;
+                if let Some(val) = txn_checks_in_progress.try_join_next() {
+                    did_anything = true;
+                    match val {
+                        Ok((idx, txn_id, txn_result)) => {
+                            info!("Got result for idx = {idx} , txn = {txn_id} - {txn_result:?}");
+                            modules.get_mut(idx).map(|v: &mut ModuleRecord| {
+                                v.txns.insert(txn_id, txn_result.clone())
+                            });
+                        }
+                        Err(e) => {
+                            info!("txn check task failed - {e:?}");
                         }
                     }
-                },
-                xval = modules_in_progress.join_next() => {
-                    if let Some(val) = xval {
-                        match val {
-                            Ok((idx, result)) => {
-                                match result {
-                                    Ok(phase_result) => {
-                                        println!("📳 module {idx} completed phase {1} with {0} txns to monitor",  phase_result.monitor.len(), modules[idx].phase);
-                                        for txn_id in phase_result.monitor {
-                                            modules[idx].txns.insert(txn_id.to_string(), None);
-                                            let local_txn_id = txn_id.to_string();
-                                            let local_issuer = self.issuer()?;
-                                            txn_checks_in_progress.spawn(async move {
-                                                if let Ok(result) = local_issuer.monitor_one(&local_txn_id).await {
-                                                    (idx, local_txn_id, Some(result))
-                                                } else {
-                                                    (idx, local_txn_id, None)
-                                                }
-                                            });
-                                        }
-                                        modules[idx].in_progress = false;
-                                        modules[idx].phase += 1;
-                                        modules[idx].end_now = phase_result.end_now;
-                                    },
-                                    Err(e) => {
-                                        println!("module step failed[0] - {e:?}");
+                }
+                if let Some(xval) = modules_in_progress.try_join_next() {
+                    did_anything = true;
+                    match xval {
+                        Ok((idx, result)) => {
+                            match result {
+                                Ok(phase_result) => {
+                                    info!("📳 module {idx} completed phase {1} with {0} txns to monitor",  phase_result.monitor.len(), modules[idx].phase);
+                                    for txn_id in phase_result.monitor {
+                                        modules[idx].txns.insert(txn_id.to_string(), None);
+                                        let local_txn_id = txn_id.to_string();
+                                        let local_issuer = self.issuer()?;
+                                        txn_checks_in_progress.spawn(async move {
+                                            if let Ok(result) =
+                                                local_issuer.monitor_one(&local_txn_id).await
+                                            {
+                                                (idx, local_txn_id, Some(result))
+                                            } else {
+                                                (idx, local_txn_id, None)
+                                            }
+                                        });
                                     }
+                                    modules[idx].in_progress = false;
+                                    modules[idx].phase += 1;
+                                    modules[idx].end_now = phase_result.end_now;
                                 }
-                            },
-                            Err(e) => {
-                                println!("module step failed - {e:?}");
+                                Err(e) => {
+                                    info!("module step failed[0] - {e:?}");
+                                }
                             }
+                        }
+                        Err(e) => {
+                            info!("module step failed - {e:?}");
                         }
                     }
                 }
             }
+            // If we got here, sleep for a bit to avoid spinning the CPU.
+            tokio::task::yield_now().await;
         }
         // If we got here, we're OK.
 
@@ -844,9 +851,9 @@ impl Perf {
             .issuer
             .issue_transfer(from, to, amt, nonce, &gas)
             .await?;
-        println!("Sent {tran_id:?}");
+        info!("Sent {tran_id:?}");
         let result = self.monitor_one(&tran_id).await?;
-        println!("Result {result:?}");
+        info!("Result {result:?}");
         match result {
             TransactionResult::Success { .. } => Ok(()),
             TransactionResult::Pending | TransactionResult::TimedOut => Err(anyhow!("Timed out")),
