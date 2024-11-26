@@ -5,7 +5,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::{
     crypto::Hash,
@@ -151,10 +151,9 @@ impl TransactionPool {
 
                 let tx_cost = txn.tx.maximum_validation_cost()?;
                 let account = state.must_get_account(txn.signer);
-                //let balance = state.must_get_account(txn.signer).balance;
 
                 // We're not going to propose txn this time
-                if tx_cost > account.balance || txn.tx.nonce().unwrap() > account.nonce {
+                if tx_cost > account.balance || txn.tx.nonce().unwrap_or_default() > account.nonce {
                     continue;
                 }
 
@@ -373,16 +372,12 @@ impl TransactionPool {
     /// will be left indefinitely in the pool.
     pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
         let tx_index = txn.mempool_index();
-        let nonce = txn.tx.nonce().unwrap();
         self.transactions.remove(&tx_index);
         self.hash_to_index.remove(&txn.hash);
         Self::remove_from_gas_index(&mut self.gas_index, txn);
 
         if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
             Self::add_to_gas_index(&mut self.gas_index, next);
-        }
-        else {
-            //info!("Not pushing new txn for execution by current nonce: {}", nonce);
         }
     }
 

@@ -810,18 +810,16 @@ impl Consensus {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
 
-                if self.create_next_block_on_timeout || self.early_proposal.is_some() {
-                    if self.create_next_block_on_timeout {
-                        warn!("Create block on timeout set. Clearing");
-                    }
-                    if self.early_proposal.is_some() {
-                        let (_, txns, _, _ ) = self.early_proposal.as_ref().unwrap();
-                        for txn in txns.into_iter().rev() {
-                            self.transaction_pool.insert_ready_transaction(txn.clone())?;
-                        }
-                        warn!("Early proposal exists but we are not leader. Clearing proposal");
-                    }
+                if self.create_next_block_on_timeout {
+                    warn!("Create block on timeout set. Clearing");
                     self.create_next_block_on_timeout = false;
+                }
+                if self.early_proposal.is_some() {
+                    let (_, txns, _, _) = self.early_proposal.take().unwrap();
+                    for txn in txns.into_iter().rev() {
+                        self.transaction_pool.insert_ready_transaction(txn)?;
+                    }
+                    warn!("Early proposal exists but we are not leader. Clearing proposal");
                     self.early_proposal = None;
                 }
 
@@ -1419,7 +1417,7 @@ impl Consensus {
                     proposal.header.view,
                 );
                 // out of gas, undo last transaction
-                debug!(nonce = tx.tx.nonce(), "gas limit reached",);
+                info!(nonce = tx.tx.nonce(), "gas limit reached",);
                 state.set_to_root(updated_root_hash.into());
                 break;
             };
