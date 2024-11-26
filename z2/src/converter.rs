@@ -796,13 +796,7 @@ fn try_with_evm_transaction(
                 }))
             })
             .collect::<Result<_>>()?,
-        transitions: transaction
-            .receipt
-            .transitions
-            .clone()
-            .into_iter()
-            .map(|x| x.into())
-            .collect(),
+        transitions: vec![],
         accepted: None,
         errors: BTreeMap::new(),
         exceptions: vec![],

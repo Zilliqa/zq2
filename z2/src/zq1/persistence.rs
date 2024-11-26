@@ -429,7 +429,7 @@ impl From<Transition> for ScillaTransition {
             from: x.address,
             to: x.message.recipient,
             depth: x.depth,
-            amount: zilliqa::transaction::ZilAmount::from_amount(x.message.amount as u128),
+            amount: zilliqa::transaction::ZilAmount::from_raw(x.message.amount as u128),
             tag: x.message.tag,
             params: serde_json::to_string(&x.message.params).unwrap(),
         }
