@@ -417,9 +417,6 @@ pub async fn convert_persistence(
         .with_finish(ProgressFinish::AndLeave);
 
     for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
-        if address.is_zero() {
-            continue;
-        }
         let zq1_account = zq1::Account::from_proto(zq1_account)?;
 
         let code = get_contract_code(&zq1_db, address)?;
@@ -707,8 +704,8 @@ fn try_with_zil_transaction(
         block_hash: Hash::ZERO,
         index: index as u64,
         success: transaction.receipt.success,
-        gas_used: EvmGas(transaction.receipt.cumulative_gas),
-        cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
+        gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
+        cumulative_gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
         contract_address,
         logs: transaction
             .receipt
