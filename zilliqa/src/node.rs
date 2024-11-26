@@ -214,7 +214,7 @@ impl Node {
                 self.handle_proposal(from, m)?;
             }
             ExternalMessage::NewTransaction(t) => {
-                // Don't process txn that this node sent since it already has it in the mempool
+                // Don't process again txn sent by this node (it's already in the mempool)
                 if self.peer_id != from {
                     self.consensus.handle_new_transaction(t)?;
                 }

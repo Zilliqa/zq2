@@ -272,7 +272,7 @@ impl TransactionPool {
             // with the current bridge design it is not possible to broadcast a different one while
             // keeping the same nonce. So for those, it will always discard the new (identical)
             // one.
-            if ReadyItem::from(existing_txn) > ReadyItem::from(&txn) {
+            if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
                 debug!("Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}", txn.hash, txn.signer, txn.tx.nonce(), txn.tx.gas_price_per_evm_gas());
                 return TxAddResult::SameNonceButLowerGasPrice;
             }
