@@ -101,10 +101,17 @@ pub struct Block {
     pub quorum_certificate: QuorumCertificate,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate_quorum_certificate: Option<AggregateQc>,
+    #[serde(serialize_with = "hex")]
+    pub logs_bloom: [u8; 256],
 }
 
 impl Block {
-    pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
+    pub fn from_block(
+        block: &message::Block,
+        miner: Address,
+        block_gas_limit: EvmGas,
+        logs_bloom: [u8; 256],
+    ) -> Self {
         Block {
             header: Header::from_header(block.header, miner, block_gas_limit),
             size: block.size() as u64,
@@ -116,6 +123,7 @@ impl Block {
             uncles: vec![], // Uncles do not exist in ZQ2
             quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
+            logs_bloom,
         }
     }
 }
@@ -135,8 +143,6 @@ pub struct Header {
     pub nonce: [u8; 8],
     #[serde(serialize_with = "hex")]
     pub sha_3_uncles: B256, // Uncles do not exist in ZQ2
-    #[serde(serialize_with = "hex")]
-    pub logs_bloom: [u8; 256], // Zilliqa blocks do not have logs of their own
     #[serde(serialize_with = "hex")]
     pub transactions_root: B256,
     #[serde(serialize_with = "hex")]
@@ -176,7 +182,6 @@ impl Header {
             mix_hash: B256::ZERO,
             nonce: [0; 8],
             sha_3_uncles: B256::ZERO, // Uncles do not exist in ZQ2
-            logs_bloom: [0; 256],     // Zilliqa blocks do not have logs of their own
             transactions_root: header.transactions_root_hash.into(),
             state_root: header.state_root_hash.into(),
             receipts_root: header.receipts_root_hash.into(),

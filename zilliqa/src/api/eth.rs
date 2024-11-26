@@ -375,7 +375,24 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     Ok(block)
 }
 
+pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u8; 256]> {
+    let mut logs_bloom = [0; 256];
+    for txn_hash in block.transactions.iter() {
+        while let Some(txn_receipt) = get_transaction_receipt_inner(*txn_hash, node)? {
+            let this_bloom = txn_receipt.logs_bloom;
+            // Ideally we'd implement a full blown bloom filter type but this'll do for now
+            assert!(logs_bloom.len() == this_bloom.len());
+            let bloom_size = logs_bloom.len();
+            for i in 0..bloom_size {
+                logs_bloom[i] |= this_bloom[i];
+            }
+        }
+    }
+    Ok(logs_bloom)
+}
+
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
+    let logs_bloom = get_block_logs_bloom(node, block)?;
     if !full {
         let miner = node.get_proposer_reward_address(block.header)?;
         let block_gas_limit = block.gas_limit();
@@ -383,6 +400,7 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             block,
             miner.unwrap_or_default(),
             block_gas_limit,
+            logs_bloom,
         ))
     } else {
         let transactions = block
@@ -396,7 +414,12 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             .collect::<Result<_>>()?;
         let miner = node.get_proposer_reward_address(block.header)?;
         let block_gas_limit = block.gas_limit();
-        let block = eth::Block::from_block(block, miner.unwrap_or_default(), block_gas_limit);
+        let block = eth::Block::from_block(
+            block,
+            miner.unwrap_or_default(),
+            block_gas_limit,
+            logs_bloom,
+        );
         Ok(eth::Block {
             transactions,
             ..block
