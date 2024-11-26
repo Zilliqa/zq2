@@ -721,7 +721,13 @@ fn try_with_zil_transaction(
                 }))
             })
             .collect::<Result<_>>()?,
-        transitions: vec![],
+        transitions: transaction
+            .receipt
+            .transitions
+            .clone()
+            .into_iter()
+            .map(|x| x.into())
+            .collect(),
         accepted: None,
         errors: BTreeMap::new(),
         exceptions: vec![],
@@ -790,7 +796,13 @@ fn try_with_evm_transaction(
                 }))
             })
             .collect::<Result<_>>()?,
-        transitions: vec![],
+        transitions: transaction
+            .receipt
+            .transitions
+            .clone()
+            .into_iter()
+            .map(|x| x.into())
+            .collect(),
         accepted: None,
         errors: BTreeMap::new(),
         exceptions: vec![],
