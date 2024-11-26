@@ -15,7 +15,8 @@
                     "zil1ad7krn8lkvm2g40eyu0f0er96t54je0ka7yldp",
                     "zil1jj9gmttszflvnze4jg6nd7d4vau4akd0xjwpkj",
                     "zil1gy44tg8tcyqplyc2h2xuzpcz9gazhfyyn8qsxf",
-                    "zil1ascnfxmlzl4z3l6ecavxcae5hc37gdzr23enz0"
+                    "zil1ascnfxmlzl4z3l6ecavxcae5hc37gdzr23enz0",
+                    "zil1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9yf6pz"
                 ]
             },
             "eth_getBalance": {
@@ -39,6 +40,10 @@
                     [
                         "0xec31349b7f17ea28ff59c7586c7734be23e43443",
                         "latest"
+                    ],
+                    [
+                        "0x0000000000000000000000000000000000000000",
+                        "latest"
                     ]
                 ]
             }
@@ -53,7 +58,9 @@
                     "0xc504cbb9a8fecb52d6da9f23c236e72c96d20e368c221943b6090ab92581b911",
                     "e7bb4c68d06e784ce9c358212f532825cabd5d9549d080d70f63fcef6035de8e",
                     "0x4964bf50c8f598f6deedaed6c34cc5d739f8a9a8aecf8eb548206af8594e6c89",
-                    "b95dd8837550bfdbcbb983a2860a2d0cd3eaad7a8902db51352ac8c178486ccf"
+                    "b95dd8837550bfdbcbb983a2860a2d0cd3eaad7a8902db51352ac8c178486ccf",
+                    "0x7b9808f32fc6ce4fa4d591a33d4d4346f30dd1c7c76c280502f3df3431d18c5f",
+                    "0x165779aad8d325db02a4f2ef0aaedc177c9b659f9de881490551d8a56a715046"
                 ]
             },
             "eth_call": {
@@ -194,6 +201,12 @@
                     ]
                 ]
             },
+            "GetTxnBodiesForTxBlock": {
+                "params": [
+                    "3277414",
+                    "3277415"
+                ]
+            },
             "GetTxBlock": {
                 "params": [
                     "3277414",
@@ -214,7 +227,9 @@
             },
             "DSBlockListing": {
                 "params": [
-                    [1]
+                    [
+                        1
+                    ]
                 ]
             },
             "GetCurrentDSEpoch": {
