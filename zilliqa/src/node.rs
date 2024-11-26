@@ -210,9 +210,6 @@ impl Node {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
         // We only expect `Proposal`s and `NewTransaction`s to be broadcast.
         match message {
-            ExternalMessage::Proposal(m) => {
-                self.handle_proposal(from, m)?;
-            }
             ExternalMessage::NewTransaction(t) => {
                 // Don't process again txn sent by this node (it's already in the mempool)
                 if self.peer_id != from {
@@ -314,9 +311,9 @@ impl Node {
             ExternalMessage::ProcessProposal(m) => {
                 self.handle_process_proposal(from, m)?;
             }
-            // Handle requests which just contain a block proposal. This shouldn't actually happen in production, but
-            // annoyingly we have some test cases which trigger this (by rewriting broadcasts to direct messages) and
-            // the easiest fix is just to handle requests with proposals gracefully.
+            // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
+            // a Request by the underlying layer, with a faux request-id. This is to mitigate issues when there are
+            // too many transactions in the broadcast queue.
             ExternalMessage::Proposal(m) => {
                 self.handle_proposal(from, m)?;
 
