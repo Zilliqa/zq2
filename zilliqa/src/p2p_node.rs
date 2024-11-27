@@ -411,7 +411,14 @@ impl P2pNode {
                                 },
                                 // still publish to self, even if no other peers.
                                 Err(gossipsub::PublishError::InsufficientPeers) => {
-                                    self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                    match message {
+                                        ExternalMessage::Proposal(_) => {
+                                            self.send_to(&topic.hash(), |c| c.requests.send((from, "(faux-id)".to_string(), message, ResponseChannel::Local)))?;
+                                        }
+                                        _ => {
+                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     trace!(%e, "failed to publish message");
