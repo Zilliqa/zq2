@@ -1006,10 +1006,10 @@ impl Network {
                                 if inner.config.eth_chain_id == sender_chain_id {
                                     match external_message {
                                         // Re-route Proposals from Broadcast to Requests, which is the behaviour in Production.
-                                        ExternalMessage::Proposal(p) => inner
+                                        ExternalMessage::Proposal(_) => inner
                                             .handle_request(
                                                 source,
-                                                &p.hash().to_string(),
+                                                "(faux-id)",
                                                 external_message.clone(),
                                                 ResponseChannel::Local,
                                             )
