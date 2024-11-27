@@ -164,7 +164,7 @@ pub struct Consensus {
     receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
     receipts_cache_hash: Hash,
     /// Actions that act on newly created blocks
-    transaction_pool: TransactionPool,
+    pub transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
     early_proposal: Option<EarlyProposal>,
     /// Flag indicating that block creation should be postponed at least until empty_block_timeout is reached
@@ -1655,7 +1655,8 @@ impl Consensus {
         // need those transactions again
         for tx in opaque_transactions {
             let account_nonce = self.state.get_account(tx.signer)?.nonce;
-            self.transaction_pool.insert_transaction(tx, account_nonce);
+            self.transaction_pool
+                .insert_transaction(tx, account_nonce, false);
         }
 
         // finalise the proposal
@@ -1674,11 +1675,15 @@ impl Consensus {
     }
 
     /// Insert transaction and add to early_proposal if possible.
-    pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<TxAddResult> {
+    pub fn handle_new_transaction(
+        &mut self,
+        txn: SignedTransaction,
+        from_broadcast: bool,
+    ) -> Result<TxAddResult> {
         let Ok(verified) = txn.verify() else {
             return Ok(TxAddResult::CannotVerifySignature);
         };
-        let inserted = self.new_transaction(verified)?;
+        let inserted = self.new_transaction(verified, from_broadcast)?;
         if inserted.was_added()
             && self.create_next_block_on_timeout
             && self.early_proposal.is_some()
@@ -1893,7 +1898,11 @@ impl Consensus {
 
     /// Returns (flag, outcome).
     /// flag is true if the transaction was newly added to the pool - ie. if it validated correctly and has not been seen before.
-    pub fn new_transaction(&mut self, txn: VerifiedTransaction) -> Result<TxAddResult> {
+    pub fn new_transaction(
+        &mut self,
+        txn: VerifiedTransaction,
+        from_broadcast: bool,
+    ) -> Result<TxAddResult> {
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
             return Ok(TxAddResult::Duplicate(txn.hash));
@@ -1928,9 +1937,9 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = self
-            .transaction_pool
-            .insert_transaction(txn, early_account.nonce);
+        let insert_result =
+            self.transaction_pool
+                .insert_transaction(txn, early_account.nonce, from_broadcast);
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -2863,7 +2872,8 @@ impl Consensus {
 
             for txn in existing_txns {
                 let account_nonce = self.state.get_account(txn.signer)?.nonce;
-                self.transaction_pool.insert_transaction(txn, account_nonce);
+                self.transaction_pool
+                    .insert_transaction(txn, account_nonce, false);
             }
 
             // block transactions need to be removed from self.transactions and re-injected
@@ -2873,7 +2883,7 @@ impl Consensus {
                 // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
                 self.transaction_pool
-                    .insert_transaction(orig_tx, account_nonce);
+                    .insert_transaction(orig_tx, account_nonce, false);
             }
             // then purge them all from the db, including receipts and indexes
             self.db
@@ -3013,7 +3023,7 @@ impl Consensus {
             .join(",");
 
         for (tx_index, txn) in verified_txns.into_iter().enumerate() {
-            self.new_transaction(txn.clone())?;
+            self.new_transaction(txn.clone(), false)?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self

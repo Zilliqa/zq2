@@ -608,6 +608,11 @@ impl Network {
         // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
+                node.inner
+                    .lock()
+                    .unwrap()
+                    .process_transactions_to_broadcast()
+                    .unwrap();
                 // Trigger a tick so that block fetching can operate.
                 node.inner.lock().unwrap().consensus.tick().unwrap();
                 if node.inner.lock().unwrap().handle_timeout().unwrap() {
@@ -797,6 +802,11 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
+                    node.inner
+                        .lock()
+                        .unwrap()
+                        .process_transactions_to_broadcast()
+                        .unwrap();
                     node.inner.lock().unwrap().handle_timeout().unwrap();
                 });
             }

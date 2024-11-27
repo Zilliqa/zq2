@@ -1899,7 +1899,7 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &secret_key,
         1,
@@ -1911,9 +1911,7 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
-
-    let block_number = "1";
+    let block_number = txn["receipt"]["epoch_num"].as_str().unwrap();
     let page_number = "0";
 
     let response: Value = wallet
@@ -1945,7 +1943,7 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &secret_key,
         1,
@@ -1957,9 +1955,7 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
-
-    let block_number = "1";
+    let block_number = txn["receipt"]["epoch_num"].as_str().unwrap();
 
     let response: Value = wallet
         .provider()
@@ -2000,7 +1996,7 @@ async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &secret_key,
         1,
@@ -2012,9 +2008,7 @@ async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
-
-    let block_number = "1";
+    let block_number = txn["receipt"]["epoch_num"].as_str().unwrap();
 
     let response: Value = wallet
         .provider()
@@ -2040,7 +2034,7 @@ async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &secret_key,
         1,
@@ -2052,9 +2046,7 @@ async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
-
-    let block_number = "1";
+    let block_number = txn["receipt"]["epoch_num"].as_str().unwrap();
 
     let response: Value = wallet
         .provider()
@@ -2084,7 +2076,7 @@ async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &secret_key,
         1,
@@ -2096,9 +2088,7 @@ async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
-
-    let block_number = "1";
+    let block_number = txn["receipt"]["epoch_num"].as_str().unwrap();
     let page_number = "2";
 
     let response: Value = wallet
@@ -2130,7 +2120,7 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &secret_key,
         1,
@@ -2142,9 +2132,7 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
-
-    let block_number = "1";
+    let block_number = txn["receipt"]["epoch_num"].as_str().unwrap();
     let page_number = "0";
 
     let response: Value = wallet

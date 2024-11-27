@@ -180,8 +180,11 @@ impl NodeLauncher {
             return Err(anyhow!("Node already running!"));
         }
 
-        let sleep = time::sleep(Duration::from_millis(5));
-        tokio::pin!(sleep);
+        let consensus_sleep = time::sleep(Duration::from_millis(5));
+        tokio::pin!(consensus_sleep);
+
+        let mempool_sleep = time::sleep(Duration::from_millis(5));
+        tokio::pin!(mempool_sleep);
 
         self.node_launched = true;
 
@@ -269,7 +272,7 @@ impl NodeLauncher {
                     let (_source, _message) = message.expect("message stream should be infinite");
                     todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
-                () = &mut sleep => {
+                () = &mut consensus_sleep => {
                     let attributes = vec![
                         KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
                         KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
@@ -281,7 +284,7 @@ impl NodeLauncher {
                     self.node.lock().unwrap().consensus.tick().unwrap();
                     // No messages for a while, so check if consensus wants to timeout
                     self.node.lock().unwrap().handle_timeout().unwrap();
-                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
+                    consensus_sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,
@@ -290,7 +293,12 @@ impl NodeLauncher {
                 r = self.reset_timeout_receiver.next() => {
                     let sleep_time = r.expect("reset timeout stream should be infinite");
                     trace!(?sleep_time, "timeout reset");
-                    sleep.as_mut().reset(Instant::now() + sleep_time);
+                    consensus_sleep.as_mut().reset(Instant::now() + sleep_time);
+                },
+
+                () = &mut mempool_sleep => {
+                    self.node.lock().unwrap().process_transactions_to_broadcast()?;
+                    mempool_sleep.as_mut().reset(Instant::now() + Duration::from_millis(20));
                 },
             }
         }

@@ -247,6 +247,7 @@ pub enum ExternalMessage {
     BlockResponse(BlockResponse),
     ProcessProposal(ProcessProposal),
     NewTransaction(SignedTransaction),
+    BatchedTransactions(Vec<SignedTransaction>),
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
@@ -314,6 +315,9 @@ impl Display for ExternalMessage {
                     write!(f, "NewTransaction(Unable to verify txn due to: {:?})", err)
                 }
             },
+            ExternalMessage::BatchedTransactions(txns) => {
+                write!(f, "BatchedTransactions(txns_count: {:?})", txns.len())
+            }
             ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
         }
     }

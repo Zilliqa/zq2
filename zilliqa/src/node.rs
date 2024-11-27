@@ -208,15 +208,18 @@ impl Node {
 
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
-        // We only expect `Proposal`s and `NewTransaction`s to be broadcast.
+        // We only expect `Proposal`s and `BatchedTransactions` to be broadcast.
         match message {
             ExternalMessage::Proposal(m) => {
                 self.handle_proposal(from, m)?;
             }
-            ExternalMessage::NewTransaction(t) => {
-                // Don't process again txn sent by this node (it's already in the mempool)
-                if self.peer_id != from {
-                    self.consensus.handle_new_transaction(t)?;
+            ExternalMessage::BatchedTransactions(transactions) => {
+                if self.peer_id == from {
+                    return Ok(());
+                }
+                for txn in transactions {
+                    let from_broadcast = true;
+                    self.consensus.handle_new_transaction(txn, from_broadcast)?;
                 }
             }
             _ => {
@@ -390,7 +393,7 @@ impl Node {
         };
         let verified_tx = tx.verify()?;
         trace!("Injecting intershard transaction {}", verified_tx.hash);
-        self.consensus.new_transaction(verified_tx)?;
+        self.consensus.new_transaction(verified_tx, false)?;
         Ok(())
     }
 
@@ -412,16 +415,26 @@ impl Node {
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
         let hash = txn.calculate_hash();
 
-        info!(?hash, "seen new txn {:?}", txn);
+        debug!(?hash, "seen new txn {:?}", txn);
 
-        let result = self.consensus.handle_new_transaction(txn.clone())?;
-        if result.was_added() {
-            // TODO: Avoid redundant self-broadcast
-            self.message_sender
-                .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
+        let from_broadcast = false;
+        let result = self
+            .consensus
+            .handle_new_transaction(txn.clone(), from_broadcast)?;
+        if !result.was_added() {
+            debug!(?result, "Transaction cannot be added to mempool");
         }
 
         Ok((hash, result))
+    }
+
+    pub fn process_transactions_to_broadcast(&mut self) -> Result<()> {
+        let txns_to_broadcast = self.consensus.transaction_pool.pull_txns_to_broadcast()?;
+        if txns_to_broadcast.is_empty() {
+            return Ok(());
+        }
+        self.message_sender
+            .broadcast_external_message(ExternalMessage::BatchedTransactions(txns_to_broadcast))
     }
 
     pub fn number(&self) -> u64 {
