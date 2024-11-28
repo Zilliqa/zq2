@@ -1,6 +1,6 @@
 {
     "urls": {
-        "ZQ2": "http://34.124.218.159:4201/",
+        "ZQ2": "https://api.zq2-protomainnet.zilliqa.com",
         "ZQ1": "http://34.124.185.137:4201/"
     },
     "headers": {
