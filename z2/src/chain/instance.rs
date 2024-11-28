@@ -107,9 +107,11 @@ impl ChainInstance {
                     .get("name")
                     .and_then(|n| n.as_str())
                     .ok_or_else(|| anyhow!("name is missing or not a string"))?;
+                // Zone is often reported as a URL. get only the last element..
                 let zone = i
                     .get("zone")
                     .and_then(|z| z.as_str())
+                    .map(|z| z.rsplit_once('/').map_or(z, |(_, y)| y))
                     .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
                 let labels: BTreeMap<String, String> = i
                     .get("labels")
