@@ -349,7 +349,7 @@ impl SignedTransaction {
 
     // We don't validate Zilliqa txns against their maximum cost, but against
     // the deposit size.
-    fn maximum_validation_cost(&self) -> Result<u128> {
+    pub(crate) fn maximum_validation_cost(&self) -> Result<u128> {
         match self {
             SignedTransaction::Legacy { tx, .. } => {
                 Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)
@@ -578,7 +578,10 @@ impl SignedTransaction {
             return Ok(ValidationOutcome::Success);
         };
         if nonce < account.nonce {
-            warn!("Nonce is too low");
+            warn!(
+                "Nonce is too low. Txn nonce is: {}, acc: {}",
+                nonce, account.nonce
+            );
             return Ok(ValidationOutcome::NonceTooLow(nonce, account.nonce));
         }
         Ok(ValidationOutcome::Success)

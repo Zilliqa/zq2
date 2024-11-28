@@ -223,13 +223,7 @@ fn create_transaction(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<CreateTransactionResponse> {
-    let transaction: TransactionParams = params.one().map_err(|_| {
-        ErrorObject::owned::<String>(
-            RPCErrorCode::RpcParseError as i32,
-            "Cannot parse transaction parameters".to_string(),
-            None,
-        )
-    })?;
+    let transaction: TransactionParams = params.one()?;
 
     let mut node = node.lock().unwrap();
 

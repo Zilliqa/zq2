@@ -36,17 +36,17 @@ macro_rules! sqlify_with_bincode {
     ($type: ty) => {
         impl ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-                Ok(ToSqlOutput::from(
-                    bincode::serialize(self)
-                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?,
-                ))
+                let data = bincode::serialize(self)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
+                Ok(ToSqlOutput::from(data))
             }
         }
         impl FromSql for $type {
             fn column_result(
                 value: rusqlite::types::ValueRef<'_>,
             ) -> rusqlite::types::FromSqlResult<Self> {
-                bincode::deserialize(value.as_blob()?).map_err(|e| FromSqlError::Other(e))
+                let blob = value.as_blob()?;
+                bincode::deserialize(blob).map_err(|e| FromSqlError::Other(e))
             }
         }
     };
@@ -205,6 +205,39 @@ impl Db {
             None => (Connection::open_in_memory()?, None),
         };
 
+        // SQLite performance tweaks
+
+        // large page_size is more compact/efficient
+        connection.pragma_update(None, "page_size", 1 << 15)?;
+        let page_size: i32 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
+
+        // reduced non-critical fsync() calls
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        let synchronous: i8 = connection.pragma_query_value(None, "synchronous", |r| r.get(0))?;
+
+        // store temporary tables/indices in-memory
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
+        let temp_store: i8 = connection.pragma_query_value(None, "temp_store", |r| r.get(0))?;
+
+        // general read/write performance improvement
+        let journal_mode: String =
+            connection.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
+
+        // retain journal size of 32MB - based on observations
+        let journal_size_limit: i32 =
+            connection
+                .pragma_update_and_check(None, "journal_size_limit", 1 << 25, |r| r.get(0))?;
+
+        tracing::info!(
+            ?journal_mode,
+            ?journal_size_limit,
+            ?synchronous,
+            ?temp_store,
+            ?page_size,
+            "PRAGMA"
+        );
+
+        // Add tracing - logs all SQL statements
         connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
 
         Self::ensure_schema(&connection)?;
@@ -231,11 +264,11 @@ impl Db {
                 gas_limit INTEGER NOT NULL,
                 qc BLOB NOT NULL,
                 agg BLOB,
-                is_canonical BOOLEAN NOT NULL);
+                is_canonical BOOLEAN NOT NULL) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS idx_blocks_height ON blocks(height);
             CREATE TABLE IF NOT EXISTS transactions (
                 tx_hash BLOB NOT NULL PRIMARY KEY,
-                data BLOB NOT NULL);
+                data BLOB NOT NULL) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS receipts (
                 tx_hash BLOB NOT NULL PRIMARY KEY REFERENCES transactions (tx_hash) ON DELETE CASCADE,
                 block_hash BLOB NOT NULL REFERENCES blocks (block_hash), -- the touched_address_index needs to be updated for all the txs in the block, so delete txs first - thus no cascade here
@@ -253,14 +286,14 @@ impl Db {
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
                 tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
-                PRIMARY KEY (address, tx_hash));
+                PRIMARY KEY (address, tx_hash)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS tip_info (
                 finalized_view INTEGER,
                 view INTEGER,
                 high_qc BLOB,
                 high_qc_updated_at BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
-            CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
             ",
         )?;
         Ok(())
@@ -505,7 +538,7 @@ impl Db {
     /// Write view and timestamp to table if view is larger than current. Return true if write was successful
     pub fn set_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
         let res = sqlite_tx
-            .execute("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view < ?1",
+            .execute("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view IS NULL OR tip_info.view < ?1",
                     [view])?;
         Ok(res != 0)
     }
@@ -604,12 +637,21 @@ impl Db {
             .map(Into::<SystemTime>::into))
     }
 
-    pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
-        self.db.lock().unwrap().execute(
-            "INSERT INTO touched_address_index (address, tx_hash) VALUES (?1, ?2)",
+    pub fn add_touched_address_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        address: Address,
+        txn_hash: Hash,
+    ) -> Result<()> {
+        sqlite_tx.execute(
+            "INSERT OR IGNORE INTO touched_address_index (address, tx_hash) VALUES (?1, ?2)",
             (AddressSqlable(address), txn_hash),
         )?;
         Ok(())
+    }
+
+    pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
+        self.add_touched_address_with_db_tx(&self.db.lock().unwrap(), address, txn_hash)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
@@ -658,7 +700,7 @@ impl Db {
         tx: &SignedTransaction,
     ) -> Result<()> {
         sqlite_tx.execute(
-            "INSERT INTO transactions (tx_hash, data) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO transactions (tx_hash, data) VALUES (?1, ?2)",
             (hash, tx),
         )?;
         Ok(())
@@ -1172,6 +1214,7 @@ impl eth_trie::DB for TrieStorage {
                 .collect();
             let query =
                 format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
+
             let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
             self.db
                 .lock()

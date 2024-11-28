@@ -810,9 +810,16 @@ impl Consensus {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
 
-                if self.create_next_block_on_timeout || self.early_proposal.is_some() {
-                    warn!("Early proposal exists but we are not leader. Clearing proposal");
+                if self.create_next_block_on_timeout {
+                    warn!("Create block on timeout set. Clearing");
                     self.create_next_block_on_timeout = false;
+                }
+                if self.early_proposal.is_some() {
+                    let (_, txns, _, _) = self.early_proposal.take().unwrap();
+                    for txn in txns.into_iter().rev() {
+                        self.transaction_pool.insert_ready_transaction(txn)?;
+                    }
+                    warn!("Early proposal exists but we are not leader. Clearing proposal");
                     self.early_proposal = None;
                 }
 
@@ -929,23 +936,17 @@ impl Consensus {
         current_block: BlockHeader,
         inspector: I,
     ) -> Result<Option<TransactionApplyResult>> {
-        let db = self.db.clone();
         let state = &mut self.state;
-        Self::apply_transaction_at(state, db, txn, current_block, inspector)
+        Self::apply_transaction_at(state, txn, current_block, inspector)
     }
 
     pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
         state: &mut State,
-        db: Arc<Db>,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
-
-        if !db.contains_transaction(&txn.hash)? {
-            db.insert_transaction(&txn.hash, &txn.tx)?;
-        }
 
         let result = state.apply_transaction(txn.clone(), current_block, inspector);
         let result = match result {
@@ -963,43 +964,8 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
-        let mut gas_left = self.config.consensus.eth_block_gas_limit;
-        std::iter::from_fn(|| self.transaction_pool.best_transaction())
-            .filter(|txn| {
-                let account_nonce = self.state.must_get_account(txn.signer).nonce;
-                // Ignore this transaction if it is no longer valid.
-                // Transactions are (or will be) valid iff their nonce is greater than the account
-                // nonce OR if they have no nonce
-                txn.tx
-                    .nonce()
-                    .map(|tx_nonce| tx_nonce >= account_nonce)
-                    .unwrap_or(true)
-            })
-            .take_while(|txn| {
-                if let Some(g) = gas_left.checked_sub(txn.tx.gas_limit()) {
-                    gas_left = g;
-                    true
-                } else {
-                    false
-                }
-            })
-            .collect()
-    }
-
-    pub fn txpool_content(&self) -> TxPoolContent {
-        let mut content = self.transaction_pool.preview_content();
-        // Ignore txns having too low nonces
-        content.pending.retain(|txn| {
-            let account_nonce = self.state.must_get_account(txn.signer).nonce;
-            txn.tx.nonce().unwrap() >= account_nonce
-        });
-
-        content.queued.retain(|txn| {
-            let account_nonce = self.state.must_get_account(txn.signer).nonce;
-            txn.tx.nonce().unwrap() >= account_nonce
-        });
-        content
+    pub fn txpool_content(&self) -> Result<TxPoolContent> {
+        self.transaction_pool.preview_content(&self.state)
     }
 
     pub fn pending_transaction_count(&self, account: Address) -> u64 {
@@ -1343,8 +1309,7 @@ impl Consensus {
 
         // Internal states
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie: EthTrie<MemoryDB> =
-            eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie: EthTrie<MemoryDB> = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let applied_txs = Vec::<VerifiedTransaction>::new();
 
         // Generate the early proposal
@@ -1393,7 +1358,7 @@ impl Consensus {
         let mut tx_index_in_block = proposal.transactions.len();
 
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = self.transaction_pool.best_transaction() {
+        while let Some(tx) = self.transaction_pool.best_transaction(&state)? {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (
                 time_since_last_view_change,
@@ -1412,8 +1377,7 @@ impl Consensus {
                     proposal.header.number,
                     proposal.header.view,
                 );
-                // don't have time, reinsert txn.
-                self.transaction_pool.insert_ready_transaction(tx);
+                // don't have time
                 break;
             }
 
@@ -1422,15 +1386,16 @@ impl Consensus {
             let zq2_inspector = ZQ2Inspector::new(&mut inspector);
             let result = Self::apply_transaction_at(
                 &mut state,
-                self.db.clone(),
                 tx.clone(),
                 proposal.header,
                 zq2_inspector,
             )?;
+            self.db.insert_transaction(&tx.hash, &tx.tx)?;
 
             // Skip transactions whose execution resulted in an error and drop them.
             let Some(result) = result else {
                 warn!("Dropping failed transaction: {:?}", tx.hash);
+                self.transaction_pool.mark_executed(&tx.clone());
                 continue;
             };
 
@@ -1447,11 +1412,13 @@ impl Consensus {
                     proposal.header.view,
                 );
                 // out of gas, undo last transaction
-                self.transaction_pool.insert_ready_transaction(tx);
+                info!(nonce = tx.tx.nonce(), "gas limit reached",);
                 state.set_to_root(updated_root_hash.into());
                 break;
             };
 
+            // Clone itself before invalidating the reference
+            let tx = tx.clone();
             // Do necessary work to assemble the transaction
             self.transaction_pool.mark_executed(&tx);
 
@@ -1573,8 +1540,8 @@ impl Consensus {
 
         // Internal states
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
-        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut updated_root_hash = state.root_hash()?;
         let mut tx_index_in_block = 0;
         let mut applied_transaction_hashes = Vec::<Hash>::new();
@@ -1590,9 +1557,9 @@ impl Consensus {
         };
 
         // Retrieve a list of pending transactions
-        let pending = self.transaction_pool.pending_hashes();
+        let pending = self.transaction_pool.pending_transactions(state)?;
 
-        for hash in pending.into_iter() {
+        for txn in pending.into_iter() {
             // First - check for time
             let (
                 time_since_last_view_change,
@@ -1606,19 +1573,14 @@ impl Consensus {
                 break;
             }
 
-            // Retrieve txn from the pool
-            let Some(txn) = self.transaction_pool.get_transaction(hash) else {
-                continue;
-            };
-
             // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
-                self.db.clone(),
                 txn.clone(),
                 executed_block_header,
                 inspector::noop(),
             )?;
+            self.db.insert_transaction(&txn.hash, &txn.tx)?;
 
             // Skip transactions whose execution resulted in an error
             let Some(result) = result else {
@@ -1696,12 +1658,12 @@ impl Consensus {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
             while let Some(txn) = broadcasted_transactions.pop() {
-                self.transaction_pool.insert_ready_transaction(txn);
+                self.transaction_pool.insert_ready_transaction(txn)?;
             }
             return Ok(None);
         };
 
-        trace!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, "######### proposing block");
+        info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
         Ok(Some((final_block, broadcasted_transactions)))
     }
@@ -2905,7 +2867,7 @@ impl Consensus {
 
             // block transactions need to be removed from self.transactions and re-injected
             for tx_hash in &head_block.transactions {
-                let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
+                let orig_tx = self.get_transaction_by_hash(*tx_hash)?.unwrap();
 
                 // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
@@ -3021,8 +2983,8 @@ impl Consensus {
         // message or locally, the proposal cannot be applied
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
             // Prefer to insert verified txn from pool. This is faster.
-            let txn = match self.transaction_pool.pop_transaction(*tx_hash) {
-                Some(txn) => txn,
+            let txn = match self.transaction_pool.get_transaction(*tx_hash) {
+                Some(txn) => txn.clone(),
                 _ => match transactions
                     .get(idx)
                     .map(|sig_tx| sig_tx.clone().verify())
@@ -3041,15 +3003,16 @@ impl Consensus {
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
-        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
 
         let transaction_hashes = verified_txns
             .iter()
             .map(|tx| format!("{:?}", tx.hash))
             .join(",");
 
-        for (tx_index, txn) in verified_txns.into_iter().enumerate() {
+        let mut touched_addresses = vec![];
+        for (tx_index, txn) in verified_txns.iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
 
@@ -3058,10 +3021,9 @@ impl Consensus {
             let result = self
                 .apply_transaction(txn.clone(), block.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.transaction_pool.mark_executed(&txn);
-
-            for address in &touched_inspector.touched {
-                self.db.add_touched_address(*address, tx_hash)?;
+            self.transaction_pool.mark_executed(txn);
+            for address in touched_inspector.touched {
+                touched_addresses.push((address, tx_hash));
             }
 
             let gas_used = result.gas_used();
@@ -3077,17 +3039,24 @@ impl Consensus {
             let receipt_hash = receipt.compute_hash();
 
             debug!("During execution in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.get_view()?, tx_hash, receipt, receipt_hash);
-            receipts_trie
-                .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
-                .unwrap();
+            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
-            transactions_trie
-                .insert(tx_hash.as_bytes(), tx_hash.as_bytes())
-                .unwrap();
+            transactions_trie.insert(tx_hash.as_bytes(), tx_hash.as_bytes())?;
 
-            info!(?receipt, "applied transaction {:?}", receipt);
+            debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
+        self.db.with_sqlite_tx(|sqlite_tx| {
+            for txn in &verified_txns {
+                self.db
+                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, &txn.tx)?;
+            }
+            for (addr, txn_hash) in touched_addresses {
+                self.db
+                    .add_touched_address_with_db_tx(sqlite_tx, addr, txn_hash)?;
+            }
+            Ok(())
+        })?;
 
         if cumulative_gas_used != block.gas_used() {
             warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());

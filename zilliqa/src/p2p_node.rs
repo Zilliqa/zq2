@@ -111,7 +111,8 @@ impl P2pNode {
                     gossipsub: gossipsub::Behaviour::new(
                         MessageAuthenticity::Signed(key_pair.clone()),
                         gossipsub::ConfigBuilder::default()
-                            .max_transmit_size(524288)
+                            // 1MB is sufficient to accommodate proposal with 4000 simple transfers (block gas limit)
+                            .max_transmit_size(1024 * 1024)
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
                             .duplicate_cache_time(Duration::from_secs(300))
@@ -410,7 +411,14 @@ impl P2pNode {
                                 },
                                 // still publish to self, even if no other peers.
                                 Err(gossipsub::PublishError::InsufficientPeers) => {
-                                    self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                    match message {
+                                        ExternalMessage::Proposal(_) => {
+                                            self.send_to(&topic.hash(), |c| c.requests.send((from, "(faux-id)".to_string(), message, ResponseChannel::Local)))?;
+                                        }
+                                        _ => {
+                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     trace!(%e, "failed to publish message");
