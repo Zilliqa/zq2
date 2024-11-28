@@ -725,12 +725,29 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
 
-    let nonce = node
-        .lock()
-        .unwrap()
-        .get_state(&block)?
-        .get_account(address)?
-        .nonce;
+    let state = node.lock().unwrap().get_state(&block)?;
+
+    if !state.has_account(address)? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "Address does not exist".to_string(),
+            None::<()>,
+        )
+        .into());
+    }
+
+    let account = state.get_account(address)?;
+
+    if !account.code.is_eoa() {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcInvalidAddressOrKey as i32,
+            "A contract account queried".to_string(),
+            None::<()>,
+        )
+        .into());
+    }
+
+    let nonce = account.nonce;
 
     let mut contracts = vec![];
 
