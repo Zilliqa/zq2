@@ -140,11 +140,18 @@ mod tests {
             )
             .unwrap(),
             settings: Settings {
-                remappings: vec![Remapping {
-                    context: None,
-                    name: "@openzeppelin".to_owned(),
-                    path: "../vendor/openzeppelin-contracts/".to_owned(),
-                }],
+                remappings: vec![
+                    Remapping {
+                        context: None,
+                        name: "@openzeppelin/contracts-upgradeable".to_owned(),
+                        path: "../vendor/openzeppelin-contracts-upgradeable/contracts".to_owned(),
+                    },
+                    Remapping {
+                        context: None,
+                        name: "@openzeppelin/contracts".to_owned(),
+                        path: "../vendor/openzeppelin-contracts/contracts".to_owned(),
+                    },
+                ],
                 optimizer: Optimizer {
                     enabled: Some(true),
                     runs: Some(4294967295),
@@ -156,8 +163,14 @@ mod tests {
             },
         };
 
-        let solc = foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 28))
-            .unwrap();
+        let mut solc =
+            foundry_compilers::solc::Solc::find_or_install(&semver::Version::new(0, 8, 28))
+                .unwrap();
+        solc.allow_paths.insert(PathBuf::from(
+            "../vendor/openzeppelin-contracts-upgradeable",
+        ));
+        solc.allow_paths
+            .insert(PathBuf::from("../vendor/openzeppelin-contracts"));
 
         let output = solc.compile_exact(&input).unwrap();
         if output.has_error() {
