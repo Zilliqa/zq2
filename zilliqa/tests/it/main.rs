@@ -1014,9 +1014,20 @@ impl Network {
                                 let mut inner = node.inner.lock().unwrap();
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
-                                    inner
-                                        .handle_broadcast(source, external_message.clone())
-                                        .unwrap();
+                                    match external_message {
+                                        // Re-route Proposals from Broadcast to Requests, which is the behaviour in Production.
+                                        ExternalMessage::Proposal(_) => inner
+                                            .handle_request(
+                                                source,
+                                                "(faux-id)",
+                                                external_message.clone(),
+                                                ResponseChannel::Local,
+                                            )
+                                            .unwrap(),
+                                        _ => inner
+                                            .handle_broadcast(source, external_message.clone())
+                                            .unwrap(),
+                                    }
                                 }
                             });
                         }
@@ -1025,22 +1036,24 @@ impl Network {
             }
             AnyMessage::Response { channel, message } => {
                 info!(%message, ?channel, "response");
-                let destination = self.pending_responses.remove(channel).unwrap();
-                let (index, node) = self
-                    .nodes
-                    .iter()
-                    .enumerate()
-                    .find(|(_, n)| n.peer_id == destination)
-                    .unwrap();
-                if !self.disconnected.contains(&index) {
-                    let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
-                    span.in_scope(|| {
-                        let mut inner = node.inner.lock().unwrap();
-                        // Send to nodes only in the same shard (having same chain_id)
-                        if inner.config.eth_chain_id == sender_chain_id {
-                            inner.handle_response(source, message.clone()).unwrap();
-                        }
-                    });
+                // skip on faux response
+                if let Some(destination) = self.pending_responses.remove(channel) {
+                    let (index, node) = self
+                        .nodes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, n)| n.peer_id == destination)
+                        .unwrap();
+                    if !self.disconnected.contains(&index) {
+                        let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
+                        span.in_scope(|| {
+                            let mut inner = node.inner.lock().unwrap();
+                            // Send to nodes only in the same shard (having same chain_id)
+                            if inner.config.eth_chain_id == sender_chain_id {
+                                inner.handle_response(source, message.clone()).unwrap();
+                            }
+                        });
+                    }
                 }
             }
         }
