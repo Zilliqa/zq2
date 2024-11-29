@@ -3017,14 +3017,14 @@ impl Consensus {
             .join(",");
 
         let mut touched_addresses = vec![];
-        for (tx_index, txn) in verified_txns.into_iter().enumerate() {
+        for (tx_index, txn) in verified_txns.iter().enumerate() {
             self.new_transaction(txn.clone(), false)?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
                 .apply_transaction(txn.clone(), block.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.transaction_pool.mark_executed(&txn);
+            self.transaction_pool.mark_executed(txn);
             for address in inspector.touched {
                 touched_addresses.push((address, tx_hash));
             }

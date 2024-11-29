@@ -1,17 +1,15 @@
 use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    cmp::{min, Ordering},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
 };
 
 use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
-use time::Duration;
 use tracing::debug;
 
 use crate::{
     crypto::Hash,
     state::State,
-    time::SystemTime,
     transaction::{SignedTransaction, ValidationOutcome, VerifiedTransaction},
 };
 
@@ -80,7 +78,7 @@ type GasCollection = BTreeMap<u128, BTreeSet<TxIndex>>;
 /// A pool that manages uncommitted transactions.
 ///
 /// It provides transactions to the chain via [`TransactionPool::best_transaction`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TransactionPool {
     /// All transactions in the pool. These transactions are all valid, or might become
     /// valid at some point in the future.
@@ -92,21 +90,7 @@ pub struct TransactionPool {
     /// These are candidates to be included in the next block
     gas_index: GasCollection,
     /// Keeps transactions created at this node that will be broadcast
-    transactions_to_broadcast: Vec<SignedTransaction>,
-    /// Keeps the time when first transaction was inserted into `broadcast_transactions`
-    first_broadcast_txn_add_time: SystemTime,
-}
-
-impl Default for TransactionPool {
-    fn default() -> Self {
-        TransactionPool {
-            transactions: BTreeMap::default(),
-            hash_to_index: BTreeMap::default(),
-            gas_index: GasCollection::default(),
-            transactions_to_broadcast: Vec::default(),
-            first_broadcast_txn_add_time: SystemTime::UNIX_EPOCH,
-        }
-    }
+    transactions_to_broadcast: VecDeque<SignedTransaction>,
 }
 
 /// A wrapper for (gas price, sender, nonce), stored in the `ready` heap of [TransactionPool].
@@ -324,23 +308,24 @@ impl TransactionPool {
     }
 
     fn store_broadcast_txn(&mut self, txn: SignedTransaction) {
-        self.transactions_to_broadcast.push(txn);
-        if self.first_broadcast_txn_add_time == SystemTime::UNIX_EPOCH {
-            self.first_broadcast_txn_add_time = SystemTime::now();
-        }
+        self.transactions_to_broadcast.push_back(txn);
     }
 
     pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<SignedTransaction>> {
-        const MAX_TIME_SINCE_FIRST_INSERT: Duration = Duration::milliseconds(50);
-        const MAX_BATCH_SIZE: usize = 20;
+        const MAX_BATCH_SIZE: usize = 100;
 
-        if self.transactions_to_broadcast.len() > MAX_BATCH_SIZE
-            || self.first_broadcast_txn_add_time.elapsed()? > MAX_TIME_SINCE_FIRST_INSERT
-        {
-            self.first_broadcast_txn_add_time = SystemTime::UNIX_EPOCH;
-            return Ok(std::mem::take(&mut self.transactions_to_broadcast));
+        if self.transactions_to_broadcast.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(vec![])
+
+        let max_take = min(self.transactions_to_broadcast.len(), MAX_BATCH_SIZE);
+
+        let ret_vec = self
+            .transactions_to_broadcast
+            .drain(..max_take)
+            .collect::<Vec<_>>();
+
+        Ok(ret_vec)
     }
 
     fn remove_from_gas_index(gas_index: &mut GasCollection, txn: &VerifiedTransaction) {

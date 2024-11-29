@@ -298,7 +298,7 @@ impl NodeLauncher {
 
                 () = &mut mempool_sleep => {
                     self.node.lock().unwrap().process_transactions_to_broadcast()?;
-                    mempool_sleep.as_mut().reset(Instant::now() + Duration::from_millis(20));
+                    mempool_sleep.as_mut().reset(Instant::now() + Duration::from_millis(100));
                 },
             }
         }
