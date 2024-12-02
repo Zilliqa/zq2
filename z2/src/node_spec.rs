@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     default::Default,
     fmt,
 };
@@ -15,7 +15,7 @@ pub struct NodeDesc {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Composition {
-    pub nodes: HashMap<u64, NodeDesc>,
+    pub nodes: BTreeMap<u64, NodeDesc>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -63,7 +63,7 @@ fn indices_from_string(input: &str) -> Result<HashSet<u64>> {
 impl Composition {
     pub fn parse(from: &str) -> Result<Self> {
         let mut components = from.split('/');
-        let mut nodes = HashMap::new();
+        let mut nodes = BTreeMap::new();
         if let Some(val) = components.next() {
             for v in indices_from_string(val)? {
                 nodes.insert(v, NodeDesc { is_validator: true });
@@ -73,13 +73,13 @@ impl Composition {
     }
 
     pub fn single_node(is_validator: bool) -> Self {
-        let mut nodes = HashMap::new();
+        let mut nodes = BTreeMap::new();
         nodes.insert(0, NodeDesc { is_validator });
         Self { nodes }
     }
 
     pub fn small_network() -> Self {
-        let mut nodes = HashMap::new();
+        let mut nodes = BTreeMap::new();
         for i in 0..4 {
             nodes.insert(i, NodeDesc { is_validator: true });
         }
