@@ -220,7 +220,7 @@ fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<
             .collect::<Vec<_>>();
 
         if chunks.len() < 2 || chunks[0] != evm_prefix {
-            warn!("Malformed key name: {} in contract storage!", key);
+            debug!("Malformed key name: {} in contract storage!", key);
             continue;
         };
 
