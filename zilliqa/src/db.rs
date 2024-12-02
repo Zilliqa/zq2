@@ -228,12 +228,17 @@ impl Db {
             connection
                 .pragma_update_and_check(None, "journal_size_limit", 1 << 25, |r| r.get(0))?;
 
+        // cache 1-days data (256MB) in-memory
+        connection.pragma_update(None, "cache_size", (1 << 28) / page_size)?;
+        let cache_size: i32 = connection.pragma_query_value(None, "cache_size", |r| r.get(0))?;
+
         tracing::info!(
             ?journal_mode,
             ?journal_size_limit,
             ?synchronous,
             ?temp_store,
             ?page_size,
+            ?cache_size,
             "PRAGMA"
         );
 
