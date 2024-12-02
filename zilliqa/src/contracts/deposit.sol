@@ -310,6 +310,14 @@ contract Deposit {
         return committee().totalStake;
     }
 
+    function getFutureTotalStake() public view returns (uint256) {
+        // if `latestComputedEpoch > currentEpoch()`
+        // then `latestComputedEpoch` determines the future committee we need
+        // otherwise there are no committee changes after `currentEpoch()`
+        // i.e. `latestComputedEpoch` determines the most recent committee
+        return _committee[latestComputedEpoch % 3].totalStake;
+    }
+
     function getStakersData()
         public
         view
