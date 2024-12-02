@@ -224,7 +224,7 @@ pub fn produce_full(c: &mut Criterion) {
         })
         .collect();
     for txn in txns {
-        let result = consensus.new_transaction(txn).unwrap();
+        let result = consensus.new_transaction(txn, false).unwrap();
         assert!(result.was_added());
     }
 
