@@ -10,6 +10,7 @@ use alloy::{
 };
 use anyhow::{Context, Result, anyhow};
 use k256::ecdsa::SigningKey;
+use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use tera::Tera;
@@ -302,6 +303,10 @@ impl Setup {
         self.config.base_port + 2002
     }
 
+    pub fn get_p2p_port(&self, index: u16) -> u16 {
+        index + 401 + self.config.base_port
+    }
+
     pub fn get_explorer_url(&self) -> String {
         format!("http://localhost:{0}", self.get_otterscan_port())
     }
@@ -314,8 +319,31 @@ impl Setup {
         format!("0.0.0.0:{0}", self.get_docs_port())
     }
 
+    pub fn get_p2p_multiaddr(&self, index: u16) -> Multiaddr {
+        // unwrap() is safe because this is a constant string - it's a bug in the program if
+        // it fails to parse.
+        format!("/ip4/127.0.0.1/tcp/{0}", self.get_p2p_port(index))
+            .parse()
+            .unwrap()
+    }
+
+    pub fn get_peer_id(&self, index: u16) -> Result<PeerId> {
+        let node_data = self
+            .config
+            .node_data
+            .get(&u64::from(index))
+            .ok_or(anyhow!("Cannot find node data for node {index}"))?;
+        let node_key = SecretKey::from_hex(&node_data.secret_key)?;
+        let libp2p_keypair = node_key.to_libp2p_keypair();
+        Ok(PeerId::from_public_key(&libp2p_keypair.public()))
+    }
+
     pub fn get_port_map(&self) -> String {
         let mut result = String::new();
+        result.push_str(&format!(
+            "🦏  p2p ports are at {0}+<node_index>\n",
+            self.get_p2p_port(0)
+        ));
         result.push_str(&format!(
             "🦏  JSON-RPC ports are at {0}+<node_index>\n",
             self.get_json_rpc_port(0, false)
@@ -501,13 +529,36 @@ impl Setup {
             self.config.shape.nodes.len(),
             &self.config_dir
         );
+
+        // We deliberately only give one of the bootstrap addresses in order to encourage
+        // libp2p to exercise its discovery paths - otherwise a bug which prevented node
+        // discovery would be missed when running locally.
+        let bootstrap_address =
+            if let Some((first_index, _)) = self.config.shape.nodes.iter().next() {
+                let idx = u16::try_from(*first_index)?;
+                println!(
+                    "Bootstrap_address has idx {idx} with node_data {0:?}",
+                    self.config.node_data.get(&u64::from(idx))
+                );
+
+                zilliqa::cfg::OneOrMany(vec![(self.get_peer_id(idx)?, self.get_p2p_multiaddr(idx))])
+            } else {
+                Default::default()
+            };
+
         for (node_index, _node_desc) in self.config.shape.nodes.iter() {
             println!("🎱 Generating configuration for node {node_index}...");
+            let node_index_u16 = u16::try_from(*node_index)?;
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
-                bootstrap_address: Default::default(),
+                bootstrap_address: bootstrap_address.clone(),
                 nodes: Vec::new(),
-                p2p_port: 0,
+                p2p_port: self.get_p2p_port(node_index_u16),
+                // No external address is needed right now, because tcp connections can be
+                // called back, so can act as an autonat server. Effectively, this means the
+                // bootstrap_address specifies the external address. If this is ever not the
+                // case, we will need an external_address to be specified here.
+                // - rrw 2024-12-02
                 external_address: None,
             };
             // @todo should pass this in!
@@ -591,7 +642,6 @@ impl Setup {
 
             cfg.nodes = Vec::new();
             cfg.nodes.push(node_config);
-            cfg.p2p_port = 0;
             // Now write the config.
             let config_path = self.get_config_path(*node_index)?;
             println!("🪅 Writing configuration file for node {0} .. ", node_index);
