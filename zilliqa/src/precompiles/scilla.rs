@@ -12,7 +12,7 @@ use revm::{
     primitives::{
         Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
     },
-    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext, Inspector,
+    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
 };
 use scilla_parser::{
     ast::nodes::{
@@ -25,7 +25,7 @@ use scilla_parser::{
 use crate::{
     cfg::scilla_ext_libs_path_default,
     constants::SCILLA_INVOKE_RUNNER,
-    exec::{scilla_call, PendingState, ScillaError},
+    exec::{scilla_call, ExternalContext, PendingState, ScillaError},
     inspector::ScillaInspector,
     state::Code,
     transaction::{EvmGas, ZilAmount},
@@ -327,8 +327,8 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
     }
 }
 
-pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>(
-    handler: &mut EvmHandler<'_, I, PendingState>,
+pub fn scilla_call_handle_register<I: ScillaInspector>(
+    handler: &mut EvmHandler<'_, ExternalContext<I>, PendingState>,
 ) {
     // Call handler
     let prev_handle = handler.execution.call.clone();
@@ -374,17 +374,23 @@ pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>
     });
 }
 
-fn scilla_call_precompile(
+fn scilla_call_precompile<I: ScillaInspector>(
     input: &CallInputs,
     gas_limit: u64,
     evmctx: &mut InnerEvmContext<PendingState>,
-    inspector: &mut (impl Inspector<PendingState> + ScillaInspector),
+    external_context: &mut ExternalContext<I>,
 ) -> PrecompileResult {
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
     };
+
+    let gas_exempt = external_context
+        .scilla_call_gas_exempt_addrs
+        .contains(&input.caller);
+
     let required_gas = input_len * PER_BYTE_COST + BASE_COST + EvmGas::from(SCILLA_INVOKE_RUNNER).0;
-    if gas_limit < required_gas {
+
+    if !gas_exempt && gas_limit < required_gas {
         return oog();
     }
 
@@ -459,11 +465,17 @@ fn scilla_call_precompile(
         } else {
             input.caller
         },
-        EvmGas(gas_limit - required_gas).into(),
+        // If this call is gas exempt the gas limit likely is not enough to invoke the Scilla call, therefore we lie
+        // and pass a large number instead.
+        if gas_exempt {
+            EvmGas(u64::MAX).into()
+        } else {
+            EvmGas(gas_limit - required_gas).into()
+        },
         address,
         ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
         serde_json::to_string(&message).unwrap(),
-        inspector,
+        &mut external_context.inspector,
         &scilla_ext_libs_path_default(),
     ) else {
         return fatal("scilla call failed");
@@ -493,7 +505,11 @@ fn scilla_call_precompile(
     // TODO(#767): Handle transfer to Scilla contract if `result.accepted`.
 
     Ok(PrecompileOutput::new(
-        required_gas + result.gas_used.0,
+        if gas_exempt {
+            u64::min(required_gas, gas_limit)
+        } else {
+            required_gas + result.gas_used.0
+        },
         Bytes::new(),
     ))
 }

@@ -40,7 +40,7 @@ use ethers::{
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
     types::{Bytes, TransactionReceipt, H256, U64},
-    utils::secret_key_to_address,
+    utils::{get_contract_address, secret_key_to_address},
 };
 use foundry_compilers::{
     artifacts::{EvmVersion, SolcInput, Source},
@@ -337,6 +337,10 @@ impl Network {
                 blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 total_native_token_supply: total_native_token_supply_default(),
+                scilla_call_gas_exempt_addrs: vec![
+                    // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
+                    Address::new(get_contract_address(secret_key_to_address(&genesis_key).0, 2).0),
+                ],
             },
             json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
@@ -461,6 +465,9 @@ impl Network {
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
+                scilla_call_gas_exempt_addrs: vec![Address::new(
+                    get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
+                )],
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -569,6 +576,9 @@ impl Network {
                         scilla_stdlib_dir: scilla_stdlib_dir_default(),
                         scilla_ext_libs_path: scilla_ext_libs_path_default(),
                         total_native_token_supply: total_native_token_supply_default(),
+                        scilla_call_gas_exempt_addrs: vec![Address::new(
+                            get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
+                        )],
                     },
                     block_request_limit: block_request_limit_default(),
                     max_blocks_in_flight: max_blocks_in_flight_default(),
