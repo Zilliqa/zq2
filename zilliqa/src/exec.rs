@@ -214,10 +214,32 @@ pub struct ScillaResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScillaError {
-    CallFailed,
-    CreateFailed,
-    OutOfGas,
-    InsufficientBalance,
+    CheckerFailed,
+    RunnerFailed,
+    BalanceTransferFailed,
+    ExecuteCmdFailed,
+    ExecuteCmdTimeout,
+    NoGasRemainingFound,
+    NoAcceptedFound,
+    CallContractFailed,
+    CreateContractFailed,
+    JsonOutputCorrupted,
+    ContractNotExist,
+    StateCorrupted,
+    LogEntryInstallFailed,
+    MessageCorrupted,
+    ReceiptIsNull,
+    MaxEdgesReached,
+    ChainCallDiffShard,
+    PreparationFailed,
+    NoOutput,
+    OutputIllegal,
+    MapDepthMissing,
+    GasNotSufficient,
+    InternalError,
+    LibraryAsRecipient,
+    VersionInconsistent,
+    LibraryExtractionFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +254,40 @@ impl ScillaException {
             .with(self.line.to_be_bytes())
             .with(self.message.as_bytes())
             .finalize()
+    }
+}
+
+impl From<u64> for ScillaError {
+    fn from(val: u64) -> ScillaError {
+        match val {
+            0 => ScillaError::CheckerFailed,
+            1 => ScillaError::RunnerFailed,
+            2 => ScillaError::BalanceTransferFailed,
+            3 => ScillaError::ExecuteCmdFailed,
+            4 => ScillaError::ExecuteCmdTimeout,
+            5 => ScillaError::NoGasRemainingFound,
+            6 => ScillaError::NoAcceptedFound,
+            7 => ScillaError::CallContractFailed,
+            8 => ScillaError::CreateContractFailed,
+            9 => ScillaError::JsonOutputCorrupted,
+            10 => ScillaError::ContractNotExist,
+            11 => ScillaError::StateCorrupted,
+            12 => ScillaError::LogEntryInstallFailed,
+            13 => ScillaError::MessageCorrupted,
+            14 => ScillaError::ReceiptIsNull,
+            15 => ScillaError::MaxEdgesReached,
+            16 => ScillaError::ChainCallDiffShard,
+            17 => ScillaError::PreparationFailed,
+            18 => ScillaError::NoOutput,
+            19 => ScillaError::OutputIllegal,
+            20 => ScillaError::MapDepthMissing,
+            21 => ScillaError::GasNotSufficient,
+            22 => ScillaError::InternalError,
+            23 => ScillaError::LibraryAsRecipient,
+            24 => ScillaError::VersionInconsistent,
+            25 => ScillaError::LibraryExtractionFailed,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -1261,7 +1317,7 @@ impl PendingState {
                 gas_used,
                 transitions: vec![],
                 accepted: None,
-                errors: [(0, vec![ScillaError::InsufficientBalance])]
+                errors: [(0, vec![ScillaError::BalanceTransferFailed])]
                     .into_iter()
                     .collect(),
                 exceptions: vec![],
@@ -1408,7 +1464,9 @@ fn scilla_create(
                 gas_used: (txn.gas_limit - gas).into(),
                 transitions: vec![],
                 accepted: Some(false),
-                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                errors: [(0, vec![ScillaError::GasNotSufficient])]
+                    .into_iter()
+                    .collect(),
                 exceptions: vec![],
             },
             state,
@@ -1443,7 +1501,9 @@ fn scilla_create(
                         gas_used: (txn.gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                        errors: [(0, vec![ScillaError::CreateContractFailed])]
+                            .into_iter()
+                            .collect(),
                         exceptions: e.errors.into_iter().map(Into::into).collect(),
                     },
                     state,
@@ -1484,7 +1544,9 @@ fn scilla_create(
                 gas_used: (txn.gas_limit - gas).into(),
                 transitions: vec![],
                 accepted: Some(false),
-                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                errors: [(0, vec![ScillaError::GasNotSufficient])]
+                    .into_iter()
+                    .collect(),
                 exceptions: vec![],
             },
             state,
@@ -1513,7 +1575,9 @@ fn scilla_create(
                     gas_used: (txn.gas_limit - gas).into(),
                     transitions: vec![],
                     accepted: Some(false),
-                    errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                    errors: [(0, vec![ScillaError::CreateContractFailed])]
+                        .into_iter()
+                        .collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
                 },
                 state,
@@ -1594,7 +1658,7 @@ pub fn scilla_call(
                         gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(depth, vec![ScillaError::CallFailed])]
+                        errors: [(depth, vec![ScillaError::CallContractFailed])]
                             .into_iter()
                             .collect(),
                         exceptions: vec![ScillaException {
@@ -1620,7 +1684,9 @@ pub fn scilla_call(
                         gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(depth, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                        errors: [(depth, vec![ScillaError::GasNotSufficient])]
+                            .into_iter()
+                            .collect(),
                         exceptions: vec![],
                     },
                     current_state,
@@ -1676,7 +1742,9 @@ pub fn scilla_call(
                             gas_used: (gas_limit - gas).into(),
                             transitions: vec![],
                             accepted: Some(false),
-                            errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
+                            errors: [(0, vec![ScillaError::CallContractFailed])]
+                                .into_iter()
+                                .collect(),
                             exceptions: e.errors.into_iter().map(Into::into).collect(),
                         },
                         new_state,
@@ -1752,7 +1820,9 @@ pub fn scilla_call(
                         gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                        errors: [(0, vec![ScillaError::GasNotSufficient])]
+                            .into_iter()
+                            .collect(),
                         exceptions: vec![],
                     },
                     current_state,

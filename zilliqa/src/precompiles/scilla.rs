@@ -469,11 +469,10 @@ fn scilla_call_precompile(
         return fatal("scilla call failed");
     };
     if !&result.success {
-        if result
-            .errors
-            .values()
-            .any(|errs| errs.iter().any(|err| matches!(err, ScillaError::OutOfGas)))
-        {
+        if result.errors.values().any(|errs| {
+            errs.iter()
+                .any(|err| matches!(err, ScillaError::GasNotSufficient))
+        }) {
             return oog();
         } else {
             return err("scilla call failed");
