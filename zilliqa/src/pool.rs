@@ -15,6 +15,7 @@ use crate::{
 
 /// The result of trying to add a transaction to the mempool. The argument is
 /// a human-readable string to be returned to the user.
+#[derive(Debug, Copy, Clone)]
 pub enum TxAddResult {
     /// Transaction was successfully added to the mempool
     AddedToMempool,

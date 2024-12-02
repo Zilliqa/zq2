@@ -87,14 +87,16 @@ lru-mem = "0.3.0"
 opentelemetry-semantic-conventions = { version = "0.27.0", features = ["semconv_experimental"] }
 
 [dev-dependencies]
-alloy = { version = "0.6.4", default-features = false, features = ["rand"] }
+alloy = { version = "0.6.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
 async-trait = "0.1.83"
 criterion = "0.5.1"
 ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
 foundry-compilers = { version = "0.11.6", features = ["svm-solc"] }
 fs_extra = "1.3.0"
-indicatif = "0.17.9"
+indicatif = { version = "0.17.9", features = ["rayon"] }
+pprof = { version = "0.14.0", default-features = false, features = ["criterion", "flamegraph"] }
 primitive-types = { version = "0.12.2" }
+rayon = "1.10.0"
 semver = "1.0.23"
 ureq = "2.10.1"
 zilliqa = { path = ".", default-features = false, features = ["fake_response_channel", "fake_time"] }
