@@ -666,6 +666,7 @@ contract Deposit {
             // Add a new withdrawal to the end of the queue.
             currentWithdrawal = withdrawals.pushBack();
             currentWithdrawal.startedAt = block.timestamp;
+            currentWithdrawal.amount = 0;
         }
         currentWithdrawal.amount += amount;
     }
