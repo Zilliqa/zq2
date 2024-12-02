@@ -418,8 +418,7 @@ impl State {
                 } else {
                     addr
                 };
-                let block_number = 1u64;
-                self.apply_delta_evm(&state, block_number)?;
+                self.apply_delta_evm(&state)?;
                 Ok(addr)
             }
             ExecutionResult::Success { .. } => Err(anyhow!("deployment did not create a contract")),
@@ -609,7 +608,7 @@ impl State {
             let (result, state) =
                 self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 
-            self.apply_delta_scilla(&state, current_block.number)?;
+            self.apply_delta_scilla(&state)?;
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {
@@ -631,8 +630,8 @@ impl State {
                     },
                 )?;
 
-            self.apply_delta_evm(&state, current_block.number)?;
-            self.apply_delta_scilla(&scilla_state, current_block.number)?;
+            self.apply_delta_evm(&state)?;
+            self.apply_delta_scilla(&scilla_state)?;
 
             Ok(TransactionApplyResult::Evm(
                 ResultAndState { result, state },
@@ -642,11 +641,7 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(
-        &mut self,
-        state: &HashMap<Address, PendingAccount>,
-        block_number: u64,
-    ) -> Result<()> {
+    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
         for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
 
@@ -692,18 +687,12 @@ impl State {
                 handle(&mut storage, var, value, &mut vec![])?;
             }
 
-            let created_at_block = match &account.account.created_at_block {
-                CreatedAtBlock::ZQ2(0) => CreatedAtBlock::ZQ2(block_number),
-                CreatedAtBlock::ZQ2(val) => CreatedAtBlock::ZQ2(*val),
-                other => *other,
-            };
-
             let account = Account {
                 nonce: account.account.nonce,
                 balance: account.account.balance,
                 code: account.account.code.clone(),
                 storage_root: storage.root_hash()?,
-                created_at_block,
+                created_at_block: CreatedAtBlock::ZQ2,
             };
 
             self.save_account(address, account)?;
@@ -716,7 +705,6 @@ impl State {
     pub fn apply_delta_evm(
         &mut self,
         state: &revm::primitives::HashMap<Address, revm::primitives::Account>,
-        block_number: u64,
     ) -> Result<()> {
         for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
@@ -747,20 +735,12 @@ impl State {
                     .to_vec()
             };
 
-            let created_at_block = match account.is_created() {
-                true => CreatedAtBlock::ZQ2(block_number),
-                _ => {
-                    let existing_account = self.get_account(address)?;
-                    existing_account.created_at_block
-                }
-            };
-
             let account = Account {
                 nonce: account.info.nonce,
                 balance: account.info.balance.try_into()?,
                 code: Code::Evm(code),
                 storage_root: storage.root_hash()?,
-                created_at_block,
+                created_at_block: CreatedAtBlock::ZQ2,
             };
             trace!(?address, ?account, "update account");
             self.save_account(address, account)?;

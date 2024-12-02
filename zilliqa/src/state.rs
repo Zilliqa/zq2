@@ -340,7 +340,7 @@ pub mod contract_addr {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum CreatedAtBlock {
     ZQ1,
-    ZQ2(u64),
+    ZQ2,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -359,7 +359,7 @@ impl Default for Account {
             balance: 0,
             code: Code::default(),
             storage_root: EMPTY_ROOT_HASH,
-            created_at_block: ZQ2(0),
+            created_at_block: ZQ2,
         }
     }
 }
