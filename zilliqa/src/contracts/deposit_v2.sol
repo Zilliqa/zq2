@@ -174,21 +174,17 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
         // is stored at index (currentEpoch() % 3).
         Committee[3] _committee;
-
         // All stakers. Keys into this map are stored by the `Committee`.
         mapping(bytes => Staker) _stakersMap;
         // Mapping from `controlAddress` to `blsPubKey` for each staker.
         mapping(address => bytes) _stakerKeys;
-
         // The latest epoch for which the committee was calculated. It is implied that no changes have (yet) occurred in
         // future epochs, either because those epochs haven't happened yet or because they have happened, but no deposits
         // or withdrawals were made.
         uint64 latestComputedEpoch;
-
         uint256 minimumStake;
         uint256 maximumStakers;
         uint64 blocksPerEpoch;
-        
     }
 
     modifier onlyControlAddress(bytes calldata blsPubKey) {
@@ -202,17 +198,22 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DepositStorage")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant DepositStorageLocation = 0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
+    bytes32 private constant DepositStorageLocation =
+        0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
 
-    function _getDepositStorage() private pure returns (DepositStorage storage $) {
+    function _getDepositStorage()
+        private
+        pure
+        returns (DepositStorage storage $)
+    {
         assembly {
             $.slot := DepositStorageLocation
         }
     }
 
-    function version() public view returns(uint64) {
+    function version() public view returns (uint64) {
         return _getInitializedVersion();
-    } 
+    }
 
     function __Deposit_init(address initialOwner) internal onlyInitializing {
         __Ownable2Step_init_unchained();
@@ -220,7 +221,9 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         __UUPSUpgradeable_init_unchained();
     }
 
-    function _authorizeUpgrade(address newImplementation) internal onlyOwner virtual override {}
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyOwner {}
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -233,7 +236,7 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         uint256 _maximumStakers,
         uint64 _blocksPerEpoch,
         InitialStaker[] memory initialStakers
-    ) initializer public {
+    ) public initializer {
         __Deposit_init(initialOwner);
         DepositStorage storage $ = _getDepositStorage();
 
@@ -296,9 +299,7 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
     // it won't be possible to identify the actual version of the
     // source file without a hardcoded version number, but storing
     // the file versions in separate folders would help
-    function reinitialize() reinitializer(version() + 1) public {
-    }
-
+    function reinitialize() public reinitializer(version() + 1) {}
 
     function currentEpoch() public view returns (uint64) {
         DepositStorage storage $ = _getDepositStorage();
@@ -435,7 +436,9 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         // then `latestComputedEpoch` determines the future committee we need
         // otherwise there are no committee changes after `currentEpoch()`
         // i.e. `latestComputedEpoch` determines the most recent committee
-        Committee storage latestCommittee = $._committee[$.latestComputedEpoch % 3];
+        Committee storage latestCommittee = $._committee[
+            $.latestComputedEpoch % 3
+        ];
 
         // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
         // balance will default to zero.
@@ -512,7 +515,11 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
                 // explicitly because `stakers` is a mapping.
 
                 // Delete old keys from `_committee[i % 3].stakers`.
-                for (uint j = 0; j < $._committee[i % 3].stakerKeys.length; j++) {
+                for (
+                    uint j = 0;
+                    j < $._committee[i % 3].stakerKeys.length;
+                    j++
+                ) {
                     delete $._committee[i % 3].stakers[
                         $._committee[i % 3].stakerKeys[j]
                     ];
@@ -666,7 +673,7 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
             futureCommittee.stakers[stakerKey].index != 0,
             "staker does not exist"
         );
- 
+
         require(
             futureCommittee.stakers[stakerKey].balance >= amount,
             "amount is greater than staked balance"

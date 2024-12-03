@@ -147,40 +147,41 @@ struct InitialStaker {
 }
 
 contract DepositInit is UUPSUpgradeable, Ownable2StepUpgradeable {
-
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
         // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
         // is stored at index (currentEpoch() % 3).
         Committee[3] _committee;
-
         // All stakers. Keys into this map are stored by the `Committee`.
         mapping(bytes => Staker) _stakersMap;
         // Mapping from `controlAddress` to `blsPubKey` for each staker.
         mapping(address => bytes) _stakerKeys;
-
         // The latest epoch for which the committee was calculated. It is implied that no changes have (yet) occurred in
         // future epochs, either because those epochs haven't happened yet or because they have happened, but no deposits
         // or withdrawals were made.
         uint64 latestComputedEpoch;
-
         uint256 minimumStake;
         uint256 maximumStakers;
         uint64 blocksPerEpoch;
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DepositStorage")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant DepositStorageLocation = 0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
+    bytes32 private constant DepositStorageLocation =
+        0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
 
-    function _getDepositStorage() private pure returns (DepositStorage storage $) {
+    function _getDepositStorage()
+        private
+        pure
+        returns (DepositStorage storage $)
+    {
         assembly {
             $.slot := DepositStorageLocation
         }
     }
 
-    function version() public view returns(uint64) {
+    function version() public view returns (uint64) {
         return _getInitializedVersion();
-    } 
+    }
 
     function __Deposit_init(address initialOwner) internal onlyInitializing {
         __Ownable2Step_init_unchained();
@@ -188,7 +189,9 @@ contract DepositInit is UUPSUpgradeable, Ownable2StepUpgradeable {
         __UUPSUpgradeable_init_unchained();
     }
 
-    function _authorizeUpgrade(address newImplementation) internal onlyOwner virtual override {}
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyOwner {}
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -201,7 +204,7 @@ contract DepositInit is UUPSUpgradeable, Ownable2StepUpgradeable {
         uint256 _maximumStakers,
         uint64 _blocksPerEpoch,
         InitialStaker[] memory initialStakers
-    ) initializer public {
+    ) public initializer {
         __Deposit_init(initialOwner);
         DepositStorage storage $ = _getDepositStorage();
 
@@ -262,8 +265,7 @@ contract DepositInit is UUPSUpgradeable, Ownable2StepUpgradeable {
     // it won't be possible to identify the actual version of the
     // source file without a hardcoded version number, but storing
     // the file versions in separate folders would help
-    function reinitialize() reinitializer(version() + 1) public {
-    }
+    function reinitialize() public reinitializer(version() + 1) {}
 
     function currentEpoch() public view returns (uint64) {
         DepositStorage storage $ = _getDepositStorage();
