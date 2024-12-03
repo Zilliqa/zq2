@@ -146,7 +146,7 @@ struct InitialStaker {
 }
 
 contract DepositInit is UUPSUpgradeable {
-        // Emitted to inform that a new staker identified by `blsPubKey`
+    // Emitted to inform that a new staker identified by `blsPubKey`
     // is going to be added to the committee `atFutureBlock`, increasing
     // the total stake by `newStake`
     event StakerAdded(bytes blsPubKey, uint256 atFutureBlock, uint256 newStake);
@@ -209,16 +209,18 @@ contract DepositInit is UUPSUpgradeable {
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override {
-        require(msg.sender == address(0), "system contract must be upgraded by the system");
+        require(
+            msg.sender == address(0),
+            "system contract must be upgraded by the system"
+        );
     }
-
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-        function initialize(
+    function initialize(
         uint256 _minimumStake,
         uint256 _maximumStakers,
         uint64 _blocksPerEpoch,

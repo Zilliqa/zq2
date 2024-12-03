@@ -219,7 +219,10 @@ contract Deposit is UUPSUpgradeable {
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override {
-        require(msg.sender == address(0), "system contract must be upgraded by the system");
+        require(
+            msg.sender == address(0),
+            "system contract must be upgraded by the system"
+        );
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
