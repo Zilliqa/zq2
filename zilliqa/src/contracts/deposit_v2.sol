@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
 struct Withdrawal {
     uint256 startedAt;
@@ -146,7 +145,7 @@ struct InitialStaker {
     uint256 amount;
 }
 
-contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
+contract Deposit is UUPSUpgradeable {
     // Emitted to inform that a new staker identified by `blsPubKey`
     // is going to be added to the committee `atFutureBlock`, increasing
     // the total stake by `newStake`
@@ -168,6 +167,8 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
     // Emitted to inform that the staker identified by `blsPubKey`
     // has updated its data that can be refetched using `getStakerData()`
     event StakerUpdated(bytes blsPubKey);
+
+    uint64 constant VERSION = 2;
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
@@ -215,82 +216,15 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         return _getInitializedVersion();
     }
 
-    function __Deposit_init(address initialOwner) internal onlyInitializing {
-        __Ownable2Step_init_unchained();
-        __Ownable_init_unchained(initialOwner);
-        __UUPSUpgradeable_init_unchained();
-    }
-
     function _authorizeUpgrade(
         address newImplementation
-    ) internal virtual override onlyOwner {}
+    ) internal virtual override {
+        require(msg.sender == address(0), "system contract must be upgraded by the system");
+    }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
-    }
-
-    function initialize(
-        address initialOwner,
-        uint256 _minimumStake,
-        uint256 _maximumStakers,
-        uint64 _blocksPerEpoch,
-        InitialStaker[] memory initialStakers
-    ) public initializer {
-        __Deposit_init(initialOwner);
-        DepositStorage storage $ = _getDepositStorage();
-
-        $.minimumStake = _minimumStake;
-        $.maximumStakers = _maximumStakers;
-        $.blocksPerEpoch = _blocksPerEpoch;
-        $.latestComputedEpoch = currentEpoch();
-
-        for (uint i = 0; i < initialStakers.length; i++) {
-            InitialStaker memory initialStaker = initialStakers[i];
-            bytes memory blsPubKey = initialStaker.blsPubKey;
-            bytes memory peerId = initialStaker.peerId;
-            address rewardAddress = initialStaker.rewardAddress;
-            address controlAddress = initialStaker.controlAddress;
-            uint256 amount = initialStaker.amount;
-
-            require(blsPubKey.length == 48);
-            require(peerId.length == 38);
-            require(
-                controlAddress != address(0),
-                "control address cannot be zero"
-            );
-
-            Committee storage currentCommittee = committee();
-            require(
-                currentCommittee.stakerKeys.length < $.maximumStakers,
-                "too many stakers"
-            );
-
-            Staker storage staker = $._stakersMap[blsPubKey];
-            // This must be a new staker, meaning the control address must be zero.
-            require(
-                staker.controlAddress == address(0),
-                "staker already exists"
-            );
-
-            if (amount < $.minimumStake) {
-                revert("stake is less than minimum stake");
-            }
-
-            $._stakerKeys[controlAddress] = blsPubKey;
-            staker.peerId = peerId;
-            staker.rewardAddress = rewardAddress;
-            staker.controlAddress = controlAddress;
-
-            currentCommittee.totalStake += amount;
-            currentCommittee.stakers[blsPubKey].balance = amount;
-            currentCommittee.stakers[blsPubKey].index =
-                currentCommittee.stakerKeys.length +
-                1;
-            currentCommittee.stakerKeys.push(blsPubKey);
-
-            emit StakerAdded(blsPubKey, block.number, amount);
-        }
     }
 
     // automatically incrementing the version number allows for
@@ -299,7 +233,7 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
     // it won't be possible to identify the actual version of the
     // source file without a hardcoded version number, but storing
     // the file versions in separate folders would help
-    function reinitialize() public reinitializer(version() + 1) {}
+    function reinitialize() public reinitializer(VERSION) {}
 
     function currentEpoch() public view returns (uint64) {
         DepositStorage storage $ = _getDepositStorage();

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
 struct Withdrawal {
     uint256 startedAt;
@@ -146,7 +145,31 @@ struct InitialStaker {
     uint256 amount;
 }
 
-contract DepositInit is UUPSUpgradeable, Ownable2StepUpgradeable {
+contract DepositInit is UUPSUpgradeable {
+        // Emitted to inform that a new staker identified by `blsPubKey`
+    // is going to be added to the committee `atFutureBlock`, increasing
+    // the total stake by `newStake`
+    event StakerAdded(bytes blsPubKey, uint256 atFutureBlock, uint256 newStake);
+
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // is going to be removed from the committee `atFutureBlock`
+    event StakerRemoved(bytes blsPubKey, uint256 atFutureBlock);
+
+    // Emitted to inform that the deposited stake of the staker
+    // identified by `blsPubKey` is going to change to `newStake`
+    // at `atFutureBlock`
+    event StakeChanged(
+        bytes blsPubKey,
+        uint256 atFutureBlock,
+        uint256 newStake
+    );
+
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // has updated its data that can be refetched using `getStakerData()`
+    event StakerUpdated(bytes blsPubKey);
+
+    uint64 constant VERSION = 1;
+
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
         // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
@@ -183,29 +206,25 @@ contract DepositInit is UUPSUpgradeable, Ownable2StepUpgradeable {
         return _getInitializedVersion();
     }
 
-    function __Deposit_init(address initialOwner) internal onlyInitializing {
-        __Ownable2Step_init_unchained();
-        __Ownable_init_unchained(initialOwner);
-        __UUPSUpgradeable_init_unchained();
-    }
-
     function _authorizeUpgrade(
         address newImplementation
-    ) internal virtual override onlyOwner {}
+    ) internal virtual override {
+        require(msg.sender == address(0), "system contract must be upgraded by the system");
+    }
+
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    function initialize(
-        address initialOwner,
+        function initialize(
         uint256 _minimumStake,
         uint256 _maximumStakers,
         uint64 _blocksPerEpoch,
         InitialStaker[] memory initialStakers
     ) public initializer {
-        __Deposit_init(initialOwner);
+        __UUPSUpgradeable_init_unchained();
         DepositStorage storage $ = _getDepositStorage();
 
         $.minimumStake = _minimumStake;
@@ -256,16 +275,10 @@ contract DepositInit is UUPSUpgradeable, Ownable2StepUpgradeable {
                 currentCommittee.stakerKeys.length +
                 1;
             currentCommittee.stakerKeys.push(blsPubKey);
+
+            emit StakerAdded(blsPubKey, block.number, amount);
         }
     }
-
-    // automatically incrementing the version number allows for
-    // upgrading the contract without manually specifying the next
-    // version number in the source file - use with caution since
-    // it won't be possible to identify the actual version of the
-    // source file without a hardcoded version number, but storing
-    // the file versions in separate folders would help
-    function reinitialize() public reinitializer(version() + 1) {}
 
     function currentEpoch() public view returns (uint64) {
         DepositStorage storage $ = _getDepositStorage();

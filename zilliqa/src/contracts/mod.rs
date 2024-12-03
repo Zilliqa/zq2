@@ -13,8 +13,6 @@ pub mod deposit_init {
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
     pub static INITIALIZE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("initialize").unwrap().clone());
-    pub static REINITIALIZE: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("reinitialize").unwrap().clone());
     pub static UPGRADE_TO_AND_CALL: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("upgradeToAndCall").unwrap().clone());
     pub static VERSION: Lazy<Function> =
@@ -22,8 +20,6 @@ pub mod deposit_init {
     pub static GET_STAKERS: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
-    pub static OWNER: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("owner").unwrap().clone());
 }
 
 pub mod deposit_v2 {
@@ -44,8 +40,6 @@ pub mod deposit_v2 {
         Lazy::new(|| CONTRACT.abi.function("version").unwrap().clone());
 
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
-    pub static OWNER: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("owner").unwrap().clone());
     pub static LEADER_AT_VIEW: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("leaderAtView").unwrap().clone());
     pub static DEPOSIT: Lazy<Function> =

@@ -775,23 +775,6 @@ impl State {
             .map_or(Ok(0), |v| Ok(v.as_u128()))
     }
 
-    pub fn deposit_contract_owner(&self, current_block: BlockHeader) -> Option<ethabi::Address> {
-        let result = self
-            .call_contract(
-                Address::ZERO,
-                Some(contract_addr::DEPOSIT_PROXY),
-                contracts::deposit::OWNER.encode_input(&[]).unwrap(),
-                0,
-                current_block,
-            )
-            .unwrap();
-        contracts::deposit::OWNER
-            .decode_output(&ensure_success(result).unwrap())
-            .unwrap()[0]
-            .clone()
-            .into_address()
-    }
-
     pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
         let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
 

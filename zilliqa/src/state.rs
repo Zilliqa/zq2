@@ -199,9 +199,6 @@ impl State {
             })
             .collect();
         let deposit_initialize_data = contracts::deposit_init::INITIALIZE.encode_input(&[
-            Token::Address(ethabi::Address::from(
-                contract_addr::DEPOSIT_PROXY_OWNER.into_array(),
-            )),
             Token::Uint((*config.consensus.minimum_stake).into()),
             Token::Uint(MAX_COMMITTEE_SIZE.into()),
             Token::Uint(config.consensus.blocks_per_epoch.into()),
@@ -252,7 +249,7 @@ impl State {
 
         // Apply update to eip 1967 proxy
         let result = self.call_contract_apply(
-            contract_addr::DEPOSIT_PROXY_OWNER,
+            Address::ZERO,
             Some(contract_addr::DEPOSIT_PROXY),
             deposit_upgrade_to_and_call_data,
             0,
@@ -391,7 +388,6 @@ pub mod contract_addr {
     pub const SHARD_REGISTRY: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
     /// Address of EIP 1967 proxy for Deposit contract
     pub const DEPOSIT_PROXY: Address = Address::new(*b"\0\0\0\0\0ZILDEPOSITPROXY");
-    pub const DEPOSIT_PROXY_OWNER: Address = Address::new(*b"ZILDEPOSITPROXYOWNER");
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -619,9 +615,6 @@ mod tests {
             .unwrap();
         assert_eq!(version, 1);
 
-        let owner = state.deposit_contract_owner(genesis_block_header).unwrap();
-        assert_eq!(owner.0, contract_addr::DEPOSIT_PROXY_OWNER.0);
-
         let proxy_storage_at = state
             .get_account_storage(
                 contract_addr::DEPOSIT_PROXY,
@@ -646,9 +639,6 @@ mod tests {
         let deposit_v2_addr = state
             .upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO))
             .unwrap();
-
-        let owner = state.deposit_contract_owner(genesis_block_header).unwrap();
-        assert_eq!(owner.0, contract_addr::DEPOSIT_PROXY_OWNER.0);
 
         let proxy_storage_at = state
             .get_account_storage(
