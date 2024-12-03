@@ -232,7 +232,7 @@ impl State {
     /// Return new deposit implementation address
     fn upgrade_deposit_contract(&mut self, current_block: BlockHeader) -> Result<Address> {
         let current_version = self.deposit_contract_version(current_block)?;
-        println!(
+        debug!(
             "Upgrading deposit contract from version {} to verion {}",
             current_version,
             current_version + 1
@@ -628,7 +628,7 @@ mod tests {
                 B256::from(
                     FixedBytes::try_from(
                         hex::decode(
-                            &"360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+                            "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
                         )
                         .unwrap()
                         .as_slice(),
@@ -656,7 +656,7 @@ mod tests {
                 B256::from(
                     FixedBytes::try_from(
                         hex::decode(
-                            &"360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+                            "360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
                         )
                         .unwrap()
                         .as_slice(),
