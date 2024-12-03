@@ -60,7 +60,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
 
     let receipt = wallet
         .provider()
-        .get_transaction_receipt(&hash.0)
+        .get_transaction_receipt(hash.0)
         .await
         .unwrap()
         .unwrap();
