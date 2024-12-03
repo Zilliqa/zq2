@@ -411,7 +411,7 @@ impl State {
             inspector::noop(),
             BaseFeeCheck::Ignore,
         )?;
-        
+
         match result {
             ExecutionResult::Success {
                 output: Output::Create(_, Some(addr)),
@@ -769,39 +769,27 @@ impl State {
             0,
             current_block,
         )?;
-        contracts::deposit::VERSION
-            .decode_output(&ensure_success(result)?)?[0]
+        contracts::deposit::VERSION.decode_output(&ensure_success(result)?)?[0]
             .clone()
-            .into_uint().map_or(Ok(0), |v| Ok(v.as_u128()))
+            .into_uint()
+            .map_or(Ok(0), |v| Ok(v.as_u128()))
     }
 
     pub fn deposit_contract_owner(&self, current_block: BlockHeader) -> Option<ethabi::Address> {
-        let result = self.call_contract(
-            Address::ZERO,
-            Some(contract_addr::DEPOSIT_PROXY),
-            contracts::deposit::OWNER.encode_input(&[]).unwrap(),
-            0,
-            current_block,
-        ).unwrap();
+        let result = self
+            .call_contract(
+                Address::ZERO,
+                Some(contract_addr::DEPOSIT_PROXY),
+                contracts::deposit::OWNER.encode_input(&[]).unwrap(),
+                0,
+                current_block,
+            )
+            .unwrap();
         contracts::deposit::OWNER
-            .decode_output(&ensure_success(result).unwrap()).unwrap()[0]
+            .decode_output(&ensure_success(result).unwrap())
+            .unwrap()[0]
             .clone()
             .into_address()
-    }
-
-
-    pub fn test_var(&self, current_block: BlockHeader) -> Result<u128> {
-        let result = self.call_contract(
-            Address::ZERO,
-            Some(contract_addr::DEPOSIT_PROXY),
-            contracts::deposit::TEST_VAR.encode_input(&[]).unwrap(),
-            0,
-            current_block,
-        )?;
-        contracts::deposit::TEST_VAR
-            .decode_output(&ensure_success(result)?)?[0]
-            .clone()
-            .into_uint().map_or(Ok(0), |v| Ok(v.as_u128()))
     }
 
     pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
@@ -1052,6 +1040,33 @@ impl State {
             inspector::noop(),
             BaseFeeCheck::Ignore,
         )?;
+
+        Ok(result)
+    }
+
+    /// Call contract and apply changes to state
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_contract_apply(
+        &mut self,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        amount: u128,
+        current_block: BlockHeader,
+    ) -> Result<ExecutionResult> {
+        let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
+            from_addr,
+            to_addr,
+            0,
+            self.block_gas_limit,
+            amount,
+            data,
+            None,
+            current_block,
+            inspector::noop(),
+            BaseFeeCheck::Ignore,
+        )?;
+        self.apply_delta_evm(&state)?;
 
         Ok(result)
     }

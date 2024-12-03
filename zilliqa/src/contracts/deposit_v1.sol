@@ -146,7 +146,7 @@ struct InitialStaker {
     uint256 amount;
 }
 
-contract Deposit_init is UUPSUpgradeable, Ownable2StepUpgradeable {
+contract DepositInit is UUPSUpgradeable, Ownable2StepUpgradeable {
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
@@ -171,8 +171,6 @@ contract Deposit_init is UUPSUpgradeable, Ownable2StepUpgradeable {
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DepositStorage")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant DepositStorageLocation = 0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
-
-    uint256 public constant TEST_VAR = 99_999;
 
     function _getDepositStorage() private pure returns (DepositStorage storage $) {
         assembly {

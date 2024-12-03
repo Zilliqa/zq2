@@ -169,8 +169,6 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         uint64 blocksPerEpoch;
     }
 
-    uint256 public constant TEST_VAR = 10_000;
-
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DepositStorage")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant DepositStorageLocation = 0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
 
