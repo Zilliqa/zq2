@@ -11,17 +11,10 @@ use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
+use tracing::debug;
 
 use crate::{
-    block_store::BlockStore,
-    cfg::{Amount, NodeConfig, ScillaExtLibsPath},
-    contracts, crypto,
-    db::TrieStorage,
-    message::MAX_COMMITTEE_SIZE,
-    node::ChainId,
-    scilla::{ParamValue, Scilla, Transition},
-    serde_util::vec_param_value,
-    transaction::EvmGas,
+    block_store::BlockStore, cfg::{Amount, NodeConfig, ScillaExtLibsPath}, contracts, crypto, db::TrieStorage, error::ensure_success, message::{BlockHeader, MAX_COMMITTEE_SIZE}, node::ChainId, scilla::{ParamValue, Scilla, Transition}, serde_util::vec_param_value, transaction::EvmGas
 };
 
 #[derive(Clone, Debug)]
@@ -152,12 +145,8 @@ impl State {
             })?;
         }
         
-        // let deposit_addr = state.force_deploy_contract_evm(contracts::deposit::BYTECODE.to_vec(), Some(contract_addr::DEPOSIT_V0))?;
-        let deposit_addr = state.force_deploy_contract_evm(contracts::deposit::BYTECODE.to_vec(), Some(contract_addr::DEPOSIT_V0))?;
-        println!("deposit_addr: {}", deposit_addr);
-        println!("contract_addr::DEPOSIT_V0     : {}", contract_addr::DEPOSIT_V0);
-        println!("contract_addr::DEPOSIT_PROXY  : {}", contract_addr::DEPOSIT_PROXY);
-        println!("contract_addr::ZERP           : {}", contract_addr::ZERO);
+        let deposit_addr = state.force_deploy_contract_evm(contracts::deposit_init::BYTECODE.to_vec(), None)?;
+        debug!("Deployed initial deposit contract version to {}", deposit_addr);
 
         let total_genesis_deposits = config
             .consensus
@@ -179,7 +168,7 @@ impl State {
                 ])
             })
             .collect();
-        let deposit_initialize_data = contracts::deposit::INITIALIZE.encode_input(
+        let deposit_initialize_data = contracts::deposit_init::INITIALIZE.encode_input(
             &[
                 Token::Address(ethabi::Address::from(contract_addr::ZERO.into_array())),
                 Token::Uint((*config.consensus.minimum_stake).into()),
@@ -188,7 +177,7 @@ impl State {
                 Token::Array(initial_stakers),
             ]
         )?;
-        println!("deposit_initialize_data: {:?}", deposit_initialize_data);
+
         let eip1967_constructor_data = contracts::eip1967_proxy::CONSTRUCTOR.encode_input(
             contracts::eip1967_proxy::BYTECODE.to_vec(), 
             &[
@@ -196,10 +185,9 @@ impl State {
                 Token::Bytes(deposit_initialize_data),
             ]
         )?;
-        println!("eip1967_constructor_data: {:?}", eip1967_constructor_data);
 
         let eip1967_addr = state.force_deploy_contract_evm(eip1967_constructor_data, Some(contract_addr::DEPOSIT_PROXY))?;
-        println!("eip1967_addr contract deployed to {}", eip1967_addr);
+        println!("EIP 1967 deposit contract deployed to {}", eip1967_addr);
 
 
         // Set DEPOSIT contract to total deposited at genesis
@@ -248,6 +236,39 @@ impl State {
         //}
 
         Ok(state)
+    }
+
+    fn upgrade_deposit_contract(&mut self,  current_block: BlockHeader) -> Result<()> {
+        let current_version = self.deposit_contract_version(current_block)?;
+        println!("Upgrading deposit contract from version {} to verion {}", current_version, current_version + 1);
+        
+        let new_deposit_addr = self.force_deploy_contract_evm(contracts::deposit_v2::BYTECODE.to_vec(), None)?;
+        println!("new_deposit_addr: {}", new_deposit_addr);
+
+        let deposit_v2_reinitialize_data = contracts::deposit_v2::REINITIALIZE.encode_input(&[])?;
+        let deposit_v1_upgrade_data = contracts::deposit_init::UPGRADE_TO_AND_CALL.encode_input(
+            &[
+                Token::Address(ethabi::Address::from(new_deposit_addr.into_array())),
+                Token::Bytes(deposit_v2_reinitialize_data),
+            ]
+        )?;
+        println!("deposit_v1_upgrade_data: {:?}", hex::encode(deposit_v1_upgrade_data.clone()));
+
+        let result = self.call_contract(
+            contract_addr::ZERO,
+            Some(contract_addr::DEPOSIT_PROXY),
+            deposit_v1_upgrade_data,
+            0,
+            current_block,
+        )?;
+        // TODO move this inide exec
+        println!("result: {:?}", result);
+        let result = ensure_success(result)?;
+        println!("result: {}", result);
+
+        debug!("EIP 1967 deposit contract {} updated with new deposit contract {} version {}", contract_addr::DEPOSIT_PROXY, new_deposit_addr, current_version + 1);
+
+        Ok(())
     }
 
     pub fn at_root(&self, root_hash: B256) -> Self {
@@ -368,9 +389,8 @@ pub mod contract_addr {
     pub const INTERSHARD_BRIDGE: Address = Address::new(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");
     /// Address of the shard registry - only present on the root shard.
     pub const SHARD_REGISTRY: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
-    pub const DEPOSIT_V0: Address = Address::new(*b"\0\0\0\0\0\0ZIL_DEPOSIT_V0");
     pub const DEPOSIT_PROXY: Address = Address::new(*b"\0\0\0ZIL_DEPOSIT_PROXY");
-    pub const ZERO: Address = Address::new(*b"\0\0\\0\0\0\0\0\0\0\0\0ZIL_ZERO");
+    pub const ZERO: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0\0\0ZIL_ZERO");
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -556,11 +576,12 @@ mod tests {
     use std::{path::PathBuf, sync::Arc};
     use crypto::Hash;
     use libp2p::PeerId;
+    use revm::primitives::FixedBytes;
 
-    use crate::{block_store::BlockStore, cfg::NodeConfig, contracts, db::Db, error::ensure_success, message::BlockHeader, node::{MessageSender, RequestId}};
+    use crate::{api::to_hex::ToHex, block_store::BlockStore, cfg::NodeConfig, db::Db, message::BlockHeader, node::{MessageSender, RequestId}};
 
     #[test]
-    fn fdj() {
+    fn deposit_contract_updateability() {
         let (s1, _) = tokio::sync::mpsc::unbounded_channel();
         let (s2, _) = tokio::sync::mpsc::unbounded_channel();
         let message_sender = MessageSender {
@@ -575,24 +596,57 @@ mod tests {
         let config = NodeConfig::default();
         let block_store = BlockStore::new(&config, db.clone(), message_sender.clone()).unwrap();
 
-        let state = State::new_with_genesis(db.state_trie().unwrap(), config, Arc::new(block_store)).unwrap();
+        let mut state = State::new_with_genesis(db.state_trie().unwrap(), config.clone(), Arc::new(block_store)).unwrap();
 
-        let result = state.call_contract(
-            Address::ZERO,
-            Some(contract_addr::DEPOSIT_V0),
-            contracts::deposit::TEST_VAR.encode_input(&[]).unwrap(),
-            0,
-            BlockHeader::genesis(Hash::ZERO),
-        ).unwrap();
+        // Check initial deployment of DEPOSIT_V0
+        let genesis_block_header = BlockHeader::genesis(Hash::ZERO);
 
-        let res2 = ensure_success(result).unwrap();
-        let test_var = contracts::deposit::TEST_VAR
-            .decode_output(&res2)
-            .unwrap()[0]
-            .clone()
-            .into_uint()
-            .unwrap();
 
+        let stakers = state.get_stakers(genesis_block_header);
+        // deposit init does not support getStakers()
+        assert!(stakers.is_err());
+
+        let version = state.deposit_contract_version(genesis_block_header).unwrap();
+        assert_eq!(version, 1);
+
+        println!("contract_addr::DEPOSIT_PROXY {}", contract_addr::DEPOSIT_PROXY);
+        println!("contract_addr::ZERO {}", contract_addr::ZERO);
+
+        let owner = state.deposit_contract_owner(genesis_block_header).unwrap();
+        assert_eq!(owner.0, contract_addr::ZERO.0);
+
+        let proxy_storage_at = state.get_account_storage(contract_addr::DEPOSIT_PROXY, B256::from(FixedBytes::try_from(hex::decode(&"360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc").unwrap().as_slice()).unwrap())).unwrap();
+        // this is the eip 1967 contract's _implementation storage spot for the proxy address. It should now point to DEPOSIT_V1 address.
+        // assert!(proxy_storage_at.to_hex().contains(&contract_addr::DEPOSIT_V1.0.to_string().split_off(2)));
+        println!("proxy_storage_at.to_hex() {:?}", proxy_storage_at.to_hex());
+
+        let test_var = state.test_var(genesis_block_header);
         println!("test_var: {:?}", test_var);
+        
+        // let proxy_acc = state.get_account(contract_addr::DEPOSIT_PROXY).unwrap();        
+        println!("state root hash {:?}", state.root_hash().unwrap());
+
+        // Update to deposit v2
+        state.upgrade_deposit_contract(genesis_block_header).unwrap();
+        
+        let owner = state.deposit_contract_owner(genesis_block_header).unwrap();
+        assert_eq!(owner.0, contract_addr::ZERO.0);
+
+        let proxy_storage_at = state.get_account_storage(contract_addr::DEPOSIT_PROXY, B256::from(FixedBytes::try_from(hex::decode(&"360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc").unwrap().as_slice()).unwrap())).unwrap();
+        // this is the eip 1967 contract's _implementation storage spot for the proxy address. It should now point to DEPOSIT_V2 address.
+        // assert!(proxy_storage_at.to_hex().contains(&contract_addr::DEPOSIT_V2.0.to_string().split_off(2)));
+        println!("proxy_storage_at.to_hex() {:?}", proxy_storage_at.to_hex());
+
+        let test_var = state.test_var(genesis_block_header);
+        println!("test_var: {:?}", test_var);
+        
+        let version = state.deposit_contract_version(genesis_block_header).unwrap();
+        println!("version: {}", version);
+        assert_eq!(version, 2);
+
+        let stakers = state.get_stakers(genesis_block_header).unwrap();
+        assert_eq!(stakers.len(), config.consensus.genesis_deposits.len());
+
     }
+
 }

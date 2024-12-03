@@ -191,7 +191,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake.amount as u128 * 1_000_000u128 * 10u128.pow(18))
         .data(
-            contracts::deposit::DEPOSIT
+            contracts::deposit_v2::DEPOSIT
                 .encode_input(&[
                     Token::Bytes(stake.validator.public_key.as_bytes()),
                     Token::Bytes(stake.validator.peer_id.to_bytes()),

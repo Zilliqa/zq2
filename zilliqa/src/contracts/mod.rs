@@ -1,17 +1,52 @@
 use serde_json::Value;
 
-pub mod deposit {
+pub use deposit_v2 as deposit;
+// pub mod deposit;
+
+pub mod deposit_init {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
     use super::{contract, Contract};
 
     static CONTRACT: Lazy<Contract> =
-        Lazy::new(|| contract("src/contracts/deposit.sol", "Deposit"));
+        Lazy::new(|| contract("src/contracts/deposit_v1.sol", "Deposit_init"));
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
     pub static INITIALIZE: Lazy<Function> = 
         Lazy::new(|| CONTRACT.abi.function("initialize").unwrap().clone());
+    pub static REINITIALIZE: Lazy<Function> = 
+        Lazy::new(|| CONTRACT.abi.function("reinitialize").unwrap().clone());
+    pub static UPGRADE_TO_AND_CALL: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("upgradeToAndCall").unwrap().clone());
+    pub static VERSION: Lazy<Function> = 
+        Lazy::new(|| CONTRACT.abi.function("version").unwrap().clone());
+    pub static GET_STAKERS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static OWNER: Lazy<Function> = 
+        Lazy::new(|| CONTRACT.abi.function("owner").unwrap().clone());
+
+    pub static TEST_VAR: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("TEST_VAR").unwrap().clone());
+}
+
+pub mod deposit_v2 {
+    use ethabi::{Constructor, Function};
+    use once_cell::sync::Lazy;
+
+    use super::{contract, Contract};
+
+    static CONTRACT: Lazy<Contract> =
+        Lazy::new(|| contract("src/contracts/deposit_v2.sol", "Deposit"));
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static REINITIALIZE: Lazy<Function> = 
+        Lazy::new(|| CONTRACT.abi.function("reinitialize").unwrap().clone());
+    pub static UPGRADE_TO_AND_CALL: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("upgradeToAndCall").unwrap().clone());
+    pub static VERSION: Lazy<Function> = 
+        Lazy::new(|| CONTRACT.abi.function("version").unwrap().clone());
 
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
     pub static OWNER: Lazy<Function> = 
@@ -38,8 +73,9 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
     pub static COMMITTEE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
-    pub static TEST_VAR: Lazy<Function> = 
+    pub static TEST_VAR: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("TEST_VAR").unwrap().clone());
+        
 }
 
 pub mod shard {
@@ -110,7 +146,7 @@ pub mod eip1967_proxy {
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
 
-    pub static SHARD_ADDED_EVT: Lazy<Event> =
+    pub static UPGRADED_EVT: Lazy<Event> =
         Lazy::new(|| CONTRACT.abi.event("Upgraded").unwrap().clone());
 }
 
@@ -154,7 +190,8 @@ mod tests {
             language: SolcLanguage::Solidity,
             sources: Source::read_all(
                 [
-                    "src/contracts/deposit.sol",
+                    "src/contracts/deposit_v1.sol",
+                    "src/contracts/deposit_v2.sol",
                     "src/contracts/intershard_bridge.sol",
                     "src/contracts/shard.sol",
                     "src/contracts/shard_registry.sol",
