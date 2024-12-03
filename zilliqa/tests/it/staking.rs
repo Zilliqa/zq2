@@ -140,6 +140,26 @@ async fn get_stake(wallet: &Wallet, staker: &NodePublicKey) -> u128 {
         .as_u128()
 }
 
+async fn get_total_stake(wallet: &Wallet) -> u128 {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .data(
+            contracts::deposit::GET_TOTAL_STAKE
+                .encode_input(&[])
+                .unwrap(),
+        );
+
+    let stake = wallet.call(&tx.into(), None).await.unwrap();
+    let stake = contracts::deposit::GET_TOTAL_STAKE
+        .decode_output(&stake)
+        .unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap();
+
+    stake.as_u128()
+}
+
 async fn get_stakers(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
 ) -> Vec<NodePublicKey> {
@@ -176,6 +196,21 @@ async fn get_minimum_deposit(
         .unwrap();
 
     deposit.as_u128()
+}
+
+#[zilliqa_macros::test]
+async fn genesis_stakes_are_correct(mut network: Network) {
+    let wallet = network.random_wallet().await;
+
+    let total_stake = get_total_stake(&wallet).await;
+    let deposit_balance = wallet
+        .get_balance(H160(contract_addr::DEPOSIT.into_array()), None)
+        .await
+        .unwrap()
+        .as_u128();
+
+    assert_ne!(deposit_balance, 0);
+    assert_eq!(total_stake, deposit_balance);
 }
 
 #[zilliqa_macros::test]
