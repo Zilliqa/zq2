@@ -157,6 +157,10 @@ impl State {
             })?;
         }
 
+        state.deploy_initial_deposit_contract(&config)?;
+
+        state.upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO))?;
+
         let total_genesis_deposits = config
             .consensus
             .genesis_deposits
@@ -168,10 +172,6 @@ impl State {
             a.balance = total_genesis_deposits;
             Ok(())
         })?;
-
-        state.deploy_initial_deposit_contract(&config)?;
-
-        state.upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO))?;
 
         Ok(state)
     }
