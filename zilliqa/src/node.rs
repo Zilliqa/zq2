@@ -208,23 +208,20 @@ impl Node {
 
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
-        // We only expect `BatchedTransactions`s to be broadcast.
         // `Proposals` are re-routed to `handle_request()`.
-        match message {
-            ExternalMessage::BatchedTransactions(transactions) => {
-                if self.peer_id == from {
-                    return Ok(());
-                }
-                for txn in transactions {
-                    let from_broadcast = true;
-                    self.consensus.handle_new_transaction(txn, from_broadcast)?;
-                }
-            }
-            _ => {
-                warn!("unexpected message type");
-            }
-        }
+        warn!("unexpected message type");
 
+        Ok(())
+    }
+
+    pub fn handle_broadcasted_transactions(
+        &mut self,
+        transactions: Vec<VerifiedTransaction>,
+    ) -> Result<()> {
+        for txn in transactions {
+            let from_broadcast = true;
+            self.consensus.handle_new_transaction(txn, from_broadcast)?;
+        }
         Ok(())
     }
 
@@ -410,15 +407,13 @@ impl Node {
         Ok(false)
     }
 
-    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
-        let hash = txn.calculate_hash();
+    pub fn create_transaction(&mut self, txn: VerifiedTransaction) -> Result<(Hash, TxAddResult)> {
+        let hash = txn.hash;
 
-        info!(?hash, "seen new txn {:?}", txn);
+        debug!(?hash, "seen new txn {:?}", txn);
 
         let from_broadcast = false;
-        let result = self
-            .consensus
-            .handle_new_transaction(txn.clone(), from_broadcast)?;
+        let result = self.consensus.handle_new_transaction(txn, from_broadcast)?;
         if !result.was_added() {
             debug!(?result, "Transaction cannot be added to mempool");
         }

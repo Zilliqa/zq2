@@ -720,6 +720,8 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
     let transaction = hex::decode(transaction)?;
     let transaction = parse_transaction(&transaction)?;
 
+    let transaction = transaction.verify()?;
+
     let (hash, result) = node.lock().unwrap().create_transaction(transaction)?;
     match result {
         TxAddResult::AddedToMempool

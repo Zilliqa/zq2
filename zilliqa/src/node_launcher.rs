@@ -205,7 +205,20 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.lock().unwrap().handle_broadcast(source, message) {
+                    if let ExternalMessage::BatchedTransactions(transactions) = message {
+                        let my_peer_id = self.node.lock().unwrap().consensus.peer_id();
+
+                        if source == my_peer_id {
+                            continue;
+                        }
+                        let mut verified = Vec::new();
+                        for txn in transactions {
+                            let txn = txn.verify()?;
+                            verified.push(txn);
+                        }
+                        self.node.lock().unwrap().handle_broadcasted_transactions(verified)?;
+                    }
+                    else if let Err(e) = self.node.lock().unwrap().handle_broadcast(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process broadcast message: {e}");
                     }

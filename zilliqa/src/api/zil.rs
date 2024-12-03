@@ -313,7 +313,8 @@ fn create_transaction(
         sig,
     };
 
-    let (transaction_hash, result) = node.create_transaction(signed_transaction.clone())?;
+    let transaction = signed_transaction.verify()?;
+    let (transaction_hash, result) = node.create_transaction(transaction)?;
     let info = match result {
         TxAddResult::AddedToMempool => Ok("Txn processed".to_string()),
         TxAddResult::Duplicate(_) => Ok("Txn already present".to_string()),

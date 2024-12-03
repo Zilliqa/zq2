@@ -634,9 +634,10 @@ impl Consensus {
         let head_block = self.head_block();
         let mut view = self.get_view()?;
 
-        trace!(
+        info!(
             block_view = block.view(),
             block_number = block.number(),
+            txns = transactions.len(),
             "handling block proposal {}",
             block.hash()
         );
@@ -1671,12 +1672,9 @@ impl Consensus {
     /// Insert transaction and add to early_proposal if possible.
     pub fn handle_new_transaction(
         &mut self,
-        txn: SignedTransaction,
+        verified: VerifiedTransaction,
         from_broadcast: bool,
     ) -> Result<TxAddResult> {
-        let Ok(verified) = txn.verify() else {
-            return Ok(TxAddResult::CannotVerifySignature);
-        };
         let inserted = self.new_transaction(verified, from_broadcast)?;
         if inserted.was_added()
             && self.create_next_block_on_timeout

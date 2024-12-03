@@ -232,6 +232,9 @@ impl Db {
         connection.pragma_update(None, "cache_size", (1 << 28) / page_size)?;
         let cache_size: i32 = connection.pragma_query_value(None, "cache_size", |r| r.get(0))?;
 
+        let mmap_size = 268435456;
+        connection.pragma_update(None, "mmap_size", mmap_size)?;
+
         tracing::info!(
             ?journal_mode,
             ?journal_size_limit,
@@ -239,6 +242,7 @@ impl Db {
             ?temp_store,
             ?page_size,
             ?cache_size,
+            ?mmap_size,
             "PRAGMA"
         );
 
