@@ -23,7 +23,7 @@ use revm::{
         AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
         ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
-    Database, DatabaseRef, Evm, Inspector,
+    Database, DatabaseRef, Evm, GetInspector, Inspector,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -367,6 +367,18 @@ impl DatabaseRef for &State {
     }
 }
 
+/// The external context used by [Evm].
+pub struct ExternalContext<'a, I> {
+    pub inspector: I,
+    pub scilla_call_gas_exempt_addrs: &'a [Address],
+}
+
+impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
+    fn get_inspector(&mut self) -> &mut impl Inspector<PendingState> {
+        &mut self.inspector
+    }
+}
+
 // As per EIP-150
 pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
 
@@ -442,6 +454,10 @@ impl State {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
+        let external_context = ExternalContext {
+            inspector,
+            scilla_call_gas_exempt_addrs: &self.scilla_call_gas_exempt_addrs,
+        };
         let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
             .with_db(pending_state)
@@ -461,7 +477,7 @@ impl State {
                 prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
                 blob_excess_gas_and_price: None,
             })
-            .with_external_context(inspector)
+            .with_external_context(external_context)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
             .append_handler_register(inspector_handle_register)

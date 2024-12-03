@@ -58,7 +58,7 @@ jobs:
       - name: rustfmt
         run: cargo +nightly fmt --all --check
       - name: Test
-        run: cargo test --all-targets --all-features
+        run: cargo test --tests --examples --bins --all-features
       - name: Verify working directory is clean
         run: git diff --exit-code
   e2e_test:

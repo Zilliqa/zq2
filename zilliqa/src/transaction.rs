@@ -578,7 +578,10 @@ impl SignedTransaction {
             return Ok(ValidationOutcome::Success);
         };
         if nonce < account.nonce {
-            warn!("Nonce is too low");
+            warn!(
+                "Nonce is too low. Txn nonce is: {}, acc: {}",
+                nonce, account.nonce
+            );
             return Ok(ValidationOutcome::NonceTooLow(nonce, account.nonce));
         }
         Ok(ValidationOutcome::Success)

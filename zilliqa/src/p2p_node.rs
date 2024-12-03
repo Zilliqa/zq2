@@ -16,9 +16,10 @@ use libp2p::{
     identify,
     kad::{self, store::MemoryStore},
     multiaddr::{Multiaddr, Protocol},
+    noise,
     request_response::{self, OutboundFailure, ProtocolSupport},
     swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
-    PeerId, StreamProtocol, Swarm,
+    tcp, yamux, PeerId, StreamProtocol, Swarm,
 };
 use rand::rngs::OsRng;
 use tokio::{
@@ -100,7 +101,11 @@ impl P2pNode {
 
         let swarm = libp2p::SwarmBuilder::with_existing_identity(key_pair)
             .with_tokio()
-            .with_quic()
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new,
+                yamux::Config::default,
+            )?
             .with_dns()?
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
@@ -111,7 +116,8 @@ impl P2pNode {
                     gossipsub: gossipsub::Behaviour::new(
                         MessageAuthenticity::Signed(key_pair.clone()),
                         gossipsub::ConfigBuilder::default()
-                            .max_transmit_size(524288)
+                            // 1MB is sufficient to accommodate proposal with 4000 simple transfers (block gas limit)
+                            .max_transmit_size(1024 * 1024)
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
                             .duplicate_cache_time(Duration::from_secs(300))
@@ -121,10 +127,10 @@ impl P2pNode {
                     .map_err(|e| anyhow!(e))?,
                     autonat_client: autonat::v2::client::Behaviour::new(OsRng, Default::default()),
                     autonat_server: autonat::v2::server::Behaviour::new(OsRng),
-                    identify: identify::Behaviour::new(identify::Config::new(
-                        "/zilliqa/1.0.0".to_owned(),
-                        key_pair.public(),
-                    )),
+                    identify: identify::Behaviour::new(
+                        identify::Config::new("/zilliqa/1.0.0".to_owned(), key_pair.public())
+                            .with_hide_listen_addrs(true),
+                    ),
                     kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
                 })
             })?
@@ -216,8 +222,7 @@ impl P2pNode {
         self.swarm.listen_on(
             Multiaddr::empty()
                 .with(Protocol::Ip4(std::net::Ipv4Addr::UNSPECIFIED))
-                .with(Protocol::Udp(self.config.p2p_port))
-                .with(Protocol::QuicV1),
+                .with(Protocol::Tcp(self.config.p2p_port)),
         )?;
 
         if let Some(external_address) = &self.config.external_address {
@@ -252,18 +257,6 @@ impl P2pNode {
                             info!(%address, "P2P swarm listening on");
                         }
                         SwarmEvent::NewExternalAddrOfPeer { peer_id, address } => {
-                            let is_non_global = address.iter().any(|p| match p {
-                                Protocol::Ip4(a) => a.is_loopback() || a.is_private(),
-                                Protocol::Ip6(a) => a.is_loopback(),
-                                _ => false,
-                            });
-                            // HACK: If the address is non-global, ignore it. When the next version of libp2p is
-                            // released, use the `hide_listen_addrs` in `identify::Config` to prevent nodes advertising
-                            // their local addresses and remove this hack.
-                            if is_non_global {
-                                continue;
-                            }
-
                             self.swarm
                                 .behaviour_mut()
                                 .kademlia
@@ -410,7 +403,14 @@ impl P2pNode {
                                 },
                                 // still publish to self, even if no other peers.
                                 Err(gossipsub::PublishError::InsufficientPeers) => {
-                                    self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                    match message {
+                                        ExternalMessage::Proposal(_) => {
+                                            self.send_to(&topic.hash(), |c| c.requests.send((from, "(faux-id)".to_string(), message, ResponseChannel::Local)))?;
+                                        }
+                                        _ => {
+                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     trace!(%e, "failed to publish message");

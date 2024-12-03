@@ -228,12 +228,17 @@ impl Db {
             connection
                 .pragma_update_and_check(None, "journal_size_limit", 1 << 25, |r| r.get(0))?;
 
+        // cache 1-days data (256MB) in-memory
+        connection.pragma_update(None, "cache_size", (1 << 28) / page_size)?;
+        let cache_size: i32 = connection.pragma_query_value(None, "cache_size", |r| r.get(0))?;
+
         tracing::info!(
             ?journal_mode,
             ?journal_size_limit,
             ?synchronous,
             ?temp_store,
             ?page_size,
+            ?cache_size,
             "PRAGMA"
         );
 
@@ -637,12 +642,21 @@ impl Db {
             .map(Into::<SystemTime>::into))
     }
 
-    pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
-        self.db.lock().unwrap().execute(
-            "INSERT INTO touched_address_index (address, tx_hash) VALUES (?1, ?2)",
+    pub fn add_touched_address_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        address: Address,
+        txn_hash: Hash,
+    ) -> Result<()> {
+        sqlite_tx.execute(
+            "INSERT OR IGNORE INTO touched_address_index (address, tx_hash) VALUES (?1, ?2)",
             (AddressSqlable(address), txn_hash),
         )?;
         Ok(())
+    }
+
+    pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
+        self.add_touched_address_with_db_tx(&self.db.lock().unwrap(), address, txn_hash)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
@@ -691,7 +705,7 @@ impl Db {
         tx: &SignedTransaction,
     ) -> Result<()> {
         sqlite_tx.execute(
-            "INSERT INTO transactions (tx_hash, data) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO transactions (tx_hash, data) VALUES (?1, ?2)",
             (hash, tx),
         )?;
         Ok(())
