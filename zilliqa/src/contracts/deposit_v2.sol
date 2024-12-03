@@ -147,6 +147,27 @@ struct InitialStaker {
 }
 
 contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
+    // Emitted to inform that a new staker identified by `blsPubKey`
+    // is going to be added to the committee `atFutureBlock`, increasing
+    // the total stake by `newStake`
+    event StakerAdded(bytes blsPubKey, uint256 atFutureBlock, uint256 newStake);
+
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // is going to be removed from the committee `atFutureBlock`
+    event StakerRemoved(bytes blsPubKey, uint256 atFutureBlock);
+
+    // Emitted to inform that the deposited stake of the staker
+    // identified by `blsPubKey` is going to change to `newStake`
+    // at `atFutureBlock`
+    event StakeChanged(
+        bytes blsPubKey,
+        uint256 atFutureBlock,
+        uint256 newStake
+    );
+
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // has updated its data that can be refetched using `getStakerData()`
+    event StakerUpdated(bytes blsPubKey);
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
@@ -167,6 +188,17 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         uint256 minimumStake;
         uint256 maximumStakers;
         uint64 blocksPerEpoch;
+        
+    }
+
+    modifier onlyControlAddress(bytes calldata blsPubKey) {
+        DepositStorage storage $ = _getDepositStorage();
+        require(blsPubKey.length == 48);
+        require(
+            $._stakersMap[blsPubKey].controlAddress == msg.sender,
+            "sender is not the control address"
+        );
+        _;
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DepositStorage")) - 1)) & ~bytes32(uint256(0xff))
@@ -253,6 +285,8 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
                 currentCommittee.stakerKeys.length +
                 1;
             currentCommittee.stakerKeys.push(blsPubKey);
+
+            emit StakerAdded(blsPubKey, block.number, amount);
         }
     }
 
@@ -265,15 +299,6 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
     function reinitialize() reinitializer(version() + 1) public {
     }
 
-    modifier onlyControlAddress(bytes calldata blsPubKey) {
-        require(blsPubKey.length == 48);
-        DepositStorage storage $ = _getDepositStorage();
-        require(
-            $._stakersMap[blsPubKey].controlAddress == msg.sender,
-            "sender is not the control address"
-        );
-        _;
-    }
 
     function currentEpoch() public view returns (uint64) {
         DepositStorage storage $ = _getDepositStorage();
@@ -340,11 +365,12 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
     }
 
     function getFutureTotalStake() public view returns (uint256) {
+        DepositStorage storage $ = _getDepositStorage();
         // if `latestComputedEpoch > currentEpoch()`
         // then `latestComputedEpoch` determines the future committee we need
         // otherwise there are no committee changes after `currentEpoch()`
         // i.e. `latestComputedEpoch` determines the most recent committee
-        return _committee[latestComputedEpoch % 3].totalStake;
+        return $._committee[$.latestComputedEpoch % 3].totalStake;
     }
 
     function getStakersData()
@@ -352,6 +378,7 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         view
         returns (
             bytes[] memory stakerKeys,
+            uint256[] memory indices,
             uint256[] memory balances,
             Staker[] memory stakers
         )
@@ -365,9 +392,29 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         stakers = new Staker[](stakerKeys.length);
         for (uint i = 0; i < stakerKeys.length; i++) {
             bytes memory key = stakerKeys[i];
+            // The stakerKeys are not sorted by the stakers'
+            // index in the current committee, therefore we
+            // return the indices too, to help identify the
+            // stakers in the bit vectors stored along with
+            // BLS aggregate signatures
+            indices[i] = currentCommittee.stakers[key].index;
             balances[i] = currentCommittee.stakers[key].balance;
             stakers[i] = $._stakersMap[key];
         }
+    }
+
+    function getStakerData(
+        bytes calldata blsPubKey
+    )
+        public
+        view
+        returns (uint256 index, uint256 balance, Staker memory staker)
+    {
+        DepositStorage storage $ = _getDepositStorage();
+        Committee storage currentCommittee = committee();
+        index = currentCommittee.stakers[blsPubKey].index;
+        balance = currentCommittee.stakers[blsPubKey].balance;
+        staker = $._stakersMap[blsPubKey];
     }
 
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
@@ -492,6 +539,14 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         }
     }
 
+    // Returns the next block number at which new stakers are added,
+    // existing ones removed and/or deposits of existing stakers change
+    function nextUpdate() public view returns (uint256 blockNumber) {
+        DepositStorage storage $ = _getDepositStorage();
+        if ($.latestComputedEpoch > currentEpoch())
+            blockNumber = $.latestComputedEpoch * $.blocksPerEpoch;
+    }
+
     // keep in-sync with zilliqa/src/precompiles.rs
     function _popVerify(
         bytes memory pubkey,
@@ -502,8 +557,6 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
             signature,
             pubkey
         );
-        //TODO: don't remove the next line
-        return true;
         uint inputLength = input.length;
         bytes memory output = new bytes(32);
         bool success;
@@ -569,6 +622,8 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
             futureCommittee.stakerKeys.length +
             1;
         futureCommittee.stakerKeys.push(blsPubKey);
+
+        emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
     }
 
     function depositTopup() public payable {
@@ -587,6 +642,12 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         );
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[stakerKey].balance += msg.value;
+
+        emit StakeChanged(
+            stakerKey,
+            nextUpdate(),
+            futureCommittee.stakers[stakerKey].balance
+        );
     }
 
     function unstake(uint256 amount) public {
@@ -605,14 +666,15 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
             futureCommittee.stakers[stakerKey].index != 0,
             "staker does not exist"
         );
-        //TODO: keep the next line commented out
-        //require(futureCommittee.stakerKeys.length > 1, "too few stakers");
+ 
         require(
             futureCommittee.stakers[stakerKey].balance >= amount,
             "amount is greater than staked balance"
         );
 
         if (futureCommittee.stakers[stakerKey].balance - amount == 0) {
+            require(futureCommittee.stakerKeys.length > 1, "too few stakers");
+
             // Remove the staker from the future committee, because their staked amount has gone to zero.
             futureCommittee.totalStake -= amount;
 
@@ -636,6 +698,8 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
             delete futureCommittee.stakers[stakerKey];
 
             // Note that we leave the staker in `_stakersMap` forever.
+
+            emit StakerRemoved(stakerKey, nextUpdate());
         } else {
             require(
                 futureCommittee.stakers[stakerKey].balance - amount >=
@@ -646,6 +710,12 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
             // Partial unstake. The staker stays in the committee, but with a reduced stake.
             futureCommittee.totalStake -= amount;
             futureCommittee.stakers[stakerKey].balance -= amount;
+
+            emit StakeChanged(
+                stakerKey,
+                nextUpdate(),
+                futureCommittee.stakers[stakerKey].balance
+            );
         }
 
         // Enqueue the withdrawal for this staker.
