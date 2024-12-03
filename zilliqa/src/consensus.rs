@@ -1353,7 +1353,6 @@ impl Consensus {
         // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
         // Internal states
-        let mut updated_root_hash: Hash = state.root_hash()?;
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
@@ -1381,6 +1380,11 @@ impl Consensus {
                 break;
             }
 
+            if gas_left < tx.tx.gas_limit() {
+                debug!(?gas_left, gas_limit = ?tx.tx.gas_limit(), "block out of space");
+                break;
+            }
+
             // Apply specific txn
             let mut inspector = TouchedAddressInspector::default();
             let result = Self::apply_transaction_at(
@@ -1398,23 +1402,10 @@ impl Consensus {
                 continue;
             };
 
-            // Decrement gas price and break loop if limit is exceeded
-            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
-                g
-            } else {
-                debug!(
-                    time_since_last_view_change,
-                    exponential_backoff_timeout,
-                    minimum_time_left_for_empty_block,
-                    "gasout proposal {} for view {}",
-                    proposal.header.number,
-                    proposal.header.view,
-                );
-                // out of gas, undo last transaction
-                info!(nonce = tx.tx.nonce(), "gas limit reached",);
-                state.set_to_root(updated_root_hash.into());
-                break;
-            };
+            // Reduce remaining gas in this block
+            gas_left = gas_left
+                .checked_sub(result.gas_used())
+                .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
             // Clone itself before invalidating the reference
             let tx = tx.clone();
@@ -1444,7 +1435,6 @@ impl Consensus {
                 self.receipts_cache.insert(tx.hash, (receipt, addresses));
 
                 tx_index_in_block += 1;
-                updated_root_hash = state.root_hash()?;
                 applied_txs.push(tx);
             }
         }
