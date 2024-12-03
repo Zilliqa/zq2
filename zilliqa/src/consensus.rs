@@ -1389,7 +1389,6 @@ impl Consensus {
                 proposal.header,
                 &mut inspector,
             )?;
-            self.db.insert_transaction(&tx.hash, &tx.tx)?;
 
             // Skip transactions whose execution resulted in an error and drop them.
             let Some(result) = result else {
@@ -1448,6 +1447,14 @@ impl Consensus {
                 applied_txs.push(tx);
             }
         }
+        let (_, applied_txs, _, _) = self.early_proposal.as_ref().unwrap();
+        self.db.with_sqlite_tx(|sqlite_tx| {
+            for tx in applied_txs {
+                self.db
+                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
+            }
+            Ok(())
+        })?;
 
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
