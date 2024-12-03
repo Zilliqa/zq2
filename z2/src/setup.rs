@@ -553,12 +553,14 @@ impl Setup {
                 bootstrap_address: bootstrap_address.clone(),
                 nodes: Vec::new(),
                 p2p_port: self.get_p2p_port(node_index_u16),
-                // No external address is needed right now, because tcp connections can be
-                // called back, so can act as an autonat server. Effectively, this means the
-                // bootstrap_address specifies the external address. If this is ever not the
-                // case, we will need an external_address to be specified here.
-                // - rrw 2024-12-02
-                external_address: None,
+                // libp2p's autonat will attempt to infer an external address by having
+                // the called peer call back. The caller attempts to facilitate this by
+                // careful choice of outgoing port.
+                // Sometimes this isn't possible, external address discovery fails, and in
+                // z2's case, the network cannot form. Specify the external address so that
+                // we never need to ask (autonat will still fail, but kademlia will be happy
+                // and the network will operate)
+                external_address: Some(self.get_p2p_multiaddr(node_index_u16)),
             };
             // @todo should pass this in!
             let port = self.get_json_rpc_port(*node_index as u16, false);
