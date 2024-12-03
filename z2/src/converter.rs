@@ -195,7 +195,12 @@ fn convert_scilla_state(
             ));
         }
     };
-    let transitions = checker_result.contract_info.unwrap().transitions;
+    let transitions = match checker_result.contract_info {
+        Some(contract_info) => {
+            contract_info.transitions
+        }
+        _ => Vec::new()
+    };
 
     Ok((storage_root, field_types, transitions))
 }

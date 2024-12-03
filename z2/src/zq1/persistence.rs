@@ -407,6 +407,7 @@ fn hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> 
 pub struct Transition {
     #[serde(rename = "addr")]
     address: Address,
+    #[serde(default)]
     depth: u64,
     #[serde(rename = "msg")]
     message: Message,
