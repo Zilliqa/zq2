@@ -9,7 +9,6 @@ use alloy::{
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
-use contract_addr::DEPOSIT;
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use serde::{Deserialize, Serialize};
@@ -147,12 +146,6 @@ impl State {
             Ok(())
         })?;
 
-        let total_genesis_deposits = config
-            .consensus
-            .genesis_deposits
-            .iter()
-            .fold(0, |acc, item| acc + item.stake.0);
-
         // Set GENESIS account starting balances
         for (address, balance) in config.consensus.genesis_accounts {
             state.mutate_account(address, |a| {
@@ -160,6 +153,12 @@ impl State {
                 Ok(())
             })?;
         }
+
+        let total_genesis_deposits = config
+            .consensus
+            .genesis_deposits
+            .iter()
+            .fold(0, |acc, item| acc + item.stake.0);
 
         let initial_stakers: Vec<_> = config
             .consensus
@@ -187,10 +186,11 @@ impl State {
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
         // Set DEPOSIT contract to total deposited at genesis
-        state.mutate_account(DEPOSIT, |a| {
+        state.mutate_account(contract_addr::DEPOSIT, |a| {
             a.balance = total_genesis_deposits;
             Ok(())
         })?;
+
         //for GenesisDeposit {
         //    public_key,
         //    peer_id,
