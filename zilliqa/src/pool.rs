@@ -140,7 +140,6 @@ impl TransactionPool {
     ///
     /// If the returned transaction is executed, the caller must call [TransactionPool::mark_executed] to inform the
     /// pool that the account's nonce has been updated and further transactions from this signer may now be ready.
-
     pub fn best_transaction(&self, state: &State) -> Result<Option<&VerifiedTransaction>> {
         for (_, gas_txns) in self.gas_index.iter().rev() {
             let same_price_iter = gas_txns.iter();
