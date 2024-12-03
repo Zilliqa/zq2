@@ -260,11 +260,12 @@ impl State {
         )?;
         ensure_success(result)?;
 
+        let new_version = self.deposit_contract_version(current_block)?;
         debug!(
-            "EIP 1967 deposit contract {} updated with new deposit contract {} version {}",
+            "EIP 1967 deposit contract {} updated with new deposit contract {} proxy version {}",
             contract_addr::DEPOSIT_PROXY,
             new_deposit_impl_addr,
-            current_version + 1
+            new_version
         );
 
         Ok(new_deposit_impl_addr)
