@@ -313,7 +313,13 @@ fn create_transaction(
         sig,
     };
 
-    let transaction = signed_transaction.verify()?;
+    let Ok(transaction) = signed_transaction.verify() else {
+        Err(ErrorObject::owned::<String>(
+            RPCErrorCode::RpcVerifyRejected as i32,
+            "signature",
+            None,
+        ))?
+    };
     let (transaction_hash, result) = node.create_transaction(transaction)?;
     let info = match result {
         TxAddResult::AddedToMempool => Ok("Txn processed".to_string()),

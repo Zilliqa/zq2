@@ -1024,6 +1024,16 @@ impl Network {
                                                 ResponseChannel::Local,
                                             )
                                             .unwrap(),
+                                        ExternalMessage::BatchedTransactions(transactions) => {
+                                            let mut verified = Vec::new();
+                                            for tx in transactions {
+                                                let tx = tx.clone().verify().unwrap();
+                                                verified.push(tx);
+                                            }
+                                            inner
+                                                .handle_broadcasted_transactions(verified)
+                                                .unwrap();
+                                        }
                                         _ => inner
                                             .handle_broadcast(source, external_message.clone())
                                             .unwrap(),
