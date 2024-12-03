@@ -40,7 +40,7 @@ use ethers::{
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
     types::{Bytes, TransactionReceipt, H256, U64},
-    utils::secret_key_to_address,
+    utils::{get_contract_address, secret_key_to_address},
 };
 use foundry_compilers::{
     artifacts::{EvmVersion, SolcInput, Source},
@@ -337,6 +337,10 @@ impl Network {
                 blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 total_native_token_supply: total_native_token_supply_default(),
+                scilla_call_gas_exempt_addrs: vec![
+                    // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
+                    Address::new(get_contract_address(secret_key_to_address(&genesis_key).0, 2).0),
+                ],
             },
             json_rpc_port: json_rpc_port_default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
@@ -461,6 +465,9 @@ impl Network {
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
+                scilla_call_gas_exempt_addrs: vec![Address::new(
+                    get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
+                )],
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -569,6 +576,9 @@ impl Network {
                         scilla_stdlib_dir: scilla_stdlib_dir_default(),
                         scilla_ext_libs_path: scilla_ext_libs_path_default(),
                         total_native_token_supply: total_native_token_supply_default(),
+                        scilla_call_gas_exempt_addrs: vec![Address::new(
+                            get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
+                        )],
                     },
                     block_request_limit: block_request_limit_default(),
                     max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -1004,9 +1014,20 @@ impl Network {
                                 let mut inner = node.inner.lock().unwrap();
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
-                                    inner
-                                        .handle_broadcast(source, external_message.clone())
-                                        .unwrap();
+                                    match external_message {
+                                        // Re-route Proposals from Broadcast to Requests, which is the behaviour in Production.
+                                        ExternalMessage::Proposal(_) => inner
+                                            .handle_request(
+                                                source,
+                                                "(faux-id)",
+                                                external_message.clone(),
+                                                ResponseChannel::Local,
+                                            )
+                                            .unwrap(),
+                                        _ => inner
+                                            .handle_broadcast(source, external_message.clone())
+                                            .unwrap(),
+                                    }
                                 }
                             });
                         }
@@ -1015,22 +1036,24 @@ impl Network {
             }
             AnyMessage::Response { channel, message } => {
                 info!(%message, ?channel, "response");
-                let destination = self.pending_responses.remove(channel).unwrap();
-                let (index, node) = self
-                    .nodes
-                    .iter()
-                    .enumerate()
-                    .find(|(_, n)| n.peer_id == destination)
-                    .unwrap();
-                if !self.disconnected.contains(&index) {
-                    let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
-                    span.in_scope(|| {
-                        let mut inner = node.inner.lock().unwrap();
-                        // Send to nodes only in the same shard (having same chain_id)
-                        if inner.config.eth_chain_id == sender_chain_id {
-                            inner.handle_response(source, message.clone()).unwrap();
-                        }
-                    });
+                // skip on faux response
+                if let Some(destination) = self.pending_responses.remove(channel) {
+                    let (index, node) = self
+                        .nodes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, n)| n.peer_id == destination)
+                        .unwrap();
+                    if !self.disconnected.contains(&index) {
+                        let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
+                        span.in_scope(|| {
+                            let mut inner = node.inner.lock().unwrap();
+                            // Send to nodes only in the same shard (having same chain_id)
+                            if inner.config.eth_chain_id == sender_chain_id {
+                                inner.handle_response(source, message.clone()).unwrap();
+                            }
+                        });
+                    }
                 }
             }
         }

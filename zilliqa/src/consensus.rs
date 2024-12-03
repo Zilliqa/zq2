@@ -810,9 +810,16 @@ impl Consensus {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
 
-                if self.create_next_block_on_timeout || self.early_proposal.is_some() {
-                    warn!("Early proposal exists but we are not leader. Clearing proposal");
+                if self.create_next_block_on_timeout {
+                    warn!("Create block on timeout set. Clearing");
                     self.create_next_block_on_timeout = false;
+                }
+                if self.early_proposal.is_some() {
+                    let (_, txns, _, _) = self.early_proposal.take().unwrap();
+                    for txn in txns.into_iter().rev() {
+                        self.transaction_pool.insert_ready_transaction(txn)?;
+                    }
+                    warn!("Early proposal exists but we are not leader. Clearing proposal");
                     self.early_proposal = None;
                 }
 
@@ -929,23 +936,17 @@ impl Consensus {
         current_block: BlockHeader,
         inspector: I,
     ) -> Result<Option<TransactionApplyResult>> {
-        let db = self.db.clone();
         let state = &mut self.state;
-        Self::apply_transaction_at(state, db, txn, current_block, inspector)
+        Self::apply_transaction_at(state, txn, current_block, inspector)
     }
 
     pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
         state: &mut State,
-        db: Arc<Db>,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
-
-        if !db.contains_transaction(&txn.hash)? {
-            db.insert_transaction(&txn.hash, &txn.tx)?;
-        }
 
         let result = state.apply_transaction(txn.clone(), current_block, inspector);
         let result = match result {
@@ -1384,11 +1385,11 @@ impl Consensus {
             let mut inspector = TouchedAddressInspector::default();
             let result = Self::apply_transaction_at(
                 &mut state,
-                self.db.clone(),
                 tx.clone(),
                 proposal.header,
                 &mut inspector,
             )?;
+            self.db.insert_transaction(&tx.hash, &tx.tx)?;
 
             // Skip transactions whose execution resulted in an error and drop them.
             let Some(result) = result else {
@@ -1574,11 +1575,11 @@ impl Consensus {
             // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
-                self.db.clone(),
                 txn.clone(),
                 executed_block_header,
                 inspector::noop(),
             )?;
+            self.db.insert_transaction(&txn.hash, &txn.tx)?;
 
             // Skip transactions whose execution resulted in an error
             let Some(result) = result else {
@@ -1661,7 +1662,7 @@ impl Consensus {
             return Ok(None);
         };
 
-        trace!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, "######### proposing block");
+        info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
         Ok(Some((final_block, broadcasted_transactions)))
     }
@@ -3005,16 +3006,17 @@ impl Consensus {
             .map(|tx| format!("{:?}", tx.hash))
             .join(",");
 
-        for (tx_index, txn) in verified_txns.into_iter().enumerate() {
+        let mut touched_addresses = vec![];
+        for (tx_index, txn) in verified_txns.iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
                 .apply_transaction(txn.clone(), block.header, &mut inspector)?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.transaction_pool.mark_executed(&txn);
+            self.transaction_pool.mark_executed(txn);
             for address in inspector.touched {
-                self.db.add_touched_address(address, tx_hash)?;
+                touched_addresses.push((address, tx_hash));
             }
 
             let gas_used = result.gas_used();
@@ -3034,9 +3036,20 @@ impl Consensus {
 
             transactions_trie.insert(tx_hash.as_bytes(), tx_hash.as_bytes())?;
 
-            info!(?receipt, "applied transaction {:?}", receipt);
+            debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
+        self.db.with_sqlite_tx(|sqlite_tx| {
+            for txn in &verified_txns {
+                self.db
+                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, &txn.tx)?;
+            }
+            for (addr, txn_hash) in touched_addresses {
+                self.db
+                    .add_touched_address_with_db_tx(sqlite_tx, addr, txn_hash)?;
+            }
+            Ok(())
+        })?;
 
         if cumulative_gas_used != block.gas_used() {
             warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());

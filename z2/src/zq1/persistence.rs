@@ -5,7 +5,7 @@ use alloy::{
 use anyhow::{anyhow, Result};
 use ethabi::Token;
 use k256::ecdsa::VerifyingKey;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sha2::Sha256;
 use sha3::{
@@ -16,6 +16,7 @@ use sha3::{
     },
     Digest, Keccak256,
 };
+use zilliqa::exec::ScillaTransition;
 
 use super::proto::{
     proto_account_base, proto_mb_info, proto_transaction_core_info, proto_transaction_receipt,
@@ -332,7 +333,7 @@ pub struct TransactionReceipt {
     #[serde(default)]
     pub event_logs: Vec<Log>,
     //#[serde(default)]
-    //pub transitions: Vec<Transition>,
+    pub transitions: Vec<Transition>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -413,11 +414,24 @@ pub struct Message {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ScillaParam {
     #[serde(rename = "vname")]
     name: String,
     #[serde(rename = "type")]
     ty: String,
     value: String,
+}
+
+impl From<Transition> for ScillaTransition {
+    fn from(x: Transition) -> Self {
+        ScillaTransition {
+            from: x.address,
+            to: x.message.recipient,
+            depth: x.depth,
+            amount: zilliqa::transaction::ZilAmount::from_raw(x.message.amount as u128),
+            tag: x.message.tag,
+            params: serde_json::to_string(&x.message.params).unwrap(),
+        }
+    }
 }

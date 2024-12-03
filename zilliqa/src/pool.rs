@@ -15,6 +15,7 @@ use crate::{
 
 /// The result of trying to add a transaction to the mempool. The argument is
 /// a human-readable string to be returned to the user.
+#[derive(Debug, Copy, Clone)]
 pub enum TxAddResult {
     /// Transaction was successfully added to the mempool
     AddedToMempool,
@@ -150,10 +151,10 @@ impl TransactionPool {
                     .ok_or(anyhow!("Unable to find txn in global index!"))?;
 
                 let tx_cost = txn.tx.maximum_validation_cost()?;
-                let balance = state.must_get_account(txn.signer).balance;
+                let account = state.must_get_account(txn.signer);
 
                 // We're not going to propose txn this time
-                if tx_cost > balance {
+                if tx_cost > account.balance || txn.tx.nonce().unwrap_or_default() > account.nonce {
                     continue;
                 }
 
@@ -496,6 +497,7 @@ mod tests {
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
+                scilla_call_gas_exempt_addrs: vec![],
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -549,14 +551,27 @@ mod tests {
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
         pool.mark_executed(&tx);
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 1);
         pool.mark_executed(&tx);
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 2);
         pool.mark_executed(&tx);
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
+
         Ok(())
     }
 
@@ -582,6 +597,10 @@ mod tests {
             let tx = pool.best_transaction(&state)?.unwrap().clone();
             assert_eq!(tx.tx.nonce().unwrap(), i);
             pool.mark_executed(&tx);
+            state.mutate_account(from, |acc| {
+                acc.nonce += 1;
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -641,6 +660,10 @@ mod tests {
         pool.insert_transaction(transaction(from, 1, 0), 0);
 
         pool.mark_executed(&transaction(from, 0, 0));
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
 
         assert_eq!(
             pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
@@ -665,6 +688,10 @@ mod tests {
             0
         );
         pool.mark_executed(&transaction(from, 0, 1));
+        state.mutate_account(from, |acc| {
+            acc.nonce += 1;
+            Ok(())
+        })?;
 
         // Sender has insufficient funds at this point
         assert_eq!(pool.best_transaction(&state)?, None);

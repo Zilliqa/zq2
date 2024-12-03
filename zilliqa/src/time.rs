@@ -87,7 +87,12 @@ mod time_impl {
         CURRENT_TIME.scope(Mutex::new(Duration::ZERO), f)
     }
 
-    /// Advance the fake time by this duration. Panics if not called within the scope of `with_fake_time()`.
+    pub fn sync_with_fake_time(f: impl FnOnce()) {
+        CURRENT_TIME.sync_scope(Mutex::new(Duration::ZERO), f)
+    }
+
+    /// Advance the fake time by this duration. Panics if not called within the scope of `with_fake_time()` or
+    /// `sync_with_fake_time()`.
     pub fn advance(delta: Duration) {
         CURRENT_TIME.with(|current_time| {
             let mut current_time = current_time.lock().unwrap();

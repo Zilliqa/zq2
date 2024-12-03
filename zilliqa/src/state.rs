@@ -47,6 +47,7 @@ pub struct State {
     pub scilla_ext_libs_path: ScillaExtLibsPath,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
+    pub scilla_call_gas_exempt_addrs: Vec<Address>,
     pub chain_id: ChainId,
     pub block_store: Arc<BlockStore>,
 }
@@ -65,6 +66,7 @@ impl State {
             scilla_ext_libs_path: consensus_config.scilla_ext_libs_path.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
+            scilla_call_gas_exempt_addrs: consensus_config.scilla_call_gas_exempt_addrs.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
             block_store,
         }
@@ -137,17 +139,26 @@ impl State {
             .expect(
                 "Genesis accounts + genesis deposits sum to more than total native token supply",
             );
+
+        // Set ZERO account to total available balance
         state.mutate_account(Address::ZERO, |a| {
             a.balance = zero_account_balance;
             Ok(())
         })?;
 
+        // Set GENESIS account starting balances
         for (address, balance) in config.consensus.genesis_accounts {
             state.mutate_account(address, |a| {
                 a.balance = *balance;
                 Ok(())
             })?;
         }
+
+        let total_genesis_deposits = config
+            .consensus
+            .genesis_deposits
+            .iter()
+            .fold(0, |acc, item| acc + item.stake.0);
 
         let initial_stakers: Vec<_> = config
             .consensus
@@ -173,6 +184,12 @@ impl State {
             ],
         )?;
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
+
+        // Set DEPOSIT contract to total deposited at genesis
+        state.mutate_account(contract_addr::DEPOSIT, |a| {
+            a.balance = total_genesis_deposits;
+            Ok(())
+        })?;
 
         //for GenesisDeposit {
         //    public_key,
@@ -227,6 +244,7 @@ impl State {
             scilla_ext_libs_path: self.scilla_ext_libs_path.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
+            scilla_call_gas_exempt_addrs: self.scilla_call_gas_exempt_addrs.clone(),
             chain_id: self.chain_id,
             block_store: self.block_store.clone(),
         }

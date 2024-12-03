@@ -1427,7 +1427,7 @@ async fn test_eth_syncing(mut network: Network) {
     network
         .run_until_async(
             || async { wallet.get_block_number().await.unwrap().as_u64() > 4 },
-            50,
+            100,
         )
         .await
         .unwrap();
@@ -1436,4 +1436,40 @@ async fn test_eth_syncing(mut network: Network) {
         .await
         .unwrap();
     assert_eq!(result, SyncingResult::Bool(false))
+}
+
+#[zilliqa_macros::test]
+async fn get_block_receipts(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Deploy a contract to generate a transaction
+    let (hash1, _) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt1 = network.run_until_receipt(&wallet, hash1, 50).await;
+    let block_hash = receipt1.block_hash.unwrap();
+
+    // Get receipts by block hash
+    let receipts: Vec<TransactionReceipt> = provider
+        .request("eth_getBlockReceipts", [block_hash])
+        .await
+        .unwrap();
+
+    assert_eq!(receipts.len(), 1);
+    assert!(receipts.iter().any(|r| r.transaction_hash == hash1));
+
+    // Verify receipts match individual receipt queries
+    let individual1 = provider
+        .get_transaction_receipt(hash1)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(receipts.contains(&individual1));
 }

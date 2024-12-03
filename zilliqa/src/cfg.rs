@@ -286,6 +286,13 @@ pub struct ConsensusConfig {
     /// The total supply of native token in the network in Wei. Any funds which are not immediately assigned to an account (via genesis_accounts and genesis_deposits env vars) will be assigned to the zero account (0x0).
     #[serde(default = "total_native_token_supply_default")]
     pub total_native_token_supply: Amount,
+    /// Calls to the `scilla_call` precompile from these addresses cost a different amount of gas. If the provided gas
+    /// limit is not enough, the call will still succeed and we will charge as much gas as we can. This hack exists due
+    /// to important contracts deployed on Zilliqa 1's mainnet that pass the incorrect gas limit to `scilla_call`.
+    /// Zilliqa 1's implementation was broken and accepted these calls and these contracts are now widely used and
+    /// bridged to other chains.
+    #[serde(default)]
+    pub scilla_call_gas_exempt_addrs: Vec<Address>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
