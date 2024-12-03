@@ -139,17 +139,26 @@ impl State {
             .expect(
                 "Genesis accounts + genesis deposits sum to more than total native token supply",
             );
+
+        // Set ZERO account to total available balance
         state.mutate_account(Address::ZERO, |a| {
             a.balance = zero_account_balance;
             Ok(())
         })?;
 
+        // Set GENESIS account starting balances
         for (address, balance) in config.consensus.genesis_accounts {
             state.mutate_account(address, |a| {
                 a.balance = *balance;
                 Ok(())
             })?;
         }
+
+        let total_genesis_deposits = config
+            .consensus
+            .genesis_deposits
+            .iter()
+            .fold(0, |acc, item| acc + item.stake.0);
 
         let initial_stakers: Vec<_> = config
             .consensus
@@ -175,6 +184,12 @@ impl State {
             ],
         )?;
         state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
+
+        // Set DEPOSIT contract to total deposited at genesis
+        state.mutate_account(contract_addr::DEPOSIT, |a| {
+            a.balance = total_genesis_deposits;
+            Ok(())
+        })?;
 
         //for GenesisDeposit {
         //    public_key,

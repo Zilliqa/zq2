@@ -1,6 +1,6 @@
 bootstrap_address = [
     "12D3KooWPXw2dXBRH1bT4vcNos9f6W2KoFTiarqptBuTzxaXg7zu",
-    "/ip4/198.51.100.103/udp/5643/quic-v1",
+    "/ip4/198.51.100.103/tcp/5643",
 ]
 p2p_port = 5643
 
@@ -72,6 +72,9 @@ consensus.genesis_accounts = [
         "5000000000000000000000",
     ],
 ]
+
+# speed up local/docker epochs
+consensus.blocks_per_epoch = 36
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
