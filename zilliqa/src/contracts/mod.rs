@@ -10,8 +10,12 @@ pub mod deposit {
         Lazy::new(|| contract("src/contracts/deposit.sol", "Deposit"));
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+    pub static INITIALIZE: Lazy<Function> = 
+        Lazy::new(|| CONTRACT.abi.function("initialize").unwrap().clone());
 
     pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static OWNER: Lazy<Function> = 
+        Lazy::new(|| CONTRACT.abi.function("owner").unwrap().clone());
     pub static LEADER_AT_VIEW: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("leaderAtView").unwrap().clone());
     pub static DEPOSIT: Lazy<Function> =
@@ -34,6 +38,8 @@ pub mod deposit {
         Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
     pub static COMMITTEE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
+    pub static TEST_VAR: Lazy<Function> = 
+        Lazy::new(|| CONTRACT.abi.function("TEST_VAR").unwrap().clone());
 }
 
 pub mod shard {
@@ -91,6 +97,23 @@ pub mod shard_registry {
         Lazy::new(|| CONTRACT.abi.event("LinkAdded").unwrap().clone());
 }
 
+pub mod eip1967_proxy {
+    use ethabi::{Constructor, Event};
+    use once_cell::sync::Lazy;
+
+    use super::{contract, Contract};
+
+    static CONTRACT: Lazy<Contract> =
+        Lazy::new(|| contract("../vendor/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol", "ERC1967Proxy"));
+
+    pub static BYTECODE: Lazy<Vec<u8>> = Lazy::new(|| CONTRACT.bytecode.clone());
+    pub static CONSTRUCTOR: Lazy<Constructor> =
+        Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
+
+    pub static SHARD_ADDED_EVT: Lazy<Event> =
+        Lazy::new(|| CONTRACT.abi.event("Upgraded").unwrap().clone());
+}
+
 const COMPILED: &str = include_str!("compiled.json");
 
 fn contract(src: &str, name: &str) -> Contract {
@@ -131,12 +154,12 @@ mod tests {
             language: SolcLanguage::Solidity,
             sources: Source::read_all(
                 [
-                    "deposit.sol",
-                    "intershard_bridge.sol",
-                    "shard.sol",
-                    "shard_registry.sol",
+                    "src/contracts/deposit.sol",
+                    "src/contracts/intershard_bridge.sol",
+                    "src/contracts/shard.sol",
+                    "src/contracts/shard_registry.sol",
+                    "../vendor/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol"
                 ]
-                .map(|c| format!("src/contracts/{c}")),
             )
             .unwrap(),
             settings: Settings {

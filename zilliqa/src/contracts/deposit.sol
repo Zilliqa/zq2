@@ -202,20 +202,17 @@ contract Deposit is UUPSUpgradeable, Ownable2StepUpgradeable {
         address initialOwner,
         uint256 _minimumStake,
         uint256 _maximumStakers,
-        uint64 _blocksPerEpoch
-        // InitialStaker[] memory initialStakers
+        uint64 _blocksPerEpoch,
+        InitialStaker[] memory initialStakers
     ) initializer public {
         __Deposit_init(initialOwner);
         DepositStorage storage $ = _getDepositStorage();
-
 
         $.minimumStake = _minimumStake;
         $.maximumStakers = _maximumStakers;
         $.blocksPerEpoch = _blocksPerEpoch;
         $.latestComputedEpoch = currentEpoch();
 
-        // TODO remove me
-        InitialStaker[] memory initialStakers = new InitialStaker[](0);
         for (uint i = 0; i < initialStakers.length; i++) {
             InitialStaker memory initialStaker = initialStakers[i];
             bytes memory blsPubKey = initialStaker.blsPubKey;

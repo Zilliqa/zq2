@@ -1,7 +1,5 @@
 use std::{
-    collections::BTreeMap,
-    fmt::Display,
-    sync::{Arc, Mutex, MutexGuard, OnceLock},
+    collections::BTreeMap, fmt::Display, sync::{Arc, Mutex, MutexGuard, OnceLock}
 };
 
 use alloy::{
@@ -153,6 +151,13 @@ impl State {
                 Ok(())
             })?;
         }
+        
+        // let deposit_addr = state.force_deploy_contract_evm(contracts::deposit::BYTECODE.to_vec(), Some(contract_addr::DEPOSIT_V0))?;
+        let deposit_addr = state.force_deploy_contract_evm(contracts::deposit::BYTECODE.to_vec(), Some(contract_addr::DEPOSIT_V0))?;
+        println!("deposit_addr: {}", deposit_addr);
+        println!("contract_addr::DEPOSIT_V0     : {}", contract_addr::DEPOSIT_V0);
+        println!("contract_addr::DEPOSIT_PROXY  : {}", contract_addr::DEPOSIT_PROXY);
+        println!("contract_addr::ZERP           : {}", contract_addr::ZERO);
 
         let total_genesis_deposits = config
             .consensus
@@ -174,16 +179,28 @@ impl State {
                 ])
             })
             .collect();
-        let deposit_data = contracts::deposit::CONSTRUCTOR.encode_input(
-            contracts::deposit::BYTECODE.to_vec(),
+        let deposit_initialize_data = contracts::deposit::INITIALIZE.encode_input(
             &[
+                Token::Address(ethabi::Address::from(contract_addr::ZERO.into_array())),
                 Token::Uint((*config.consensus.minimum_stake).into()),
                 Token::Uint(MAX_COMMITTEE_SIZE.into()),
                 Token::Uint(config.consensus.blocks_per_epoch.into()),
                 Token::Array(initial_stakers),
-            ],
+            ]
         )?;
-        state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
+        println!("deposit_initialize_data: {:?}", deposit_initialize_data);
+        let eip1967_constructor_data = contracts::eip1967_proxy::CONSTRUCTOR.encode_input(
+            contracts::eip1967_proxy::BYTECODE.to_vec(), 
+            &[
+                Token::Address(ethabi::Address::from(deposit_addr.into_array())),
+                Token::Bytes(deposit_initialize_data),
+            ]
+        )?;
+        println!("eip1967_constructor_data: {:?}", eip1967_constructor_data);
+
+        let eip1967_addr = state.force_deploy_contract_evm(eip1967_constructor_data, Some(contract_addr::DEPOSIT_PROXY))?;
+        println!("eip1967_addr contract deployed to {}", eip1967_addr);
+
 
         // Set DEPOSIT contract to total deposited at genesis
         state.mutate_account(contract_addr::DEPOSIT, |a| {
@@ -351,7 +368,9 @@ pub mod contract_addr {
     pub const INTERSHARD_BRIDGE: Address = Address::new(*b"\0\0\0\0\0\0\0\0ZQINTERSHARD");
     /// Address of the shard registry - only present on the root shard.
     pub const SHARD_REGISTRY: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0ZQSHARD");
-    pub const DEPOSIT: Address = Address::new(*b"\0\0\0\0\0\0\0\0\0\0ZILDEPOSIT");
+    pub const DEPOSIT_V0: Address = Address::new(*b"\0\0\0\0\0\0ZIL_DEPOSIT_V0");
+    pub const DEPOSIT_PROXY: Address = Address::new(*b"\0\0\0ZIL_DEPOSIT_PROXY");
+    pub const ZERO: Address = Address::new(*b"\0\0\\0\0\0\0\0\0\0\0\0ZIL_ZERO");
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -526,5 +545,54 @@ impl ScillaValue {
             ScillaValue::Map(m) => Some(m),
             ScillaValue::Bytes(_) => None,
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::{path::PathBuf, sync::Arc};
+    use crypto::Hash;
+    use libp2p::PeerId;
+
+    use crate::{block_store::BlockStore, cfg::NodeConfig, contracts, db::Db, error::ensure_success, message::BlockHeader, node::{MessageSender, RequestId}};
+
+    #[test]
+    fn fdj() {
+        let (s1, _) = tokio::sync::mpsc::unbounded_channel();
+        let (s2, _) = tokio::sync::mpsc::unbounded_channel();
+        let message_sender = MessageSender {
+            our_shard: 0,
+            our_peer_id: PeerId::random(),
+            outbound_channel: s1,
+            local_channel: s2,
+            request_id: RequestId::default(),
+        };
+        let db = Db::new::<PathBuf>(None, 0, 0).unwrap();
+        let db = Arc::new(db);
+        let config = NodeConfig::default();
+        let block_store = BlockStore::new(&config, db.clone(), message_sender.clone()).unwrap();
+
+        let state = State::new_with_genesis(db.state_trie().unwrap(), config, Arc::new(block_store)).unwrap();
+
+        let result = state.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT_V0),
+            contracts::deposit::TEST_VAR.encode_input(&[]).unwrap(),
+            0,
+            BlockHeader::genesis(Hash::ZERO),
+        ).unwrap();
+
+        let res2 = ensure_success(result).unwrap();
+        let test_var = contracts::deposit::TEST_VAR
+            .decode_output(&res2)
+            .unwrap()[0]
+            .clone()
+            .into_uint()
+            .unwrap();
+
+        println!("test_var: {:?}", test_var);
     }
 }

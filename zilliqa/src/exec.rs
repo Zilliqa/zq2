@@ -411,7 +411,7 @@ impl State {
             inspector::noop(),
             BaseFeeCheck::Ignore,
         )?;
-
+        
         match result {
             ExecutionResult::Success {
                 output: Output::Create(_, Some(addr)),
@@ -423,7 +423,7 @@ impl State {
                         .remove(&addr)
                         .ok_or_else(|| anyhow!("deployment did not change the contract account"))?;
                     state.insert(override_address, account);
-                    addr
+                    override_address
                 } else {
                     addr
                 };
@@ -766,7 +766,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -788,7 +788,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -813,7 +813,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             BlockHeader::default(),
@@ -835,7 +835,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -853,7 +853,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
@@ -877,7 +877,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some

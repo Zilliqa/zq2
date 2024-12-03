@@ -83,6 +83,27 @@ pub struct NodeConfig {
     pub failed_request_sleep_duration: Duration,
 }
 
+impl Default for NodeConfig {
+    fn default() -> Self {
+        NodeConfig {
+            json_rpc_port: json_rpc_port_default(),
+            disable_rpc: disable_rpc_default(),
+            eth_chain_id: eth_chain_id_default(),
+            consensus: ConsensusConfig::default(), 
+            allowed_timestamp_skew: allowed_timestamp_skew_default(),
+            data_dir: None,
+            state_cache_size: state_cache_size_default(),
+            load_checkpoint: None,
+            do_checkpoints: false,
+            block_request_limit: block_request_limit_default(),
+            max_blocks_in_flight: max_blocks_in_flight_default(),        
+            block_request_batch_size: block_request_batch_size_default(),
+            state_rpc_limit: state_rpc_limit_default(),
+            failed_request_sleep_duration: failed_request_sleep_duration_default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Checkpoint {
@@ -293,6 +314,32 @@ pub struct ConsensusConfig {
     /// bridged to other chains.
     #[serde(default)]
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
+}
+
+impl Default for ConsensusConfig {
+    fn default() -> Self {
+        ConsensusConfig {
+            is_main: default_true(),
+            main_shard_id: None,
+            consensus_timeout: consensus_timeout_default(),
+            genesis_deposits: vec!(),
+            genesis_accounts: vec!(),
+            empty_block_timeout: empty_block_timeout_default(),
+            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+            scilla_address: scilla_address_default(),
+            scilla_stdlib_dir: scilla_stdlib_dir_default(),
+            scilla_ext_libs_path: scilla_ext_libs_path_default(),
+            local_address: local_address_default(),
+            rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
+            blocks_per_hour: 3600 * 40,
+            minimum_stake: 32_000_000_000_000_000_000u128.into(),
+            eth_block_gas_limit: EvmGas(84000000),
+            blocks_per_epoch: blocks_per_epoch_default(),
+            epochs_per_checkpoint: epochs_per_checkpoint_default(),
+            gas_price: 4_761_904_800_000u128.into(),
+            total_native_token_supply: total_native_token_supply_default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
