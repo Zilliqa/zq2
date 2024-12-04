@@ -1,113 +1,28 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-
-struct Withdrawal {
-    uint256 startedAt;
-    uint256 amount;
-}
-
-// Implementation of a double-ended queue of `Withdrawal`s, backed by a circular buffer.
-library Deque {
-    struct Withdrawals {
-        Withdrawal[] values;
-        // The physical index of the first element, if it exists. If `len == 0`, the value of `head` is unimportant.
-        uint256 head;
-        // The number of elements in the queue.
-        uint256 len;
-    }
-
-    // Returns the physical index of an element, given its logical index.
-    function physicalIdx(
-        Withdrawals storage deque,
-        uint256 idx
-    ) internal view returns (uint256) {
-        uint256 physical = deque.head + idx;
-        // Wrap the physical index in case it is out-of-bounds of the buffer.
-        if (physical >= deque.values.length) {
-            return physical - deque.values.length;
-        } else {
-            return physical;
-        }
-    }
-
-    function length(Withdrawals storage deque) internal view returns (uint256) {
-        return deque.len;
-    }
-
-    // Get the element at the given logical index. Reverts if `idx >= queue.length()`.
-    function get(
-        Withdrawals storage deque,
-        uint256 idx
-    ) internal view returns (Withdrawal storage) {
-        if (idx >= deque.len) {
-            revert("element does not exist");
-        }
-
-        uint256 pIdx = physicalIdx(deque, idx);
-        return deque.values[pIdx];
-    }
-
-    // Push an empty element to the back of the queue. Returns a reference to the new element.
-    function pushBack(
-        Withdrawals storage deque
-    ) internal returns (Withdrawal storage) {
-        // Add more space in the buffer if it is full.
-        if (deque.len == deque.values.length) {
-            deque.values.push();
-        }
-
-        uint256 idx = physicalIdx(deque, deque.len);
-        deque.len += 1;
-
-        return deque.values[idx];
-    }
-
-    // Pop an element from the front of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
-    function popFront(
-        Withdrawals storage deque
-    ) internal returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        uint256 oldHead = deque.head;
-        deque.head = physicalIdx(deque, 1);
-        deque.len -= 1;
-        return deque.values[oldHead];
-    }
-
-    // Peeks the element at the back of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
-    function back(
-        Withdrawals storage deque
-    ) internal view returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        return get(deque, deque.len - 1);
-    }
-
-    // Peeks the element at the front of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
-    function front(
-        Withdrawals storage deque
-    ) internal view returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        return get(deque, 0);
-    }
-}
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {Deque, Withdrawal} from "./utils/deque.sol";
 
 using Deque for Deque.Withdrawals;
+
+/// Argument has unexpected length
+/// @param argument name of argument
+/// @param required expected length
+error UnexpectedArgumentLength(string argument, uint256 required);
+
+/// Maximum number of stakers has been reached
+error TooManyStakers();
+/// Key already staked 
+error KeyAlreadyStaked();
+/// Key is not staked
+error KeyNotStaked();
+/// Stake amount less than minimum
+error StakeAmountTooLow();
+
+/// Proof of possession verification failed 
+error RogueKeyCheckFailed();
+
 
 struct CommitteeStakerEntry {
     // The index of the value in the `stakers` array plus 1.
@@ -168,7 +83,7 @@ contract Deposit is UUPSUpgradeable {
     // has updated its data that can be refetched using `getStakerData()`
     event StakerUpdated(bytes blsPubKey);
 
-    uint64 constant VERSION = 2;
+    uint64 public constant VERSION = 2;
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
@@ -190,7 +105,9 @@ contract Deposit is UUPSUpgradeable {
 
     modifier onlyControlAddress(bytes calldata blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
-        require(blsPubKey.length == 48);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
         require(
             $._stakersMap[blsPubKey].controlAddress == msg.sender,
             "sender is not the control address"
@@ -199,7 +116,7 @@ contract Deposit is UUPSUpgradeable {
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DepositStorage")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant DepositStorageLocation =
+    bytes32 private constant DEPOSIT_STORAGE_LOCATION =
         0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
 
     function _getDepositStorage()
@@ -208,7 +125,7 @@ contract Deposit is UUPSUpgradeable {
         returns (DepositStorage storage $)
     {
         assembly {
-            $.slot := DepositStorageLocation
+            $.slot := DEPOSIT_STORAGE_LOCATION
         }
     }
 
@@ -217,6 +134,7 @@ contract Deposit is UUPSUpgradeable {
     }
 
     function _authorizeUpgrade(
+        // solhint-disable-next-line no-unused-vars
         address newImplementation
     ) internal virtual override {
         require(
@@ -230,7 +148,8 @@ contract Deposit is UUPSUpgradeable {
         _disableInitializers();
     }
 
-    // explicitly set version number in contract code
+    // explicitly set version number in contract code 
+    // solhint-disable-next-line no-empty-blocks
     function reinitialize() public reinitializer(VERSION) {}
 
     function currentEpoch() public view returns (uint64) {
@@ -263,16 +182,16 @@ contract Deposit is UUPSUpgradeable {
         Committee storage currentCommittee = committee();
         // Get a random number in the inclusive range of 0 to (totalStake - 1)
         uint256 position = randomness % currentCommittee.totalStake;
-        uint256 cummulative_stake = 0;
+        uint256 cummulativeStake = 0;
 
         // TODO: Consider binary search for performance. Or consider an alias method for O(1) performance.
         for (uint256 i = 0; i < currentCommittee.stakerKeys.length; i++) {
             bytes memory stakerKey = currentCommittee.stakerKeys[i];
             uint256 stakedBalance = currentCommittee.stakers[stakerKey].balance;
 
-            cummulative_stake += stakedBalance;
+            cummulativeStake += stakedBalance;
 
-            if (position < cummulative_stake) {
+            if (position < cummulativeStake) {
                 return stakerKey;
             }
         }
@@ -323,7 +242,7 @@ contract Deposit is UUPSUpgradeable {
         stakerKeys = currentCommittee.stakerKeys;
         balances = new uint256[](stakerKeys.length);
         stakers = new Staker[](stakerKeys.length);
-        for (uint i = 0; i < stakerKeys.length; i++) {
+        for (uint256 i = 0; i < stakerKeys.length; i++) {
             bytes memory key = stakerKeys[i];
             // The stakerKeys are not sorted by the stakers'
             // index in the current committee, therefore we
@@ -351,7 +270,9 @@ contract Deposit is UUPSUpgradeable {
     }
 
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
-        require(blsPubKey.length == 48);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
 
         // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
         // balance will default to zero.
@@ -361,7 +282,9 @@ contract Deposit is UUPSUpgradeable {
     function getFutureStake(
         bytes calldata blsPubKey
     ) public view returns (uint256) {
-        require(blsPubKey.length == 48);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
         DepositStorage storage $ = _getDepositStorage();
 
         // if `latestComputedEpoch > currentEpoch()`
@@ -380,10 +303,12 @@ contract Deposit is UUPSUpgradeable {
     function getRewardAddress(
         bytes calldata blsPubKey
     ) public view returns (address) {
-        require(blsPubKey.length == 48);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
         DepositStorage storage $ = _getDepositStorage();
         if ($._stakersMap[blsPubKey].controlAddress == address(0)) {
-            revert("not staked");
+            revert KeyNotStaked();
         }
         return $._stakersMap[blsPubKey].rewardAddress;
     }
@@ -391,10 +316,12 @@ contract Deposit is UUPSUpgradeable {
     function getControlAddress(
         bytes calldata blsPubKey
     ) public view returns (address) {
-        require(blsPubKey.length == 48);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
         DepositStorage storage $ = _getDepositStorage();
         if ($._stakersMap[blsPubKey].controlAddress == address(0)) {
-            revert("not staked");
+            revert KeyNotStaked();
         }
         return $._stakersMap[blsPubKey].controlAddress;
     }
@@ -418,10 +345,12 @@ contract Deposit is UUPSUpgradeable {
     function getPeerId(
         bytes calldata blsPubKey
     ) public view returns (bytes memory) {
-        require(blsPubKey.length == 48);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
         DepositStorage storage $ = _getDepositStorage();
         if ($._stakersMap[blsPubKey].controlAddress == address(0)) {
-            revert("not staked");
+            revert KeyNotStaked();
         }
         return $._stakersMap[blsPubKey].peerId;
     }
@@ -448,7 +377,7 @@ contract Deposit is UUPSUpgradeable {
 
                 // Delete old keys from `_committee[i % 3].stakers`.
                 for (
-                    uint j = 0;
+                    uint256 j = 0;
                     j < $._committee[i % 3].stakerKeys.length;
                     j++
                 ) {
@@ -462,7 +391,7 @@ contract Deposit is UUPSUpgradeable {
                 $._committee[i % 3].stakerKeys = latestComputedCommittee
                     .stakerKeys;
                 for (
-                    uint j = 0;
+                    uint256 j = 0;
                     j < latestComputedCommittee.stakerKeys.length;
                     j++
                 ) {
@@ -496,7 +425,7 @@ contract Deposit is UUPSUpgradeable {
             signature,
             pubkey
         );
-        uint inputLength = input.length;
+        uint256 inputLength = input.length;
         bytes memory output = new bytes(32);
         bool success;
         assembly {
@@ -520,20 +449,28 @@ contract Deposit is UUPSUpgradeable {
         bytes calldata signature,
         address rewardAddress
     ) public payable {
-        require(blsPubKey.length == 48);
-        require(peerId.length == 38);
-        require(signature.length == 96);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
+        if (peerId.length != 38) {
+            revert UnexpectedArgumentLength("peer id", 38);
+        }  
+        if (signature.length != 96) {
+            revert UnexpectedArgumentLength("signature", 96);
+        }        
         DepositStorage storage $ = _getDepositStorage();
 
         // Verify signature as a proof-of-possession of the private key.
         bool pop = _popVerify(blsPubKey, signature);
-        require(pop, "rogue key check");
+        if (!pop) {
+            revert RogueKeyCheckFailed();
+        }    
 
         Staker storage staker = $._stakersMap[blsPubKey];
 
         if (msg.value < $.minimumStake) {
-            revert("stake is less than minimum stake");
-        }
+            revert StakeAmountTooLow();
+        }  
 
         $._stakerKeys[msg.sender] = blsPubKey;
         staker.peerId = peerId;
@@ -546,14 +483,12 @@ contract Deposit is UUPSUpgradeable {
             (currentEpoch() + 2) % 3
         ];
 
-        require(
-            futureCommittee.stakerKeys.length < $.maximumStakers,
-            "too many stakers"
-        );
-        require(
-            futureCommittee.stakers[blsPubKey].index == 0,
-            "staker already exists"
-        );
+        if (futureCommittee.stakerKeys.length >= $.maximumStakers) {
+            revert TooManyStakers();
+        }
+        if (futureCommittee.stakers[blsPubKey].index != 0) {
+            revert KeyAlreadyStaked();
+        }
 
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[blsPubKey].balance = msg.value;
@@ -568,17 +503,18 @@ contract Deposit is UUPSUpgradeable {
     function depositTopup() public payable {
         DepositStorage storage $ = _getDepositStorage();
         bytes storage stakerKey = $._stakerKeys[msg.sender];
-        require(stakerKey.length != 0, "staker does not exist");
+        if (stakerKey.length == 0) {
+            revert KeyNotStaked();
+        }
 
         updateLatestComputedEpoch();
 
         Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
         ];
-        require(
-            futureCommittee.stakers[stakerKey].index != 0,
-            "staker does not exist"
-        );
+        if (futureCommittee.stakers[stakerKey].index == 0) {
+            revert KeyNotStaked();
+        }
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[stakerKey].balance += msg.value;
 
@@ -592,7 +528,9 @@ contract Deposit is UUPSUpgradeable {
     function unstake(uint256 amount) public {
         DepositStorage storage $ = _getDepositStorage();
         bytes storage stakerKey = $._stakerKeys[msg.sender];
-        require(stakerKey.length != 0, "staker does not exist");
+        if (stakerKey.length == 0) {
+            revert KeyNotStaked();
+        }
         Staker storage staker = $._stakersMap[stakerKey];
 
         updateLatestComputedEpoch();
@@ -600,11 +538,9 @@ contract Deposit is UUPSUpgradeable {
         Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
         ];
-
-        require(
-            futureCommittee.stakers[stakerKey].index != 0,
-            "staker does not exist"
-        );
+        if (futureCommittee.stakers[stakerKey].index == 0) {
+            revert KeyNotStaked();
+        }
 
         require(
             futureCommittee.stakers[stakerKey].balance >= amount,
