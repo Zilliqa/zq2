@@ -230,12 +230,7 @@ contract Deposit is UUPSUpgradeable {
         _disableInitializers();
     }
 
-    // automatically incrementing the version number allows for
-    // upgrading the contract without manually specifying the next
-    // version number in the source file - use with caution since
-    // it won't be possible to identify the actual version of the
-    // source file without a hardcoded version number, but storing
-    // the file versions in separate folders would help
+    // explicitly set version number in contract code
     function reinitialize() public reinitializer(VERSION) {}
 
     function currentEpoch() public view returns (uint64) {
