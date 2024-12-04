@@ -8,7 +8,7 @@ You'll first need to pull the OpenZeppelin modules:
 git submodule update --init
 ```
 
-Then compile with Foundry via Rust tests:
+Then compile with `solc`:
 
 ```sh
 ZQ_CONTRACT_TEST_BLESS=1 cargo test --features test_contract_bytecode -- contracts::tests::compile_all
