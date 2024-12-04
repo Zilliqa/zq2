@@ -24,7 +24,7 @@ use git2::Repository;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
 use libp2p::PeerId;
-use revm::primitives::ResultAndState;
+use revm::primitives::{HashMap, ResultAndState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -54,10 +54,6 @@ use zilliqa::{
 };
 
 use crate::{zq1, zq1::Transaction};
-
-fn create_acc_query_prefix(address: Address) -> String {
-    format!("{:02x}", address)
-}
 
 const ZQ1_STATE_KEY_SEPARATOR: u8 = 0x16;
 
@@ -94,56 +90,41 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
 
 #[allow(clippy::type_complexity)]
 fn convert_scilla_state(
-    zq1_db: &zq1::Db,
+    storage_entries: Vec<(Vec<Vec<u8>>, Vec<u8>)>,
     zq2_db: &Db,
     state: &State,
     code: &str,
     init_data: &[ParamValue],
     address: Address,
 ) -> Result<(B256, BTreeMap<String, (String, u8)>, Vec<Transition>)> {
-    let prefix = create_acc_query_prefix(address);
-
-    let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
-
     let mut contract_values = vec![];
     let mut field_types: BTreeMap<String, (String, u8)> = BTreeMap::new();
 
-    for elem in storage_entries_iter {
-        let (key, value) = elem?;
-
-        let chunks = key
-            .as_bytes()
-            .split(|item| *item == ZQ1_STATE_KEY_SEPARATOR)
-            .map(|chunk| {
-                String::from_utf8(chunk.to_vec()).expect("Unable to convert key chunk into string!")
-            })
-            .skip(1) // Skip contract address (which was a part of key in zq1)
-            .collect::<Vec<_>>();
-
-        if chunks.is_empty() {
-            debug!("Malformed key name: {} in contract storage!", key);
+    for (keys, value) in storage_entries {
+        if keys.is_empty() {
+            warn!("Malformed key name in contract storage!");
             continue;
-        };
+        }
 
         // We handle this type of keys differently in zq2
-        if chunks[0].as_str() == "_fields_map_depth"
-            || chunks[0].as_str() == "_version"
-            || chunks[0].as_str() == "_hasmap"
-            || chunks[0].as_str() == "_addr"
+        if keys[0] == b"_fields_map_depth"
+            || keys[0] == b"_version"
+            || keys[0] == b"_hasmap"
+            || keys[0] == b"_addr"
         {
             continue;
         }
 
-        let key_type = &chunks[0];
-        let field_name = &chunks[1];
-
+        let key_type = String::from_utf8(keys[0].clone()).unwrap();
+        let field_name = String::from_utf8(keys[1].clone()).unwrap();
+        
         if key_type.contains("_depth") {
             let value = String::from_utf8(value)
                 .map_err(|err| anyhow!("Unable to convert _depth value into string: {err}"))?;
             let field_depth: u8 = std::str::FromStr::from_str(&value)?;
 
             let (field_type, _) = field_types
-                .get(field_name)
+                .get(&field_name)
                 .cloned()
                 .unwrap_or_else(|| (String::new(), field_depth));
             field_types.insert(field_name.into(), (field_type, field_depth));
@@ -152,7 +133,7 @@ fn convert_scilla_state(
             let field_type = String::from_utf8(value)
                 .map_err(|err| anyhow!("Unable to convert field_type into string: {err}"))?;
             let (_, depth) = field_types
-                .get(field_name)
+                .get(&field_name)
                 .cloned()
                 .unwrap_or_else(|| (String::new(), 0));
             field_types.insert(field_name.into(), (field_type, depth));
@@ -160,15 +141,15 @@ fn convert_scilla_state(
         }
 
         // At this point we know it's a field value
-        let field_name = &chunks[0];
+        let field_name = String::from_utf8(keys[0].clone()).unwrap();
         let mut indices = vec![];
 
-        for chunk in chunks.iter().skip(1) {
+        for chunk in keys.into_iter().skip(1) {
             if !chunk.is_empty() {
-                indices.push(chunk.as_bytes().to_vec())
+                indices.push(chunk)
             }
         }
-        contract_values.push((field_name.to_owned(), (indices, value)));
+        contract_values.push((field_name, (indices, value)));
     }
 
     let db = Arc::new(zq2_db.state_trie()?);
@@ -203,31 +184,17 @@ fn convert_scilla_state(
     Ok((storage_root, field_types, transitions))
 }
 
-fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<B256> {
-    let prefix = create_acc_query_prefix(address);
-
-    let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
-
-    let evm_prefix = "_evm_storage".as_bytes();
-
+fn convert_evm_state(storage_entries: Vec<(Vec<Vec<u8>>, Vec<u8>)>, zq2_db: &Arc<Db>, address: Address) -> Result<B256> {
     let db = Arc::new(zq2_db.state_trie()?);
     let mut contract_trie = EthTrie::new(db.clone()).at_root(EMPTY_ROOT_HASH);
 
-    for elem in storage_entries_iter {
-        let (key, value) = elem?;
-
-        let chunks = key
-            .as_bytes()
-            .split(|item| *item == ZQ1_STATE_KEY_SEPARATOR)
-            .skip(1) // skip contract address which was a part of key in zq1
-            .collect::<Vec<_>>();
-
-        if chunks.len() < 2 || chunks[0] != evm_prefix {
-            debug!("Malformed key name: {} in contract storage!", key);
+    for (keys, value) in storage_entries {
+        if keys.len() < 2 || keys[0] != b"_evm_storage" {
+            warn!("Malformed key name in contract storage!");
             continue;
         };
 
-        let key = hex::decode(chunks[1])?;
+        let key = hex::decode(&keys[1])?;
         let key = State::account_storage_key(address, B256::from_slice(&key));
 
         contract_trie.insert(&key.0, &value)?;
@@ -354,7 +321,7 @@ fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Res
     Ok(())
 }
 
-pub async fn convert_persistence(
+pub fn convert_persistence(
     zq1_db: zq1::Db,
     zq2_db: Db,
     zq2_config: Config,
@@ -388,30 +355,31 @@ pub async fn convert_persistence(
     )?;
 
     let mut scilla_docker = run_scilla_docker()?;
-    // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
-    // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
-    let distance_sum: u64 = zq1_db
-        .accounts()
-        .map(|(addr, _)| addr)
-        .take(100)
-        .tuple_windows()
-        .map(|(a, b)| {
-            // Downsample the addresses to 8 bytes, treating them as `u64`s, for ease of computation.
-            let a = u64::from_be_bytes(a.as_slice()[..8].try_into().unwrap());
-            let b = u64::from_be_bytes(b.as_slice()[..8].try_into().unwrap());
 
-            b - a
-        })
-        .sum();
-    let average_distance = distance_sum as f64 / 99.;
-    let address_count = ((u64::MAX as f64) / average_distance) as u64;
+    let accounts: Vec<_> = zq1_db.accounts().collect();
 
-    let progress = ProgressBar::new(address_count)
+    let progress = ProgressBar::no_length()
         .with_style(style.clone())
-        .with_message("collect accounts")
+        .with_message("collect state")
         .with_finish(ProgressFinish::AndLeave);
 
-    let accounts: Vec<_> = zq1_db.accounts().progress_with(progress).collect();
+    let mut contract_storage: HashMap<_, Vec<_>, _>  = HashMap::new();
+    for (k, v) in zq1_db.get_contract_state_data_iter().progress_with(progress) {
+        let mut chunks = k.split(|item| *item == ZQ1_STATE_KEY_SEPARATOR);
+        let address = Address::from_str(std::str::from_utf8(&chunks.next().unwrap()).unwrap()).unwrap();
+        let chunks: Vec<_> = chunks.map(|c| c.to_vec()).collect();
+        contract_storage.entry(address).or_default().push((chunks, v));
+    }
+
+    let progress = ProgressBar::new(accounts.len() as u64)
+        .with_style(style.clone())
+        .with_message("collect code")
+        .with_finish(ProgressFinish::AndLeave);
+
+    let mut code = HashMap::new();
+    for (address, _) in accounts.iter().progress_with(progress) {
+        code.insert(*address, get_contract_code(&zq1_db, *address)?);
+    }
 
     let progress = ProgressBar::new(accounts.len() as u64)
         .with_style(style.clone())
@@ -421,18 +389,18 @@ pub async fn convert_persistence(
     for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
         let zq1_account = zq1::Account::from_proto(zq1_account)?;
 
-        let code = get_contract_code(&zq1_db, address)?;
+        let code = code.remove(&address).unwrap();
 
         let (code, storage_root) = match code {
             Code::Evm(evm_code) if !evm_code.is_empty() => {
-                let storage_root = convert_evm_state(&zq1_db, &zq2_db, address)?;
+                let storage_root = convert_evm_state(contract_storage.remove(&address).unwrap(), &zq2_db, address)?;
                 (Code::Evm(evm_code), storage_root)
             }
             Code::Scilla {
                 code, init_data, ..
             } => {
                 let (storage_root, types, transitions) =
-                    convert_scilla_state(&zq1_db, &zq2_db, &state, &code, &init_data, address)?;
+                    convert_scilla_state(contract_storage.remove(&address).unwrap(), &zq2_db, &state, &code, &init_data, address)?;
                 (
                     Code::Scilla {
                         code,
@@ -924,7 +892,7 @@ fn infer_eth_signature(
     ))
 }
 
-pub async fn print_tx_in_block(zq1_persistence_dir: &str, block_number: u64) -> Result<()> {
+pub fn print_tx_in_block(zq1_persistence_dir: &str, block_number: u64) -> Result<()> {
     let db = zq1::Db::new(zq1_persistence_dir)?;
     let block = db
         .get_tx_block(block_number)?
@@ -949,7 +917,7 @@ pub async fn print_tx_in_block(zq1_persistence_dir: &str, block_number: u64) -> 
     Ok(())
 }
 
-pub async fn print_tx_by_hash(
+pub fn print_tx_by_hash(
     zq1_persistence_dir: &str,
     block_number: u64,
     txn_hash: B256,

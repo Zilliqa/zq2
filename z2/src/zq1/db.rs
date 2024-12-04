@@ -2,13 +2,15 @@
 
 use std::{
     collections::HashMap, convert::Infallible, fs, num::ParseIntError, path::Path,
-    string::FromUtf8Error, sync::Arc,
+    string::FromUtf8Error, sync::Arc, u64,
 };
 
 use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie, Trie, DB};
 use hex::FromHex;
+use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
+use itertools::Itertools;
 use leveldb::{
     db::Database,
     iterator::{Iterable, LevelDBIterator},
@@ -107,6 +109,68 @@ impl DB for StateDatabase {
 
         Ok(())
     }
+}
+
+pub fn repack_state(dir: impl AsRef<Path>) -> Result<()> {
+    let options = Options {
+        create_if_missing: true,
+        ..Options::new()
+    };
+    let dir = dir.as_ref();
+    let state_root = Database::open(&dir.join("stateRoot"), &options)?;
+    let trie_root = state_root
+        .get_u8(&ReadOptions::new(), 0.to_string().as_bytes())?
+        .map(|r| B256::from_slice(&r));
+
+    let state = EthTrie::new(Arc::new(StateDatabase::new(
+        Database::open(&dir.join("state"), &options)?,
+        false,
+    )?));
+    let state = if let Some(trie_root) = trie_root {
+        state.at_root(trie_root)
+    } else {
+        state
+    };
+
+    // Calculate an estimate for the number of accounts by taking the first 100 accounts, calculating the distance
+    // between pairs of adjacent addresses, taking the average and extrapolating to the end of the key space.
+    let distance_sum: u64 = state.iter()
+        .take(100)
+        .tuple_windows()
+        .map(|((k1, _), (k2, _))| {
+            // Downsample the addresses to 8 bytes, treating them as `u64`s, for ease of computation.
+            let k1 = u64::from_be_bytes((&hex::decode(String::from_utf8(k1).unwrap()).unwrap()[..8]).try_into().unwrap());
+            let k2 = u64::from_be_bytes((&hex::decode(String::from_utf8(k2).unwrap()).unwrap()[..8]).try_into().unwrap());
+
+            k2 - k1
+        })
+        .sum();
+    let average_distance = distance_sum as f64 / 99.;
+    let address_count = ((u64::MAX as f64) / average_distance) as u64;
+
+    let style = ProgressStyle::with_template(
+        "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
+    )?;
+    let progress = ProgressBar::new(address_count)
+        .with_style(style.clone())
+        .with_message("repack accounts")
+        .with_finish(ProgressFinish::AndLeave);
+
+    let mut new_state = EthTrie::new(Arc::new(StateDatabase::new(Database::open(&dir.join("newState"), &options)?, false)?));
+
+    for chunk in &state.iter().progress_with(progress).chunks(1_000_000) {
+        let chunk: Vec<_> = chunk.collect();
+        for (k, v) in chunk {
+            new_state.insert(&k, &v)?;
+        }
+        // Commit writes
+        new_state.root_hash()?;
+    }
+
+    fs::rename(dir.join("state"), dir.join("oldState"))?;
+    fs::rename(dir.join("newState"), dir.join("state"))?;
+
+    Ok(())
 }
 
 pub struct Db {
@@ -247,6 +311,10 @@ impl Db {
         Ok(self
             .contract_state_data_2
             .get_u8(&ReadOptions::new(), k.as_bytes())?)
+    }
+
+    pub fn get_contract_state_data_iter(&self) -> impl Iterator<Item = (Vec<u8>, Vec<u8>)> + '_ {
+        self.contract_state_data_2.iter(&ReadOptions::new())
     }
 
     pub fn get_contract_state_data_with_prefix(

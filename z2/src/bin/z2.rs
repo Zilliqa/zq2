@@ -228,6 +228,10 @@ pub struct DeployerGenerateGenesisArgs {
 enum ConverterCommands {
     /// Convert Zilliqa 1 to Zilliqa 2 persistence format.
     Convert(ConvertConfigStruct),
+    /// Decrease the size of Zilliqa 1 state database by removing unused keys.
+    RepackState {
+        zq1_persistence_dir: String
+    },
     /// Print the transaction in a given block
     PrintTransactionsInBlock(ConverterPrintTransactionConfigStruct),
     /// Print transaction by Hash
@@ -912,13 +916,12 @@ async fn main() -> Result<()> {
                     &arg.zq2_data_dir,
                     &arg.zq2_config_file,
                     arg.secret_key,
-                )
-                .await?;
+                )?;
                 Ok(())
             }
+            ConverterCommands::RepackState { zq1_persistence_dir } => plumbing::repack_state(zq1_persistence_dir),
             ConverterCommands::PrintTransactionsInBlock(ref arg) => {
-                plumbing::run_print_txs_in_block(&arg.zq1_persistence_directory, arg.block_number)
-                    .await?;
+                plumbing::run_print_txs_in_block(&arg.zq1_persistence_directory, arg.block_number)?;
                 Ok(())
             }
             ConverterCommands::PrintTransactionConverter(ref _arg) => {

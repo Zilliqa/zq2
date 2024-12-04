@@ -348,7 +348,7 @@ pub async fn update_depends(base_dir: &str, with_ssh: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_persistence_converter(
+pub fn run_persistence_converter(
     zq1_pers_dir: &str,
     zq2_data_dir: &str,
     zq2_config: &str,
@@ -358,7 +358,7 @@ pub async fn run_persistence_converter(
     let zq1_dir = PathBuf::from_str(zq1_pers_dir)?;
     let zq2_dir = PathBuf::from_str(zq2_data_dir)?;
     let config_file = PathBuf::from_str(zq2_config)?;
-    let zq2_config = fs::read_to_string(config_file).await?;
+    let zq2_config = std::fs::read_to_string(config_file)?;
     let zq2_config: zilliqa::cfg::Config = toml::from_str(&zq2_config)?;
     let node_config = zq2_config.nodes.first().unwrap();
     let zq2_db = zilliqa::db::Db::new(
@@ -367,23 +367,27 @@ pub async fn run_persistence_converter(
         node_config.state_cache_size,
     )?;
     let zq1_db = zq1::Db::new(zq1_dir)?;
-    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_key).await?;
+    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_key)?;
     Ok(())
 }
 
-pub async fn run_print_txs_in_block(zq1_pers_dir: &str, block_num: u64) -> Result<()> {
+pub fn repack_state(dir: &str) -> Result<()> {
+    zq1::repack_state(dir)
+}
+
+pub fn run_print_txs_in_block(zq1_pers_dir: &str, block_num: u64) -> Result<()> {
     println!("🐼 Printing txns into block {block_num} .. ");
-    converter::print_tx_in_block(zq1_pers_dir, block_num).await?;
+    converter::print_tx_in_block(zq1_pers_dir, block_num)?;
     Ok(())
 }
 
-pub async fn run_print_txs_by_hash(
+pub fn run_print_txs_by_hash(
     zq1_pers_dir: &str,
     block_num: u64,
     tx_hash: B256,
 ) -> Result<()> {
     println!("🐼 Printing txn with hash {tx_hash} .. ");
-    converter::print_tx_by_hash(zq1_pers_dir, block_num, tx_hash).await?;
+    converter::print_tx_by_hash(zq1_pers_dir, block_num, tx_hash)?;
     Ok(())
 }
 
