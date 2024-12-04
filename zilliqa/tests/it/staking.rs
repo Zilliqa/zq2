@@ -54,7 +54,7 @@ async fn deposit_stake(
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake)
         .data(
             contracts::deposit::DEPOSIT
@@ -81,7 +81,7 @@ async fn current_epoch(
     block: Option<u64>,
 ) -> u64 {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(contracts::deposit::CURRENT_EPOCH.encode_input(&[]).unwrap());
     let response = wallet
         .call(&tx.into(), block.map(|b| b.into()))
@@ -104,7 +104,7 @@ async fn current_epoch(
 
 async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: u128) -> H256 {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(
             contracts::deposit::UNSTAKE
                 .encode_input(&[Token::Uint(amount.into())])
@@ -123,7 +123,7 @@ async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: 
 
 async fn get_stake(wallet: &Wallet, staker: &NodePublicKey) -> u128 {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(
             contracts::deposit::GET_STAKE
                 .encode_input(&[Token::Bytes(staker.as_bytes())])
@@ -144,7 +144,7 @@ async fn get_stakers(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
 ) -> Vec<NodePublicKey> {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
     let stakers = wallet.call(&tx.into(), None).await.unwrap();
     let stakers = contracts::deposit::GET_STAKERS
@@ -164,7 +164,7 @@ async fn get_minimum_deposit(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
 ) -> u128 {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(contracts::deposit::MIN_DEPOSIT.encode_input(&[]).unwrap());
     let deposit = wallet.call(&tx.into(), None).await.unwrap();
 

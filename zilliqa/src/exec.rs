@@ -423,7 +423,7 @@ impl State {
                         .remove(&addr)
                         .ok_or_else(|| anyhow!("deployment did not change the contract account"))?;
                     state.insert(override_address, account);
-                    addr
+                    override_address
                 } else {
                     addr
                 };
@@ -761,12 +761,26 @@ impl State {
         Ok(())
     }
 
+    pub fn deposit_contract_version(&self, current_block: BlockHeader) -> Result<u128> {
+        let result = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT_PROXY),
+            contracts::deposit::VERSION.encode_input(&[]).unwrap(),
+            0,
+            current_block,
+        )?;
+        contracts::deposit::VERSION.decode_output(&ensure_success(result)?)?[0]
+            .clone()
+            .into_uint()
+            .map_or(Ok(0), |v| Ok(v.as_u128()))
+    }
+
     pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
         let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -788,7 +802,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -813,7 +827,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             BlockHeader::default(),
@@ -835,7 +849,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -853,7 +867,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
@@ -877,7 +891,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
@@ -1009,6 +1023,33 @@ impl State {
             inspector::noop(),
             BaseFeeCheck::Ignore,
         )?;
+
+        Ok(result)
+    }
+
+    /// Call contract and apply changes to state
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_contract_apply(
+        &mut self,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        amount: u128,
+        current_block: BlockHeader,
+    ) -> Result<ExecutionResult> {
+        let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
+            from_addr,
+            to_addr,
+            0,
+            self.block_gas_limit,
+            amount,
+            data,
+            None,
+            current_block,
+            inspector::noop(),
+            BaseFeeCheck::Ignore,
+        )?;
+        self.apply_delta_evm(&state)?;
 
         Ok(result)
     }
