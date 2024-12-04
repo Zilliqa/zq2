@@ -377,16 +377,32 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
 
 pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u8; 256]> {
     let mut logs_bloom = [0; 256];
-    for txn_hash in block.transactions.iter() {
-        while let Some(txn_receipt) = get_transaction_receipt_inner(*txn_hash, node)? {
-            let this_bloom = txn_receipt.logs_bloom;
-            // Ideally we'd implement a full blown bloom filter type but this'll do for now
-            assert!(logs_bloom.len() == this_bloom.len());
-            let bloom_size = logs_bloom.len();
-            for i in 0..bloom_size {
-                logs_bloom[i] |= this_bloom[i];
-            }
-        }
+    for txn_receipt in node.get_transaction_receipts_in_block(block.hash())?.iter() {
+        // Ideally we'd implement a full blown bloom filter type but this'll do for now
+        txn_receipt
+            .logs
+            .clone()
+            .into_iter()
+            .map(|log| match log {
+                Log::Evm(log) => log,
+                Log::Scilla(log) => log.into_evm(),
+            })
+            .enumerate()
+            .map(|(log_index, log)| {
+                let log = eth::Log::new(
+                    log,
+                    log_index,
+                    txn_receipt.index as usize,
+                    txn_receipt.tx_hash,
+                    block.number(),
+                    block.hash(),
+                );
+
+                log.bloom(&mut logs_bloom);
+
+                log
+            })
+            .collect_vec();
     }
     Ok(logs_bloom)
 }
