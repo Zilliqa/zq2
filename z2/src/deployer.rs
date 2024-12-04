@@ -17,6 +17,7 @@ use crate::{
 };
 
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
+const ZERO_ACCOUNT: &str = "0x0000000000000000000000000000000000000000";
 
 pub async fn new(
     network_name: &str,
@@ -204,7 +205,7 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
         chain.name()
     );
 
-    let genesis_private_key = chain.genesis_wallet_private_key().await?;
+    let genesis_private_key = chain.genesis_private_key().await?;
     for node in validators {
         let permit = semaphore.clone().acquire_owned().await?;
         let genesis_key = genesis_private_key.clone();
@@ -230,8 +231,6 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
 pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNode) -> Result<()> {
     let private_keys = node.get_private_key().await?;
     let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
-    let reward_private_keys = node.get_wallet_private_key().await?;
-    let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
 
     println!("Validator {}:", node.name());
     println!("z2 deposit --chain {} \\", node.chain()?);
@@ -242,10 +241,7 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
         node_ethereum_address.bls_pop_signature
     );
     println!("\t--private-key {} \\", genesis_private_key);
-    println!(
-        "\t--reward-address {} \\",
-        node_reward_ethereum_address.address
-    );
+    println!("\t--reward-address {} \\", ZERO_ACCOUNT);
     println!("\t--amount {VALIDATOR_DEPOSIT_IN_MILLIONS}\n");
 
     Ok(())
@@ -285,11 +281,9 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
     let mut failures = vec![];
 
     for node in validators {
-        let genesis_private_key = chain.genesis_wallet_private_key().await?;
+        let genesis_private_key = chain.genesis_private_key().await?;
         let private_keys = node.get_private_key().await?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
-        let reward_private_keys = node.get_wallet_private_key().await?;
-        let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
 
         println!("Validator {}:", node.name());
 
@@ -303,7 +297,7 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
             VALIDATOR_DEPOSIT_IN_MILLIONS,
             chain.name().parse()?,
             &genesis_private_key,
-            &node_reward_ethereum_address.address,
+            ZERO_ACCOUNT,
         )?;
 
         let result = validators::deposit_stake(&stake).await;
@@ -721,85 +715,6 @@ pub async fn run_generate_private_keys(
             let project_id = &node.clone().project_id;
             let mut labels = BTreeMap::<String, String>::new();
             labels.insert("is-private-key".to_string(), "true".to_string());
-            labels.insert("role".to_string(), role);
-            labels.insert("zq2-network".to_string(), chain_name);
-            labels.insert("node-name".to_string(), node.clone().name);
-            let result = generate_secret(&mp, secret_name, labels, project_id, force).await;
-            drop(permit); // Release the permit when the task is done
-            (node, result)
-        });
-        futures.push(future);
-    }
-
-    let results = futures::future::join_all(futures).await;
-
-    multi_progress.stop();
-
-    let mut failures = vec![];
-
-    for result in results {
-        if let (machine, Err(err)) = result? {
-            println!("Node {} failed with error: {}", machine.name, err);
-            failures.push(machine.name);
-        }
-    }
-
-    for failure in failures {
-        log::error!("FAILURE: {}", failure);
-    }
-
-    Ok(())
-}
-
-pub async fn run_generate_reward_wallets(
-    config_file: &str,
-    node_selection: bool,
-    force: bool,
-) -> Result<()> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-
-    // Create a list of instances
-    let mut machines = chain.machines();
-    machines.retain(|m| m.labels.get("role") == Some(&NodeRole::Validator.to_string()));
-
-    let machine_names = machines.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
-
-    let target_nodes = if node_selection {
-        let mut select = cliclack::multiselect("Select target nodes");
-
-        for name in &machine_names {
-            select = select.item(name.clone(), name, "");
-        }
-
-        let selection = select.interact()?;
-        let mut machines = machines.clone();
-        machines.retain(|m| selection.contains(&m.name));
-        machines
-    } else {
-        machines.sort_by_key(|machine| machine.name.to_owned());
-        machines
-    };
-
-    let semaphore = Arc::new(Semaphore::new(50));
-    let mut futures = vec![];
-
-    let multi_progress = cliclack::multi_progress("Generating the reward wallets".yellow());
-
-    for node in target_nodes {
-        let permit = semaphore.clone().acquire_owned().await?;
-        let mp = multi_progress.to_owned();
-        let chain_name = chain.name();
-        let role = node
-            .labels
-            .get("role")
-            .unwrap_or_else(|| panic!("The machine {} has no label role", node.name))
-            .clone();
-        let future = task::spawn(async move {
-            let secret_name = &format!("{}-wallet-pk", node.clone().name);
-            let project_id = &node.clone().project_id;
-            let mut labels = BTreeMap::<String, String>::new();
-            labels.insert("is-reward-wallet".to_string(), "true".to_string());
             labels.insert("role".to_string(), role);
             labels.insert("zq2-network".to_string(), chain_name);
             labels.insert("node-name".to_string(), node.clone().name);

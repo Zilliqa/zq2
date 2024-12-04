@@ -1,12 +1,12 @@
 p2p_port = 3333
-bootstrap_address = [ "12D3KooWEpeCSbza6zYXJ8PY8v6iEZYzYD4mhk4QbmHGbjx186dS", "/ip4/34.87.62.126/tcp/3333" ]
+bootstrap_address = [ "12D3KooWMfwG5qGYbYnTCncHaohiyciouYzd5t3sUvfhbN8KV7dz", "/ip4/34.143.219.228/tcp/3333" ]
 
 [[nodes]]
 eth_chain_id = 33103
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [ ["0x3b5cf50bb3ed8d77d1895084092156c7549be7df", "900_000_000_000_000_000_000_000_000"] ]
-consensus.genesis_deposits = [ ["b95bb5b3669baa33ebedd784bcab7e281deba89537ccabbe2bbb81c7bdbbd11c8a8118dfc3fd8af17077c4636c52b508", "12D3KooWEpeCSbza6zYXJ8PY8v6iEZYzYD4mhk4QbmHGbjx186dS", "20_000_000_000_000_000_000_000_000", "0x3b5cf50bb3ed8d77d1895084092156c7549be7df"] ]
+consensus.genesis_accounts = [ ["0xb4492c468fe97cb73ea70a9a712cdd5b5ab621c3", "900_000_000_000_000_000_000_000_000" ] ]
+consensus.genesis_deposits = [ ["a4e99661cd6436894a7496a69eed9be0f6ecad43ed9087198b3acfcbab1fd4682744fefdee56affb3896b28f41d414a1", "12D3KooWMfwG5qGYbYnTCncHaohiyciouYzd5t3sUvfhbN8KV7dz", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "0xb4492c468fe97cb73ea70a9a712cdd5b5ab621c3"] ]
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"

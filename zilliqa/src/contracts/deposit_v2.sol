@@ -175,6 +175,16 @@ contract Deposit is UUPSUpgradeable {
         return $.minimumStake;
     }
 
+    function maximumStakers() public view returns (uint256) {
+        DepositStorage storage $ = _getDepositStorage();
+        return $.maximumStakers;
+    }
+
+    function blocksPerEpoch() public view returns (uint64) {
+        DepositStorage storage $ = _getDepositStorage();
+        return $.blocksPerEpoch;
+    }
+
     function leaderFromRandomness(
         uint256 randomness
     ) private view returns (bytes memory) {

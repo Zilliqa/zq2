@@ -282,16 +282,6 @@ pub async fn run_deployer_generate_private_keys(
     Ok(())
 }
 
-pub async fn run_deployer_generate_reward_wallets(
-    config_file: &str,
-    node_selection: bool,
-    force: bool,
-) -> Result<()> {
-    println!("🦆 Running generate-reward-wallets for {config_file} .. ");
-    deployer::run_generate_reward_wallets(config_file, node_selection, force).await?;
-    Ok(())
-}
-
 pub async fn print_depends(_base_dir: &str) -> Result<()> {
     for p in Component::all().iter() {
         let req = setup::Setup::describe_component(p).await?;
