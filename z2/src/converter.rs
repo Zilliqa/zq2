@@ -31,7 +31,7 @@ use sha2::{Digest, Sha256};
 use sha3::Keccak256;
 use tempfile::TempDir;
 use tokio::sync::mpsc;
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 use zilliqa::{
     block_store::BlockStore,
     cfg::{scilla_ext_libs_path_default, Amount, Config, NodeConfig},
@@ -40,7 +40,7 @@ use zilliqa::{
     contracts,
     crypto::{self, Hash, SecretKey},
     db::Db,
-    exec::{store_external_libraries, BaseFeeCheck},
+    exec::{store_external_libraries, BaseFeeCheck, ScillaError, ScillaException},
     inspector,
     message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
@@ -101,7 +101,6 @@ fn convert_scilla_state(
     init_data: &[ParamValue],
     address: Address,
 ) -> Result<(B256, BTreeMap<String, (String, u8)>, Vec<Transition>)> {
-    println!("contract address: {:?}", address);
     let prefix = create_acc_query_prefix(address);
 
     let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
@@ -122,7 +121,7 @@ fn convert_scilla_state(
             .collect::<Vec<_>>();
 
         if chunks.is_empty() {
-            warn!("Malformed key name: {} in contract storage!", key);
+            debug!("Malformed key name: {} in contract storage!", key);
             continue;
         };
 
@@ -196,7 +195,10 @@ fn convert_scilla_state(
             ));
         }
     };
-    let transitions = checker_result.contract_info.unwrap().transitions;
+    let transitions = match checker_result.contract_info {
+        Some(contract_info) => contract_info.transitions,
+        _ => Vec::new(),
+    };
 
     Ok((storage_root, field_types, transitions))
 }
@@ -221,7 +223,7 @@ fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<
             .collect::<Vec<_>>();
 
         if chunks.len() < 2 || chunks[0] != evm_prefix {
-            warn!("Malformed key name: {} in contract storage!", key);
+            debug!("Malformed key name: {} in contract storage!", key);
             continue;
         };
 
@@ -699,6 +701,21 @@ fn try_with_zil_transaction(
         Address::from_slice(&hashed[12..])
     });
 
+    let mut errors = BTreeMap::new();
+
+    transaction
+        .receipt
+        .errors
+        .into_iter()
+        .for_each(|(key, value)| {
+            let key = key.parse::<u64>().unwrap();
+            let value = value
+                .into_iter()
+                .map(|err_as_int| err_as_int.into())
+                .collect::<Vec<_>>();
+            errors.entry(key).or_insert_with(Vec::new).extend(value);
+        });
+
     let receipt = TransactionReceipt {
         tx_hash: Hash(txn_hash.0),
         block_hash: Hash::ZERO,
@@ -724,13 +741,12 @@ fn try_with_zil_transaction(
         transitions: transaction
             .receipt
             .transitions
-            .clone()
             .into_iter()
             .map(|x| x.into())
             .collect(),
-        accepted: None,
-        errors: BTreeMap::new(),
-        exceptions: vec![],
+        accepted: transaction.receipt.accepted,
+        errors,
+        exceptions: transaction.receipt.exceptions,
     };
 
     let transaction = SignedTransaction::Zilliqa {

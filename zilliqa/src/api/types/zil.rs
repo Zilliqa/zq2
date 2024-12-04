@@ -367,19 +367,7 @@ impl GetTxResponse {
                 errors: receipt
                     .errors
                     .into_iter()
-                    .map(|(k, v)| {
-                        (
-                            k,
-                            v.into_iter()
-                                .map(|err| match err {
-                                    ScillaError::CallFailed => 7,
-                                    ScillaError::CreateFailed => 8,
-                                    ScillaError::OutOfGas => 21,
-                                    ScillaError::InsufficientBalance => 22,
-                                })
-                                .collect(),
-                        )
-                    })
+                    .map(|(k, v)| (k, v.into_iter().map(|err| err as u64).collect()))
                     .collect(),
                 exceptions: receipt.exceptions,
             },
@@ -821,10 +809,11 @@ impl TransactionStatusResponse {
                 receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
             if errors.len() == 1 {
                 match errors[0] {
-                    ScillaError::CallFailed => TxnStatusCode::FailScillaLib,
-                    ScillaError::CreateFailed => TxnStatusCode::Error,
-                    ScillaError::OutOfGas => TxnStatusCode::InsufficientGas,
-                    ScillaError::InsufficientBalance => TxnStatusCode::InsufficientBalance,
+                    ScillaError::CallContractFailed => TxnStatusCode::FailScillaLib,
+                    ScillaError::CreateContractFailed => TxnStatusCode::Error,
+                    ScillaError::GasNotSufficient => TxnStatusCode::InsufficientGas,
+                    ScillaError::BalanceTransferFailed => TxnStatusCode::InsufficientBalance,
+                    _ => TxnStatusCode::Error,
                 }
             } else {
                 TxnStatusCode::Error
