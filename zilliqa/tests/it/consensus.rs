@@ -5,7 +5,7 @@ use ethers::{
 };
 use primitive_types::{H160, H256};
 use tracing::*;
-use zilliqa::crypto::Hash;
+use zilliqa::{crypto::Hash, state::contract_addr};
 
 use crate::Network;
 
@@ -222,9 +222,15 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .clone();
     let total_staked: u128 = genesis_deposits[0].stake.0 * 4;
 
-    // Zero account balance plus genesis account plus initial stakes should equal total_native_token_supply
+    // Zero account balance plus genesis account plus initial stakes plus deposit contract should equal total_native_token_supply
     let zero_account_balance: u128 = wallet
         .get_balance(H160::zero(), None)
+        .await
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let deposit_contract_balance: u128 = wallet
+        .get_balance(H160::from_slice(&contract_addr::DEPOSIT.0 .0), None)
         .await
         .unwrap()
         .try_into()
@@ -237,7 +243,7 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .0;
     assert_eq!(
         total_native_token_supply,
-        zero_account_balance + total_staked + genesis_account_balance
+        zero_account_balance + total_staked + genesis_account_balance + deposit_contract_balance
     );
 
     // Mine first block
