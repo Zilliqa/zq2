@@ -164,7 +164,7 @@ impl ChainInstance {
         Ok(nodes)
     }
 
-    pub async fn genesis_wallet_private_key(&self) -> Result<String> {
+    pub async fn genesis_private_key(&self) -> Result<String> {
         let private_keys =
             retrieve_secret_by_role(&self.config.name, &self.config.project_id, "genesis").await?;
 

@@ -337,33 +337,7 @@ impl ChainNode {
             private_key
         } else {
             return Err(anyhow!(
-                "Found multiple private keys for the instance {}",
-                &self.machine.name
-            ));
-        };
-
-        Ok(private_key.value().await?)
-    }
-
-    pub async fn get_wallet_private_key(&self) -> Result<String> {
-        if self.role == NodeRole::Apps {
-            return Err(anyhow!(
-                "Node {} has role 'apps' and does not own a private key",
-                &self.machine.name
-            ));
-        }
-
-        let private_keys = retrieve_wallet_secret_by_node_name(
-            &self.chain.name(),
-            &self.machine.project_id,
-            &self.machine.name,
-        )
-        .await?;
-        let private_key = if let Some(private_key) = private_keys.first() {
-            private_key
-        } else {
-            return Err(anyhow!(
-                "Found multiple private keys for the instance {}",
+                "No private key for the instance {}",
                 &self.machine.name
             ));
         };
@@ -386,7 +360,7 @@ impl ChainNode {
             private_key.value().await?
         } else {
             return Err(anyhow!(
-                "Found multiple private keys for the instance {}",
+                "No private key for the instance {}",
                 &self.machine.name
             ));
         };
@@ -535,8 +509,8 @@ impl ChainNode {
                 ));
             };
 
-        let genesis_wallet =
-            EthereumAddress::from_private_key(&self.chain.genesis_wallet_private_key().await?)?;
+        let genesis_account =
+            EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
         let bootstrap_node =
             EthereumAddress::from_private_key(&selected_bootstrap.get_private_key().await?)?;
         let role_name = self.role.to_string();
@@ -550,7 +524,7 @@ impl ChainNode {
         var_map.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
         var_map.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
         var_map.insert("set_bootstrap_address", set_bootstrap_address);
-        var_map.insert("genesis_address", &genesis_wallet.address);
+        var_map.insert("genesis_address", &genesis_account.address);
 
         let ctx = Context::from_serialize(var_map)?;
         Ok(Tera::one_off(spec_config, &ctx, false)?)
@@ -588,7 +562,7 @@ impl ChainNode {
         };
 
         let genesis_key = if *role_name == NodeRole::Apps.to_string() {
-            &self.chain.genesis_wallet_private_key().await?
+            &self.chain.genesis_private_key().await?
         } else {
             ""
         };
@@ -773,22 +747,6 @@ async fn retrieve_secret_by_node_name(
         project_id,
         format!(
             "labels.zq2-network={} AND labels.node-name={} AND labels.is-private-key=true",
-            chain_name, node_name
-        )
-        .as_str(),
-    )
-    .await
-}
-
-async fn retrieve_wallet_secret_by_node_name(
-    chain_name: &str,
-    project_id: &str,
-    node_name: &str,
-) -> Result<Vec<Secret>> {
-    Secret::get_secrets(
-        project_id,
-        format!(
-            "labels.zq2-network={} AND labels.node-name={} AND labels.is-reward-wallet=true",
             chain_name, node_name
         )
         .as_str(),
