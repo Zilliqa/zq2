@@ -118,7 +118,7 @@ where
     nodes: Vec<TraceNode>,
 }
 
-impl<'a, D> Iterator for TrieIterator<'a, D>
+impl<D> Iterator for TrieIterator<'_, D>
 where
     D: DB,
 {
