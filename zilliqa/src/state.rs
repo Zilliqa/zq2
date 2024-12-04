@@ -111,18 +111,14 @@ impl State {
                     config.consensus.consensus_timeout.as_millis().into(),
                 )],
             )?;
-            state.force_deploy_contract_evm(
-                shard_data,
-                Some(contract_addr::SHARD_REGISTRY),
-                None,
-            )?;
+            state.force_deploy_contract_evm(shard_data, Some(contract_addr::SHARD_REGISTRY), 0)?;
         };
 
         let intershard_bridge_data = contracts::intershard_bridge::BYTECODE.to_vec();
         state.force_deploy_contract_evm(
             intershard_bridge_data,
             Some(contract_addr::INTERSHARD_BRIDGE),
-            None,
+            0,
         )?;
 
         let zero_account_balance = config
@@ -174,7 +170,7 @@ impl State {
     fn deploy_initial_deposit_contract(&mut self, config: &NodeConfig) -> Result<Address> {
         // Deploy DepositInit
         let deposit_addr =
-            self.force_deploy_contract_evm(contracts::deposit_init::BYTECODE.to_vec(), None, None)?;
+            self.force_deploy_contract_evm(contracts::deposit_init::BYTECODE.to_vec(), None, 0)?;
 
         let initial_stakers: Vec<_> = config
             .consensus
@@ -215,7 +211,7 @@ impl State {
         let eip1967_addr = self.force_deploy_contract_evm(
             eip1967_constructor_data,
             Some(contract_addr::DEPOSIT_PROXY),
-            Some(total_genesis_deposits),
+            total_genesis_deposits,
         )?;
         debug!(
             "Deployed initial deposit contract version to {} and EIP 1967 deposit contract to {}",
@@ -237,7 +233,7 @@ impl State {
 
         // Deploy latest deposit implementation
         let new_deposit_impl_addr =
-            self.force_deploy_contract_evm(contracts::deposit::BYTECODE.to_vec(), None, None)?;
+            self.force_deploy_contract_evm(contracts::deposit::BYTECODE.to_vec(), None, 0)?;
 
         let new_deposit_impl_reinitialize_data =
             contracts::deposit::REINITIALIZE.encode_input(&[])?;

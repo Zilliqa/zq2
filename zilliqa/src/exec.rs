@@ -454,14 +454,14 @@ impl State {
         &mut self,
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
-        amount: Option<u128>,
+        amount: u128,
     ) -> Result<Address> {
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
             0,
             self.block_gas_limit,
-            amount.unwrap_or_default(),
+            amount,
             creation_bytecode,
             None,
             BlockHeader::genesis(Hash::ZERO),
