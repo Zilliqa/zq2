@@ -230,7 +230,7 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .try_into()
         .unwrap();
     let deposit_contract_balance: u128 = wallet
-        .get_balance(H160::from_slice(&contract_addr::DEPOSIT.0 .0), None)
+        .get_balance(H160::from_slice(&contract_addr::DEPOSIT_PROXY.0 .0), None)
         .await
         .unwrap()
         .try_into()

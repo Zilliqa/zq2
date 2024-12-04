@@ -137,7 +137,7 @@ contract DepositInit is UUPSUpgradeable {
         uint256 _maximumStakers,
         uint64 _blocksPerEpoch,
         InitialStaker[] memory initialStakers
-    ) public initializer {
+    ) public payable initializer {
         __UUPSUpgradeable_init_unchained();
         DepositStorage storage $ = _getDepositStorage();
 
@@ -192,6 +192,11 @@ contract DepositInit is UUPSUpgradeable {
 
             emit StakerAdded(blsPubKey, block.number, amount);
         }
+
+        require(
+            msg.value == committee().totalStake,
+            "stake value does not match total"
+        );
     }
 
     function currentEpoch() public view returns (uint64) {

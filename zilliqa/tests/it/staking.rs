@@ -142,7 +142,7 @@ async fn get_stake(wallet: &Wallet, staker: &NodePublicKey) -> u128 {
 
 async fn get_total_stake(wallet: &Wallet) -> u128 {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(
             contracts::deposit::GET_TOTAL_STAKE
                 .encode_input(&[])
@@ -204,7 +204,7 @@ async fn genesis_stakes_are_correct(mut network: Network) {
 
     let total_stake = get_total_stake(&wallet).await;
     let deposit_balance = wallet
-        .get_balance(H160(contract_addr::DEPOSIT.into_array()), None)
+        .get_balance(H160(contract_addr::DEPOSIT_PROXY.into_array()), None)
         .await
         .unwrap()
         .as_u128();

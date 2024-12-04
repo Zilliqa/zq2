@@ -174,7 +174,7 @@ impl State {
     fn deploy_initial_deposit_contract(&mut self, config: &NodeConfig) -> Result<Address> {
         // Deploy DepositInit
         let deposit_addr =
-            self.force_deploy_contract_evm(contracts::deposit_init::BYTECODE.to_vec(), None)?;
+            self.force_deploy_contract_evm(contracts::deposit_init::BYTECODE.to_vec(), None, None)?;
 
         let initial_stakers: Vec<_> = config
             .consensus
@@ -237,7 +237,7 @@ impl State {
 
         // Deploy latest deposit implementation
         let new_deposit_impl_addr =
-            self.force_deploy_contract_evm(contracts::deposit::BYTECODE.to_vec(), None)?;
+            self.force_deploy_contract_evm(contracts::deposit::BYTECODE.to_vec(), None, None)?;
 
         let new_deposit_impl_reinitialize_data =
             contracts::deposit::REINITIALIZE.encode_input(&[])?;
