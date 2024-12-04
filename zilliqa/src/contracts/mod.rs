@@ -181,6 +181,7 @@ mod tests {
             sources: Source::read_all([
                 "src/contracts/deposit_v1.sol",
                 "src/contracts/deposit_v2.sol",
+                "src/contracts/utils/deque.sol",
                 "src/contracts/intershard_bridge.sol",
                 "src/contracts/shard.sol",
                 "src/contracts/shard_registry.sol",
