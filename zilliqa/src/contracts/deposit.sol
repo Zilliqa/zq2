@@ -200,8 +200,6 @@ contract Deposit {
         uint64 _blocksPerEpoch,
         InitialStaker[] memory initialStakers
     ) payable {
-        require(msg.value > 0, "Stake value is zero");
-
         minimumStake = _minimumStake;
         maximumStakers = _maximumStakers;
         blocksPerEpoch = _blocksPerEpoch;
