@@ -60,10 +60,14 @@ pub mod deposit_v2 {
         Lazy::new(|| CONTRACT.abi.function("getStakers").unwrap().clone());
     pub static GET_TOTAL_STAKE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getTotalStake").unwrap().clone());
-    pub static MIN_DEPOSIT: Lazy<Function> =
-        Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
     pub static COMMITTEE: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("committee").unwrap().clone());
+    pub static MIN_DEPOSIT: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("minimumStake").unwrap().clone());
+    pub static MAX_STAKERS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("maximumStakers").unwrap().clone());
+    pub static BLOCKS_PER_EPOCH: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("blocksPerEpoch").unwrap().clone());
 }
 
 pub mod shard {
