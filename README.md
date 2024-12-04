@@ -104,3 +104,7 @@ Of the currently undocumented APIs, the following are partially implemented:
   * `eth_getBlockByHash` (issue #79)
   * `eth_getBlockByNumber` (issue #79)
   * `net_peerCount`
+
+## Denial of Service
+
+Refer to `docs/denialofservice.md` for a collection of guides to help mitigate the issue.
