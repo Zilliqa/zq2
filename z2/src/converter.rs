@@ -196,10 +196,8 @@ fn convert_scilla_state(
         }
     };
     let transitions = match checker_result.contract_info {
-        Some(contract_info) => {
-            contract_info.transitions
-        }
-        _ => Vec::new()
+        Some(contract_info) => contract_info.transitions,
+        _ => Vec::new(),
     };
 
     Ok((storage_root, field_types, transitions))
