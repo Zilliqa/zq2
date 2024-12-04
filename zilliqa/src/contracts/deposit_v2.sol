@@ -126,6 +126,11 @@ contract Deposit is UUPSUpgradeable {
         assembly {
             $.slot := DEPOSIT_STORAGE_LOCATION
         }
+
+        require(
+            msg.value == committee().totalStake,
+            "Stake value does not match total"
+        );
     }
 
     function version() public view returns (uint64) {
