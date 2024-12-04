@@ -200,6 +200,8 @@ contract Deposit {
         uint64 _blocksPerEpoch,
         InitialStaker[] memory initialStakers
     ) payable {
+        require(msg.value > 0, "Stake value is zero");
+
         minimumStake = _minimumStake;
         maximumStakers = _maximumStakers;
         blocksPerEpoch = _blocksPerEpoch;
@@ -251,6 +253,11 @@ contract Deposit {
 
             emit StakerAdded(blsPubKey, block.number, amount);
         }
+
+        require(
+            msg.value == committee().totalStake,
+            "Stake value does not match total"
+        );
     }
 
     function currentEpoch() public view returns (uint64) {
