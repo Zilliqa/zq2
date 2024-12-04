@@ -497,6 +497,7 @@ mod tests {
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
+                scilla_call_gas_exempt_addrs: vec![],
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),

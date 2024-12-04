@@ -1264,6 +1264,101 @@ async fn scilla_precompiles(mut network: Network) {
     assert_eq!(val, 5.into());
 }
 
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn scilla_call_with_bad_gas(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let code = r#"
+        scilla_version 0
+
+        library HelloWorld
+
+        let one = Uint128 1
+        let two = Uint128 2
+        let big_number = Uint128 1234
+        let addr = 0x0123456789012345678901234567890123456789
+
+        contract Hello
+        ()
+
+        field num : Uint128 = big_number
+        field str : String = "foobar"
+        field addr_to_int : Map ByStr20 Uint128 =
+          let emp = Emp ByStr20 Uint128 in
+          builtin put emp addr one
+        field addr_to_addr_to_int : Map ByStr20 (Map ByStr20 Uint128) =
+          let emp1 = Emp ByStr20 Uint128 in
+          let inner = builtin put emp1 addr one in
+          let emp2 = Emp ByStr20 (Map ByStr20 Uint128) in
+          builtin put emp2 addr inner
+
+        transition InsertIntoMap(a: ByStr20, b: Uint128)
+          addr_to_int[a] := b;
+          e = {_eventname : "Inserted"; a : a; b : b};
+          event e
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    // Bump the genesis wallet's nonce up, so that the next contract we deploy will be exempt from gas charges when
+    // calling the `scilla_call` precompile.
+    let tx_hash = wallet
+        .send_transaction(TransactionRequest::new().to(H160::zero()), None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, tx_hash, 100).await;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    // Construct a transaction which uses the scilla_call precompile.
+    let function = abi.function("callScillaWithBadGas").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("InsertIntoMap".to_owned()),
+        Token::String("addr_to_int".to_owned()),
+        Token::Address(wallet.address()),
+        Token::Uint(5.into()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // Make sure the transaction succeeds.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.status.unwrap().as_u64(), 1);
+}
+
 #[zilliqa_macros::test]
 async fn get_tx_block(mut network: Network) {
     let wallet = network.genesis_wallet().await;

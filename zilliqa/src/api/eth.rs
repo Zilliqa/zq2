@@ -30,6 +30,7 @@ use super::{
     to_hex::ToHex,
     types::eth::{
         self, CallParams, ErrorCode, HashOrTransaction, OneOrMany, SyncingResult, SyncingStruct,
+        TransactionReceipt,
     },
 };
 use crate::{
@@ -54,6 +55,7 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_chainId", chain_id),
             ("eth_estimateGas", estimate_gas),
             ("eth_getBalance", get_balance),
+            ("eth_getBlockReceipts", get_block_receipts),
             ("eth_getCode", get_code),
             ("eth_getStorageAt", get_storage_at),
             ("eth_getTransactionCount", get_transaction_count),
@@ -248,6 +250,27 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .get_account(address)?
         .balance
         .to_hex())
+}
+
+fn get_block_receipts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TransactionReceipt>> {
+    let block_id: B256 = params.one()?;
+
+    let node = node.lock().unwrap();
+
+    // Get the block
+    let block = node
+        .get_block(block_id)?
+        .ok_or_else(|| anyhow!("block not found"))?;
+
+    // Get receipts for all transactions in the block
+    let mut receipts = Vec::new();
+    for tx_hash in block.transactions {
+        if let Some(receipt) = get_transaction_receipt_inner(tx_hash, &node)? {
+            receipts.push(receipt);
+        }
+    }
+
+    Ok(receipts)
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
