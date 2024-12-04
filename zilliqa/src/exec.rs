@@ -398,13 +398,14 @@ impl State {
         &mut self,
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
+        amount: Option<u128>,
     ) -> Result<Address> {
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
             0,
             self.block_gas_limit,
-            0,
+            amount.unwrap_or_default(),
             creation_bytecode,
             None,
             BlockHeader::genesis(Hash::ZERO),
@@ -784,7 +785,7 @@ impl State {
     }
 
     pub fn get_stakers(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
-        let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
+        let data: Vec<u8> = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
         let result = self.call_contract(
             Address::ZERO,

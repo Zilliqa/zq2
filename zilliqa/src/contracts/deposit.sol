@@ -199,7 +199,7 @@ contract Deposit {
         uint256 _maximumStakers,
         uint64 _blocksPerEpoch,
         InitialStaker[] memory initialStakers
-    ) {
+    ) payable {
         minimumStake = _minimumStake;
         maximumStakers = _maximumStakers;
         blocksPerEpoch = _blocksPerEpoch;

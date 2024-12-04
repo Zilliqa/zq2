@@ -108,13 +108,18 @@ impl State {
                     config.consensus.consensus_timeout.as_millis().into(),
                 )],
             )?;
-            state.force_deploy_contract_evm(shard_data, Some(contract_addr::SHARD_REGISTRY))?;
+            state.force_deploy_contract_evm(
+                shard_data,
+                Some(contract_addr::SHARD_REGISTRY),
+                None,
+            )?;
         };
 
         let intershard_bridge_data = contracts::intershard_bridge::BYTECODE.to_vec();
         state.force_deploy_contract_evm(
             intershard_bridge_data,
             Some(contract_addr::INTERSHARD_BRIDGE),
+            None,
         )?;
 
         let zero_account_balance = config
@@ -160,7 +165,7 @@ impl State {
             .iter()
             .fold(0, |acc, item| acc + item.stake.0);
 
-        let initial_stakers: Vec<_> = config
+        let initial_stakers = config
             .consensus
             .genesis_deposits
             .into_iter()
@@ -183,13 +188,12 @@ impl State {
                 Token::Array(initial_stakers),
             ],
         )?;
-        state.force_deploy_contract_evm(deposit_data, Some(contract_addr::DEPOSIT))?;
 
-        // Set DEPOSIT contract to total deposited at genesis
-        state.mutate_account(contract_addr::DEPOSIT, |a| {
-            a.balance = total_genesis_deposits;
-            Ok(())
-        })?;
+        state.force_deploy_contract_evm(
+            deposit_data,
+            Some(contract_addr::DEPOSIT),
+            Some(total_genesis_deposits),
+        )?;
 
         //for GenesisDeposit {
         //    public_key,
