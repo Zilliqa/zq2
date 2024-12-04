@@ -1,113 +1,25 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-
-struct Withdrawal {
-    uint256 startedAt;
-    uint256 amount;
-}
-
-// Implementation of a double-ended queue of `Withdrawal`s, backed by a circular buffer.
-library Deque {
-    struct Withdrawals {
-        Withdrawal[] values;
-        // The physical index of the first element, if it exists. If `len == 0`, the value of `head` is unimportant.
-        uint256 head;
-        // The number of elements in the queue.
-        uint256 len;
-    }
-
-    // Returns the physical index of an element, given its logical index.
-    function physicalIdx(
-        Withdrawals storage deque,
-        uint256 idx
-    ) internal view returns (uint256) {
-        uint256 physical = deque.head + idx;
-        // Wrap the physical index in case it is out-of-bounds of the buffer.
-        if (physical >= deque.values.length) {
-            return physical - deque.values.length;
-        } else {
-            return physical;
-        }
-    }
-
-    function length(Withdrawals storage deque) internal view returns (uint256) {
-        return deque.len;
-    }
-
-    // Get the element at the given logical index. Reverts if `idx >= queue.length()`.
-    function get(
-        Withdrawals storage deque,
-        uint256 idx
-    ) internal view returns (Withdrawal storage) {
-        if (idx >= deque.len) {
-            revert("element does not exist");
-        }
-
-        uint256 pIdx = physicalIdx(deque, idx);
-        return deque.values[pIdx];
-    }
-
-    // Push an empty element to the back of the queue. Returns a reference to the new element.
-    function pushBack(
-        Withdrawals storage deque
-    ) internal returns (Withdrawal storage) {
-        // Add more space in the buffer if it is full.
-        if (deque.len == deque.values.length) {
-            deque.values.push();
-        }
-
-        uint256 idx = physicalIdx(deque, deque.len);
-        deque.len += 1;
-
-        return deque.values[idx];
-    }
-
-    // Pop an element from the front of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
-    function popFront(
-        Withdrawals storage deque
-    ) internal returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        uint256 oldHead = deque.head;
-        deque.head = physicalIdx(deque, 1);
-        deque.len -= 1;
-        return deque.values[oldHead];
-    }
-
-    // Peeks the element at the back of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
-    function back(
-        Withdrawals storage deque
-    ) internal view returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        return get(deque, deque.len - 1);
-    }
-
-    // Peeks the element at the front of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
-    function front(
-        Withdrawals storage deque
-    ) internal view returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        return get(deque, 0);
-    }
-}
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {Deque, Withdrawal} from "./utils/deque.sol";
 
 using Deque for Deque.Withdrawals;
+
+
+/// Argument has unexpected length
+/// @param argument name of argument
+/// @param required expected length
+error UnexpectedArgumentLength(string argument, uint256 required);
+
+/// Maximum number of stakers has been reached
+error TooManyStakers();
+/// Key already staked 
+error KeyAlreadyStaked();
+/// Key is not staked
+error KeyNotStaked();
+/// Stake amount less than minimum
+error StakeAmountTooLow();
 
 struct CommitteeStakerEntry {
     // The index of the value in the `stakers` array plus 1.
@@ -168,7 +80,7 @@ contract DepositInit is UUPSUpgradeable {
     // has updated its data that can be refetched using `getStakerData()`
     event StakerUpdated(bytes blsPubKey);
 
-    uint64 constant VERSION = 1;
+    uint64 public constant VERSION = 1;
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
@@ -189,7 +101,7 @@ contract DepositInit is UUPSUpgradeable {
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DepositStorage")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant DepositStorageLocation =
+    bytes32 private constant DEPOSIT_STORAGE_LOCATION =
         0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
 
     function _getDepositStorage()
@@ -198,7 +110,7 @@ contract DepositInit is UUPSUpgradeable {
         returns (DepositStorage storage $)
     {
         assembly {
-            $.slot := DepositStorageLocation
+            $.slot := DEPOSIT_STORAGE_LOCATION
         }
     }
 
@@ -207,6 +119,7 @@ contract DepositInit is UUPSUpgradeable {
     }
 
     function _authorizeUpgrade(
+        // solhint-disable-next-line no-unused-vars
         address newImplementation
     ) internal virtual override {
         require(
@@ -234,7 +147,7 @@ contract DepositInit is UUPSUpgradeable {
         $.blocksPerEpoch = _blocksPerEpoch;
         $.latestComputedEpoch = currentEpoch();
 
-        for (uint i = 0; i < initialStakers.length; i++) {
+        for (uint256 i = 0; i < initialStakers.length; i++) {
             InitialStaker memory initialStaker = initialStakers[i];
             bytes memory blsPubKey = initialStaker.blsPubKey;
             bytes memory peerId = initialStaker.peerId;
@@ -242,28 +155,28 @@ contract DepositInit is UUPSUpgradeable {
             address controlAddress = initialStaker.controlAddress;
             uint256 amount = initialStaker.amount;
 
-            require(blsPubKey.length == 48);
-            require(peerId.length == 38);
+            if (blsPubKey.length != 48) {
+                revert UnexpectedArgumentLength("bls public key", 48);
+            }
+            if (peerId.length != 38) {
+                revert UnexpectedArgumentLength("peer id", 38);
+            }
             require(
                 controlAddress != address(0),
                 "control address cannot be zero"
             );
 
             Committee storage currentCommittee = committee();
-            require(
-                currentCommittee.stakerKeys.length < $.maximumStakers,
-                "too many stakers"
-            );
-
+            if (currentCommittee.stakerKeys.length >= $.maximumStakers) {
+                revert TooManyStakers();
+            }
             Staker storage staker = $._stakersMap[blsPubKey];
             // This must be a new staker, meaning the control address must be zero.
-            require(
-                staker.controlAddress == address(0),
-                "staker already exists"
-            );
-
+            if (staker.controlAddress != address(0)) {
+                revert KeyAlreadyStaked();
+            }
             if (amount < $.minimumStake) {
-                revert("stake is less than minimum stake");
+                revert StakeAmountTooLow();
             }
 
             $._stakerKeys[controlAddress] = blsPubKey;
