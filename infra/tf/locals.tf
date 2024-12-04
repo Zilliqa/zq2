@@ -3,7 +3,7 @@
 ################################################################################
 
 locals {
-  labels       = merge(var.labels, { "zq2-network" = var.chain_name })
+  labels       = merge(var.labels, { "zq2-network" = var.chain_name }, { "node-subdomain" = var.node_dns_subdomain })
   network_name = element(split("/", data.google_compute_subnetwork.default.network), length(split("/", data.google_compute_subnetwork.default.network)) - 1)
 
   google_load_balancer_ip_ranges = [
