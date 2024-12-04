@@ -13,16 +13,15 @@ error UnexpectedArgumentLength(string argument, uint256 required);
 
 /// Maximum number of stakers has been reached
 error TooManyStakers();
-/// Key already staked 
+/// Key already staked
 error KeyAlreadyStaked();
 /// Key is not staked
 error KeyNotStaked();
 /// Stake amount less than minimum
 error StakeAmountTooLow();
 
-/// Proof of possession verification failed 
+/// Proof of possession verification failed
 error RogueKeyCheckFailed();
-
 
 struct CommitteeStakerEntry {
     // The index of the value in the `stakers` array plus 1.
@@ -148,7 +147,7 @@ contract Deposit is UUPSUpgradeable {
         _disableInitializers();
     }
 
-    // explicitly set version number in contract code 
+    // explicitly set version number in contract code
     // solhint-disable-next-line no-empty-blocks
     function reinitialize() public reinitializer(VERSION) {}
 
@@ -454,23 +453,23 @@ contract Deposit is UUPSUpgradeable {
         }
         if (peerId.length != 38) {
             revert UnexpectedArgumentLength("peer id", 38);
-        }  
+        }
         if (signature.length != 96) {
             revert UnexpectedArgumentLength("signature", 96);
-        }        
+        }
         DepositStorage storage $ = _getDepositStorage();
 
         // Verify signature as a proof-of-possession of the private key.
         bool pop = _popVerify(blsPubKey, signature);
         if (!pop) {
             revert RogueKeyCheckFailed();
-        }    
+        }
 
         Staker storage staker = $._stakersMap[blsPubKey];
 
         if (msg.value < $.minimumStake) {
             revert StakeAmountTooLow();
-        }  
+        }
 
         $._stakerKeys[msg.sender] = blsPubKey;
         staker.peerId = peerId;

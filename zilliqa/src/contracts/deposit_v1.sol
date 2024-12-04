@@ -6,7 +6,6 @@ import {Deque, Withdrawal} from "./utils/deque.sol";
 
 using Deque for Deque.Withdrawals;
 
-
 /// Argument has unexpected length
 /// @param argument name of argument
 /// @param required expected length
@@ -14,7 +13,7 @@ error UnexpectedArgumentLength(string argument, uint256 required);
 
 /// Maximum number of stakers has been reached
 error TooManyStakers();
-/// Key already staked 
+/// Key already staked
 error KeyAlreadyStaked();
 /// Key is not staked
 error KeyNotStaked();
