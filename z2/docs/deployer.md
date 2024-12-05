@@ -337,6 +337,7 @@ Options:
       --timeout <TIMEOUT>  Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
   -m, --method <METHOD>    Method to run
   -p, --params <PARAMS>    List of parameters for the method. ie "["string_value", true]"
+      --select             Enable nodes selection
   -v, --verbose...         Increase logging verbosity
   -q, --quiet...           Decrease logging verbosity
   -h, --help               Print help

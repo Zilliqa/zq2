@@ -175,6 +175,9 @@ pub struct DeployerRpcArgs {
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
 }
 
 #[derive(Args, Debug)]
@@ -790,6 +793,7 @@ async fn main() -> Result<()> {
                     &args.params,
                     &args.config_file,
                     &args.timeout,
+                    args.select,
                 )
                 .await
                 .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;

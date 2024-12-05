@@ -95,6 +95,22 @@ pub enum Chain {
 }
 
 impl Chain {
+    pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
+        match chain_name {
+            "zq2-richard" => Ok(include_str!("../resources/chain-specs/zq2-richard.toml")),
+            "zq2-uccbtest" => Ok(include_str!("../resources/chain-specs/zq2-uccbtest.toml")),
+            "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
+            "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
+            "zq2-prototestnet" => Ok(include_str!(
+                "../resources/chain-specs/zq2-prototestnet.toml"
+            )),
+            "zq2-protomainnet" => Ok(include_str!(
+                "../resources/chain-specs/zq2-protomainnet.toml"
+            )),
+            _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
+        }
+    }
+
     pub fn get_endpoint(&self) -> Result<&'static str> {
         let endpoint = self.get_str("endpoint");
 
@@ -108,6 +124,7 @@ impl Chain {
             format!("endpoint not available for the chain {}", self).red()
         ))
     }
+
     pub fn get_project_id(&self) -> Result<&'static str> {
         let project_id = self.get_str("project_id");
 
@@ -120,22 +137,5 @@ impl Chain {
             "{}",
             format!("project_id not available for the chain {}", self).red()
         ))
-    }
-
-    pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
-        match chain_name {
-            "zq2-richard" => Ok(include_str!("../resources/chain-specs/zq2-richard.toml")),
-            "zq2-uccbtest" => Ok(include_str!("../resources/chain-specs/zq2-uccbtest.toml")),
-            "zq2-infratest" => Err(anyhow!("Configuration file for {} not found", chain_name)),
-            "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
-            "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
-            "zq2-prototestnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-prototestnet.toml"
-            )),
-            "zq2-protomainnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-protomainnet.toml"
-            )),
-            _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
-        }
     }
 }

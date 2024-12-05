@@ -320,16 +320,35 @@ pub async fn run_rpc_call(
     params: &Option<String>,
     config_file: &str,
     timeout: usize,
+    node_selection: bool,
 ) -> Result<()> {
-    let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
-    let mut futures = vec![];
-
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
 
     // Create a list of chain instances
     let mut machines = chain.machines();
     machines.retain(|m| m.labels.get("role") != Some(&NodeRole::Apps.to_string()));
+
+    let machine_names = machines.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
+
+    let target_nodes = if node_selection {
+        let mut select = cliclack::multiselect("Select target nodes");
+
+        for name in &machine_names {
+            select = select.item(name.clone(), name, "");
+        }
+
+        let selection = select.interact()?;
+        let mut machines = machines.clone();
+        machines.retain(|m| selection.contains(&m.name));
+        machines
+    } else {
+        machines.sort_by_key(|machine| machine.name.to_owned());
+        machines
+    };
+
+    let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
+    let mut futures = vec![];
 
     println!("Running RPC call on {} nodes", chain.name());
     println!("🦆 Running the RPC call - Method: '{method}' .. ");
@@ -338,13 +357,13 @@ pub async fn run_rpc_call(
         params.clone().unwrap_or("[]".to_owned())
     );
 
-    let column_width = machines
+    let column_width = target_nodes
         .iter()
         .map(|m| m.name.len())
         .max()
         .unwrap_or_default();
 
-    for machine in machines {
+    for machine in target_nodes {
         let current_method = method.to_owned();
         let current_params = params.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;

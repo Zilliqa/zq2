@@ -231,9 +231,17 @@ pub async fn run_rpc_call(
     params: &Option<String>,
     config_file: &str,
     timeout: &Option<usize>,
+    node_selection: bool,
 ) -> Result<()> {
     println!("🦆 Running RPC call for {config_file}' .. ");
-    deployer::run_rpc_call(method, params, config_file, timeout.unwrap_or(30)).await?;
+    deployer::run_rpc_call(
+        method,
+        params,
+        config_file,
+        timeout.unwrap_or(30),
+        node_selection,
+    )
+    .await?;
     Ok(())
 }
 
