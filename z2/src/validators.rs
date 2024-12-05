@@ -131,7 +131,7 @@ pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
 
 pub async fn gen_validator_startup_script(
     config: &ChainConfig,
-    container: &Option<String>,
+    image_tag: &Option<String>,
 ) -> Result<()> {
     println!("✌️ Generating the validator startup scripts and configuration");
     println!("📋 Chain specification: {}", config.name);
@@ -148,8 +148,8 @@ pub async fn gen_validator_startup_script(
 
     context.insert("version", &config.version);
     context.insert("chain_name", &config.name);
-    if let Some(v) = container {
-        context.insert("container", v)
+    if let Some(v) = image_tag {
+        context.insert("image_tag", v)
     }
 
     let script = tera_template

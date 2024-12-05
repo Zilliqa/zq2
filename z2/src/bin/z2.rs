@@ -401,9 +401,9 @@ struct JoinStruct {
     /// Specify the ZQ2 chain you want join
     #[clap(long = "chain")]
     chain_name: chain::Chain,
-    /// Specify the container label to run
-    #[clap(long = "container")]
-    container: Option<String>,
+    /// Specify the tag of the image to run
+    #[clap(long)]
+    image_tag: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -921,7 +921,7 @@ async fn main() -> Result<()> {
         },
         Commands::Join(ref args) => {
             let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain, &args.container).await?;
+            validators::gen_validator_startup_script(&chain, &args.image_tag).await?;
             Ok(())
         }
         Commands::Deposit(ref args) => {
