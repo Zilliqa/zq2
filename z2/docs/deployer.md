@@ -12,15 +12,19 @@ Group of subcommands to deploy and configure a Zilliqa 2 network
 Usage: z2 deployer [OPTIONS] <COMMAND>
 
 Commands:
-  new                   Generate the deployer config file
-  install               Install the network defined in the deployer config file
-  upgrade               Update the network defined in the deployer config file
-  get-config-file       Generate in output the validator config file to join the network
-  get-deposit-commands  Generate in output the commands to deposit stake amount to all the validators
-  deposit               Deposit the stake amounts to all the validators
-  rpc                   Run RPC calls over the internal network nodes
-  restore               Restore a node using another node's data dir
-  help                  Print this message or the help of the given subcommand(s)
+  new                    Generate the deployer config file
+  install                Install the network defined in the deployer config file
+  upgrade                Update the network defined in the deployer config file
+  get-config-file        Generate in output the validator config file to join the network
+  deposit                Deposit the stake amounts to all the validators
+  rpc                    Run RPC calls over the internal network nodes
+  backup                 Backup locally a node data dir
+  restore                Restore a node data dir from a local backup
+  reset                  Reset a network stopping all the nodes and cleaning the /data folder
+  restart                Restart a network stopping all the nodes and starting the service again
+  generate-private-keys  Generate the node private keys. --force to replace if already existing
+  generate-genesis-key   Generate the genesis key. --force to replace if already existing
+  help                   Print this message or the help of the given subcommand(s)
 
 Options:
   -v, --verbose...  Increase logging verbosity
@@ -81,7 +85,7 @@ Options:
 
 Generate the deployer configuration file to upgrade the validator nodes of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
 
-```
+```yaml
 Network name: `zq2-prototestnet`
 Project Id: `gcp-tests`
 Roles: validators
@@ -232,50 +236,21 @@ Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
-      --select                       Enable nodes selection
-      --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
-  -v, --verbose...                   Increase logging verbosity
-  -q, --quiet...                     Decrease logging verbosity
-  -h, --help                         Print help
+      --select
+          Enable nodes selection
+      --max-parallel <MAX_PARALLEL>
+          Define the number of nodes to process in parallel. Default: 50
+      --persistence-url <PERSISTENCE_URL>
+          gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+  -v, --verbose...
+          Increase logging verbosity
+  -q, --quiet...
+          Decrease logging verbosity
+  -h, --help
+          Print help
 ```
 
 > Same as `upgrade` subcommand, but skipping the check if the nodes are receiving new blocks
-
-## Retrieve the commands to deposit stake amount to all the validators
-
-```bash
-z2 deployer get-deposit-commands --help
-```
-
-```bash
-Generate in output the commands to deposit stake amount to all the validators
-
-Usage: z2 deployer get-deposit-commands [OPTIONS] [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-      --select      Enable nodes selection
-  -v, --verbose...  Increase logging verbosity
-  -q, --quiet...    Decrease logging verbosity
-  -h, --help        Print help
-```
-
-### Usage example
-
-#### Scenario
-
-Retrieve the commands to deposit the stake amounts to the `zq2-prototestnet` validators
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
-```bash
-z2 deployer get-deposit-commands zq2-prototestnet.yaml
-```
 
 ## Deposit the stake amounts to all the validators
 

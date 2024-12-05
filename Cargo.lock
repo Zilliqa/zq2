@@ -10354,6 +10354,8 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "sha3",
+ "strum",
+ "strum_macros",
  "tempfile",
  "tera",
  "thiserror 2.0.3",
