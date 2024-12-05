@@ -27,8 +27,9 @@ jobs:
         with:
           node-version: "16"
       - run: cd evm_scilla_js_tests
-      - run: npm install --save-dev prettier prettier-plugin-solidity
+      - run: npm install --save-dev prettier prettier-plugin-solidity solhint
       - run: npx prettier --write --plugin=prettier-plugin-solidity '../**/*.sol'
+      - run: npx solhint '../zilliqa/src/contracts/**/*.sol' --fix --noPrompt
       - name: Commit changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

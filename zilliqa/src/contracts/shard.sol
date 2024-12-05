@@ -6,7 +6,7 @@ contract Shard {
 
     uint public id;
     uint public parentShard;
-    bytes32 genesis;
+    bytes32 internal genesis;
 
     uint16 public consensusTimeoutMs;
 

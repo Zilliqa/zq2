@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.4;
 
-import "./shard.sol";
+import {Shard} from "./shard.sol";
 
 contract ShardRegistry is Shard {
     event ShardAdded(uint id);
@@ -13,10 +13,10 @@ contract ShardRegistry is Shard {
     error LinkTargetDoesntExist();
     error NotAuthorizedToLink();
 
-    address[] shards;
-    mapping(uint => uint) indices;
+    address[] internal shards;
+    mapping(uint => uint) internal indices;
 
-    mapping(uint => uint) links;
+    mapping(uint => uint) internal links;
 
     // We construct this at genesis so we cannot know the genesis hash. Hence we pass 0.
     //
