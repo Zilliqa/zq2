@@ -1,5 +1,6 @@
 use std::ops::DerefMut;
 
+use alloy::primitives::Address;
 use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
 use ethabi::Token;
 use ethers::{
@@ -8,12 +9,11 @@ use ethers::{
     signers::LocalWallet,
     types::{BlockId, BlockNumber, TransactionRequest},
 };
-use libp2p::PeerId;
 use primitive_types::{H160, H256};
 use rand::Rng;
 use tracing::{info, trace};
 use zilliqa::{
-    contracts, crypto::NodePublicKey, message::MAX_COMMITTEE_SIZE, state::contract_addr,
+    contracts, crypto::{NodePublicKey, SecretKey}, message::MAX_COMMITTEE_SIZE, state::contract_addr
 };
 
 use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
@@ -39,20 +39,20 @@ async fn check_miner_got_reward(
 async fn deposit_stake(
     network: &mut Network,
     control_wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-    key: NodePublicKey,
-    peer_id: PeerId,
+    staker_wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    new_validator_key: SecretKey,
     stake: u128,
     reward_address: H160,
-    pop: blsful::ProofOfPossession<Bls12381G2Impl>,
+    pop: blsful::Signature<Bls12381G2Impl>,
 ) -> H256 {
     // Transfer the new validator enough ZIL to stake.
-    let tx = TransactionRequest::pay(reward_address, stake);
+    let tx = TransactionRequest::pay(staker_wallet.address(), stake + 58190476400000000000);
     let hash = control_wallet
         .send_transaction(tx, None)
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(control_wallet, hash, 80).await;
+    network.run_until_receipt(staker_wallet, hash, 80).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -61,14 +61,20 @@ async fn deposit_stake(
         .data(
             contracts::deposit::DEPOSIT
                 .encode_input(&[
-                    Token::Bytes(key.as_bytes()),
-                    Token::Bytes(peer_id.to_bytes()),
-                    Token::Bytes(pop.0.to_compressed().to_vec()),
+                    Token::Bytes(new_validator_key.node_public_key().as_bytes()),
+                    Token::Bytes(
+                        new_validator_key
+                            .to_libp2p_keypair()
+                            .public()
+                            .to_peer_id()
+                            .to_bytes(),
+                    ),
+                    Token::Bytes(pop.as_raw_value().to_compressed().to_vec()),
                     Token::Address(reward_address),
                 ])
                 .unwrap(),
         );
-    let hash = control_wallet
+    let hash = staker_wallet
         .send_transaction(tx, None)
         .await
         .unwrap()
@@ -323,14 +329,19 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert_eq!(stakers.len(), 4);
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
 
+    let staker_wallet = network.wallet_of_node(index).await;
+    let pop = new_validator_key.pop_prove(
+        network.shard_id,
+        Address::from(staker_wallet.address().to_fixed_bytes()),
+    );
     let deposit_hash = deposit_stake(
         &mut network,
         &wallet,
-        new_validator_key.node_public_key(),
-        new_validator_key.to_libp2p_keypair().public().to_peer_id(),
+        &staker_wallet,
+        new_validator_key,
         32 * 10u128.pow(18),
         reward_address,
-        new_validator_key.pop_prove(),
+        pop,
     )
     .await;
 
@@ -400,13 +411,16 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
-    let pop = new_validator_key.pop_prove();
-
+    let staker_wallet = network.wallet_of_node(index).await;
+    let pop = new_validator_key.pop_prove(
+        network.shard_id,
+        Address::from(staker_wallet.address().to_fixed_bytes()),
+    );
     deposit_stake(
         &mut network,
         &wallet,
-        new_validator_key.node_public_key(),
-        new_validator_key.to_libp2p_keypair().public().to_peer_id(),
+        &staker_wallet,
+        new_validator_key,
         1024 * 10u128.pow(18),
         reward_address,
         pop,
