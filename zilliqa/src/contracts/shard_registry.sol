@@ -4,19 +4,19 @@ pragma solidity ^0.8.4;
 import {Shard} from "./shard.sol";
 
 contract ShardRegistry is Shard {
-    event ShardAdded(uint id);
-    event LinkAdded(uint from, uint indexed to);
+    event ShardAdded(uint256 id);
+    event LinkAdded(uint256 from, uint256 indexed to);
 
     /// Tried to register a shard that is already registered
-    error ShardAlreadyExists(uint id);
+    error ShardAlreadyExists(uint256 id);
     error LinkSourceDoesntExist();
     error LinkTargetDoesntExist();
     error NotAuthorizedToLink();
 
     address[] internal shards;
-    mapping(uint => uint) internal indices;
+    mapping(uint256 => uint256) internal indices;
 
-    mapping(uint => uint) internal links;
+    mapping(uint256 => uint256) internal links;
 
     // We construct this at genesis so we cannot know the genesis hash. Hence we pass 0.
     //
@@ -28,7 +28,7 @@ contract ShardRegistry is Shard {
         addShard(block.chainid, address(this));
     }
 
-    function addShard(uint shardId, address shardContract) public {
+    function addShard(uint256 shardId, address shardContract) public {
         if (indices[shardId] != 0) {
             revert ShardAlreadyExists(shardId);
         }
@@ -37,12 +37,12 @@ contract ShardRegistry is Shard {
         emit ShardAdded(shardId);
     }
 
-    function addLink(uint sourceId, uint targetId) public {
-        uint indexFrom = indices[sourceId];
+    function addLink(uint256 sourceId, uint256 targetId) public {
+        uint256 indexFrom = indices[sourceId];
         if (indexFrom == 0) {
             revert LinkSourceDoesntExist();
         }
-        uint indexTo = indices[targetId];
+        uint256 indexTo = indices[targetId];
         if (indexTo == 0) {
             revert LinkTargetDoesntExist();
         }
