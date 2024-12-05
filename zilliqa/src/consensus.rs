@@ -1539,7 +1539,6 @@ impl Consensus {
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut updated_root_hash = state.root_hash()?;
         let mut tx_index_in_block = 0;
         let mut applied_transaction_hashes = Vec::<Hash>::new();
 
@@ -1570,6 +1569,11 @@ impl Consensus {
                 break;
             }
 
+            if gas_left < txn.tx.gas_limit() {
+                debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), "block out of space");
+                break;
+            }
+
             // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
@@ -1584,13 +1588,10 @@ impl Consensus {
                 continue;
             };
 
-            // Second - check for gas
-            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
-                g
-            } else {
-                state.set_to_root(updated_root_hash.into());
-                break;
-            };
+            // Reduce remaining gas in this block
+            gas_left = gas_left
+                .checked_sub(result.gas_used())
+                .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
             // Do necessary work to assemble the transaction
             transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
@@ -1605,7 +1606,6 @@ impl Consensus {
             receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
             tx_index_in_block += 1;
-            updated_root_hash = state.root_hash()?;
             applied_transaction_hashes.push(txn.hash);
         }
 
