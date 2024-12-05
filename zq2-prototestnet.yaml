@@ -1,6 +1,5 @@
 name: zq2-prototestnet
 eth_chain_id: 33103
-project_id: prj-d-zq2-testnet-g13pnaa8
 roles:
 - bootstrap
 - validator

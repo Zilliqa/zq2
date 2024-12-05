@@ -45,7 +45,7 @@ impl Validator {
 pub struct StakeDeposit {
     validator: Validator,
     amount: u8,
-    chain_name: Chain,
+    chain_endpoint: String,
     private_key: String,
     reward_address: H160,
 }
@@ -54,14 +54,14 @@ impl StakeDeposit {
     pub fn new(
         validator: Validator,
         amount: u8,
-        chain_name: Chain,
+        chain_endpoint: &str,
         private_key: &str,
         reward_address: &str,
     ) -> Result<Self> {
         Ok(Self {
             validator,
             amount,
-            chain_name,
+            chain_endpoint: chain_endpoint.to_owned(),
             private_key: private_key.to_owned(),
             reward_address: H160(hex_string_to_u8_20(reward_address).unwrap()),
         })
@@ -173,7 +173,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
         stake.amount, stake.validator.peer_id
     );
 
-    let network_api = stake.chain_name.get_endpoint().unwrap();
+    let network_api = stake.chain_endpoint.clone();
     let provider = Provider::<Http>::try_from(network_api)?;
 
     let chain_id = provider.get_chainid().await?;

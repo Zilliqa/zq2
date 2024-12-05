@@ -272,8 +272,7 @@ impl ChainNode {
     }
 
     pub fn chain(&self) -> Result<Chain> {
-        let chain_name = &self.chain.name();
-        chain_name.parse()
+        self.chain.chain()
     }
 
     pub fn name(&self) -> String {

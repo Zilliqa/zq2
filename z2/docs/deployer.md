@@ -56,9 +56,6 @@ Options:
       --eth-chain-id <ETH_CHAIN_ID>
           ZQ2 EVM chain ID
 
-      --project-id <PROJECT_ID>
-          GCP project-id where the network is running
-
       --roles <ROLES>
           Virtual Machine roles
 
@@ -93,7 +90,7 @@ Roles: validators
 ```
 
 ```bash
-z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --project-id gcp-tests --roles validator
+z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --roles validator
 ```
 
 Output: `zq2-prototestnet.yaml`
@@ -101,7 +98,6 @@ Output: `zq2-prototestnet.yaml`
 ```yaml
 name: zq2-prototestnet
 eth_chain_id: 33333
-project_id: gcp-tests
 roles:
 - validator
 versions:
@@ -120,7 +116,7 @@ Roles: apps
 ```
 
 ```bash
-z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --project-id gcp-tests --roles apps
+z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --roles apps
 ```
 
 Output: `zq2-prototestnet.yaml`
@@ -128,7 +124,6 @@ Output: `zq2-prototestnet.yaml`
 ```yaml
 name: zq2-prototestnet
 eth_chain_id: 33333
-project_id: gcp-tests
 roles:
 - apps
 versions:
@@ -148,7 +143,7 @@ Roles: apps,validator
 ```
 
 ```bash
-z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --project-id gcp-tests --roles apps,validator
+z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --roles apps,validator
 ```
 
 Output: `zq2-prototestnet.yaml`
@@ -156,7 +151,6 @@ Output: `zq2-prototestnet.yaml`
 ```yaml
 name: zq2-prototestnet
 eth_chain_id: 33333
-project_id: gcp-tests
 roles:
 - validator
 - apps

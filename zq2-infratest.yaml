@@ -1,6 +1,5 @@
 name: zq2-infratest
 eth_chain_id: 33469
-project_id: prj-d-zq2-devnet-c83bkpsd
 roles:
 - bootstrap
 - validator
@@ -8,6 +7,6 @@ roles:
 - apps
 - checkpoint
 versions:
-  zq2: 6e284b5f
+  zq2: 886d0c55
   otterscan: develop
   spout: main

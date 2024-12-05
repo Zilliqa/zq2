@@ -19,19 +19,8 @@ use crate::{
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
 const ZERO_ACCOUNT: &str = "0x0000000000000000000000000000000000000000";
 
-pub async fn new(
-    network_name: &str,
-    eth_chain_id: u64,
-    project_id: &str,
-    roles: Vec<NodeRole>,
-) -> Result<()> {
-    let config = NetworkConfig::new(
-        network_name.to_string(),
-        eth_chain_id,
-        project_id.to_string(),
-        roles,
-    )
-    .await?;
+pub async fn new(network_name: &str, eth_chain_id: u64, roles: Vec<NodeRole>) -> Result<()> {
+    let config = NetworkConfig::new(network_name.to_string(), eth_chain_id, roles).await?;
     let content = serde_yaml::to_string(&config)?;
     let mut file_path = std::env::current_dir()?;
     file_path.push(format!("{network_name}.yaml"));
@@ -157,9 +146,10 @@ pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
     chain_nodes.retain(|node| node.role == role);
 
     if let Some(node) = chain_nodes.first() {
+        let content = node.get_config_toml().await?;
         println!("Config file for a node role {} in {}", role, chain.name());
         println!("---");
-        println!("{}", node.get_config_toml().await?);
+        println!("{}", content);
         println!("---");
     } else {
         log::error!(
@@ -295,7 +285,7 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         let stake = validators::StakeDeposit::new(
             validator,
             VALIDATOR_DEPOSIT_IN_MILLIONS,
-            chain.name().parse()?,
+            chain.chain()?.get_endpoint()?,
             &genesis_private_key,
             ZERO_ACCOUNT,
         )?;
@@ -650,7 +640,6 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
 
 pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
-    let project_id = &config.project_id();
     let chain = ChainInstance::new(config).await?;
 
     let multi_progress = cliclack::multi_progress("Generating the genesis key".yellow());
@@ -659,7 +648,14 @@ pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<
     let mut labels = BTreeMap::<String, String>::new();
     labels.insert("role".to_string(), "genesis".to_owned());
     labels.insert("zq2-network".to_string(), chain.name());
-    let result = generate_secret(&multi_progress, secret_name, labels, project_id, force).await;
+    let result = generate_secret(
+        &multi_progress,
+        secret_name,
+        labels,
+        chain.chain()?.get_project_id()?,
+        force,
+    )
+    .await;
 
     multi_progress.stop();
 
