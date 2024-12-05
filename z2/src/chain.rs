@@ -75,10 +75,22 @@ pub enum Chain {
     )]
     Zq2ProtoMainnet,
     // #[value(name = "zq2-testnet")]
-    // #[strum(serialize = "zq2-testnet", props(endpoint = "https://api.zq2-testnet.zilliqa.com", project_id = "prj-d-zq2-testnet-g13pnaa8"))]
+    // #[strum(
+    //     serialize = "zq2-testnet",
+    //     props(
+    //         endpoint = "https://api.zq2-testnet.zilliqa.com",
+    //         project_id = "prj-d-zq2-testnet-g13pnaa8"
+    //     )
+    // )]
     // Zq2Testnet,
     // #[value(name = "zq2-mainnet")]
-    // #[strum(serialize = "zq2-mainnet", props(endpoint = "https://api.zq2-mainnet.zilliqa.com", project_id = "prj-p-zq2-mainnet-sn5n8wfl"))]
+    // #[strum(
+    //     serialize = "zq2-mainnet",
+    //     props(
+    //         endpoint = "https://api.zq2-mainnet.zilliqa.com",
+    //         project_id = "prj-p-zq2-mainnet-sn5n8wfl"
+    //     )
+    // )]
     // Zq2Mainnet,
 }
 
