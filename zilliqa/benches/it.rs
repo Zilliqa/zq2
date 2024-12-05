@@ -256,9 +256,9 @@ pub fn produce_full(crit: &mut Criterion) {
         })
         .collect();
     for txn in txns {
-        let result = big.new_transaction(txn.clone()).unwrap();
+        let result = big.new_transaction(txn.clone(), false).unwrap();
         assert!(result.was_added());
-        let result = tiny.new_transaction(txn).unwrap();
+        let result = tiny.new_transaction(txn, false).unwrap();
         assert!(result.was_added());
     }
 
