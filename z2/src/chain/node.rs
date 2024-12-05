@@ -275,6 +275,10 @@ impl ChainNode {
         self.chain.chain()
     }
 
+    pub fn chain_id(&self) -> u64 {
+        self.eth_chain_id
+    }
+
     pub fn name(&self) -> String {
         self.machine.name.clone()
     }

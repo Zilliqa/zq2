@@ -30,7 +30,7 @@ fn main() -> Result<()> {
         "peer_id": secret_key.to_libp2p_keypair().public().to_peer_id(),
         "tx_pubkey": tx_pubkey,
         "address": tx_pubkey.into_addr(),
-        "bls_pop_signature": secret_key.pop_prove(),
+        "bls_pop_signature": secret_key.pop_prove(10, tx_pubkey.into_addr()), // TODO add chain_id as input param.
     });
 
     println!("{output}");
