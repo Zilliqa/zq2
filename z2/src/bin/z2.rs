@@ -106,17 +106,14 @@ enum DeployerCommands {
 
 #[derive(Args, Debug)]
 pub struct DeployerNewArgs {
-    #[clap(long)]
     /// ZQ2 network name
+    #[clap(long)]
     network_name: Option<String>,
-    #[clap(long)]
     /// ZQ2 EVM chain ID
-    eth_chain_id: Option<u64>,
     #[clap(long)]
-    /// GCP project-id where the network is running
-    project_id: Option<String>,
-    #[clap(long, value_enum, value_delimiter = ',')]
+    eth_chain_id: Option<u64>,
     /// Virtual Machine roles
+    #[clap(long, value_enum, value_delimiter = ',')]
     roles: Option<Vec<chain::node::NodeRole>>,
 }
 
@@ -178,6 +175,9 @@ pub struct DeployerRpcArgs {
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
 }
 
 #[derive(Args, Debug)]
@@ -404,9 +404,9 @@ struct JoinStruct {
     /// Specify the ZQ2 chain you want join
     #[clap(long = "chain")]
     chain_name: chain::Chain,
-    /// Specify the container label to run
-    #[clap(long = "container")]
-    container: Option<String>,
+    /// Specify the tag of the image to run
+    #[clap(long)]
+    image_tag: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -699,10 +699,6 @@ async fn main() -> Result<()> {
                     .network_name
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("--network-name is a mandatory argument"))?;
-                let project_id = arg
-                    .project_id
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("--project-id is a mandatory argument"))?;
                 let roles = arg
                     .roles
                     .clone()
@@ -710,7 +706,7 @@ async fn main() -> Result<()> {
                 let eth_chain_id = arg
                     .eth_chain_id
                     .ok_or_else(|| anyhow::anyhow!("--eth-chain-id is a mandatory argument"))?;
-                plumbing::run_deployer_new(&network_name, eth_chain_id, &project_id, roles)
+                plumbing::run_deployer_new(&network_name, eth_chain_id, roles)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer new command: {}", err)
@@ -797,6 +793,7 @@ async fn main() -> Result<()> {
                     &args.params,
                     &args.config_file,
                     &args.timeout,
+                    args.select,
                 )
                 .await
                 .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
@@ -928,7 +925,7 @@ async fn main() -> Result<()> {
         },
         Commands::Join(ref args) => {
             let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain, &args.container).await?;
+            validators::gen_validator_startup_script(&chain, &args.image_tag).await?;
             Ok(())
         }
         Commands::Deposit(ref args) => {
@@ -937,7 +934,7 @@ async fn main() -> Result<()> {
             let stake = validators::StakeDeposit::new(
                 node,
                 args.amount,
-                args.chain_name.clone(),
+                args.chain_name.get_endpoint()?,
                 &args.private_key,
                 &args.reward_address,
             )?;

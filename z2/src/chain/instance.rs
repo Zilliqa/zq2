@@ -6,6 +6,7 @@ use serde_json::value::Value;
 use super::{
     config::NetworkConfig,
     node::{retrieve_secret_by_role, ChainNode, Machine, NodeRole},
+    Chain,
 };
 
 #[derive(Clone, Debug)]
@@ -17,15 +18,20 @@ pub struct ChainInstance {
 
 impl ChainInstance {
     pub async fn new(config: NetworkConfig) -> Result<Self> {
+        let chain = <Chain as std::str::FromStr>::from_str(&config.name.clone())?;
         Ok(Self {
             config: config.clone(),
-            machines: Self::import_machines(&config.name, &config.project_id).await?,
+            machines: Self::import_machines(&config.name, chain.get_project_id()?).await?,
             persistence_url: None,
         })
     }
 
     pub fn name(&self) -> String {
         self.config.name.clone()
+    }
+
+    pub fn chain(&self) -> Result<Chain> {
+        Ok(<Chain as std::str::FromStr>::from_str(&self.name())?)
     }
 
     pub fn persistence_url(&self) -> Option<String> {
@@ -165,8 +171,12 @@ impl ChainInstance {
     }
 
     pub async fn genesis_private_key(&self) -> Result<String> {
-        let private_keys =
-            retrieve_secret_by_role(&self.config.name, &self.config.project_id, "genesis").await?;
+        let private_keys = retrieve_secret_by_role(
+            &self.config.name,
+            self.chain()?.get_project_id()?,
+            "genesis",
+        )
+        .await?;
 
         if let Some(private_key) = private_keys.first() {
             Ok(private_key.value().await?)
