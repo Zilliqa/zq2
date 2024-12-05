@@ -14,7 +14,7 @@ error UnexpectedArgumentLength(string argument, uint256 required);
 /// Maximum number of stakers has been reached
 error TooManyStakers();
 /// Key already staked
-error KeyAlreadyStaked()    ;
+error KeyAlreadyStaked();
 /// Key is not staked
 error KeyNotStaked();
 /// Stake amount less than minimum
