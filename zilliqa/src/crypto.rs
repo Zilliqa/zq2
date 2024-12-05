@@ -12,6 +12,7 @@ use blsful::{
     inner_types::Group, vsss_rs::ShareIdentifier, AggregateSignature, Bls12381G2, Bls12381G2Impl,
     MultiPublicKey, MultiSignature, PublicKey, Signature,
 };
+use crypto_bigint::generic_array::GenericArray;
 use itertools::Itertools;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
 use serde::{
@@ -252,9 +253,12 @@ impl SecretKey {
         blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes)
     }
 
-    pub fn pop_prove(&self) -> blsful::ProofOfPossession<Bls12381G2Impl> {
-        let sk = blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes);
-        sk.proof_of_possession().expect("sk != 0")
+    pub fn pop_prove(&self, chain_id: u64, address: Address) -> blsful::Signature<Bls12381G2Impl> {
+        let mut msg = [0u8; 50];
+        msg[..8].copy_from_slice(&chain_id.to_le_bytes());
+        msg[8..].copy_from_slice(&address.to_checksum_buffer(Some(chain_id)).into_inner());
+
+        self.sign(&msg).0
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -282,6 +286,14 @@ impl SecretKey {
             .expect("`SecretKey::from_bytes` returns an `Err` only when the length is not 32, we know the length is 32")
             .into();
         keypair.into()
+    }
+
+    pub fn to_evm_address(&self) -> Address {
+        let ecdsa_key =
+            k256::ecdsa::SigningKey::from_bytes(GenericArray::from_slice(&self.bytes)).unwrap();
+        let tx_pubkey =
+            TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
+        tx_pubkey.into_addr()
     }
 }
 
@@ -362,5 +374,39 @@ impl HashBuilder {
         bytes_iter.for_each(|bytes| self.0.update(bytes.as_ref()));
 
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use blsful::Pairing;
+
+    use super::*;
+
+    #[test]
+    fn test_pop() {
+        let sk =
+            SecretKey::from_hex("b9c5e8b5bfd400122f5f30e711659c0911eaaf6e0cf87dad6962b9f7102bf78e")
+                .unwrap();
+        let pk = sk.node_public_key();
+        let addr = sk.to_evm_address();
+        println!("{:?}", addr);
+        println!("{:?}", addr.to_vec());
+
+        let msg = b"00";
+        let sig = sk.sign(msg);
+        let res = sig.0.verify(&pk.0, msg);
+        println!("sig verify res: {:?}", res);
+
+        // let sig1: Signature<Bls12381G2Impl> = sig.0;
+        // println!("sig1: {}", sig1);
+
+        // let sig_bytes = sig1.as_raw_value().to_compressed().to_vec();
+        // // let sig_bytes: &blsful::inner_types::G2Projective = sig1.as_raw_value();
+        // // let sig_bytes_compressed = sig_bytes.to_compressed().to_vec();
+        // let decoded = <blsful::Bls12381G2Impl as Pairing>::Signature::try_from(sig_bytes).unwrap();
+
+        // let decoded2: blsful::Signature<Bls12381G2Impl> = Signature::Basic(decoded);
+        // println!("decoded2: {}", decoded2);
     }
 }
