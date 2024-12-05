@@ -197,7 +197,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
             let addr = *addrs.iter().find(|a| a.is_ipv4()).unwrap();
 
             let mut stop = || {
-                std::process::Command::new("docker")
+                let mut stop_child = std::process::Command::new("docker")
                     .arg("stop")
                     .arg("--signal")
                     .arg("SIGKILL")
@@ -207,6 +207,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     .spawn()
                     .unwrap();
                 let _ = child.wait();
+                let _ = stop_child.wait();
             };
 
             // Silence the default panic hook.

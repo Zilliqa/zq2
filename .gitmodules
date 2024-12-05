@@ -1,3 +1,6 @@
 [submodule "vendor/openzeppelin-contracts"]
 	path = vendor/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts.git
+[submodule "vendor/openzeppelin-contracts-upgradeable"]
+	path = vendor/openzeppelin-contracts-upgradeable
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git

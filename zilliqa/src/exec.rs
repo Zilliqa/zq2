@@ -23,7 +23,7 @@ use revm::{
         AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
         ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
-    Database, DatabaseRef, Evm, Inspector,
+    Database, DatabaseRef, Evm, GetInspector, Inspector,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -214,10 +214,32 @@ pub struct ScillaResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScillaError {
-    CallFailed,
-    CreateFailed,
-    OutOfGas,
-    InsufficientBalance,
+    CheckerFailed,
+    RunnerFailed,
+    BalanceTransferFailed,
+    ExecuteCmdFailed,
+    ExecuteCmdTimeout,
+    NoGasRemainingFound,
+    NoAcceptedFound,
+    CallContractFailed,
+    CreateContractFailed,
+    JsonOutputCorrupted,
+    ContractNotExist,
+    StateCorrupted,
+    LogEntryInstallFailed,
+    MessageCorrupted,
+    ReceiptIsNull,
+    MaxEdgesReached,
+    ChainCallDiffShard,
+    PreparationFailed,
+    NoOutput,
+    OutputIllegal,
+    MapDepthMissing,
+    GasNotSufficient,
+    InternalError,
+    LibraryAsRecipient,
+    VersionInconsistent,
+    LibraryExtractionFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +254,40 @@ impl ScillaException {
             .with(self.line.to_be_bytes())
             .with(self.message.as_bytes())
             .finalize()
+    }
+}
+
+impl From<u64> for ScillaError {
+    fn from(val: u64) -> ScillaError {
+        match val {
+            0 => ScillaError::CheckerFailed,
+            1 => ScillaError::RunnerFailed,
+            2 => ScillaError::BalanceTransferFailed,
+            3 => ScillaError::ExecuteCmdFailed,
+            4 => ScillaError::ExecuteCmdTimeout,
+            5 => ScillaError::NoGasRemainingFound,
+            6 => ScillaError::NoAcceptedFound,
+            7 => ScillaError::CallContractFailed,
+            8 => ScillaError::CreateContractFailed,
+            9 => ScillaError::JsonOutputCorrupted,
+            10 => ScillaError::ContractNotExist,
+            11 => ScillaError::StateCorrupted,
+            12 => ScillaError::LogEntryInstallFailed,
+            13 => ScillaError::MessageCorrupted,
+            14 => ScillaError::ReceiptIsNull,
+            15 => ScillaError::MaxEdgesReached,
+            16 => ScillaError::ChainCallDiffShard,
+            17 => ScillaError::PreparationFailed,
+            18 => ScillaError::NoOutput,
+            19 => ScillaError::OutputIllegal,
+            20 => ScillaError::MapDepthMissing,
+            21 => ScillaError::GasNotSufficient,
+            22 => ScillaError::InternalError,
+            23 => ScillaError::LibraryAsRecipient,
+            24 => ScillaError::VersionInconsistent,
+            25 => ScillaError::LibraryExtractionFailed,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -367,6 +423,18 @@ impl DatabaseRef for &State {
     }
 }
 
+/// The external context used by [Evm].
+pub struct ExternalContext<'a, I> {
+    pub inspector: I,
+    pub scilla_call_gas_exempt_addrs: &'a [Address],
+}
+
+impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
+    fn get_inspector(&mut self) -> &mut impl Inspector<PendingState> {
+        &mut self.inspector
+    }
+}
+
 // As per EIP-150
 pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
 
@@ -386,13 +454,14 @@ impl State {
         &mut self,
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
+        amount: u128,
     ) -> Result<Address> {
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
             0,
             self.block_gas_limit,
-            0,
+            amount,
             creation_bytecode,
             None,
             BlockHeader::genesis(Hash::ZERO),
@@ -411,7 +480,7 @@ impl State {
                         .remove(&addr)
                         .ok_or_else(|| anyhow!("deployment did not change the contract account"))?;
                     state.insert(override_address, account);
-                    addr
+                    override_address
                 } else {
                     addr
                 };
@@ -442,6 +511,10 @@ impl State {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
+        let external_context = ExternalContext {
+            inspector,
+            scilla_call_gas_exempt_addrs: &self.scilla_call_gas_exempt_addrs,
+        };
         let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
             .with_db(pending_state)
@@ -461,7 +534,7 @@ impl State {
                 prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
                 blob_excess_gas_and_price: None,
             })
-            .with_external_context(inspector)
+            .with_external_context(external_context)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
             .append_handler_register(inspector_handle_register)
@@ -745,12 +818,26 @@ impl State {
         Ok(())
     }
 
+    pub fn deposit_contract_version(&self, current_block: BlockHeader) -> Result<u128> {
+        let result = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT_PROXY),
+            contracts::deposit::VERSION.encode_input(&[]).unwrap(),
+            0,
+            current_block,
+        )?;
+        contracts::deposit::VERSION.decode_output(&ensure_success(result)?)?[0]
+            .clone()
+            .into_uint()
+            .map_or(Ok(0), |v| Ok(v.as_u128()))
+    }
+
     pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
         let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -768,11 +855,11 @@ impl State {
     }
 
     pub fn get_stakers(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
-        let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
+        let data: Vec<u8> = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -797,7 +884,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             BlockHeader::default(),
@@ -819,7 +906,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -837,7 +924,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
@@ -861,7 +948,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
@@ -993,6 +1080,33 @@ impl State {
             inspector::noop(),
             BaseFeeCheck::Ignore,
         )?;
+
+        Ok(result)
+    }
+
+    /// Call contract and apply changes to state
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_contract_apply(
+        &mut self,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        amount: u128,
+        current_block: BlockHeader,
+    ) -> Result<ExecutionResult> {
+        let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
+            from_addr,
+            to_addr,
+            0,
+            self.block_gas_limit,
+            amount,
+            data,
+            None,
+            current_block,
+            inspector::noop(),
+            BaseFeeCheck::Ignore,
+        )?;
+        self.apply_delta_evm(&state)?;
 
         Ok(result)
     }
@@ -1261,7 +1375,7 @@ impl PendingState {
                 gas_used,
                 transitions: vec![],
                 accepted: None,
-                errors: [(0, vec![ScillaError::InsufficientBalance])]
+                errors: [(0, vec![ScillaError::BalanceTransferFailed])]
                     .into_iter()
                     .collect(),
                 exceptions: vec![],
@@ -1408,7 +1522,9 @@ fn scilla_create(
                 gas_used: (txn.gas_limit - gas).into(),
                 transitions: vec![],
                 accepted: Some(false),
-                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                errors: [(0, vec![ScillaError::GasNotSufficient])]
+                    .into_iter()
+                    .collect(),
                 exceptions: vec![],
             },
             state,
@@ -1443,7 +1559,9 @@ fn scilla_create(
                         gas_used: (txn.gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                        errors: [(0, vec![ScillaError::CreateContractFailed])]
+                            .into_iter()
+                            .collect(),
                         exceptions: e.errors.into_iter().map(Into::into).collect(),
                     },
                     state,
@@ -1484,7 +1602,9 @@ fn scilla_create(
                 gas_used: (txn.gas_limit - gas).into(),
                 transitions: vec![],
                 accepted: Some(false),
-                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                errors: [(0, vec![ScillaError::GasNotSufficient])]
+                    .into_iter()
+                    .collect(),
                 exceptions: vec![],
             },
             state,
@@ -1513,7 +1633,9 @@ fn scilla_create(
                     gas_used: (txn.gas_limit - gas).into(),
                     transitions: vec![],
                     accepted: Some(false),
-                    errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                    errors: [(0, vec![ScillaError::CreateContractFailed])]
+                        .into_iter()
+                        .collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
                 },
                 state,
@@ -1594,7 +1716,7 @@ pub fn scilla_call(
                         gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(depth, vec![ScillaError::CallFailed])]
+                        errors: [(depth, vec![ScillaError::CallContractFailed])]
                             .into_iter()
                             .collect(),
                         exceptions: vec![ScillaException {
@@ -1620,7 +1742,9 @@ pub fn scilla_call(
                         gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(depth, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                        errors: [(depth, vec![ScillaError::GasNotSufficient])]
+                            .into_iter()
+                            .collect(),
                         exceptions: vec![],
                     },
                     current_state,
@@ -1676,7 +1800,9 @@ pub fn scilla_call(
                             gas_used: (gas_limit - gas).into(),
                             transitions: vec![],
                             accepted: Some(false),
-                            errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
+                            errors: [(0, vec![ScillaError::CallContractFailed])]
+                                .into_iter()
+                                .collect(),
                             exceptions: e.errors.into_iter().map(Into::into).collect(),
                         },
                         new_state,
@@ -1752,7 +1878,9 @@ pub fn scilla_call(
                         gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                        errors: [(0, vec![ScillaError::GasNotSufficient])]
+                            .into_iter()
+                            .collect(),
                         exceptions: vec![],
                     },
                     current_state,

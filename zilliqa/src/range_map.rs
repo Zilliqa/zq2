@@ -78,7 +78,7 @@ impl<'a> ItemIterator<'a> {
     }
 }
 
-impl<'a> Iterator for ItemIterator<'a> {
+impl Iterator for ItemIterator<'_> {
     type Item = u64;
 
     /// Just count up through the ranges and values one by one until

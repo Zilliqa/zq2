@@ -98,8 +98,6 @@ enum DeployerCommands {
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
-    /// Generate the validators reward wallets. --force to replace if already existing
-    GenerateRewardWallets(DeployerGenerateActionsArgs),
     /// Generate the node private keys. --force to replace if already existing
     GeneratePrivateKeys(DeployerGenerateActionsArgs),
     /// Generate the genesis key. --force to replace if already existing
@@ -883,22 +881,6 @@ async fn main() -> Result<()> {
                     .map_err(|err| {
                         anyhow::anyhow!(
                             "Failed to run deployer generate-private-keys command: {}",
-                            err
-                        )
-                    })?;
-                Ok(())
-            }
-            DeployerCommands::GenerateRewardWallets(ref arg) => {
-                let config_file = arg.config_file.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Provide a configuration file. [--config-file] mandatory argument"
-                    )
-                })?;
-                plumbing::run_deployer_generate_reward_wallets(&config_file, arg.select, arg.force)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!(
-                            "Failed to run deployer generate-reward-wallets command: {}",
                             err
                         )
                     })?;

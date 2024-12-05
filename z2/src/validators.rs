@@ -188,7 +188,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake.amount as u128 * 1_000_000u128 * 10u128.pow(18))
         .data(
             contracts::deposit::DEPOSIT

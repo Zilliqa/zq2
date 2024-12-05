@@ -64,8 +64,7 @@ pub const MAX_PENDING_BLOCK_REQUESTS_PER_PEER: usize = 16;
 /// plausible fork reasonably quickly.
 pub const EXAMINE_BLOCKS_PER_FORK_COUNT: usize = 16;
 
-/// Gas costs.
-
+// Gas costs.
 pub const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
 pub const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
 pub const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);

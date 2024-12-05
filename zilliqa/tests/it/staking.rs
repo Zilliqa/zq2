@@ -12,7 +12,9 @@ use libp2p::PeerId;
 use primitive_types::{H160, H256};
 use rand::Rng;
 use tracing::{info, trace};
-use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
+use zilliqa::{
+    contracts, crypto::NodePublicKey, message::MAX_COMMITTEE_SIZE, state::contract_addr,
+};
 
 use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
 
@@ -54,7 +56,7 @@ async fn deposit_stake(
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake)
         .data(
             contracts::deposit::DEPOSIT
@@ -81,7 +83,7 @@ async fn current_epoch(
     block: Option<u64>,
 ) -> u64 {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(contracts::deposit::CURRENT_EPOCH.encode_input(&[]).unwrap());
     let response = wallet
         .call(&tx.into(), block.map(|b| b.into()))
@@ -104,7 +106,7 @@ async fn current_epoch(
 
 async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: u128) -> H256 {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(
             contracts::deposit::UNSTAKE
                 .encode_input(&[Token::Uint(amount.into())])
@@ -123,7 +125,7 @@ async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: 
 
 async fn get_stake(wallet: &Wallet, staker: &NodePublicKey) -> u128 {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(
             contracts::deposit::GET_STAKE
                 .encode_input(&[Token::Bytes(staker.as_bytes())])
@@ -140,11 +142,31 @@ async fn get_stake(wallet: &Wallet, staker: &NodePublicKey) -> u128 {
         .as_u128()
 }
 
+async fn get_total_stake(wallet: &Wallet) -> u128 {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(
+            contracts::deposit::GET_TOTAL_STAKE
+                .encode_input(&[])
+                .unwrap(),
+        );
+
+    let stake = wallet.call(&tx.into(), None).await.unwrap();
+    let stake = contracts::deposit::GET_TOTAL_STAKE
+        .decode_output(&stake)
+        .unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap();
+
+    stake.as_u128()
+}
+
 async fn get_stakers(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
 ) -> Vec<NodePublicKey> {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
     let stakers = wallet.call(&tx.into(), None).await.unwrap();
     let stakers = contracts::deposit::GET_STAKERS
@@ -164,7 +186,7 @@ async fn get_minimum_deposit(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
 ) -> u128 {
     let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT.into_array()))
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .data(contracts::deposit::MIN_DEPOSIT.encode_input(&[]).unwrap());
     let deposit = wallet.call(&tx.into(), None).await.unwrap();
 
@@ -178,13 +200,51 @@ async fn get_minimum_deposit(
     deposit.as_u128()
 }
 
-#[zilliqa_macros::test]
-async fn minimum_stake_is_properly_set(mut network: Network) {
-    let wallet = network.random_wallet().await;
+async fn get_maximum_stakers(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+) -> u128 {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(contracts::deposit::MAX_STAKERS.encode_input(&[]).unwrap());
+    let deposit = wallet.call(&tx.into(), None).await.unwrap();
 
-    let deposit = get_minimum_deposit(&wallet).await;
+    let deposit = contracts::deposit::MAX_STAKERS
+        .decode_output(&deposit)
+        .unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap();
+
+    deposit.as_u128()
+}
+
+async fn get_blocks_per_epoch(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+) -> u64 {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(
+            contracts::deposit::BLOCKS_PER_EPOCH
+                .encode_input(&[])
+                .unwrap(),
+        );
+    let deposit = wallet.call(&tx.into(), None).await.unwrap();
+
+    let deposit = contracts::deposit::BLOCKS_PER_EPOCH
+        .decode_output(&deposit)
+        .unwrap()[0]
+        .clone()
+        .into_uint()
+        .unwrap();
+
+    deposit.as_u64()
+}
+
+#[zilliqa_macros::test]
+async fn deposit_storage_initially_set(mut network: Network) {
+    let wallet = network.random_wallet().await;
     assert_eq!(
-        deposit,
+        get_minimum_deposit(&wallet).await,
         *network.nodes[0]
             .inner
             .lock()
@@ -193,6 +253,44 @@ async fn minimum_stake_is_properly_set(mut network: Network) {
             .consensus
             .minimum_stake
     );
+    assert_eq!(
+        get_maximum_stakers(&wallet).await,
+        MAX_COMMITTEE_SIZE as u128
+    );
+    assert_eq!(
+        get_blocks_per_epoch(&wallet).await,
+        network.nodes[0]
+            .inner
+            .lock()
+            .unwrap()
+            .config
+            .consensus
+            .blocks_per_epoch
+    );
+
+    let stakers = get_stakers(&wallet).await;
+    assert_eq!(
+        stakers.len(),
+        network.nodes[0]
+            .inner
+            .lock()
+            .unwrap()
+            .config
+            .consensus
+            .genesis_deposits
+            .len()
+    );
+
+    // deposit contract gensis balance
+    let total_stake = get_total_stake(&wallet).await;
+    let deposit_balance = wallet
+        .get_balance(H160(contract_addr::DEPOSIT_PROXY.into_array()), None)
+        .await
+        .unwrap()
+        .as_u128();
+
+    assert_ne!(deposit_balance, 0);
+    assert_eq!(total_stake, deposit_balance);
 }
 
 #[zilliqa_macros::test]

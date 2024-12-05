@@ -121,6 +121,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             scilla_stdlib_dir: scilla_stdlib_dir_default(),
             scilla_ext_libs_path: scilla_ext_libs_path_default(),
             total_native_token_supply: total_native_token_supply_default(),
+            scilla_call_gas_exempt_addrs: vec![],
         },
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         data_dir: None,

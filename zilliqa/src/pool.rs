@@ -142,7 +142,6 @@ impl TransactionPool {
     ///
     /// If the returned transaction is executed, the caller must call [TransactionPool::mark_executed] to inform the
     /// pool that the account's nonce has been updated and further transactions from this signer may now be ready.
-
     pub fn best_transaction(&self, state: &State) -> Result<Option<&VerifiedTransaction>> {
         for (_, gas_txns) in self.gas_index.iter().rev() {
             let same_price_iter = gas_txns.iter();
@@ -527,6 +526,7 @@ mod tests {
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
+                scilla_call_gas_exempt_addrs: vec![],
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),

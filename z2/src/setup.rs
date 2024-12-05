@@ -534,6 +534,7 @@ impl Setup {
                     epochs_per_checkpoint: 24,
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
                     total_native_token_supply: total_native_token_supply_default(),
+                    scilla_call_gas_exempt_addrs: vec![],
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
