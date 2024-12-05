@@ -16,6 +16,7 @@ Commands:
   install                Install the network defined in the deployer config file
   upgrade                Update the network defined in the deployer config file
   get-config-file        Generate in output the validator config file to join the network
+  get-deposit-commands   Generate in output the commands to deposit stake amount to all the validators
   deposit                Deposit the stake amounts to all the validators
   rpc                    Run RPC calls over the internal network nodes
   backup                 Backup locally a node data dir
@@ -251,6 +252,42 @@ Options:
 ```
 
 > Same as `upgrade` subcommand, but skipping the check if the nodes are receiving new blocks
+
+## Retrieve the commands to deposit stake amount to all the validators
+
+```bash
+z2 deployer get-deposit-commands --help
+```
+
+```bash
+Generate in output the commands to deposit stake amount to all the validators
+
+Usage: z2 deployer get-deposit-commands [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+      --select      Enable nodes selection
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Retrieve the commands to deposit the stake amounts to the `zq2-prototestnet` validators
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer get-deposit-commands zq2-prototestnet.yaml
+```
 
 ## Deposit the stake amounts to all the validators
 
