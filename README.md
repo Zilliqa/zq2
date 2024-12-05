@@ -66,6 +66,18 @@ Then you can install a suitable Solc version by executing:
 svm install <solc version>
 ```
 
+## Running benchmarks
+
+Benchmarks can be run with `cargo bench --package zilliqa --bench it`.
+To run a specific benchmark, append ` -- <benchmark-name>` to the command.
+
+It can also be helpful to generate flamegraphs from benchmarks to see where time is being spent.
+Append `--profile-time <time in seconds>` to the command to continue running the benchmark for the specified period of time, rather than stopping when enough samples have been gathered.
+You should select `profile-time` to be long enough to gather a representative set of samples.
+150 seconds has been a reasonable value in testing.
+After running this, a flamegraph should exist in `target/criterion/<benchmark-name>/<benchmark-name>/profile/flamegraph.svg`.
+Make sure to open the `.svg` in a web browser - the embedded JS provides some useful features for exploring the graph (such as being able to click on functions and CTRL+F).
+
 ## Logging
 
 You can get log output globally via
