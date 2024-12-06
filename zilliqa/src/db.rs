@@ -584,7 +584,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row_and_then(
-                "SELECT height FROM blocks WHERE is_canonical = TRUE ORDER BY height DESC LIMIT 1",
+                "SELECT height from (SELECT height, is_canonical FROM blocks ORDER BY height DESC) WHERE is_canonical = 1 LIMIT 1",
                 (),
                 |row| row.get(0),
             )
