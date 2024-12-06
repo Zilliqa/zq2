@@ -15,15 +15,15 @@ use serde_yaml;
 use tera::Tera;
 use tokio::fs;
 use zilliqa::{
-    cfg,
+    api,
     cfg::{
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default, disable_rpc_default,
-        empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        local_address_default, max_blocks_in_flight_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default,
-        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_rpc_limit_default,
-        total_native_token_supply_default, Amount, ConsensusConfig, GenesisDeposit,
+        self, allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, consensus_timeout_default, empty_block_timeout_default,
+        eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
+        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
+        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
+        state_rpc_limit_default, total_native_token_supply_default, Amount, ConsensusConfig,
+        GenesisDeposit,
     },
     transaction::EvmGas,
 };
@@ -507,12 +507,12 @@ impl Setup {
             // @todo should pass this in!
             let mut node_config = cfg::NodeConfig {
                 json_rpc_port: self.get_json_rpc_port(u64::try_into(*node_index)?, false),
+                enabled_apis: api::all_enabled(),
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
                 state_cache_size: state_cache_size_default(),
                 load_checkpoint: None,
                 do_checkpoints: false,
-                disable_rpc: disable_rpc_default(),
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
                     scilla_address: scilla_address_default(),
@@ -560,7 +560,6 @@ impl Setup {
             // Create if doesn't exist
             let data_dir_path = self.get_data_dir(*node_index)?;
             tokio::fs::create_dir(&data_dir_path).await?;
-            node_config.disable_rpc = false;
             node_config.eth_chain_id = CHAIN_ID | 0x8000;
             node_config.data_dir = Some(utils::string_from_path(&data_dir_path)?);
             node_config

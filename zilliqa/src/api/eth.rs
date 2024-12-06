@@ -34,7 +34,7 @@ use super::{
     },
 };
 use crate::{
-    api::zil::ZilAddress,
+    api::zilliqa::ZilAddress,
     crypto::Hash,
     error::ensure_success,
     message::Block,

@@ -13,7 +13,7 @@ use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
     api::{
         to_hex::ToHex,
-        zil::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
+        zilliqa::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
     },
     exec::{ScillaError, ScillaException},
     message::Block,
