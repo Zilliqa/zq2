@@ -59,13 +59,11 @@ rand_chacha = "0.3.1"
 rand_core = "0.6.4"
 revm = { version = "18.0.0", features = ["optional_no_base_fee"] }
 revm-inspectors = { version = "0.11.0", features = ["js-tracer"] }
-rusqlite = { version = "0.32.1", features = ["bundled", "trace"] }
 serde = { version = "1.0.215", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
 serde_json = { version = "1.0.133", features = ["raw_value","arbitrary_precision"] }
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-sled = "0.34.7"
 tempfile = "3.14.0"
 time = { version = "0.3.36", features = ["formatting", "macros"] }
 tokio = { version = "1.41.1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
@@ -85,6 +83,7 @@ serde_repr = "0.1.19"
 thiserror = "2.0.3"
 lru-mem = "0.3.0"
 opentelemetry-semantic-conventions = { version = "0.27.0", features = ["semconv_experimental"] }
+redb = { version = "2.2.0", features = ["logging"] }
 
 [dev-dependencies]
 alloy = { version = "0.6.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
