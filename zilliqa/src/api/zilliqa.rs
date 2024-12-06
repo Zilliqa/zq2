@@ -1475,7 +1475,7 @@ mod tests {
     fn test_hex_checksum() {
         use alloy::primitives::{address, Address};
 
-        use crate::api::zil::to_zil_checksum_string;
+        use crate::api::zilliqa::to_zil_checksum_string;
 
         let cases: Vec<(Address, &str)> = vec![
             (

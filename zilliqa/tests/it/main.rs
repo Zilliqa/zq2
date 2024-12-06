@@ -63,14 +63,15 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
+    api,
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, disable_rpc_default, eth_chain_id_default,
-        failed_request_sleep_duration_default, json_rpc_port_default, local_address_default,
-        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
-        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        Amount, Checkpoint, ConsensusConfig, GenesisDeposit, NodeConfig,
+        block_request_limit_default, eth_chain_id_default, failed_request_sleep_duration_default,
+        json_rpc_port_default, local_address_default, max_blocks_in_flight_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default,
+        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, Amount, Checkpoint,
+        ConsensusConfig, GenesisDeposit, NodeConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -180,7 +181,7 @@ fn node(
         Arc::new(AtomicUsize::new(0)),
     )?;
     let node = Arc::new(Mutex::new(node));
-    let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
+    let rpc_module: RpcModule<Arc<Mutex<Node>>> = api::rpc_module(node.clone());
 
     Ok((
         TestNode {
@@ -343,8 +344,8 @@ impl Network {
                 ],
             },
             json_rpc_port: json_rpc_port_default(),
+            enabled_apis: api::all_enabled(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
-            disable_rpc: disable_rpc_default(),
             data_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
@@ -439,12 +440,12 @@ impl Network {
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             json_rpc_port: json_rpc_port_default(),
+            enabled_apis: api::all_enabled(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
-            disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
                 is_main: self.is_main(),
@@ -552,8 +553,8 @@ impl Network {
                     state_cache_size: state_cache_size_default(),
                     load_checkpoint: None,
                     do_checkpoints: self.do_checkpoints,
-                    disable_rpc: disable_rpc_default(),
                     json_rpc_port: json_rpc_port_default(),
+                    enabled_apis: api::all_enabled(),
                     consensus: ConsensusConfig {
                         genesis_deposits: genesis_deposits.clone(),
                         is_main: self.is_main(),
