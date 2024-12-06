@@ -5,6 +5,8 @@ bootstrap_address = [
 p2p_port = 5643
 
 [[nodes]]
+enabled_apis = [ "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ]
+
 # These (public key, peerId, stake, rewardAddress) tuples correspond to the private keys of all four nodes in `docker-compose.yaml`.
 consensus.genesis_deposits = [
     [

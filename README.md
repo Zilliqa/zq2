@@ -46,6 +46,15 @@ Pass the path to configuration files on the command line with `-c` or `--config-
 If multiple configuration files are provided, they will be merged together.
 If a configuration key occurs in more than one configuration file, the process will exit with an error.
 
+By default, a node will not expose any RPC methods.
+To enable APIs, you must set `enabled_apis` under the [[nodes]] object in the configuration file.
+Each item in `enabled_apis` must either be:
+
+* A string such as `"eth"`, which enables all API methods under the `eth_` namespace.
+* An object of the form `{ namespace = "eth", apis = ["blockNumber"] }`, which enables specific API methods.
+
+Zilliqa APIs which don't have a namespace are implicitly grouped under the `zilliqa` namespace.
+
 ## Testing
 
 The tests can be run with `cargo test`.

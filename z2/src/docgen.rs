@@ -17,9 +17,9 @@ use tokio::fs;
 use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default, disable_rpc_default,
-        empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        json_rpc_port_default, local_address_default, max_blocks_in_flight_default,
+        block_request_limit_default, consensus_timeout_default, empty_block_timeout_default,
+        eth_chain_id_default, failed_request_sleep_duration_default, json_rpc_port_default,
+        local_address_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default,
         scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default,
         state_rpc_limit_default, total_native_token_supply_default, ConsensusConfig, NodeConfig,
@@ -386,7 +386,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
         load_checkpoint: None,
         do_checkpoints: false,
         eth_chain_id: eth_chain_id_default(),
-        disable_rpc: disable_rpc_default(),
+        enabled_apis: vec![],
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         json_rpc_port: json_rpc_port_default(),
         block_request_limit: block_request_limit_default(),

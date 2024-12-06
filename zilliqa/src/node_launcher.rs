@@ -125,30 +125,28 @@ impl NodeLauncher {
 
         let rpc_module = api::rpc_module(Arc::clone(&node));
 
-        if !config.disable_rpc {
-            trace!("Launching JSON-RPC server");
-            // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
-            let cors = CorsLayer::new()
-                .allow_methods(Method::POST)
-                .allow_origin(Any)
-                .allow_headers([header::CONTENT_TYPE]);
-            let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
-            let port = config.json_rpc_port;
-            let server = jsonrpsee::server::ServerBuilder::new()
-                .set_http_middleware(middleware)
-                .set_id_provider(EthIdProvider)
-                .build((Ipv4Addr::UNSPECIFIED, port))
-                .await;
+        trace!("Launching JSON-RPC server");
+        // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
+        let cors = CorsLayer::new()
+            .allow_methods(Method::POST)
+            .allow_origin(Any)
+            .allow_headers([header::CONTENT_TYPE]);
+        let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
+        let port = config.json_rpc_port;
+        let server = jsonrpsee::server::ServerBuilder::new()
+            .set_http_middleware(middleware)
+            .set_id_provider(EthIdProvider)
+            .build((Ipv4Addr::UNSPECIFIED, port))
+            .await;
 
-            match server {
-                Ok(server) => {
-                    info!("JSON-RPC server listening on port {}", port);
-                    let handle = server.start(rpc_module.clone());
-                    tokio::spawn(handle.stopped());
-                }
-                Err(e) => {
-                    error!("Failed to start JSON-RPC server: {}", e);
-                }
+        match server {
+            Ok(server) => {
+                info!("JSON-RPC server listening on port {}", port);
+                let handle = server.start(rpc_module.clone());
+                tokio::spawn(handle.stopped());
+            }
+            Err(e) => {
+                error!("Failed to start JSON-RPC server: {}", e);
             }
         }
 

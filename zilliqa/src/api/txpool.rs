@@ -1,4 +1,3 @@
-// This file contains API calls implementation that naturally didn't fit in other namespaces
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
