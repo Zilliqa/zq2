@@ -9,6 +9,7 @@ use zilliqa::crypto::{SecretKey, TransactionPublicKey};
 #[derive(Deserialize)]
 struct Input {
     secret_key: String,
+    chain_id: u64,
 }
 
 fn main() -> Result<()> {
@@ -30,7 +31,7 @@ fn main() -> Result<()> {
         "peer_id": secret_key.to_libp2p_keypair().public().to_peer_id(),
         "tx_pubkey": tx_pubkey,
         "address": tx_pubkey.into_addr(),
-        "bls_pop_signature": secret_key.pop_prove(),
+        "bls_pop_signature": hex::encode(secret_key.deposit_auth_signature(input.chain_id, tx_pubkey.into_addr()).as_raw_value().to_compressed()),
     });
 
     println!("{output}");
