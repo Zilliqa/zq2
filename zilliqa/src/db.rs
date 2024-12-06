@@ -584,6 +584,7 @@ impl Db {
             .lock()
             .unwrap()
             .query_row_and_then(
+                // Two queries here are deliberate to ensure the index on `height` column is used
                 "SELECT height from (SELECT height, is_canonical FROM blocks ORDER BY height DESC) WHERE is_canonical = 1 LIMIT 1",
                 (),
                 |row| row.get(0),
