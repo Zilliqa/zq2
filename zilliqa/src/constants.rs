@@ -30,7 +30,7 @@ pub const ZIL_CONTRACT_CREATE_GAS: usize = 50;
 pub const ZIL_NORMAL_TXN_GAS: usize = 50;
 
 // Maximum rate at which to send availability requests
-pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE: Duration = Duration::from_millis(1000);
+pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE: Duration = Duration::from_secs(300);
 
 // We assume that every node has the last ALWAYS_RETAIN_LAST_N_BLOCKS blocks, otherwise
 // it's hard ever to catch up. Set this too large and syncing will be hard because we will
