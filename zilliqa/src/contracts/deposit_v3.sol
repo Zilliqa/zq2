@@ -479,7 +479,9 @@ contract Deposit is UUPSUpgradeable {
         }
 
         for (uint256 i = 0; i < 8; i++) {
-            message[blsPubKey.length + i] = bytes1(uint8(chain_id >> (8 * (7 - i))));
+            message[blsPubKey.length + i] = bytes1(
+                uint8(chain_id >> (8 * (7 - i)))
+            );
         }
 
         for (uint256 i = 0; i < 20; i++) {
