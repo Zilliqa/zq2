@@ -14,7 +14,7 @@ contract IntershardBridge {
         uint128 gasPrice
     );
 
-    uint64 nonce; // internal value used to guarantee transaction hash uniqueness
+    uint64 internal nonce; // internal value used to guarantee transaction hash uniqueness
 
     function bridge(
         uint64 targetShard,
