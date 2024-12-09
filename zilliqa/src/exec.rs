@@ -467,6 +467,7 @@ impl State {
             None,
             BlockHeader::genesis(Hash::ZERO),
             inspector::noop(),
+            false,
             BaseFeeCheck::Ignore,
         )?;
 
@@ -507,6 +508,7 @@ impl State {
         nonce: Option<u64>,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
         base_fee_check: BaseFeeCheck,
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
         let mut padded_view_number = [0u8; 32];
@@ -539,7 +541,6 @@ impl State {
             .with_external_context(external_context)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
-            .append_handler_register(inspector_handle_register)
             .modify_cfg_env(|c| {
                 c.chain_id = self.chain_id.eth;
                 c.disable_base_fee = match base_fee_check {
@@ -569,8 +570,11 @@ impl State {
                     precompiles.extend(get_custom_precompiles());
                     precompiles
                 });
-            })
-            .build();
+            });
+        if enable_inspector {
+            evm = evm.append_handler_register(inspector_handle_register);
+        }
+        let mut evm = evm.build();
 
         let mut result_and_state = evm.transact()?;
         let mut ctx_with_handler = evm.into_context_with_handler_cfg();
@@ -694,6 +698,7 @@ impl State {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
@@ -721,6 +726,7 @@ impl State {
                     txn.nonce(),
                     current_block,
                     inspector,
+                    enable_inspector,
                     if blessed {
                         BaseFeeCheck::Ignore
                     } else {
@@ -1041,6 +1047,7 @@ impl State {
                 None,
                 current_block,
                 inspector::noop(),
+                false,
                 BaseFeeCheck::Validate,
             )?;
 
@@ -1077,6 +1084,7 @@ impl State {
             None,
             current_block,
             inspector::noop(),
+            false,
             BaseFeeCheck::Validate,
         )?;
 
@@ -1105,6 +1113,7 @@ impl State {
             None,
             current_block,
             inspector::noop(),
+            false,
             BaseFeeCheck::Ignore,
         )?;
 
@@ -1131,6 +1140,7 @@ impl State {
             None,
             current_block,
             inspector::noop(),
+            false,
             BaseFeeCheck::Ignore,
         )?;
         self.apply_delta_evm(&state)?;

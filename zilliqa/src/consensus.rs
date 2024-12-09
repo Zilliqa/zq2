@@ -935,9 +935,10 @@ impl Consensus {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
     ) -> Result<Option<TransactionApplyResult>> {
         let state = &mut self.state;
-        Self::apply_transaction_at(state, txn, current_block, inspector)
+        Self::apply_transaction_at(state, txn, current_block, inspector, enable_inspector)
     }
 
     pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
@@ -945,10 +946,12 @@ impl Consensus {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        let result = state.apply_transaction(txn.clone(), current_block, inspector);
+        let result =
+            state.apply_transaction(txn.clone(), current_block, inspector, enable_inspector);
         let result = match result {
             Ok(r) => r,
             Err(error) => {
@@ -976,6 +979,10 @@ impl Consensus {
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
+        if !self.config.enable_ots_indices {
+            return Err(anyhow!("Otterscan indices are disabled"));
+        }
+
         self.db.get_touched_transactions(address)
     }
 
@@ -1392,6 +1399,7 @@ impl Consensus {
                 tx.clone(),
                 proposal.header,
                 &mut inspector,
+                self.config.enable_ots_indices,
             )?;
 
             // Skip transactions whose execution resulted in an error and drop them.
@@ -1579,6 +1587,7 @@ impl Consensus {
                 txn.clone(),
                 executed_block_header,
                 inspector::noop(),
+                false,
             )?;
             self.db.insert_transaction(&txn.hash, &txn.tx)?;
 
@@ -3009,7 +3018,12 @@ impl Consensus {
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
-                .apply_transaction(txn.clone(), block.header, &mut inspector)?
+                .apply_transaction(
+                    txn.clone(),
+                    block.header,
+                    &mut inspector,
+                    self.config.enable_ots_indices,
+                )?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
             self.transaction_pool.mark_executed(txn);
             for address in inspector.touched {

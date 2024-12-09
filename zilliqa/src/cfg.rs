@@ -110,6 +110,9 @@ pub struct NodeConfig {
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
     pub failed_request_sleep_duration: Duration,
+    /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
+    #[serde(default)]
+    pub enable_ots_indices: bool,
 }
 
 impl Default for NodeConfig {
@@ -128,6 +131,7 @@ impl Default for NodeConfig {
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            enable_ots_indices: false,
         }
     }
 }

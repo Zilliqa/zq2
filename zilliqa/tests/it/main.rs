@@ -357,6 +357,7 @@ impl Network {
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            enable_ots_indices: true,
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -479,6 +480,7 @@ impl Network {
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            enable_ots_indices: true,
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
