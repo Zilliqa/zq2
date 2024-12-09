@@ -43,7 +43,7 @@ hex = "0.4.3"
 home = "0.5.9"
 indicatif = "0.17.9"
 itertools = "0.13.0"
-jsonrpsee = {version = "0.22.4", features = ["client"]}
+jsonrpsee = {version = "0.24.7", features = ["client"]}
 k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "930118ef5a6566f058d22e1614a8e96b4c287262", features = ["identify"]}
