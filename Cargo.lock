@@ -3150,7 +3150,7 @@ dependencies = [
  "solar-parse",
  "svm-rs 0.5.7",
  "svm-rs-builds",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tracing",
  "winnow",
  "yansi 1.0.1",
@@ -3182,7 +3182,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tracing",
  "walkdir",
  "yansi 1.0.1",
@@ -3218,7 +3218,7 @@ dependencies = [
  "serde",
  "serde_json",
  "svm-rs 0.5.7",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tokio",
  "walkdir",
 ]
@@ -4992,7 +4992,7 @@ dependencies = [
  "multiaddr",
  "pin-project",
  "rw-stream-sink",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
 ]
 
 [[package]]
@@ -5025,7 +5025,7 @@ dependencies = [
  "quick-protobuf-codec",
  "rand",
  "rand_core",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tracing",
  "web-time",
 ]
@@ -5061,7 +5061,7 @@ dependencies = [
  "rw-stream-sink",
  "serde",
  "smallvec",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tracing",
  "unsigned-varint",
  "web-time",
@@ -5130,7 +5130,7 @@ dependencies = [
  "quick-protobuf",
  "quick-protobuf-codec",
  "smallvec",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tracing",
 ]
 
@@ -5175,7 +5175,7 @@ dependencies = [
  "serde",
  "sha2",
  "smallvec",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tracing",
  "uint",
  "web-time",
@@ -5236,7 +5236,7 @@ dependencies = [
  "sha2",
  "snow",
  "static_assertions",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tracing",
  "x25519-dalek",
  "zeroize",
@@ -5260,7 +5260,7 @@ dependencies = [
  "ring 0.17.8",
  "rustls 0.23.19",
  "socket2",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tokio",
  "tracing",
 ]
@@ -5347,7 +5347,7 @@ dependencies = [
  "ring 0.17.8",
  "rustls 0.23.19",
  "rustls-webpki 0.101.7",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "x509-parser",
  "yasna",
 ]
@@ -5374,7 +5374,7 @@ dependencies = [
  "either",
  "futures",
  "libp2p-core",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tracing",
  "yamux 0.12.1",
  "yamux 0.13.4",
@@ -6863,7 +6863,7 @@ dependencies = [
  "asynchronous-codec",
  "bytes",
  "quick-protobuf",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "unsigned-varint",
 ]
 
@@ -6890,7 +6890,7 @@ dependencies = [
  "rustc-hash 2.1.0",
  "rustls 0.23.19",
  "socket2",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tokio",
  "tracing",
 ]
@@ -6909,7 +6909,7 @@ dependencies = [
  "rustls 0.23.19",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tinyvec",
  "tracing",
  "web-time",
@@ -8849,11 +8849,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.3"
+version = "2.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c006c85c7651b3cf2ada4584faa36773bd07bac24acfb39f3c431b36d7e667aa"
+checksum = "8fec2a1820ebd077e2b90c4df007bebf344cd394098a13c563957d0afc83ea47"
 dependencies = [
- "thiserror-impl 2.0.3",
+ "thiserror-impl 2.0.6",
 ]
 
 [[package]]
@@ -8869,9 +8869,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.3"
+version = "2.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f077553d607adc1caf65430528a576c757a71ed73944b66ebb58ef2bbd243568"
+checksum = "d65750cab40f4ff1929fb1ba509e9914eb756131cef4210da8d5d700d26f6312"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10358,7 +10358,7 @@ dependencies = [
  "strum_macros",
  "tempfile",
  "tera",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "tokio",
  "tokio-stream",
  "toml",
@@ -10517,7 +10517,7 @@ dependencies = [
  "sha3",
  "sled",
  "tempfile",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "time",
  "tokio",
  "tokio-stream",
@@ -10604,7 +10604,7 @@ dependencies = [
  "flate2",
  "indexmap 2.7.0",
  "memchr",
- "thiserror 2.0.3",
+ "thiserror 2.0.6",
  "zopfli",
 ]
 
