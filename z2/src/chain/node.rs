@@ -7,7 +7,7 @@ use colored::Colorize;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
@@ -515,17 +515,32 @@ impl ChainNode {
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
         let bootstrap_public_ip = selected_bootstrap.machine.external_address;
+        let enabled_apis = if self.role == NodeRole::Api {
+            // Enable all APIs, except `admin_` for API nodes.
+            json!(["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"])
+        } else {
+            // Only enable `eth_blockNumber` for other nodes.
+            json!([
+                {
+                    "namespace": "eth",
+                    "apis": ["blockNumber"],
+                },
+            ])
+        };
+        // Enable Otterscan indices on API nodes.
+        let enable_ots_indices = self.role == NodeRole::Api;
 
-        let mut var_map = BTreeMap::<&str, &str>::new();
-        var_map.insert("role", &role_name);
-        var_map.insert("eth_chain_id", &eth_chain_id);
-        var_map.insert("bootstrap_public_ip", &bootstrap_public_ip);
-        var_map.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
-        var_map.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
-        var_map.insert("set_bootstrap_address", set_bootstrap_address);
-        var_map.insert("genesis_address", &genesis_account.address);
+        let mut ctx = Context::new();
+        ctx.insert("role", &role_name);
+        ctx.insert("eth_chain_id", &eth_chain_id);
+        ctx.insert("bootstrap_public_ip", &bootstrap_public_ip);
+        ctx.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
+        ctx.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
+        ctx.insert("set_bootstrap_address", set_bootstrap_address);
+        ctx.insert("genesis_address", &genesis_account.address);
+        ctx.insert("enabled_apis", &enabled_apis);
+        ctx.insert("enable_ots_indices", &enable_ots_indices);
 
-        let ctx = Context::from_serialize(var_map)?;
         Ok(Tera::one_off(spec_config, &ctx, false)?)
     }
 

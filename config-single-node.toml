@@ -1,6 +1,7 @@
 p2p_port = 0
 
 [[nodes]]
+enabled_apis = [ "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ]
 json_rpc_port = 4201
 eth_chain_id = 0x8001
 consensus.consensus_timeout = { secs = 5, nanos = 0 }

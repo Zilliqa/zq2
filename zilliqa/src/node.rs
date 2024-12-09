@@ -517,13 +517,13 @@ impl Node {
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(other_txn, block.header, inspector::noop())?;
+                state.apply_transaction(other_txn, block.header, inspector::noop(), false)?;
             } else {
                 let config = TracingInspectorConfig::from_parity_config(trace_types);
                 let mut inspector = TracingInspector::new(config);
                 let pre_state = state.try_clone()?;
 
-                let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                 let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
@@ -568,9 +568,9 @@ impl Node {
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(other_txn, parent.header, inspector::noop())?;
+                state.apply_transaction(other_txn, parent.header, inspector::noop(), false)?;
             } else {
-                let result = state.apply_transaction(txn, block.header, inspector)?;
+                let result = state.apply_transaction(txn, block.header, inspector, true)?;
 
                 return Ok(result);
             }
@@ -635,7 +635,7 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+            let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
@@ -661,7 +661,8 @@ impl Node {
                         TracingInspectorConfig::from_geth_call_config(&call_config),
                     );
 
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -681,7 +682,8 @@ impl Node {
                 }
                 GethDebugBuiltInTracerType::FourByteTracer => {
                     let mut inspector = FourByteInspector::default();
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(_, _) = result else {
                         return Ok(None);
@@ -696,7 +698,8 @@ impl Node {
                     let mux_config = tracer_config.into_mux_config()?;
 
                     let mut inspector = MuxInspector::try_from_config(mux_config)?;
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -718,7 +721,8 @@ impl Node {
                     let mut inspector = TracingInspector::new(
                         TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
                     );
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -748,7 +752,7 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                 let TransactionApplyResult::Evm(result, env) = result else {
                     return Ok(None);

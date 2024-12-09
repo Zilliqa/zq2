@@ -25,3 +25,9 @@ do_checkpoints=true
 consensus.blocks_per_epoch=3600
 consensus.epochs_per_checkpoint=24
 {%- endif %}
+
+enabled_apis = {{ enabled_apis }}
+
+{%- if enable_ots_indices %}
+enable_ots_indices = true
+{%- endif %}

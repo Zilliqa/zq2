@@ -2,30 +2,38 @@ pub mod admin;
 mod erigon;
 pub mod eth;
 mod net;
-mod others;
 pub mod ots;
 pub mod subscription_id_provider;
 pub mod to_hex;
 mod trace;
+mod txpool;
 pub mod types;
 mod web3;
-pub mod zil;
+pub mod zilliqa;
 
 pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node.clone());
 
+    module.merge(admin::rpc_module(node.clone())).unwrap();
     module.merge(erigon::rpc_module(node.clone())).unwrap();
     module.merge(eth::rpc_module(node.clone())).unwrap();
     module.merge(net::rpc_module(node.clone())).unwrap();
-    module.merge(trace::rpc_module(node.clone())).unwrap();
     module.merge(ots::rpc_module(node.clone())).unwrap();
+    module.merge(trace::rpc_module(node.clone())).unwrap();
+    module.merge(txpool::rpc_module(node.clone())).unwrap();
     module.merge(web3::rpc_module(node.clone())).unwrap();
-    module.merge(zil::rpc_module(node.clone())).unwrap();
-    module.merge(admin::rpc_module(node.clone())).unwrap();
-
-    module.merge(others::rpc_module(node.clone())).unwrap();
+    module.merge(zilliqa::rpc_module(node.clone())).unwrap();
 
     module
+}
+
+pub fn all_enabled() -> Vec<crate::cfg::ApiNamespace> {
+    [
+        "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa",
+    ]
+    .into_iter()
+    .map(|ns| crate::cfg::ApiNamespace::EnableAll(ns.to_owned()))
+    .collect()
 }
 
 /// Returns an `RpcModule<Arc<Mutex<Node>>>`. Call with the following syntax:
@@ -48,16 +56,25 @@ macro_rules! declare_module {
         $node:expr,
         [ $(($name:expr, $method:expr)),* $(,)? ] $(,)?
     ) => {{
-        let mut module: jsonrpsee::RpcModule<std::sync::Arc<std::sync::Mutex<crate::node::Node>>> = jsonrpsee::RpcModule::new($node);
+        let mut module: jsonrpsee::RpcModule<std::sync::Arc<std::sync::Mutex<crate::node::Node>>> = jsonrpsee::RpcModule::new($node.clone());
         let meter = opentelemetry::global::meter("zilliqa");
 
         $(
+            let enabled = $node.lock().unwrap().config.enabled_apis.iter().any(|n| n.enabled($name));
             let rpc_server_duration = meter
                 .f64_histogram(opentelemetry_semantic_conventions::metric::RPC_SERVER_DURATION)
                 .with_unit("s")
                 .build();
             module
                 .register_method($name, move |params, context, _| {
+                    if !enabled {
+                        return Err(jsonrpsee::types::ErrorObject::owned(
+                            jsonrpsee::types::error::ErrorCode::InvalidRequest.code(),
+                            format!("{} is disabled", $name),
+                            None as Option<String>,
+                        ));
+                    }
+
                     let mut attributes = vec![
                         opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_SYSTEM, "jsonrpc"),
                         opentelemetry::KeyValue::new(opentelemetry_semantic_conventions::attribute::RPC_SERVICE, "zilliqa.eth"),
