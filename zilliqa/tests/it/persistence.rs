@@ -8,6 +8,7 @@ use primitive_types::H160;
 use rand::Rng;
 use tracing::*;
 use zilliqa::{
+    api,
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
@@ -121,8 +122,8 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         state_cache_size: state_cache_size_default(),
         load_checkpoint: None,
         do_checkpoints: false,
-        disable_rpc: false,
         json_rpc_port: json_rpc_port_default(),
+        enabled_apis: api::all_enabled(),
         eth_chain_id: eth_chain_id_default(),
         block_request_limit: block_request_limit_default(),
         max_blocks_in_flight: max_blocks_in_flight_default(),

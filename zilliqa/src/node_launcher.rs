@@ -125,7 +125,7 @@ impl NodeLauncher {
 
         let rpc_module = api::rpc_module(Arc::clone(&node));
 
-        if !config.disable_rpc {
+        if !config.enabled_apis.is_empty() {
             trace!("Launching JSON-RPC server");
             // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
             let cors = CorsLayer::new()
