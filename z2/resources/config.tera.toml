@@ -27,3 +27,7 @@ consensus.epochs_per_checkpoint=24
 {%- endif %}
 
 enabled_apis = {{ enabled_apis }}
+
+{%- if enable_ots_indices %}
+enable_ots_indices = true
+{%- endif %}

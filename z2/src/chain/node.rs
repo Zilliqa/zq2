@@ -527,6 +527,8 @@ impl ChainNode {
                 },
             ])
         };
+        // Enable Otterscan indices on API nodes.
+        let enable_ots_indices = self.role == NodeRole::Api;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
@@ -537,6 +539,7 @@ impl ChainNode {
         ctx.insert("set_bootstrap_address", set_bootstrap_address);
         ctx.insert("genesis_address", &genesis_account.address);
         ctx.insert("enabled_apis", &enabled_apis);
+        ctx.insert("enable_ots_indices", &enable_ots_indices);
 
         Ok(Tera::one_off(spec_config, &ctx, false)?)
     }

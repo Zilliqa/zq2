@@ -503,6 +503,7 @@ mod tests {
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            enable_ots_indices: false,
         };
 
         let (s1, _) = tokio::sync::mpsc::unbounded_channel();
