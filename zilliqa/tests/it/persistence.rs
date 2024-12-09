@@ -10,10 +10,10 @@ use tracing::*;
 use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
-        failed_request_sleep_duration_default, json_rpc_port_default, max_blocks_in_flight_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default,
-        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default,
+        block_request_limit_default, cache_size_default, consensus_timeout_default,
+        eth_chain_id_default, failed_request_sleep_duration_default, json_rpc_port_default,
+        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
+        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
         state_rpc_limit_default, total_native_token_supply_default, Checkpoint, ConsensusConfig,
         NodeConfig,
     },
@@ -118,7 +118,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         },
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         data_dir: None,
-        state_cache_size: state_cache_size_default(),
+        cache_size: cache_size_default(),
         load_checkpoint: None,
         do_checkpoints: false,
         disable_rpc: false,
