@@ -107,6 +107,7 @@ ZQ2_IMAGE="{{ docker_image }}"
 
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
+    docker container prune -f
     docker run -td -p 3333:3333/udp -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
     --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
     -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
