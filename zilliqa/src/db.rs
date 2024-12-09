@@ -477,6 +477,7 @@ impl Db {
             state_trie.insert(&account_hash, &serialised_account)?;
 
             processed_accounts += 1;
+            // Occasionally flush the cached state changes to disk to minimise memory usage.
             if processed_accounts % COMPUTE_ROOT_HASH_EVERY_ACCOUNTS == 0 {
                 let _ = state_trie.root_hash()?;
             }
