@@ -69,7 +69,7 @@ sled = "0.34.7"
 tempfile = "3.14.0"
 time = { version = "0.3.36", features = ["formatting", "macros"] }
 tokio = { version = "1.41.1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
-tokio-stream = "0.1.16"
+tokio-stream = "0.1.17"
 toml = "0.8.19"
 tower = "0.4.13"
 tower-http = { version = "0.6.1", features = ["cors"] }
