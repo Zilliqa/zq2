@@ -461,7 +461,8 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
-    let tx_block = zil::TxBlock::new(&block);
+    let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
+    let tx_block: zil::TxBlock = zil::TxBlock::new(&block, txn_fees);
     Ok(tx_block)
 }
 
@@ -689,9 +690,23 @@ fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::T
     let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
-    let block: zil::TxBlock = zil::TxBlock::new(&block);
+    let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
+    let block: zil::TxBlock = zil::TxBlock::new(&block, txn_fees);
 
     Ok(Some(block))
+}
+
+fn get_txn_fees_for_block(node: &Node, hash: Hash) -> Result<u128> {
+    Ok(node
+        .get_transaction_receipts_in_block(hash)?
+        .iter()
+        .fold(0, |acc, txnrcpt| {
+            let txn = node
+                .get_transaction_by_hash(txnrcpt.tx_hash)
+                .unwrap()
+                .unwrap();
+            acc + ((txnrcpt.gas_used.0 as u128) * txn.tx.gas_price_per_evm_gas())
+        }))
 }
 
 // GetTxBlockVerbose
@@ -709,7 +724,8 @@ fn get_tx_block_verbose(
     let proposer = node
         .get_proposer_reward_address(block.header)?
         .expect("No proposer");
-    let block: zil::TxBlockVerbose = zil::TxBlockVerbose::new(&block, proposer);
+    let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
+    let block: zil::TxBlockVerbose = zil::TxBlockVerbose::new(&block, txn_fees, proposer);
 
     Ok(Some(block))
 }

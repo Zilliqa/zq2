@@ -33,7 +33,7 @@ pub struct TxBlock {
 }
 
 impl TxBlock {
-    pub fn new(block: &Block) -> Self {
+    pub fn new(block: &Block, txn_fees: u128) -> Self {
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlock {
@@ -42,7 +42,7 @@ impl TxBlock {
                 gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
                 gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
                 rewards: 0,
-                txn_fees: 0,
+                txn_fees,
                 prev_block_hash: block.parent_hash().into(),
                 block_num: block.number(),
                 timestamp: block
@@ -109,7 +109,7 @@ pub struct TxBlockVerbose {
 }
 
 impl TxBlockVerbose {
-    pub fn new(block: &Block, proposer: Address) -> Self {
+    pub fn new(block: &Block, txn_fees: u128, proposer: Address) -> Self {
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlockVerbose {
@@ -119,7 +119,7 @@ impl TxBlockVerbose {
                     gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
                     gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
                     rewards: 0,
-                    txn_fees: 0,
+                    txn_fees,
                     prev_block_hash: block.parent_hash().into(),
                     block_num: block.number(),
                     timestamp: block
