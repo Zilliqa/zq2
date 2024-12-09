@@ -139,6 +139,9 @@ pub struct DeployerInstallArgs {
     /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long)]
     persistence_url: Option<String>,
+    /// gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the installation will be performed only on the validator nodes
+    #[clap(long)]
+    checkpoint_url: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -724,6 +727,7 @@ async fn main() -> Result<()> {
                     arg.select,
                     arg.max_parallel,
                     arg.persistence_url.clone(),
+                    arg.checkpoint_url.clone(),
                 )
                 .await
                 .map_err(|err| {
