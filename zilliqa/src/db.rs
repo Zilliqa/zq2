@@ -414,6 +414,9 @@ impl Db {
             }
         }
 
+        let mut processed_accounts = 0;
+        const COMPUTE_ROOT_HASH_EVERY_ACCOUNTS: usize = 10000;
+
         // then decode state
         loop {
             // Read account key and the serialised Account
@@ -472,6 +475,11 @@ impl Db {
                 ));
             }
             state_trie.insert(&account_hash, &serialised_account)?;
+
+            processed_accounts += 1;
+            if processed_accounts % COMPUTE_ROOT_HASH_EVERY_ACCOUNTS == 0 {
+                let _ = state_trie.root_hash()?;
+            }
         }
 
         if state_trie.root_hash()? != parent.state_root_hash().0 {
