@@ -530,7 +530,7 @@ impl ChainNode {
         };
 
         let mut ctx = Context::new();
-        ctx.insert("key", &role_name);
+        ctx.insert("role", &role_name);
         ctx.insert("eth_chain_id", &eth_chain_id);
         ctx.insert("bootstrap_public_ip", &bootstrap_public_ip);
         ctx.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
