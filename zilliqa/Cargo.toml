@@ -98,7 +98,7 @@ pprof = { version = "0.14.0", default-features = false, features = ["criterion",
 primitive-types = { version = "0.12.2" }
 rayon = "1.10.0"
 semver = "1.0.23"
-ureq = "2.11.0"
+ureq = "2.12.1"
 zilliqa = { path = ".", default-features = false, features = ["fake_response_channel", "fake_time"] }
 zilliqa-macros = { path = "../zilliqa-macros" }
 
