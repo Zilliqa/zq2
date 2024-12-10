@@ -638,9 +638,9 @@ mod tests {
             .contains(&deposit_init_addr.0.to_string().split_off(2)));
 
         // Update to deposit v2
-        let deposit_v3 = Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+        let deposit_v2 = Lazy::<contracts::Contract>::force(&contracts::deposit_v2::CONTRACT);
         let deposit_v2_addr = state
-            .upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO), deposit_v3)
+            .upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO), deposit_v2)
             .unwrap();
 
         let proxy_storage_at = state

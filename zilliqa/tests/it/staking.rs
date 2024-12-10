@@ -314,7 +314,7 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     check_miner_got_reward(&wallet, 1).await;
 }
 
-#[zilliqa_macros::test(blocks_per_epoch = 2, deposit_v3_upgrade_block_height = 11)]
+#[zilliqa_macros::test(blocks_per_epoch = 2, deposit_v3_upgrade_block_height = 12)]
 async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -402,7 +402,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     check_miner_got_reward(&wallet, BlockNumber::Latest).await;
 
     // Now test joining deposit_v3
-    let deposit_v3_deploy_block = 11;
+    let deposit_v3_deploy_block = 12;
     let index = network.add_node();
     let new_validator_key = network.get_node_raw(index).secret_key;
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
