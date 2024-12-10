@@ -1,52 +1,34 @@
-#![allow(unused_imports)]
-
 use std::{
     collections::BTreeMap,
-    fs,
-    path::PathBuf,
     process::{self, Child, ExitStatus, Stdio},
-    str::FromStr,
     sync::Arc,
-    thread::sleep,
     time::Duration,
 };
 
 use alloy::{
     consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH},
-    primitives::{Address, Parity, PrimitiveSignature, TxKind, B256, U256},
+    primitives::{Address, PrimitiveSignature, TxKind, B256, U256},
 };
 use anyhow::{anyhow, Context, Result};
-use bitvec::{bitarr, bitvec, order::Msb0};
-use clap::{Parser, Subcommand};
+use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
-use ethabi::Token;
-use git2::Repository;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
 use libp2p::PeerId;
-use revm::primitives::ResultAndState;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use sha3::Keccak256;
-use tempfile::TempDir;
 use tokio::sync::mpsc;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 use zilliqa::{
     block_store::BlockStore,
     cfg::{scilla_ext_libs_path_default, Amount, Config, NodeConfig},
-    consensus::Validator,
-    constants::SCILLA_INVOKE_CHECKER,
-    contracts,
-    crypto::{self, Hash, SecretKey},
+    crypto::{Hash, SecretKey},
     db::Db,
-    exec::{store_external_libraries, BaseFeeCheck, ScillaError, ScillaException},
-    inspector,
-    message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
+    exec::store_external_libraries,
+    message::{Block, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
     schnorr,
-    scilla::{storage_key, CheckOutput, ParamValue, Transition, TransitionParam},
-    state::{contract_addr, Account, Code, ContractInit, State},
+    scilla::{storage_key, CheckOutput, ParamValue, Transition},
+    state::{Account, Code, ContractInit, State},
     time::SystemTime,
     transaction::{
         EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,

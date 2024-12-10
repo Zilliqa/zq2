@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -17,7 +16,7 @@ use crate::{
     chain::node::NodeRole,
     kpi,
     node_spec::{Composition, NodeSpec},
-    utils, validators,
+    utils,
 };
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
