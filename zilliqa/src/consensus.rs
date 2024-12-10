@@ -1226,17 +1226,9 @@ impl Consensus {
             Ok(())
         })?;
 
-        if let Some(deposit_v3_deploy_height) = self
-            .config
-            .consensus
-            .contract_upgrade_block_heights
-            .deposit_v3
-        {
-            if deposit_v3_deploy_height == proposal.header.number {
-                let deposit_v3_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
-                state.upgrade_deposit_contract(proposal.header, deposit_v3_contract)?;
-            }
+        if self.block_is_first_in_epoch(proposal.header.number) {
+            // Update state with any contract upgrades for this block
+            self.contract_upgrade_apply_state_change(&mut state, proposal.header)?;
         }
 
         // Finalise the proposal with final QC and state.
@@ -1264,6 +1256,27 @@ impl Consensus {
 
         // Return the final proposal
         Ok(Some(proposal))
+    }
+
+    /// If there are any contract updates to be done then apply them to the state passed in
+    fn contract_upgrade_apply_state_change(
+        &mut self,
+        state: &mut State,
+        block_header: BlockHeader,
+    ) -> Result<()> {
+        if let Some(deposit_v3_deploy_height) = self
+            .config
+            .consensus
+            .contract_upgrade_block_heights
+            .deposit_v3
+        {
+            if deposit_v3_deploy_height == block_header.number {
+                let deposit_v3_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+                state.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
+            }
+        }
+        Ok(())
     }
 
     /// Assembles the Proposal block early.
@@ -3124,18 +3137,11 @@ impl Consensus {
             Ok(())
         })?;
 
-        if let Some(deposit_v3_deploy_height) = self
-            .config
-            .consensus
-            .contract_upgrade_block_heights
-            .deposit_v3
-        {
-            if deposit_v3_deploy_height == block.header.number {
-                let deposit_v3_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
-                self.state
-                    .upgrade_deposit_contract(block.header, deposit_v3_contract)?;
-            }
+        if self.block_is_first_in_epoch(block.header.number) {
+            // Update state with any contract upgrades for this block
+            let mut state_clone = self.state.clone();
+            self.contract_upgrade_apply_state_change(&mut state_clone, block.header)?;
+            self.state = state_clone;
         }
 
         if self.state.root_hash()? != block.state_root_hash() {
