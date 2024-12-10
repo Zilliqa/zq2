@@ -516,18 +516,17 @@ impl ChainNode {
         let eth_chain_id = self.eth_chain_id.to_string();
         let bootstrap_public_ip = selected_bootstrap.machine.external_address;
         let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
-        let enabled_apis = if self.role == NodeRole::Api {
+        // 4201 is the publically exposed port - We don't expose everything there.
+        let public_api = if self.role == NodeRole::Api {
             // Enable all APIs, except `admin_` for API nodes.
-            json!(["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"])
+            json!({ "port": 4201, "enabled_apis": ["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] })
         } else {
             // Only enable `eth_blockNumber` for other nodes.
-            json!([
-                {
-                    "namespace": "eth",
-                    "apis": ["blockNumber"],
-                },
-            ])
+            json!({"port": 4201, "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
         };
+        // 4202 is not exposed, so enable everything for local debugging.
+        let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
+        let api_servers = json!([public_api, private_api]);
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
@@ -537,11 +536,11 @@ impl ChainNode {
         ctx.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
         ctx.insert("set_bootstrap_address", set_bootstrap_address);
         ctx.insert("genesis_address", &genesis_account.address);
-        ctx.insert("enabled_apis", &enabled_apis);
         ctx.insert(
             "whitelisted_evm_contract_addresses",
             &whitelisted_evm_contract_addresses,
         );
+        ctx.insert("api_servers", &api_servers);
 
         Ok(Tera::one_off(spec_config, &ctx, false)?)
     }

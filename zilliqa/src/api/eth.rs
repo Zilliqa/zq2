@@ -35,6 +35,7 @@ use super::{
 };
 use crate::{
     api::zilliqa::ZilAddress,
+    cfg::EnabledApi,
     crypto::Hash,
     error::ensure_success,
     message::Block,
@@ -45,9 +46,13 @@ use crate::{
     transaction::{EvmGas, Log, SignedTransaction},
 };
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = super::declare_module!(
         node,
+        enabled_apis,
         [
             ("eth_accounts", accounts),
             ("eth_blockNumber", block_number),

@@ -1,8 +1,9 @@
 p2p_port = 0
 
 [[nodes]]
-enabled_apis = [ "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ]
-json_rpc_port = 4201
+api_servers = [
+    { port = 4201, enabled_apis = [ "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] }
+]
 eth_chain_id = 0x8001
 consensus.consensus_timeout = { secs = 5, nanos = 0 }
 # These public keys correspond to the private keys of all four nodes in `docker-compose.yaml`.
@@ -29,8 +30,9 @@ consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
 
 [[nodes]]
-enabled_apis = [ "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ]
-json_rpc_port = 4202
+api_servers = [
+    { port = 4202, enabled_apis = [ "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] }
+]
 eth_chain_id = 0x8002
 [nodes.consensus]
 consensus_timeout = { secs = 5, nanos = 0 }
@@ -56,5 +58,3 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-
-

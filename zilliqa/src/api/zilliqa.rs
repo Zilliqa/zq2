@@ -38,6 +38,7 @@ use super::{
 };
 use crate::{
     api::types::zil::{CreateTransactionResponse, GetTxResponse, RPCErrorCode},
+    cfg::EnabledApi,
     crypto::Hash,
     exec::zil_contract_address,
     message::Block,
@@ -53,9 +54,13 @@ use crate::{
     },
 };
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
+        enabled_apis,
         [
             ("CreateTransaction", create_transaction),
             (

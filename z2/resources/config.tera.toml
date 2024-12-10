@@ -27,4 +27,4 @@ consensus.blocks_per_epoch=3600
 consensus.epochs_per_checkpoint=24
 {%- endif %}
 
-enabled_apis = {{ enabled_apis }}
+api_servers = {{ api_servers }}

@@ -11,28 +11,49 @@ pub mod types;
 mod web3;
 pub mod zilliqa;
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = RpcModule::new(node.clone());
 
-    module.merge(admin::rpc_module(node.clone())).unwrap();
-    module.merge(erigon::rpc_module(node.clone())).unwrap();
-    module.merge(eth::rpc_module(node.clone())).unwrap();
-    module.merge(net::rpc_module(node.clone())).unwrap();
-    module.merge(ots::rpc_module(node.clone())).unwrap();
-    module.merge(trace::rpc_module(node.clone())).unwrap();
-    module.merge(txpool::rpc_module(node.clone())).unwrap();
-    module.merge(web3::rpc_module(node.clone())).unwrap();
-    module.merge(zilliqa::rpc_module(node.clone())).unwrap();
+    module
+        .merge(admin::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(erigon::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(eth::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(net::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(ots::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(trace::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(txpool::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(web3::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(zilliqa::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
 
     module
 }
 
-pub fn all_enabled() -> Vec<crate::cfg::ApiNamespace> {
+pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
     [
         "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa",
     ]
     .into_iter()
-    .map(|ns| crate::cfg::ApiNamespace::EnableAll(ns.to_owned()))
+    .map(|ns| crate::cfg::EnabledApi::EnableAll(ns.to_owned()))
     .collect()
 }
 
@@ -54,13 +75,14 @@ pub fn all_enabled() -> Vec<crate::cfg::ApiNamespace> {
 macro_rules! declare_module {
     (
         $node:expr,
+        $enabled_apis:expr,
         [ $(($name:expr, $method:expr)),* $(,)? ] $(,)?
     ) => {{
         let mut module: jsonrpsee::RpcModule<std::sync::Arc<std::sync::Mutex<crate::node::Node>>> = jsonrpsee::RpcModule::new($node.clone());
         let meter = opentelemetry::global::meter("zilliqa");
 
         $(
-            let enabled = $node.lock().unwrap().config.enabled_apis.iter().any(|n| n.enabled($name));
+            let enabled = $enabled_apis.iter().any(|n| n.enabled($name));
             let rpc_server_duration = meter
                 .f64_histogram(opentelemetry_semantic_conventions::metric::RPC_SERVER_DURATION)
                 .with_unit("s")
@@ -127,4 +149,4 @@ use std::sync::{Arc, Mutex};
 use declare_module;
 use jsonrpsee::RpcModule;
 
-use crate::node::Node;
+use crate::{cfg::EnabledApi, node::Node};

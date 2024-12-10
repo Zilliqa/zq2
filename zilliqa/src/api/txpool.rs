@@ -7,10 +7,13 @@ use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};
 
 use super::types::eth;
-use crate::{api::types::eth::Transaction, node::Node};
+use crate::{api::types::eth::Transaction, cfg::EnabledApi, node::Node};
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
-    super::declare_module!(node, [("txpool_content", txpool_content)])
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
+    super::declare_module!(node, enabled_apis, [("txpool_content", txpool_content)])
 }
 
 fn txpool_content(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::TxPoolContent>> {

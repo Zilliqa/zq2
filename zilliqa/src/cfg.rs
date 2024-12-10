@@ -38,7 +38,7 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum ApiNamespace {
+pub enum EnabledApi {
     EnableAll(String),
     Enabled {
         namespace: String,
@@ -46,13 +46,13 @@ pub enum ApiNamespace {
     },
 }
 
-impl ApiNamespace {
+impl EnabledApi {
     pub fn enabled(&self, api: &str) -> bool {
         // APIs with no namespace default to the 'zilliqa' namespace.
         let (ns, method) = api.split_once('_').unwrap_or(("zilliqa", api));
         match self {
-            ApiNamespace::EnableAll(namespace) => namespace == ns,
-            ApiNamespace::Enabled { namespace, apis } => {
+            EnabledApi::EnableAll(namespace) => namespace == ns,
+            EnabledApi::Enabled { namespace, apis } => {
                 namespace == ns && apis.iter().any(|m| m == method)
             }
         }
@@ -61,13 +61,19 @@ impl ApiNamespace {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct NodeConfig {
-    /// The port to listen for JSON-RPC requests on. Defaults to 4201.
-    #[serde(default = "json_rpc_port_default")]
-    pub json_rpc_port: u16,
+pub struct ApiServer {
+    /// The port to listen for JSON-RPC requests on.
+    pub port: u16,
     /// RPC APIs to enable.
+    pub enabled_apis: Vec<EnabledApi>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeConfig {
+    /// RPC API endpoints to expose.
     #[serde(default)]
-    pub enabled_apis: Vec<ApiNamespace>,
+    pub api_servers: Vec<ApiServer>,
     /// Chain identifier. Doubles as shard_id internally.
     #[serde(default = "eth_chain_id_default")]
     pub eth_chain_id: u64,
@@ -109,8 +115,7 @@ pub struct NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
-            json_rpc_port: json_rpc_port_default(),
-            enabled_apis: vec![],
+            api_servers: vec![],
             eth_chain_id: eth_chain_id_default(),
             consensus: ConsensusConfig::default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
@@ -164,10 +169,6 @@ pub fn allowed_timestamp_skew_default() -> Duration {
 
 pub fn state_cache_size_default() -> usize {
     256 * 1024 * 1024 // 256 MiB
-}
-
-pub fn json_rpc_port_default() -> u16 {
-    4201
 }
 
 pub fn eth_chain_id_default() -> u64 {
