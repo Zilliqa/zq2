@@ -1,32 +1,18 @@
-#![allow(unused_imports)]
-
-use std::{
-    cell::{RefCell, RefMut},
-    fmt, fs,
-    io::{Cursor, Write},
-    iter,
-    path::Path,
-    str::FromStr,
-    sync::RwLock,
-};
+use std::{fmt, fs, iter, str::FromStr};
 
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
-use clap::ValueEnum;
-use ethers::{middleware::Middleware as _, signers::Signer, types::U256};
-use lazy_static::lazy_static;
-use rand::{self, distributions::DistString as _, prelude::*};
+use ethers::{middleware::Middleware as _, signers::Signer};
+use rand::{self, prelude::*};
 use serde::{Deserialize, Serialize};
-use tempfile;
 use tokio::time::{sleep, Duration};
-use url::Url;
 use zilliqa_rs::{
     middlewares::Middleware,
     providers::{Http, Provider},
 };
 
 /// Stolen from z blockchain perf, partly so external contributors can also run it.
-use crate::{perf_mod, utils};
+use crate::perf_mod;
 
 pub struct Perf {
     pub config: Config,
