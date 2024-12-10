@@ -107,15 +107,6 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
             ("eth_submitWork", submit_work),
             ("eth_syncing", syncing),
             ("eth_uninstallFilter", uninstall_filter),
-            ("net_listening", net_listening),
-            ("net_peerCount", net_peer_count),
-            ("net_version", net_version),
-            ("txpool_content", txpool_content),
-            ("txpool_contentFrom", txpool_content_from),
-            ("txpool_inspect", txpool_inspect),
-            ("txpool_status", txpool_status),
-            ("web3_clientVersion", web3_client_version),
-            ("web3_sha3", web3_sha3),
         ],
     );
 
@@ -856,14 +847,6 @@ fn syncing(params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingResult> {
     }
 }
 
-fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok("0x0".to_string())
-}
-
-fn net_listening(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
-    Ok(true)
-}
-
 #[allow(clippy::redundant_allocation)]
 async fn subscribe(
     params: Params<'_>,
@@ -989,112 +972,92 @@ async fn subscribe(
     Ok(())
 }
 
-//blobBaseFee
+/// eth_blobBaseFee
+/// Returns the expected base fee for blobs in the next block
 fn blob_base_fee(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//feeHistory
+/// eth_feeHistory
+/// Returns the collection of historical gas information
 fn fee_history(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//getAccount
+/// eth_getAccount
+/// Retrieve account details by specifying an address and a block number/tag.
 fn get_account(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//getFilterChanges
+/// eth_getFilterChanges
+/// Polling method for a filter, which returns an array of events that have occurred since the last poll.
 fn get_filter_changes(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//getFilterLogs
+/// eth_getFilterLogs
+/// Returns an array of all logs matching filter with given id.
 fn get_filter_logs(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//getProof
+/// eth_getProof
+/// Returns the account and storage values of the specified account including the Merkle-proof.
 fn get_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//hashrate
+/// eth_hashrate
+/// Returns the number of hashes per second that the node is mining with.
 fn hashrate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//maxPriorityFeePerGas
+/// eth_maxPriorityFeePerGas
+/// Get the priority fee needed to be included in a block.
 fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//newBlockFilter
+/// eth_newBlockFilter
+/// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
 fn new_block_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//newFilter
+/// eth_newFilter
+/// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
 fn new_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//newPendingTransactionFilter
+/// eth_newPendingTransactionFilter
+/// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
 fn new_pending_transaction_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//signTransaction
+/// eth_signTransaction
+/// Signs a transaction that can be submitted to the network later using eth_sendRawTransaction
 fn sign_transaction(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//simulateV1
+/// eth_simulateV1
+/// Simulates a series of transactions at a specific block height with optional state overrides. This method allows you to test transactions with custom block and state parameters without actually submitting them to the network.
 fn simulate_v1(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//submitWork
+/// eth_submitWork
+/// Used for submitting a proof-of-work solution.
 fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-//uninstallFilter
+/// eth_uninstallFilter
+/// It uninstalls a filter with the given filter id.
 fn uninstall_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
-
-//net_version
-fn net_version(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
-
-//txpool_content
-fn txpool_content(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
-
-//txpool_inspect
-fn txpool_inspect(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
-
-//txpool_contentFrom
-fn txpool_content_from(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
-
-//txpool_status
-fn txpool_status(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
-
-//web3_clientVersion
-fn web3_client_version(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
-
-//web3_sha3
-fn web3_sha3(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
