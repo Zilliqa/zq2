@@ -13,7 +13,10 @@ use primitive_types::{H160, H256};
 use rand::Rng;
 use tracing::{info, trace};
 use zilliqa::{
-    contracts, crypto::{NodePublicKey, SecretKey}, message::MAX_COMMITTEE_SIZE, state::contract_addr
+    contracts,
+    crypto::{NodePublicKey, SecretKey},
+    message::MAX_COMMITTEE_SIZE,
+    state::contract_addr,
 };
 
 use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
@@ -330,7 +333,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
 
     let staker_wallet = network.wallet_of_node(index).await;
-    let pop = new_validator_key.pop_prove(
+    let deposit_signature = new_validator_key.deposit_auth_signature(
         network.shard_id,
         Address::from(staker_wallet.address().to_fixed_bytes()),
     );
@@ -341,7 +344,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         new_validator_key,
         32 * 10u128.pow(18),
         reward_address,
-        pop,
+        deposit_signature,
     )
     .await;
 
@@ -412,7 +415,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
     let staker_wallet = network.wallet_of_node(index).await;
-    let pop = new_validator_key.pop_prove(
+    let signature = new_validator_key.deposit_auth_signature(
         network.shard_id,
         Address::from(staker_wallet.address().to_fixed_bytes()),
     );
@@ -423,7 +426,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
         new_validator_key,
         1024 * 10u128.pow(18),
         reward_address,
-        pop,
+        signature,
     )
     .await;
 
