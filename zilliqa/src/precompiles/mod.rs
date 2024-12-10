@@ -1,3 +1,4 @@
+mod bls_verify;
 mod erc20;
 mod pop_verify;
 mod scilla;
@@ -5,6 +6,7 @@ mod scilla;
 use std::sync::Arc;
 
 use alloy::primitives::Address;
+use bls_verify::BlsVerify;
 use erc20::ERC20Precompile;
 use pop_verify::PopVerify;
 use revm::ContextPrecompile;
@@ -22,6 +24,10 @@ pub fn get_custom_precompiles() -> Vec<(Address, ContextPrecompile<PendingState>
         (
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x80"),
             ContextPrecompile::ContextStateful(Arc::new(PopVerify)),
+        ),
+        (
+            Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x81"),
+            ContextPrecompile::ContextStateful(Arc::new(BlsVerify)),
         ),
         (
             Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x92"),
