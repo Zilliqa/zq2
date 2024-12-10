@@ -50,18 +50,18 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
         node,
         [
             ("eth_accounts", accounts),
+            ("eth_blobBaseFee", blob_base_fee),
             ("eth_blockNumber", block_number),
             ("eth_call", call),
             ("eth_chainId", chain_id),
             ("eth_estimateGas", estimate_gas),
-            ("eth_getBalance", get_balance),
-            ("eth_getBlockReceipts", get_block_receipts),
-            ("eth_getCode", get_code),
-            ("eth_getStorageAt", get_storage_at),
-            ("eth_getTransactionCount", get_transaction_count),
+            ("eth_feeHistory", fee_history),
             ("eth_gasPrice", get_gas_price),
-            ("eth_getBlockByNumber", get_block_by_number),
+            ("eth_getAccount", get_account),
+            ("eth_getBalance", get_balance),
             ("eth_getBlockByHash", get_block_by_hash),
+            ("eth_getBlockByNumber", get_block_by_number),
+            ("eth_getBlockReceipts", get_block_receipts),
             (
                 "eth_getBlockTransactionCountByHash",
                 get_block_transaction_count_by_hash
@@ -70,7 +70,12 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "eth_getBlockTransactionCountByNumber",
                 get_block_transaction_count_by_number
             ),
+            ("eth_getCode", get_code),
+            ("eth_getFilterChanges", get_filter_changes),
+            ("eth_getFilterLogs", get_filter_logs),
             ("eth_getLogs", get_logs),
+            ("eth_getProof", get_proof),
+            ("eth_getStorageAt", get_storage_at),
             (
                 "eth_getTransactionByBlockHashAndIndex",
                 get_transaction_by_block_hash_and_index
@@ -80,17 +85,37 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 get_transaction_by_block_number_and_index
             ),
             ("eth_getTransactionByHash", get_transaction_by_hash),
+            ("eth_getTransactionCount", get_transaction_count),
             ("eth_getTransactionReceipt", get_transaction_receipt),
-            ("eth_sendRawTransaction", send_raw_transaction),
-            ("eth_getUncleCountByBlockHash", get_uncle_count),
-            ("eth_getUncleCountByBlockNumber", get_uncle_count),
             ("eth_getUncleByBlockHashAndIndex", get_uncle),
             ("eth_getUncleByBlockNumberAndIndex", get_uncle),
+            ("eth_getUncleCountByBlockHash", get_uncle_count),
+            ("eth_getUncleCountByBlockNumber", get_uncle_count),
+            ("eth_hashrate", hashrate),
+            ("eth_maxPriorityFeePerGas", max_priority_fee_per_gas),
             ("eth_mining", mining),
+            ("eth_newBlockFilter", new_block_filter),
+            ("eth_newFilter", new_filter),
+            (
+                "eth_newPendingTransactionFilter",
+                new_pending_transaction_filter
+            ),
             ("eth_protocolVersion", protocol_version),
+            ("eth_sendRawTransaction", send_raw_transaction),
+            ("eth_signTransaction", sign_transaction),
+            ("eth_simulateV1", simulate_v1),
+            ("eth_submitWork", submit_work),
             ("eth_syncing", syncing),
-            ("net_peerCount", net_peer_count),
+            ("eth_uninstallFilter", uninstall_filter),
             ("net_listening", net_listening),
+            ("net_peerCount", net_peer_count),
+            ("net_version", net_version),
+            ("txpool_content", txpool_content),
+            ("txpool_contentFrom", txpool_content_from),
+            ("txpool_inspect", txpool_inspect),
+            ("txpool_status", txpool_status),
+            ("web3_clientVersion", web3_client_version),
+            ("web3_sha3", web3_sha3),
         ],
     );
 
@@ -962,4 +987,114 @@ async fn subscribe(
     }
 
     Ok(())
+}
+
+//blobBaseFee
+fn blob_base_fee(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//feeHistory
+fn fee_history(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//getAccount
+fn get_account(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//getFilterChanges
+fn get_filter_changes(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//getFilterLogs
+fn get_filter_logs(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//getProof
+fn get_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//hashrate
+fn hashrate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//maxPriorityFeePerGas
+fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//newBlockFilter
+fn new_block_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//newFilter
+fn new_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//newPendingTransactionFilter
+fn new_pending_transaction_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//signTransaction
+fn sign_transaction(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//simulateV1
+fn simulate_v1(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//submitWork
+fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//uninstallFilter
+fn uninstall_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//net_version
+fn net_version(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//txpool_content
+fn txpool_content(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//txpool_inspect
+fn txpool_inspect(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//txpool_contentFrom
+fn txpool_content_from(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//txpool_status
+fn txpool_status(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//web3_clientVersion
+fn web3_client_version(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+//web3_sha3
+fn web3_sha3(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
 }
