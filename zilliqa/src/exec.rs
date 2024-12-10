@@ -10,9 +10,8 @@ use std::{
     sync::{Arc, MutexGuard},
 };
 
-use alloy::primitives::{hex, Address, U256};
+use alloy::primitives::{hex, Address, Bytes, U256};
 use anyhow::{anyhow, Context, Result};
-use bytes::Bytes;
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
@@ -427,6 +426,8 @@ impl DatabaseRef for &State {
 pub struct ExternalContext<'a, I> {
     pub inspector: I,
     pub scilla_call_gas_exempt_addrs: &'a [Address],
+    // This flag is only used for zq1 whitelisted contracts, and it's used to detect if the entire transaction should be marked as failed
+    pub enforce_transaction_failure: bool,
 }
 
 impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
@@ -514,6 +515,7 @@ impl State {
         let external_context = ExternalContext {
             inspector,
             scilla_call_gas_exempt_addrs: &self.scilla_call_gas_exempt_addrs,
+            enforce_transaction_failure: false,
         };
         let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
@@ -570,9 +572,34 @@ impl State {
             })
             .build();
 
-        let e = evm.transact()?;
-        let (mut state, cfg) = evm.into_db_and_env_with_handler_cfg();
-        Ok((e, state.finalize(), cfg.env))
+        let mut result_and_state = evm.transact()?;
+        let mut ctx_with_handler = evm.into_context_with_handler_cfg();
+
+        // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
+        if ctx_with_handler
+            .context
+            .external
+            .enforce_transaction_failure
+        {
+            result_and_state.state.clear();
+            return Ok((
+                ResultAndState {
+                    result: ExecutionResult::Revert {
+                        gas_used: result_and_state.result.gas_used(),
+                        output: Bytes::default(),
+                    },
+                    state: result_and_state.state,
+                },
+                HashMap::new(),
+                ctx_with_handler.context.evm.inner.env,
+            ));
+        }
+
+        Ok((
+            result_and_state,
+            ctx_with_handler.context.evm.db.finalize(),
+            ctx_with_handler.context.evm.inner.env,
+        ))
     }
 
     // The rules here are somewhat odd, and inherited from ZQ1

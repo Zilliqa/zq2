@@ -338,8 +338,36 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         }
 
         let gas = Gas::new(inputs.gas_limit);
-        let outcome =
-            scilla_call_precompile(&inputs, gas.limit(), &mut ctx.evm.inner, &mut ctx.external);
+        let gas_exempt = ctx
+            .external
+            .scilla_call_gas_exempt_addrs
+            .contains(&inputs.caller);
+
+        // The behaviour is different for contracts having 21k gas and/or deployed with zq1
+        // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
+        // 2. if gas == 21k and NOT gas_exempt -> mark entire txn as failed (not only the current precompile)
+        // 3. Otherwise, let it run with what it's given and let the caller decide
+
+        // Below is case 2nd
+        if gas.limit() == 21000 && !gas_exempt {
+            ctx.external.enforce_transaction_failure = true;
+            return Ok(FrameOrResult::new_call_result(
+                InterpreterResult {
+                    result: InstructionResult::OutOfGas,
+                    gas,
+                    output: Bytes::new(),
+                },
+                inputs.return_memory_offset.clone(),
+            ));
+        }
+
+        let outcome = scilla_call_precompile(
+            &inputs,
+            gas.limit(),
+            &mut ctx.evm.inner,
+            &mut ctx.external,
+            gas_exempt,
+        );
 
         // Copied from `EvmContext::call_precompile`
         let mut result = InterpreterResult {
@@ -379,14 +407,11 @@ fn scilla_call_precompile<I: ScillaInspector>(
     gas_limit: u64,
     evmctx: &mut InnerEvmContext<PendingState>,
     external_context: &mut ExternalContext<I>,
+    gas_exempt: bool,
 ) -> PrecompileResult {
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
     };
-
-    let gas_exempt = external_context
-        .scilla_call_gas_exempt_addrs
-        .contains(&input.caller);
 
     let required_gas = input_len * PER_BYTE_COST + BASE_COST + EvmGas::from(SCILLA_INVOKE_RUNNER).0;
 
