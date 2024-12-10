@@ -13,7 +13,7 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, Context, Result};
 use eth_trie::{EthTrie, Trie};
 use itertools::Itertools;
-use lru_mem::LruCache;
+// use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
 use rusqlite::{
     named_params,
@@ -182,12 +182,12 @@ const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
 #[derive(Debug)]
 pub struct Db {
     db: Arc<Mutex<Connection>>,
-    state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    // state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
 }
 
 impl Db {
-    pub fn new<P>(data_dir: Option<P>, shard_id: u64, state_cache_size: usize) -> Result<Self>
+    pub fn new<P>(data_dir: Option<P>, shard_id: u64, _state_cache_size: usize) -> Result<Self>
     where
         P: AsRef<Path>,
     {
@@ -249,7 +249,7 @@ impl Db {
 
         Ok(Db {
             db: Arc::new(Mutex::new(connection)),
-            state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
+            // state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
             path,
         })
     }
@@ -495,7 +495,7 @@ impl Db {
     pub fn state_trie(&self) -> Result<TrieStorage> {
         Ok(TrieStorage {
             db: self.db.clone(),
-            cache: self.state_cache.clone(),
+            // cache: self.state_cache.clone(),
         })
     }
 
@@ -1154,16 +1154,16 @@ fn decompress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path:
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
     db: Arc<Mutex<Connection>>,
-    cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
+    // cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
 }
 
 impl eth_trie::DB for TrieStorage {
     type Error = rusqlite::Error;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
-        if let Some(cached) = self.cache.lock().unwrap().get(key).map(|v| v.to_vec()) {
-            return Ok(Some(cached));
-        }
+        // if let Some(cached) = self.cache.lock().unwrap().get(key).map(|v| v.to_vec()) {
+        //     return Ok(Some(cached));
+        // }
 
         let value: Option<Vec<u8>> = self
             .db
@@ -1176,12 +1176,12 @@ impl eth_trie::DB for TrieStorage {
             )
             .optional()?;
 
-        let mut cache = self.cache.lock().unwrap();
-        if !cache.contains(key) {
-            if let Some(value) = &value {
-                let _ = cache.insert(key.to_vec(), value.clone());
-            }
-        }
+        // let mut cache = self.cache.lock().unwrap();
+        // if !cache.contains(key) {
+        //     if let Some(value) = &value {
+        //         let _ = cache.insert(key.to_vec(), value.clone());
+        //     }
+        // }
 
         Ok(value)
     }
@@ -1191,7 +1191,7 @@ impl eth_trie::DB for TrieStorage {
             "INSERT OR REPLACE INTO state_trie (key, value) VALUES (?1, ?2)",
             (key, &value),
         )?;
-        let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
+        // let _ = self.cache.lock().unwrap().insert(key.to_vec(), value);
         Ok(())
     }
 
@@ -1226,13 +1226,13 @@ impl eth_trie::DB for TrieStorage {
                 .lock()
                 .unwrap()
                 .execute(&query, rusqlite::params_from_iter(params))?;
-            for (key, value) in keys.iter().zip(values) {
-                let _ = self
-                    .cache
-                    .lock()
-                    .unwrap()
-                    .insert(key.to_vec(), value.to_vec());
-            }
+            // for (key, value) in keys.iter().zip(values) {
+            //     let _ = self
+            //         .cache
+            //         .lock()
+            //         .unwrap()
+            //         .insert(key.to_vec(), value.to_vec());
+            // }
         }
 
         Ok(())
