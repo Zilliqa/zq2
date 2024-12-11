@@ -356,7 +356,7 @@ impl NodeLauncher {
                     self.node.lock().unwrap().consensus.tick().unwrap();
                     // No messages for a while, so check if consensus wants to timeout
                     self.node.lock().unwrap().handle_timeout().unwrap();
-                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
+                    sleep.as_mut().reset(Instant::now() + self.config.consensus.empty_block_timeout / 2);
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,
