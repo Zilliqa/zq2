@@ -429,7 +429,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         new_validator_key,
         32 * 10u128.pow(18),
         reward_address,
-        &deposit_signature.as_raw_value(),
+        deposit_signature.as_raw_value(),
     )
     .await;
 

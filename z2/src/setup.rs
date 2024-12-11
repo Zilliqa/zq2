@@ -17,18 +17,19 @@ use tokio::fs;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::{
-    api, cfg::{state_cache_size_default, ApiServer}, crypto::{SecretKey, TransactionPublicKey}
+    api,
+    cfg::{state_cache_size_default, ApiServer},
+    crypto::{SecretKey, TransactionPublicKey},
 };
 use zilliqa::{
     cfg::{
         self, allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default,
-        empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        local_address_default, max_blocks_in_flight_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default,
-        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_rpc_limit_default,
-        total_native_token_supply_default, Amount, ConsensusConfig, ContractUpgradesBlockHeights,
-        GenesisDeposit,
+        block_request_limit_default, consensus_timeout_default, empty_block_timeout_default,
+        eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
+        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
+        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
+        state_rpc_limit_default, total_native_token_supply_default, Amount, ConsensusConfig,
+        ContractUpgradesBlockHeights, GenesisDeposit,
     },
     transaction::EvmGas,
 };
