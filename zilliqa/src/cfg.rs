@@ -37,14 +37,43 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnabledApi {
+    EnableAll(String),
+    Enabled {
+        namespace: String,
+        apis: Vec<String>,
+    },
+}
+
+impl EnabledApi {
+    pub fn enabled(&self, api: &str) -> bool {
+        // APIs with no namespace default to the 'zilliqa' namespace.
+        let (ns, method) = api.split_once('_').unwrap_or(("zilliqa", api));
+        match self {
+            EnabledApi::EnableAll(namespace) => namespace == ns,
+            EnabledApi::Enabled { namespace, apis } => {
+                namespace == ns && apis.iter().any(|m| m == method)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiServer {
+    /// The port to listen for JSON-RPC requests on.
+    pub port: u16,
+    /// RPC APIs to enable.
+    pub enabled_apis: Vec<EnabledApi>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
-    /// The port to listen for JSON-RPC requests on. Defaults to 4201.
-    #[serde(default = "json_rpc_port_default")]
-    pub json_rpc_port: u16,
-    /// If true, the JSON-RPC server is not started. Defaults to false.
-    #[serde(default = "disable_rpc_default")]
-    pub disable_rpc: bool,
+    /// RPC API endpoints to expose.
+    #[serde(default)]
+    pub api_servers: Vec<ApiServer>,
     /// Chain identifier. Doubles as shard_id internally.
     #[serde(default = "eth_chain_id_default")]
     pub eth_chain_id: u64,
@@ -86,8 +115,7 @@ pub struct NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
-            json_rpc_port: json_rpc_port_default(),
-            disable_rpc: disable_rpc_default(),
+            api_servers: vec![],
             eth_chain_id: eth_chain_id_default(),
             consensus: ConsensusConfig::default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
@@ -143,16 +171,8 @@ pub fn state_cache_size_default() -> usize {
     256 * 1024 * 1024 // 256 MiB
 }
 
-pub fn json_rpc_port_default() -> u16 {
-    4201
-}
-
 pub fn eth_chain_id_default() -> u64 {
     700 + 0x8000
-}
-
-pub fn disable_rpc_default() -> bool {
-    false
 }
 
 pub fn block_request_limit_default() -> usize {
