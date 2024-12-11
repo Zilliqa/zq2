@@ -185,7 +185,11 @@ fn oog<T>() -> Result<T, PrecompileErrors> {
 }
 
 fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
-    Err(PrecompileErrors::Error(PrecompileError::other(message)))
+    Err(err_inner(message))
+}
+
+fn err_inner(message: impl Into<String>) -> PrecompileErrors {
+    PrecompileErrors::Error(PrecompileError::other(message))
 }
 
 fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
@@ -215,8 +219,9 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
 
         let mut decoder = Decoder::new(input, false);
 
-        let address = Address::detokenize(decoder.decode().unwrap());
-        let field = String::detokenize(decoder.decode().unwrap());
+        let address =
+            Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
+        let field = String::detokenize(decoder.decode().map_err(|_| err_inner("invalid field"))?);
 
         let account = match context.db.load_account(address) {
             Ok(account) => account,
@@ -421,9 +426,17 @@ fn scilla_call_precompile<I: ScillaInspector>(
 
     let mut decoder = Decoder::new(&input.input, false);
 
-    let address = Address::detokenize(decoder.decode().unwrap());
-    let transition = String::detokenize(decoder.decode().unwrap());
-    let keep_origin = U256::detokenize(decoder.decode().unwrap());
+    let address = Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
+    let transition = String::detokenize(
+        decoder
+            .decode()
+            .map_err(|_| err_inner("invalid transition"))?,
+    );
+    let keep_origin = U256::detokenize(
+        decoder
+            .decode()
+            .map_err(|_| err_inner("invalid keep_origin"))?,
+    );
 
     let keep_origin = if keep_origin == U256::from(0) {
         false
