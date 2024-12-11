@@ -515,20 +515,8 @@ impl ChainNode {
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
         let bootstrap_public_ip = selected_bootstrap.machine.external_address;
-
-        let contracts = self.chain()?.get_whitelisted_evm_contracts();
-        let whitelisted_evm_contract_addresses = if contracts.is_empty() {
-            String::from("[ ]")
-        } else {
-            format!(
-                "[\n    {}\n]",
-                contracts
-                    .iter()
-                    .map(|s| format!("\"{}\",", s))
-                    .collect::<Vec<_>>()
-                    .join("\n    ")
-            )
-        };
+        let whitelisted_evm_contract_addresses =
+            serde_json::to_string_pretty(&self.chain()?.get_whitelisted_evm_contracts())?;
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", &role_name);

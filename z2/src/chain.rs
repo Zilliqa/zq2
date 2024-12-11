@@ -178,8 +178,4 @@ impl Chain {
             format!("project_id not available for the chain {}", self).red()
         ))
     }
-
-    pub fn parse(name: &str) -> Result<Self> {
-        Ok(<Self as std::str::FromStr>::from_str(name)?)
-    }
 }
