@@ -417,7 +417,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         Address::from(staker_wallet.address().to_fixed_bytes()),
     );
 
-    // Give new node time to catch to block with deposit_v3
+    // Give new node time to catch up to block including deposit_v3 deployment
     network
         .run_until_block(&staker_wallet, deposit_v3_deploy_block.into(), 200)
         .await;
