@@ -22,10 +22,8 @@ fn net_listening(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<bool> {
 }
 
 /// net_peerCount
-fn net_peer_count(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    let node = node.lock().unwrap();
-    let num_peers = node.get_peer_num();
-    Ok(num_peers.to_string())
+fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
+    Ok("0x0".to_string())
 }
 
 /// net_version
