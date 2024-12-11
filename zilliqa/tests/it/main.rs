@@ -63,15 +63,9 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
+    api,
     cfg::{
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, disable_rpc_default, eth_chain_id_default,
-        failed_request_sleep_duration_default, json_rpc_port_default, local_address_default,
-        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
-        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        Amount, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights, GenesisDeposit,
-        NodeConfig,
+        allowed_timestamp_skew_default, block_request_batch_size_default, block_request_limit_default, eth_chain_id_default, failed_request_sleep_duration_default, max_blocks_in_flight_default, minimum_time_left_for_empty_block_default, scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default, Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights, GenesisDeposit, NodeConfig
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -181,7 +175,8 @@ fn node(
         Arc::new(AtomicUsize::new(0)),
     )?;
     let node = Arc::new(Mutex::new(node));
-    let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
+    let rpc_module: RpcModule<Arc<Mutex<Node>>> =
+        api::rpc_module(node.clone(), &api::all_enabled());
 
     Ok((
         TestNode {
@@ -352,9 +347,11 @@ impl Network {
                 ],
                 contract_upgrade_block_heights,
             },
-            json_rpc_port: json_rpc_port_default(),
+            api_servers: vec![ApiServer {
+                port: 4201,
+                enabled_apis: api::all_enabled(),
+            }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
-            disable_rpc: disable_rpc_default(),
             data_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
@@ -452,13 +449,15 @@ impl Network {
         };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
-            json_rpc_port: json_rpc_port_default(),
+            api_servers: vec![ApiServer {
+                port: 4201,
+                enabled_apis: api::all_enabled(),
+            }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
-            disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
                 is_main: self.is_main(),
@@ -523,24 +522,6 @@ impl Network {
             .map(|n| (n.secret_key, n.onchain_key.clone()))
             .collect::<Vec<_>>();
 
-        // The initial stake of each node.
-        let stake = 32_000_000_000_000_000_000u128;
-        let genesis_deposits: Vec<_> = keys
-            .iter()
-            .map(|k| GenesisDeposit {
-                public_key: k.0.node_public_key(),
-                peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
-                stake: stake.into(),
-                reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true)
-                    .into_addr(),
-            })
-            .collect();
-
-        let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
-            deposit_v3: self.deposit_v3_upgrade_block_height,
-        };
-
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
             Vec<_>,
             Vec<_>,
@@ -564,48 +545,7 @@ impl Network {
                     warn!("Failed to copy data dir over");
                 }
 
-                let config = NodeConfig {
-                    eth_chain_id: self.shard_id,
-                    allowed_timestamp_skew: allowed_timestamp_skew_default(),
-                    data_dir: None,
-                    state_cache_size: state_cache_size_default(),
-                    load_checkpoint: None,
-                    do_checkpoints: self.do_checkpoints,
-                    disable_rpc: disable_rpc_default(),
-                    json_rpc_port: json_rpc_port_default(),
-                    consensus: ConsensusConfig {
-                        genesis_deposits: genesis_deposits.clone(),
-                        is_main: self.is_main(),
-                        consensus_timeout: Duration::from_secs(5),
-                        // Give a genesis account 1 billion ZIL.
-                        genesis_accounts: Self::genesis_accounts(&self.genesis_key),
-                        empty_block_timeout: Duration::from_millis(25),
-                        rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
-                        blocks_per_hour: 3600 * 40,
-                        minimum_stake: 32_000_000_000_000_000_000u128.into(),
-                        eth_block_gas_limit: EvmGas(84000000),
-                        gas_price: 4_761_904_800_000u128.into(),
-                        local_address: local_address_default(),
-                        main_shard_id: None,
-                        minimum_time_left_for_empty_block:
-                            minimum_time_left_for_empty_block_default(),
-                        scilla_address: scilla_address_default(),
-                        blocks_per_epoch: self.blocks_per_epoch,
-                        epochs_per_checkpoint: 1,
-                        scilla_stdlib_dir: scilla_stdlib_dir_default(),
-                        scilla_ext_libs_path: scilla_ext_libs_path_default(),
-                        total_native_token_supply: total_native_token_supply_default(),
-                        scilla_call_gas_exempt_addrs: vec![Address::new(
-                            get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
-                        )],
-                        contract_upgrade_block_heights: contract_upgrade_block_heights.clone(),
-                    },
-                    block_request_limit: block_request_limit_default(),
-                    max_blocks_in_flight: max_blocks_in_flight_default(),
-                    block_request_batch_size: block_request_batch_size_default(),
-                    state_rpc_limit: state_rpc_limit_default(),
-                    failed_request_sleep_duration: failed_request_sleep_duration_default(),
-                };
+                let config = self.nodes[i].inner.lock().unwrap().config.clone();
 
                 node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
             })

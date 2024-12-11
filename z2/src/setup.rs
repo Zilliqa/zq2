@@ -17,13 +17,12 @@ use tokio::fs;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::{
-    cfg::state_cache_size_default,
-    crypto::{SecretKey, TransactionPublicKey},
+    api, cfg::{state_cache_size_default, ApiServer}, crypto::{SecretKey, TransactionPublicKey}
 };
 use zilliqa::{
     cfg::{
         self, allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default, disable_rpc_default,
+        block_request_limit_default, consensus_timeout_default,
         empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
         local_address_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default,
@@ -505,14 +504,17 @@ impl Setup {
                 external_address: None,
             };
             // @todo should pass this in!
+            let port = self.get_json_rpc_port(*node_index as u16, false);
             let mut node_config = cfg::NodeConfig {
-                json_rpc_port: self.get_json_rpc_port(u64::try_into(*node_index)?, false),
+                api_servers: vec![ApiServer {
+                    port,
+                    enabled_apis: api::all_enabled(),
+                }],
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
                 state_cache_size: state_cache_size_default(),
                 load_checkpoint: None,
                 do_checkpoints: false,
-                disable_rpc: disable_rpc_default(),
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
                     scilla_address: scilla_address_default(),
@@ -543,10 +545,7 @@ impl Setup {
                 state_rpc_limit: state_rpc_limit_default(),
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
             };
-            println!(
-                "🧩  Node {node_index} has RPC port {0}",
-                node_config.json_rpc_port
-            );
+            println!("🧩  Node {node_index} has RPC port {port}");
 
             let node_dir_path = self.get_node_dir(*node_index)?;
             if utils::file_exists(&node_dir_path).await? {
@@ -561,7 +560,6 @@ impl Setup {
             // Create if doesn't exist
             let data_dir_path = self.get_data_dir(*node_index)?;
             tokio::fs::create_dir(&data_dir_path).await?;
-            node_config.disable_rpc = false;
             node_config.eth_chain_id = CHAIN_ID | 0x8000;
             node_config.data_dir = Some(utils::string_from_path(&data_dir_path)?);
             node_config

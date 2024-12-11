@@ -173,7 +173,7 @@ impl P2pNode {
     fn generate_child_config(parent: &NodeConfig, shard_id: u64) -> NodeConfig {
         let parent = parent.clone();
         NodeConfig {
-            json_rpc_port: parent.json_rpc_port + 1,
+            api_servers: vec![],
             eth_chain_id: shard_id,
             consensus: ConsensusConfig {
                 is_main: false,

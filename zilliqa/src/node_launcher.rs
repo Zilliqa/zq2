@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use http::{header, Method};
-use jsonrpsee::RpcModule;
 use libp2p::{futures::StreamExt, PeerId};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -38,7 +37,6 @@ use crate::{
 pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,
     pub config: NodeConfig,
-    pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
     pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
     pub request_failures: UnboundedReceiverStream<(PeerId, OutgoingMessageFailure)>,
@@ -123,27 +121,24 @@ impl NodeLauncher {
         )?;
         let node = Arc::new(Mutex::new(node));
 
-        let rpc_module = api::rpc_module(Arc::clone(&node));
-
-        if !config.disable_rpc {
-            trace!("Launching JSON-RPC server");
+        for api_server in &config.api_servers {
+            let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
             // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
             let cors = CorsLayer::new()
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE]);
             let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
-            let port = config.json_rpc_port;
             let server = jsonrpsee::server::ServerBuilder::new()
                 .set_http_middleware(middleware)
                 .set_id_provider(EthIdProvider)
-                .build((Ipv4Addr::UNSPECIFIED, port))
+                .build((Ipv4Addr::UNSPECIFIED, api_server.port))
                 .await;
 
             match server {
                 Ok(server) => {
-                    info!("JSON-RPC server listening on port {}", port);
-                    let handle = server.start(rpc_module.clone());
+                    info!("JSON-RPC server listening on port {}", api_server.port);
+                    let handle = server.start(rpc_module);
                     tokio::spawn(handle.stopped());
                 }
                 Err(e) => {
@@ -154,7 +149,6 @@ impl NodeLauncher {
 
         let launcher = NodeLauncher {
             node,
-            rpc_module,
             broadcasts: broadcasts_receiver,
             requests: requests_receiver,
             request_failures: request_failures_receiver,

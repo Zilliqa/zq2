@@ -18,15 +18,20 @@ use super::{
 };
 use crate::{
     api::to_hex::ToHex,
+    cfg::EnabledApi,
     crypto::Hash,
     inspector::{self, CreatorInspector, OtterscanOperationInspector, OtterscanTraceInspector},
     node::Node,
     time::SystemTime,
 };
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
+        enabled_apis,
         [
             ("ots_getApiLevel", get_otterscan_api_level),
             ("ots_getBlockDetails", get_block_details),
