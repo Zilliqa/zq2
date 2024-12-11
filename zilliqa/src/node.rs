@@ -153,6 +153,7 @@ pub struct Node {
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
+    watchdog: WatchDogDebounce,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -167,6 +168,13 @@ impl ChainId {
     pub fn zil(&self) -> u64 {
         self.eth - 0x8000
     }
+}
+
+pub const WATCHDOG_HISTORY_LEN: u64 = 10;
+#[derive(Default, Debug)]
+pub struct WatchDogDebounce {
+    pub count: u64,
+    pub value: u64,
 }
 
 impl Node {
@@ -193,6 +201,7 @@ impl Node {
             config.state_cache_size,
         )?);
         let node = Node {
+            watchdog: WatchDogDebounce::default(),
             config: config.clone(),
             peer_id,
             message_sender: message_sender.clone(),
@@ -204,6 +213,35 @@ impl Node {
             peer_num,
         };
         Ok(node)
+    }
+
+    pub fn watchdog(&mut self) -> Result<()> {
+        // If watchdog is disabled, then do nothing.
+        if systemd::daemon::watchdog_enabled(false).unwrap_or_default() == 0 {
+            return Ok(());
+        }
+
+        // 1. Collect sample
+        let sample = self
+            .db
+            .get_highest_canonical_block_number()?
+            .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
+
+        if self.watchdog.value == sample {
+            self.watchdog.count += 1;
+        } else {
+            self.watchdog.value = sample;
+            self.watchdog.count = 0;
+        }
+
+        // 2. Internal check to see if node is stuck.
+        if self.watchdog.count > WATCHDOG_HISTORY_LEN {
+            // 3. External check to see if others are stuck.
+        }
+
+        // 4. Reset watchdog timer
+        systemd::daemon::notify(false, [(systemd::daemon::STATE_WATCHDOG, "1")].iter())?;
+        Ok(())
     }
 
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {

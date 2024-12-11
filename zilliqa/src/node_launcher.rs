@@ -30,7 +30,7 @@ use crate::{
     crypto::SecretKey,
     health::HealthLayer,
     message::{ExternalMessage, InternalMessage},
-    node::{self, OutgoingMessageFailure},
+    node::{self, OutgoingMessageFailure, WATCHDOG_HISTORY_LEN},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
 };
 
@@ -179,7 +179,7 @@ impl NodeLauncher {
 
         // Schedule a watchdog task
         let wdt_usec = systemd::daemon::watchdog_enabled(false)?;
-        let watchdog = time::sleep(Duration::from_micros(wdt_usec / 2));
+        let watchdog = time::sleep(Duration::from_micros(wdt_usec / WATCHDOG_HISTORY_LEN));
         tokio::pin!(watchdog);
 
         self.node_launched = true;
@@ -276,7 +276,7 @@ impl NodeLauncher {
                         KeyValue::new(MESSAGING_DESTINATION_NAME, "watchdog"),
                     ];
                     let start = SystemTime::now();
-                    // self.node.lock().unwrap().watchdog();
+                    self.node.lock().unwrap().watchdog().expect("Watchdog Error");
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,
