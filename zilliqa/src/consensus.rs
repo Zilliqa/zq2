@@ -13,6 +13,7 @@ use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use libp2p::PeerId;
+use once_cell::sync::Lazy;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -22,6 +23,7 @@ use crate::{
     block_store::BlockStore,
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
+    contracts,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -1224,6 +1226,11 @@ impl Consensus {
             Ok(())
         })?;
 
+        if self.block_is_first_in_epoch(proposal.header.number) {
+            // Update state with any contract upgrades for this block
+            self.contract_upgrade_apply_state_change(&mut state, proposal.header)?;
+        }
+
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1249,6 +1256,27 @@ impl Consensus {
 
         // Return the final proposal
         Ok(Some(proposal))
+    }
+
+    /// If there are any contract updates to be done then apply them to the state passed in
+    fn contract_upgrade_apply_state_change(
+        &mut self,
+        state: &mut State,
+        block_header: BlockHeader,
+    ) -> Result<()> {
+        if let Some(deposit_v3_deploy_height) = self
+            .config
+            .consensus
+            .contract_upgrade_block_heights
+            .deposit_v3
+        {
+            if deposit_v3_deploy_height == block_header.number {
+                let deposit_v3_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+                state.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
+            }
+        }
+        Ok(())
     }
 
     /// Assembles the Proposal block early.
@@ -2598,6 +2626,10 @@ impl Consensus {
         &self.state
     }
 
+    pub fn state_mut(&mut self) -> &mut State {
+        &mut self.state
+    }
+
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
             .block_store
@@ -3104,6 +3136,13 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
+
+        if self.block_is_first_in_epoch(block.header.number) {
+            // Update state with any contract upgrades for this block
+            let mut state_clone = self.state.clone();
+            self.contract_upgrade_apply_state_change(&mut state_clone, block.header)?;
+            self.state = state_clone;
+        }
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(

@@ -13,7 +13,7 @@ use crate::exec::PendingState;
 
 pub struct PopVerify;
 
-// keep in-sync with zilliqa/src/contracts/deposit.sol
+// keep in-sync with zilliqa/src/contracts/deposit_v2.sol
 impl PopVerify {
     const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
     fn pop_verify(
