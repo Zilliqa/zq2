@@ -30,9 +30,16 @@ use crate::{
     crypto::SecretKey,
     health::HealthLayer,
     message::{ExternalMessage, InternalMessage},
-    node::{self, OutgoingMessageFailure, WATCHDOG_HISTORY_LEN},
+    node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
 };
+
+const WATCHDOG_THRESHOLD: u64 = 6;
+#[derive(Default, Debug)]
+pub struct WatchDogDebounce {
+    pub count: u64,
+    pub value: u64,
+}
 
 pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,
@@ -45,6 +52,7 @@ pub struct NodeLauncher {
     /// Channel used to steer next sleep time
     pub reset_timeout_receiver: UnboundedReceiverStream<Duration>,
     node_launched: bool,
+    watchdog: WatchDogDebounce,
 }
 
 // If the `fake_response_channel` feature is enabled, swap out the libp2p ResponseChannel for a `u64`. In our
@@ -157,6 +165,7 @@ impl NodeLauncher {
             reset_timeout_receiver,
             node_launched: false,
             config,
+            watchdog: WatchDogDebounce::default(),
         };
         let input_channels = NodeInputChannels {
             broadcasts: broadcasts_sender,
@@ -169,6 +178,54 @@ impl NodeLauncher {
         Ok((launcher, input_channels))
     }
 
+    async fn handle_watchdog(&mut self) -> Result<()> {
+        // If watchdog is disabled, then do nothing.
+        // if systemd::daemon::watchdog_enabled(false).unwrap_or_default() == 0 {
+        //     return Ok(());
+        // }
+
+        // 1. Collect sample
+        let self_highest = self
+            .node
+            .lock()
+            .unwrap()
+            .db
+            .get_highest_canonical_block_number()?
+            .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
+
+        // 1.5 Debounce
+        if self.watchdog.value == self_highest {
+            self.watchdog.count += 1;
+        } else {
+            self.watchdog.value = self_highest;
+            self.watchdog.count = 0;
+        }
+
+        // 2. Internal check to see if node is possibly stuck.
+        if self.watchdog.count > WATCHDOG_THRESHOLD {
+            // 3. External check to see if others are stuck too.
+            tracing::info!("EXTERNAL CHECK");
+            let result: String = self
+                .rpc_module
+                .call("eth_blockNumber", jsonrpsee::rpc_params![])
+                .await?;
+            let other_highest = result
+                .strip_prefix("0x")
+                .map(|s| u64::from_str_radix(s, 16).unwrap_or_default())
+                .unwrap_or_default();
+            tracing::info!("{:?}", result);
+
+            // 4. If self < others for > threshold, then we're stuck
+            if self_highest < other_highest {
+                return Ok(());
+            }
+        }
+
+        // 4. Reset watchdog timer
+        systemd::daemon::notify(false, [(systemd::daemon::STATE_WATCHDOG, "1")].iter())?;
+        Ok(())
+    }
+
     pub async fn start_shard_node(&mut self) -> Result<()> {
         if self.node_launched {
             return Err(anyhow!("Node already running!"));
@@ -177,10 +234,13 @@ impl NodeLauncher {
         let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
 
-        // Schedule a watchdog task
-        let wdt_usec = systemd::daemon::watchdog_enabled(false)?;
-        let watchdog = time::sleep(Duration::from_micros(wdt_usec / WATCHDOG_HISTORY_LEN));
+        // Schedule a watchdog handler
+        let wdt_dur = Duration::from_micros(
+            systemd::daemon::watchdog_enabled(false)?.max(60_000_000) / WATCHDOG_THRESHOLD,
+        );
+        let watchdog = time::sleep(wdt_dur);
         tokio::pin!(watchdog);
+        tracing::info!("Watchdog checks every {:?}", wdt_dur);
 
         self.node_launched = true;
 
@@ -276,7 +336,8 @@ impl NodeLauncher {
                         KeyValue::new(MESSAGING_DESTINATION_NAME, "watchdog"),
                     ];
                     let start = SystemTime::now();
-                    self.node.lock().unwrap().watchdog().expect("Watchdog Error");
+                    self.handle_watchdog().await?;
+                    watchdog.as_mut().reset(Instant::now() + wdt_dur);
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,
