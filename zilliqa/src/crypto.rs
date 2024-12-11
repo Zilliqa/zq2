@@ -253,6 +253,12 @@ impl SecretKey {
         blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes)
     }
 
+    // Used in deposit_v2
+    pub fn pop_prove(&self) -> blsful::ProofOfPossession<Bls12381G2Impl> {
+        let sk = blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes);
+        sk.proof_of_possession().expect("sk != 0")
+    }
+
     /// Sigature for staking deposit contract authorisation.
     /// Sign over message made up of validator node's bls public key, chain_id and evm address.
     pub fn deposit_auth_signature(
