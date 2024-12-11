@@ -18,7 +18,7 @@ pub struct ChainInstance {
 
 impl ChainInstance {
     pub async fn new(config: NetworkConfig) -> Result<Self> {
-        let chain = <Chain as std::str::FromStr>::from_str(&config.name.clone())?;
+        let chain = Chain::parse(&config.name.clone())?;
         Ok(Self {
             config: config.clone(),
             machines: Self::import_machines(&config.name, chain.get_project_id()?).await?,
@@ -31,7 +31,7 @@ impl ChainInstance {
     }
 
     pub fn chain(&self) -> Result<Chain> {
-        Ok(<Chain as std::str::FromStr>::from_str(&self.name())?)
+        Chain::parse(&self.name())
     }
 
     pub fn persistence_url(&self) -> Option<String> {
