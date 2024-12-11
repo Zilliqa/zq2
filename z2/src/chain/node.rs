@@ -527,6 +527,8 @@ impl ChainNode {
         // 4202 is not exposed, so enable everything for local debugging.
         let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
+        // Enable Otterscan indices on API nodes.
+        let enable_ots_indices = self.role == NodeRole::Api;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
@@ -541,6 +543,7 @@ impl ChainNode {
             &whitelisted_evm_contract_addresses,
         );
         ctx.insert("api_servers", &api_servers);
+        ctx.insert("enable_ots_indices", &enable_ots_indices);
 
         Ok(Tera::one_off(spec_config, &ctx, false)?)
     }

@@ -544,6 +544,7 @@ impl Setup {
                 block_request_batch_size: block_request_batch_size_default(),
                 state_rpc_limit: state_rpc_limit_default(),
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
+                enable_ots_indices: false,
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 
