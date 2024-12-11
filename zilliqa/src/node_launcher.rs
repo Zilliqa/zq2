@@ -177,6 +177,11 @@ impl NodeLauncher {
         let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
 
+        // Schedule a watchdog task
+        let wdt_usec = systemd::daemon::watchdog_enabled(false)?;
+        let watchdog = time::sleep(Duration::from_micros(wdt_usec / 2));
+        tokio::pin!(watchdog);
+
         self.node_launched = true;
 
         let meter = opentelemetry::global::meter("zilliqa");
@@ -263,6 +268,21 @@ impl NodeLauncher {
                     let (_source, _message) = message.expect("message stream should be infinite");
                     todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
+
+                () = &mut watchdog => {
+                    let attributes = vec![
+                        KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
+                        KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
+                        KeyValue::new(MESSAGING_DESTINATION_NAME, "watchdog"),
+                    ];
+                    let start = SystemTime::now();
+                    // self.node.lock().unwrap().watchdog();
+                    messaging_process_duration.record(
+                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
+                        &attributes,
+                    );
+                }
+
                 () = &mut sleep => {
                     let attributes = vec![
                         KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),

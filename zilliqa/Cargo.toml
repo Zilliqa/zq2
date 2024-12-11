@@ -85,6 +85,7 @@ serde_repr = "0.1.19"
 thiserror = "2.0.6"
 lru-mem = "0.3.0"
 opentelemetry-semantic-conventions = { version = "0.27.0", features = ["semconv_experimental"] }
+systemd = "0.10.0"
 
 [dev-dependencies]
 alloy = { version = "0.6.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }

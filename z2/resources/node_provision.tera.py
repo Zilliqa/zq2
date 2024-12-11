@@ -131,11 +131,12 @@ ZQ2_SERVICE_DESC="""
 Description=Zilliqa Node
 
 [Service]
+WatchdogSec=60s
 Type=forking
 ExecStart=/usr/local/bin/zq2.sh start """ + SECRET_KEY + """
 ExecStop=/usr/local/bin/zq2.sh stop
 RemainAfterExit=yes
-Restart=on-failure
+Restart=on-failure,on-watchdog
 RestartSec=10
 
 Environment="RUST_LOG=zilliqa=debug"
