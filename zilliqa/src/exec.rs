@@ -10,9 +10,8 @@ use std::{
     sync::{Arc, MutexGuard},
 };
 
-use alloy::primitives::{hex, Address, U256};
+use alloy::primitives::{hex, Address, Bytes, U256};
 use anyhow::{anyhow, Context, Result};
-use bytes::Bytes;
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
@@ -427,6 +426,8 @@ impl DatabaseRef for &State {
 pub struct ExternalContext<'a, I> {
     pub inspector: I,
     pub scilla_call_gas_exempt_addrs: &'a [Address],
+    // This flag is only used for zq1 whitelisted contracts, and it's used to detect if the entire transaction should be marked as failed
+    pub enforce_transaction_failure: bool,
 }
 
 impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
@@ -466,6 +467,7 @@ impl State {
             None,
             BlockHeader::genesis(Hash::ZERO),
             inspector::noop(),
+            false,
             BaseFeeCheck::Ignore,
         )?;
 
@@ -506,6 +508,7 @@ impl State {
         nonce: Option<u64>,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
         base_fee_check: BaseFeeCheck,
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
         let mut padded_view_number = [0u8; 32];
@@ -514,6 +517,7 @@ impl State {
         let external_context = ExternalContext {
             inspector,
             scilla_call_gas_exempt_addrs: &self.scilla_call_gas_exempt_addrs,
+            enforce_transaction_failure: false,
         };
         let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
@@ -537,7 +541,6 @@ impl State {
             .with_external_context(external_context)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
-            .append_handler_register(inspector_handle_register)
             .modify_cfg_env(|c| {
                 c.chain_id = self.chain_id.eth;
                 c.disable_base_fee = match base_fee_check {
@@ -567,12 +570,40 @@ impl State {
                     precompiles.extend(get_custom_precompiles());
                     precompiles
                 });
-            })
-            .build();
+            });
+        if enable_inspector {
+            evm = evm.append_handler_register(inspector_handle_register);
+        }
+        let mut evm = evm.build();
 
-        let e = evm.transact()?;
-        let (mut state, cfg) = evm.into_db_and_env_with_handler_cfg();
-        Ok((e, state.finalize(), cfg.env))
+        let mut result_and_state = evm.transact()?;
+        let mut ctx_with_handler = evm.into_context_with_handler_cfg();
+
+        // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
+        if ctx_with_handler
+            .context
+            .external
+            .enforce_transaction_failure
+        {
+            result_and_state.state.clear();
+            return Ok((
+                ResultAndState {
+                    result: ExecutionResult::Revert {
+                        gas_used: result_and_state.result.gas_used(),
+                        output: Bytes::default(),
+                    },
+                    state: result_and_state.state,
+                },
+                HashMap::new(),
+                ctx_with_handler.context.evm.inner.env,
+            ));
+        }
+
+        Ok((
+            result_and_state,
+            ctx_with_handler.context.evm.db.finalize(),
+            ctx_with_handler.context.evm.inner.env,
+        ))
     }
 
     // The rules here are somewhat odd, and inherited from ZQ1
@@ -667,6 +698,7 @@ impl State {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
@@ -694,6 +726,7 @@ impl State {
                     txn.nonce(),
                     current_block,
                     inspector,
+                    enable_inspector,
                     if blessed {
                         BaseFeeCheck::Ignore
                     } else {
@@ -1014,6 +1047,7 @@ impl State {
                 None,
                 current_block,
                 inspector::noop(),
+                false,
                 BaseFeeCheck::Validate,
             )?;
 
@@ -1050,6 +1084,7 @@ impl State {
             None,
             current_block,
             inspector::noop(),
+            false,
             BaseFeeCheck::Validate,
         )?;
 
@@ -1078,6 +1113,7 @@ impl State {
             None,
             current_block,
             inspector::noop(),
+            false,
             BaseFeeCheck::Ignore,
         )?;
 
@@ -1104,6 +1140,7 @@ impl State {
             None,
             current_block,
             inspector::noop(),
+            false,
             BaseFeeCheck::Ignore,
         )?;
         self.apply_delta_evm(&state)?;

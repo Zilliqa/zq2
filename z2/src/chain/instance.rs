@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
 
 use anyhow::{anyhow, Ok, Result};
 use serde_json::value::Value;
@@ -18,7 +18,7 @@ pub struct ChainInstance {
 
 impl ChainInstance {
     pub async fn new(config: NetworkConfig) -> Result<Self> {
-        let chain = <Chain as std::str::FromStr>::from_str(&config.name.clone())?;
+        let chain = Chain::from_str(&config.name.clone())?;
         Ok(Self {
             config: config.clone(),
             machines: Self::import_machines(&config.name, chain.get_project_id()?).await?,
@@ -31,7 +31,7 @@ impl ChainInstance {
     }
 
     pub fn chain(&self) -> Result<Chain> {
-        Ok(<Chain as std::str::FromStr>::from_str(&self.name())?)
+        Ok(Chain::from_str(&self.name())?)
     }
 
     pub fn persistence_url(&self) -> Option<String> {
@@ -113,9 +113,11 @@ impl ChainInstance {
                     .get("name")
                     .and_then(|n| n.as_str())
                     .ok_or_else(|| anyhow!("name is missing or not a string"))?;
+                // Zone is often reported as a URL. get only the last element..
                 let zone = i
                     .get("zone")
                     .and_then(|z| z.as_str())
+                    .map(|z| z.rsplit_once('/').map_or(z, |(_, y)| y))
                     .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
                 let labels: BTreeMap<String, String> = i
                     .get("labels")

@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -13,11 +12,11 @@ use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
 use crate::{
-    chain,
-    chain::node::NodeRole,
+    chain::{self, node::NodeRole},
+    deployer::ApiOperation,
     kpi,
     node_spec::{Composition, NodeSpec},
-    utils, validators,
+    utils,
 };
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
@@ -286,6 +285,12 @@ pub async fn run_deployer_generate_private_keys(
 ) -> Result<()> {
     println!("🦆 Running generate-private-keys for {config_file} .. ");
     deployer::run_generate_private_keys(config_file, node_selection, force).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
+    println!("🦆 Running API operation '{operation}' for {config_file} .. ");
+    deployer::run_api_operation(config_file, operation).await?;
     Ok(())
 }
 

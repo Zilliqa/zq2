@@ -18,10 +18,17 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
+consensus.scilla_call_gas_exempt_addrs = {{ whitelisted_evm_contract_addresses }}
 
 {%- if role == "checkpoint" %}
 # Checkpoint configuration
 do_checkpoints=true
 consensus.blocks_per_epoch=3600
 consensus.epochs_per_checkpoint=24
+{%- endif %}
+
+api_servers = {{ api_servers }}
+
+{%- if enable_ots_indices %}
+enable_ots_indices = true
 {%- endif %}
