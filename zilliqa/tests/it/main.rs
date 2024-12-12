@@ -180,8 +180,7 @@ fn node(
         Arc::new(AtomicUsize::new(0)),
     )?;
     let node = Arc::new(Mutex::new(node));
-    let rpc_module: RpcModule<Arc<Mutex<Node>>> =
-        api::rpc_module(node.clone(), &api::all_enabled());
+    let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
 
     Ok((
         TestNode {
@@ -357,6 +356,7 @@ impl Network {
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            remote_api_url: remote_api_url_default(),
             enable_ots_indices: true,
         };
 
@@ -480,6 +480,7 @@ impl Network {
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            remote_api_url: remote_api_url_default(),
             enable_ots_indices: true,
         };
 

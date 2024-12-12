@@ -132,6 +132,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         block_request_batch_size: block_request_batch_size_default(),
         state_rpc_limit: state_rpc_limit_default(),
         failed_request_sleep_duration: failed_request_sleep_duration_default(),
+        remote_api_url: remote_api_url_default(),
         enable_ots_indices: true,
     };
     let mut rng = network.rng.lock().unwrap();
