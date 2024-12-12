@@ -11,6 +11,7 @@ use clap_verbosity_flag::{InfoLevel, Verbosity};
 use z2lib::{
     chain,
     components::Component,
+    deployer::ApiOperation,
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
@@ -98,6 +99,8 @@ enum DeployerCommands {
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
+    /// Perform operation over the network API nodes
+    Api(DeployerApiArgs),
     /// Generate the node private keys. --force to replace if already existing
     GeneratePrivateKeys(DeployerGenerateActionsArgs),
     /// Generate the genesis key. --force to replace if already existing
@@ -220,6 +223,15 @@ pub struct DeployerGenerateGenesisArgs {
     /// Generate and replace the existing key
     #[clap(long)]
     force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerApiArgs {
+    /// The operation to perform over the API nodes
+    #[clap(long, short)]
+    operation: ApiOperation,
+    /// The network deployer config file
+    config_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -881,6 +893,17 @@ async fn main() -> Result<()> {
                             err
                         )
                     })?;
+                Ok(())
+            }
+            DeployerCommands::Api(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_api_operation(&config_file, arg.operation.clone())
+                    .await
+                    .map_err(|err| anyhow::anyhow!("Failed to run API operation: {}", err))?;
                 Ok(())
             }
         },
