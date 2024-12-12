@@ -20,7 +20,7 @@ jobs:
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Install dependencies
-        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
+        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler libsystemd-dev
       - name: Track PR Benchmarks
         run: |
           bencher run \

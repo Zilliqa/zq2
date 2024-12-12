@@ -3,7 +3,7 @@ FROM rust:1.83.0-slim-bullseye as builder
 ARG is_release=false
 RUN apt update -y && \
     apt upgrade -y && \
-    apt install -y protobuf-compiler
+    apt install -y protobuf-compiler libsystemd-dev pkg-config
 
 RUN apt autoremove
 
