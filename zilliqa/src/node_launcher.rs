@@ -208,7 +208,7 @@ impl NodeLauncher {
             // 3. External check to see if others are stuck too.
             let client = jsonrpsee::http_client::HttpClientBuilder::default()
                 .request_timeout(Duration::from_secs(5)) // fast call
-                .build(self.config.remote_rpc_url.as_str())?;
+                .build(self.config.remote_api_url.as_str())?;
 
             let result: String = client
                 .request("eth_blockNumber", jsonrpsee::rpc_params![])
@@ -217,7 +217,7 @@ impl NodeLauncher {
                 .unwrap_or_else(|e| {
                     tracing::error!(
                         "WDT remote call to {} failed: {e}",
-                        self.config.remote_rpc_url,
+                        self.config.remote_api_url,
                     );
                     "0x0".to_string()
                 });

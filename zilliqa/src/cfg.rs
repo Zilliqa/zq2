@@ -113,8 +113,8 @@ pub struct NodeConfig {
     pub failed_request_sleep_duration: Duration,
     /// Point to API gateway - used to check for block progress.
     /// Defaults to localhost.
-    #[serde(default = "remote_rpc_default")]
-    pub remote_rpc_url: Url,
+    #[serde(default = "remote_api_url_default")]
+    pub remote_api_url: Url,
     /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
     #[serde(default)]
     pub enable_ots_indices: bool,
@@ -136,7 +136,7 @@ impl Default for NodeConfig {
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
-            remote_rpc_url: remote_rpc_default(),
+            remote_api_url: remote_api_url_default(),
             enable_ots_indices: false,
         }
     }
@@ -181,7 +181,7 @@ pub fn state_cache_size_default() -> usize {
     256 * 1024 * 1024 // 256 MiB
 }
 
-pub fn remote_rpc_default() -> Url {
+pub fn remote_api_url_default() -> Url {
     Url::parse(&format!("http://localhost:{}", json_rpc_port_default())).unwrap()
 }
 
