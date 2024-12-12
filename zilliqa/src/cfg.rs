@@ -182,7 +182,7 @@ pub fn state_cache_size_default() -> usize {
 }
 
 pub fn remote_api_url_default() -> Url {
-    Url::parse(&format!("http://localhost:{}", json_rpc_port_default())).unwrap()
+    Url::parse("http://localhost:4201").unwrap()
 }
 
 pub fn eth_chain_id_default() -> u64 {

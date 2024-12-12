@@ -21,9 +21,9 @@ use zilliqa::{
         block_request_limit_default, consensus_timeout_default, empty_block_timeout_default,
         eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
         max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
-        state_rpc_limit_default, total_native_token_supply_default, Amount, ApiServer,
-        ConsensusConfig, GenesisDeposit,
+        remote_api_url_default, scilla_address_default, scilla_ext_libs_path_default,
+        scilla_stdlib_dir_default, state_rpc_limit_default, total_native_token_supply_default,
+        Amount, ApiServer, ConsensusConfig, GenesisDeposit,
     },
     transaction::EvmGas,
 };

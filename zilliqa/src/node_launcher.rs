@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use http::{header, Method};
-use jsonrpsee::{core::client::ClientT, RpcModule};
+use jsonrpsee::core::client::ClientT;
 use libp2p::{futures::StreamExt, PeerId};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -182,9 +182,9 @@ impl NodeLauncher {
 
     async fn handle_watchdog(&mut self) -> Result<()> {
         // If watchdog is disabled, then do nothing.
-        // if systemd::daemon::watchdog_enabled(false).unwrap_or_default() == 0 {
-        //     return Ok(());
-        // }
+        if systemd::daemon::watchdog_enabled(false).unwrap_or_default() == 0 {
+            return Ok(());
+        }
 
         // 1. Collect quick sample
         let self_highest = self
@@ -194,6 +194,8 @@ impl NodeLauncher {
             .db
             .get_highest_canonical_block_number()?
             .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
+
+        tracing::debug!("WDT check {self_highest}");
 
         // 1.5 Debounce
         if self.watchdog.value == self_highest {
@@ -222,14 +224,14 @@ impl NodeLauncher {
                     "0x0".to_string()
                 });
 
-            let other_highest = result
+            let remote_highest = result
                 .strip_prefix("0x")
                 .map(|s| u64::from_str_radix(s, 16).unwrap_or_default())
                 .unwrap_or_default();
 
             // 4. If self < others for > threshold, then we're stuck
-            if self_highest < other_highest {
-                tracing::warn!(?self_highest, ?other_highest, "WDT node stuck at");
+            if self_highest < remote_highest {
+                tracing::warn!(?self_highest, ?remote_highest, "WDT node stuck at");
                 return Ok(());
             } else {
                 tracing::warn!(
