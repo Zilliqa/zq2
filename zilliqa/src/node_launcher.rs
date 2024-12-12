@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use http::{header, Method};
+use jsonrpsee::RpcModule;
 use libp2p::{futures::StreamExt, PeerId};
 use node::Node;
 use opentelemetry::KeyValue;
