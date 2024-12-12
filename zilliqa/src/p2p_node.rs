@@ -356,6 +356,19 @@ impl P2pNode {
                         InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, path) => {
                             self.task_threads.spawn(async move { db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, path) });
                         }
+                        InternalMessage::RestartShard(shard_id) => {
+                            // remove existing node
+                            let topic = Self::shard_id_to_topic(shard_id);
+                            self.shard_nodes.remove(&topic.hash());
+                            // restart node
+                            let shard_config = self.config.nodes
+                                .iter()
+                                .find(|shard_config| shard_config.eth_chain_id == shard_id)
+                                .cloned()
+                                .unwrap_or_else(
+                                    || Self::generate_child_config(self.config.nodes.first().unwrap(), shard_id));
+                            self.add_shard_node(shard_config.clone()).await?;
+                        },
                     }
                 },
                 message = self.request_responses_receiver.next() => {

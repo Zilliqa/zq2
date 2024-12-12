@@ -254,13 +254,12 @@ impl NodeLauncher {
         let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
 
-        let wdt_dur = Duration::from_secs(6);
-        // let wdt_dur = self
-        //     .config
-        //     .consensus
-        //     .consensus_timeout
-        //     .add(self.config.consensus.empty_block_timeout)
-        //     .saturating_mul(5); // every 30s or so
+        let wdt_dur = self
+            .config
+            .consensus
+            .consensus_timeout
+            .add(self.config.consensus.empty_block_timeout)
+            .saturating_mul(5); // every 30s or so
 
         let watchdog = time::sleep(wdt_dur);
         tokio::pin!(watchdog);
@@ -379,7 +378,7 @@ impl NodeLauncher {
                     ];
                     let start = SystemTime::now();
                     if self.internal_watchdog().await? {
-                        tracing::info!("WDT termination.");
+                        tracing::info!("WDT restarting {shard_id}.");
                         return self.node.lock().unwrap().internal_restart(shard_id);
                     };
                     watchdog.as_mut().reset(Instant::now() + wdt_dur);
