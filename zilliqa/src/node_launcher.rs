@@ -186,7 +186,7 @@ impl NodeLauncher {
         //     return Ok(());
         // }
 
-        // 1. Collect sample
+        // 1. Collect quick sample
         let self_highest = self
             .node
             .lock()
@@ -207,6 +207,7 @@ impl NodeLauncher {
         if self.watchdog.count >= WATCHDOG_THRESHOLD {
             // 3. External check to see if others are stuck too.
             let client = jsonrpsee::http_client::HttpClientBuilder::default()
+                .request_timeout(Duration::from_secs(5)) // fast call
                 .build(self.config.remote_rpc_url.as_str())?;
 
             let result: String = client
