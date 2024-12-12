@@ -108,7 +108,6 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             consensus_timeout: consensus_timeout_default(),
             genesis_deposits: Vec::new(),
             main_shard_id: None,
-            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
             scilla_address: scilla_address_default(),
             blocks_per_epoch: 10,
             epochs_per_checkpoint: 1,
