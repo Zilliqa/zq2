@@ -1,11 +1,13 @@
 use std::{
     net::Ipv4Addr,
+    ops::Add,
     sync::{atomic::AtomicUsize, Arc, Mutex},
     time::{Duration, SystemTime},
 };
 
 use anyhow::{anyhow, Result};
 use http::{header, Method};
+use jsonrpsee::core::client::ClientT;
 use libp2p::{futures::StreamExt, PeerId};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -34,6 +36,11 @@ use crate::{
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
 };
 
+#[derive(Debug, Default)]
+struct WatchDogDebounce {
+    value: u64,
+    count: u64,
+}
 pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,
     pub config: NodeConfig,
@@ -45,6 +52,7 @@ pub struct NodeLauncher {
     /// Channel used to steer next sleep time
     pub reset_timeout_receiver: UnboundedReceiverStream<Duration>,
     node_launched: bool,
+    watchdog: WatchDogDebounce,
 }
 
 // If the `fake_response_channel` feature is enabled, swap out the libp2p ResponseChannel for a `u64`. In our
@@ -157,6 +165,7 @@ impl NodeLauncher {
             reset_timeout_receiver,
             node_launched: false,
             config,
+            watchdog: Default::default(),
         };
         let input_channels = NodeInputChannels {
             broadcasts: broadcasts_sender,
@@ -169,6 +178,74 @@ impl NodeLauncher {
         Ok((launcher, input_channels))
     }
 
+    async fn internal_watchdog(&mut self) -> Result<bool> {
+        // If watchdog is disabled, then do nothing.
+        if self.config.remote_api_url.is_none() {
+            return Ok(false);
+        }
+
+        // 1. Collect quick sample
+        let self_highest = self
+            .node
+            .lock()
+            .unwrap()
+            .db
+            .get_highest_canonical_block_number()?
+            .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
+
+        tracing::debug!(
+            "WDT check value: {} count: {}",
+            self.watchdog.value,
+            self.watchdog.count
+        );
+
+        // 1.5 Debounce
+        if self.watchdog.value != self_highest {
+            self.watchdog.value = self_highest;
+            self.watchdog.count = 0;
+        } else {
+            self.watchdog.count += 1;
+        }
+
+        // 2. Internal check to see if node is possibly stuck.
+        if self.watchdog.count > 3 {
+            let rpc_url = self.config.remote_api_url.clone().unwrap_or_default();
+            // 3. External check to see if others are stuck too.
+            let client = jsonrpsee::http_client::HttpClientBuilder::default()
+                .request_timeout(self.config.consensus.consensus_timeout / 2) // fast call
+                .build(rpc_url.clone())?;
+
+            let result = client
+                .request("eth_blockNumber", jsonrpsee::rpc_params![])
+                .await
+                // do not restart due to network/upstream errors, check again later.
+                .unwrap_or_else(|e| {
+                    tracing::error!("WDT remote call to {} failed: {e}", rpc_url);
+                    "0x0".to_string()
+                });
+
+            let remote_highest = result
+                .strip_prefix("0x")
+                .map(|s| u64::from_str_radix(s, 16).unwrap_or_default())
+                .unwrap_or_default();
+
+            // 4. If self < others for > threshold, then we're stuck
+            if self_highest < remote_highest {
+                tracing::warn!(?self_highest, ?remote_highest, "WDT node stuck at");
+                return Ok(true);
+            } else {
+                tracing::warn!(
+                    ?self_highest,
+                    ?remote_highest,
+                    "WDT network possibly stalled at"
+                )
+            }
+        }
+
+        // 4. Reset watchdog, do nothing.
+        Ok(false)
+    }
+
     pub async fn start_shard_node(&mut self) -> Result<()> {
         if self.node_launched {
             return Err(anyhow!("Node already running!"));
@@ -176,6 +253,17 @@ impl NodeLauncher {
 
         let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
+
+        let wdt_dur = self
+            .config
+            .consensus
+            .consensus_timeout
+            .add(self.config.consensus.empty_block_timeout)
+            .saturating_mul(5); // every 30s or so
+
+        let watchdog = time::sleep(wdt_dur);
+        tokio::pin!(watchdog);
+        tracing::info!("Watchdog checks every {:?}", wdt_dur);
 
         self.node_launched = true;
 
@@ -281,6 +369,24 @@ impl NodeLauncher {
                         &attributes,
                     );
                 },
+
+                () = &mut watchdog => {
+                    let attributes = vec![
+                        KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
+                        KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
+                        KeyValue::new(MESSAGING_DESTINATION_NAME, "watchdog"),
+                    ];
+                    let start = SystemTime::now();
+                    if self.internal_watchdog().await? {
+                        tracing::info!("WDT termination.");
+                        break Ok(());
+                    };
+                    watchdog.as_mut().reset(Instant::now() + wdt_dur);
+                    messaging_process_duration.record(
+                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
+                        &attributes,
+                    );
+                }
                 r = self.reset_timeout_receiver.next() => {
                     let sleep_time = r.expect("reset timeout stream should be infinite");
                     trace!(?sleep_time, "timeout reset");
