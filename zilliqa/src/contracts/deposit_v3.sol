@@ -44,14 +44,13 @@ struct Staker {
     address controlAddress;
     // The address which rewards for this staker will be sent to.
     address rewardAddress;
-    // The address whose key with which validators sign cross-chain events 
+    // The address whose key with which validators sign cross-chain events
     address signingAddress;
     // libp2p peer ID, corresponding to the staker's `blsPubKey`
     bytes peerId;
     // Invariants: Items are always sorted by `startedAt`. No two items have the same value of `startedAt`.
     Deque.Withdrawals withdrawals;
 }
-
 
 contract Deposit is UUPSUpgradeable {
     // Emitted to inform that a new staker identified by `blsPubKey`
