@@ -11,6 +11,9 @@ data_dir = "/data"
 consensus.genesis_accounts = [ ["{{ genesis_address }}", "900_000_000_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = [ ["{{ bootstrap_bls_public_key }}", "{{ bootstrap_peer_id }}", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "{{ genesis_address }}"] ]
 
+# API gateway
+remote_api_url = "{{ remote_api_url }}"
+
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
 consensus.blocks_per_hour = 3600
