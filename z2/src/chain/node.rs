@@ -630,7 +630,12 @@ impl ChainNode {
         progress_bar.inc(1);
 
         progress_bar.start("Exporting the backup file");
-        machine.copy_from("/tmp/data.zip", filename).await?;
+        if filename.starts_with("gs://") {
+            let command = format!("sudo gsutil -m cp /tmp/data.zip {}", filename);
+            machine.run(&command, false).await?;
+        } else {
+            machine.copy_from("/tmp/data.zip", filename).await?;
+        }
         progress_bar.inc(1);
 
         progress_bar.start("Cleaning the backup files");
@@ -660,7 +665,12 @@ impl ChainNode {
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Importing the backup file", self.name()));
-        machine.copy_to(&[filename], "/tmp/data.zip").await?;
+        if filename.starts_with("gs://") {
+            let command = format!("sudo gsutil -m cp {} /tmp/data.zip", filename);
+            machine.run(&command, false).await?;
+        } else {
+            machine.copy_to(&[filename], "/tmp/data.zip").await?;
+        }
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Deleting the data folder", self.name()));

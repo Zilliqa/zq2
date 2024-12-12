@@ -426,7 +426,7 @@ Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
-  -f, --file <FILE>  The path of the backup file
+  -f, --file <FILE>  The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
   -v, --verbose...   Increase logging verbosity
   -q, --quiet...     Decrease logging verbosity
   -h, --help         Print help
@@ -460,7 +460,7 @@ Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
-  -f, --file <FILE>                  The path of the backup file
+  -f, --file <FILE>                  The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
       --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
   -v, --verbose...                   Increase logging verbosity
   -q, --quiet...                     Decrease logging verbosity
