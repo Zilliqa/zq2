@@ -185,7 +185,7 @@ pub struct DeployerRpcArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerBackupArgs {
-    /// The path of the backup file
+    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long, short)]
     file: String,
     /// The network deployer config file
@@ -194,7 +194,7 @@ pub struct DeployerBackupArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerRestoreArgs {
-    /// The path of the backup file
+    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long, short)]
     file: String,
     /// Define the number of nodes to process in parallel. Default: 50
