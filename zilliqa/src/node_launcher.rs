@@ -35,7 +35,8 @@ use crate::{
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
 };
 
-const WATCHDOG_THRESHOLD: u64 = 6;
+// 3 samples should be sufficient to determine if a node is stuck.
+const WATCHDOG_THRESHOLD: u64 = 3;
 #[derive(Default, Debug)]
 pub struct WatchDogDebounce {
     pub count: u64,
@@ -229,11 +230,19 @@ impl NodeLauncher {
             if self_highest < other_highest {
                 tracing::warn!(?self_highest, ?other_highest, "WDT node stuck at");
                 return Ok(());
+            } else {
+                tracing::warn!(
+                    ?self_highest,
+                    ?remote_highest,
+                    "WDT network possibly stalled at"
+                )
             }
         }
 
         // 4. Reset systemd watchdog
-        systemd::daemon::notify(false, [(systemd::daemon::STATE_WATCHDOG, "1")].iter())?;
+        if !systemd::daemon::notify(false, [(systemd::daemon::STATE_WATCHDOG, "1")].iter())? {
+            tracing::error!("Failed to notify systemd.");
+        }
         Ok(())
     }
 
