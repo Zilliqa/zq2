@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use http::{header, Method};
-use jsonrpsee::RpcModule;
+use jsonrpsee::{core::client::ClientT, RpcModule};
 use libp2p::{futures::StreamExt, PeerId};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -205,21 +205,29 @@ impl NodeLauncher {
         // 2. Internal check to see if node is possibly stuck.
         if self.watchdog.count >= WATCHDOG_THRESHOLD {
             // 3. External check to see if others are stuck too.
-            tracing::info!("WDT internal check: {self_highest}");
+            let client = jsonrpsee::http_client::HttpClientBuilder::default()
+                .build(self.config.remote_rpc_url.as_str())?;
 
-            let result: String = self
-                .rpc_module
-                .call("eth_blockNumber", jsonrpsee::rpc_params![])
-                .await?;
+            let result: String = client
+                .request("eth_blockNumber", jsonrpsee::rpc_params![])
+                .await
+                // do not restart due to network/upstream errors, check again later.
+                .unwrap_or_else(|e| {
+                    tracing::error!(
+                        "WDT remote call to {} failed: {e}",
+                        self.config.remote_rpc_url,
+                    );
+                    "0x0".to_string()
+                });
+
             let other_highest = result
                 .strip_prefix("0x")
                 .map(|s| u64::from_str_radix(s, 16).unwrap_or_default())
                 .unwrap_or_default();
-            tracing::info!("WDT external check: {:?}", other_highest);
 
             // 4. If self < others for > threshold, then we're stuck
             if self_highest < other_highest {
-                tracing::warn!("WDT stuck node.");
+                tracing::warn!(?self_highest, ?other_highest, "WDT node stuck at");
                 return Ok(());
             }
         }

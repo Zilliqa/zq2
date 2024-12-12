@@ -111,7 +111,8 @@ pub struct NodeConfig {
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
     pub failed_request_sleep_duration: Duration,
-    /// Remote RPC gateway
+    /// Point to API gateway - used to check for block progress.
+    /// Defaults to localhost.
     #[serde(default = "remote_rpc_default")]
     pub remote_rpc_url: Url,
     /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
