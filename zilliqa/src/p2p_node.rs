@@ -231,6 +231,7 @@ impl P2pNode {
 
         if let Some((peer, address)) = &self.config.bootstrap_address {
             if self.swarm.local_peer_id() != peer {
+                tracing::info!("Dialling {peer} at {}", address);
                 self.swarm.dial(
                     DialOpts::peer_id(*peer)
                         .override_role() // hole-punch

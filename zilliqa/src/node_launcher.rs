@@ -202,9 +202,10 @@ impl NodeLauncher {
         }
 
         // 2. Internal check to see if node is possibly stuck.
-        if self.watchdog.count > WATCHDOG_THRESHOLD {
+        if self.watchdog.count >= WATCHDOG_THRESHOLD {
             // 3. External check to see if others are stuck too.
-            tracing::info!("EXTERNAL CHECK");
+            tracing::info!("WDT internal check: {self_highest}");
+
             let result: String = self
                 .rpc_module
                 .call("eth_blockNumber", jsonrpsee::rpc_params![])
@@ -213,15 +214,16 @@ impl NodeLauncher {
                 .strip_prefix("0x")
                 .map(|s| u64::from_str_radix(s, 16).unwrap_or_default())
                 .unwrap_or_default();
-            tracing::info!("{:?}", result);
+            tracing::info!("WDT external check: {:?}", other_highest);
 
             // 4. If self < others for > threshold, then we're stuck
             if self_highest < other_highest {
+                tracing::warn!("WDT stuck node.");
                 return Ok(());
             }
         }
 
-        // 4. Reset watchdog timer
+        // 4. Reset systemd watchdog
         systemd::daemon::notify(false, [(systemd::daemon::STATE_WATCHDOG, "1")].iter())?;
         Ok(())
     }
@@ -234,7 +236,7 @@ impl NodeLauncher {
         let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
 
-        // Schedule a watchdog handler
+        // Schedule a systemd watchdog handler
         let wdt_dur = Duration::from_micros(
             systemd::daemon::watchdog_enabled(false)?.max(60_000_000) / WATCHDOG_THRESHOLD,
         );
