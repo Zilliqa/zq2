@@ -500,11 +500,8 @@ impl Consensus {
             return Ok(None);
         }
 
-        let (
-            time_since_last_view_change,
-            exponential_backoff_timeout,
-            minimum_time_left_for_empty_block,
-        ) = self.get_consensus_timeout_params()?;
+        let (time_since_last_view_change, exponential_backoff_timeout, _) =
+            self.get_consensus_timeout_params();
 
         trace!(
             "timeout reached create_next_block_on_timeout: {}",
@@ -514,15 +511,8 @@ impl Consensus {
             let empty_block_timeout_ms =
                 self.config.consensus.empty_block_timeout.as_millis() as u64;
 
-            let has_txns_for_next_block = self.transaction_pool.has_txn_ready();
-
-            // Check if enough time elapsed or there's something in mempool or we don't have enough
-            // time but let's try at least until new view can happen
-            if time_since_last_view_change > empty_block_timeout_ms
-                || has_txns_for_next_block
-                || (time_since_last_view_change + minimum_time_left_for_empty_block
-                    >= exponential_backoff_timeout)
-            {
+            // Check if enough time elapsed to propse block
+            if time_since_last_view_change > empty_block_timeout_ms {
                 if let Ok(Some((block, transactions))) = self.propose_new_block() {
                     self.create_next_block_on_timeout = false;
                     return Ok(Some((
@@ -543,7 +533,6 @@ impl Consensus {
 
         // Now consider whether we want to timeout - the timeout duration doubles every time, so it
         // Should eventually have all nodes on the same view
-
         if time_since_last_view_change < exponential_backoff_timeout {
             trace!(
                 "Not proceeding with view change. Current view: {} - time since last: {}, timeout requires: {}",
