@@ -193,12 +193,6 @@ impl NodeLauncher {
             .get_highest_canonical_block_number()?
             .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
 
-        tracing::debug!(
-            "WDT check value: {} count: {}",
-            self.watchdog.value,
-            self.watchdog.count
-        );
-
         // 1.5 Debounce
         if self.watchdog.value != self_highest {
             self.watchdog.value = self_highest;
@@ -206,6 +200,12 @@ impl NodeLauncher {
         } else {
             self.watchdog.count += 1;
         }
+
+        tracing::debug!(
+            "WDT check value: {} count: {}",
+            self.watchdog.value,
+            self.watchdog.count
+        );
 
         // 2. Internal check to see if node is possibly stuck.
         if self.watchdog.count > 3 {
@@ -246,7 +246,7 @@ impl NodeLauncher {
         Ok(false)
     }
 
-    pub async fn start_shard_node(&mut self) -> Result<()> {
+    pub async fn start_shard_node(&mut self, shard_id: u64) -> Result<()> {
         if self.node_launched {
             return Err(anyhow!("Node already running!"));
         }
@@ -254,12 +254,13 @@ impl NodeLauncher {
         let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
 
-        let wdt_dur = self
-            .config
-            .consensus
-            .consensus_timeout
-            .add(self.config.consensus.empty_block_timeout)
-            .saturating_mul(5); // every 30s or so
+        let wdt_dur = Duration::from_secs(6);
+        // let wdt_dur = self
+        //     .config
+        //     .consensus
+        //     .consensus_timeout
+        //     .add(self.config.consensus.empty_block_timeout)
+        //     .saturating_mul(5); // every 30s or so
 
         let watchdog = time::sleep(wdt_dur);
         tokio::pin!(watchdog);
@@ -379,7 +380,7 @@ impl NodeLauncher {
                     let start = SystemTime::now();
                     if self.internal_watchdog().await? {
                         tracing::info!("WDT termination.");
-                        break Ok(());
+                        return self.node.lock().unwrap().internal_restart(shard_id);
                     };
                     watchdog.as_mut().reset(Instant::now() + wdt_dur);
                     messaging_process_duration.record(

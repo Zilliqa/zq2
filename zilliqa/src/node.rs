@@ -353,6 +353,11 @@ impl Node {
         Ok(())
     }
 
+    pub fn internal_restart(&self, shard_id: u64) -> Result<()> {
+        self.message_sender
+            .send_message_to_coordinator(InternalMessage::LaunchShard(shard_id))
+    }
+
     pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
         let to = self.chain_id.eth;
         tracing::debug!(%from, %to, %message, "handling message");
