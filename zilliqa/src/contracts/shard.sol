@@ -4,15 +4,15 @@ pragma solidity ^0.8.4;
 contract Shard {
     event ValidatorAdded(address validator);
 
-    uint public id;
-    uint public parentShard;
-    bytes32 genesis;
+    uint256 public id;
+    uint256 public parentShard;
+    bytes32 internal genesis;
 
     uint16 public consensusTimeoutMs;
 
     constructor(
-        uint _id,
-        uint parentId,
+        uint256 _id,
+        uint256 parentId,
         uint16 consensusTimeout,
         bytes32 genesisHash
     ) {

@@ -13,7 +13,7 @@ use super::{hex, hex_no_prefix, option_hex_no_prefix};
 use crate::{
     api::{
         to_hex::ToHex,
-        zil::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
+        zilliqa::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
     },
     exec::{ScillaError, ScillaException},
     message::Block,
@@ -33,7 +33,7 @@ pub struct TxBlock {
 }
 
 impl TxBlock {
-    pub fn new(block: &Block) -> Self {
+    pub fn new(block: &Block, txn_fees: u128) -> Self {
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlock {
@@ -42,7 +42,7 @@ impl TxBlock {
                 gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
                 gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
                 rewards: 0,
-                txn_fees: 0,
+                txn_fees,
                 prev_block_hash: block.parent_hash().into(),
                 block_num: block.number(),
                 timestamp: block
@@ -109,7 +109,7 @@ pub struct TxBlockVerbose {
 }
 
 impl TxBlockVerbose {
-    pub fn new(block: &Block, proposer: Address) -> Self {
+    pub fn new(block: &Block, txn_fees: u128, proposer: Address) -> Self {
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlockVerbose {
@@ -119,7 +119,7 @@ impl TxBlockVerbose {
                     gas_limit: ScillaGas::from(block.gas_limit()), // In Scilla
                     gas_used: ScillaGas::from(block.gas_used()),   // In Scilla
                     rewards: 0,
-                    txn_fees: 0,
+                    txn_fees,
                     prev_block_hash: block.parent_hash().into(),
                     block_num: block.number(),
                     timestamp: block
@@ -367,19 +367,7 @@ impl GetTxResponse {
                 errors: receipt
                     .errors
                     .into_iter()
-                    .map(|(k, v)| {
-                        (
-                            k,
-                            v.into_iter()
-                                .map(|err| match err {
-                                    ScillaError::CallFailed => 7,
-                                    ScillaError::CreateFailed => 8,
-                                    ScillaError::OutOfGas => 21,
-                                    ScillaError::InsufficientBalance => 22,
-                                })
-                                .collect(),
-                        )
-                    })
+                    .map(|(k, v)| (k, v.into_iter().map(|err| err as u64).collect()))
                     .collect(),
                 exceptions: receipt.exceptions,
             },
@@ -821,10 +809,11 @@ impl TransactionStatusResponse {
                 receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
             if errors.len() == 1 {
                 match errors[0] {
-                    ScillaError::CallFailed => TxnStatusCode::FailScillaLib,
-                    ScillaError::CreateFailed => TxnStatusCode::Error,
-                    ScillaError::OutOfGas => TxnStatusCode::InsufficientGas,
-                    ScillaError::InsufficientBalance => TxnStatusCode::InsufficientBalance,
+                    ScillaError::CallContractFailed => TxnStatusCode::FailScillaLib,
+                    ScillaError::CreateContractFailed => TxnStatusCode::Error,
+                    ScillaError::GasNotSufficient => TxnStatusCode::InsufficientGas,
+                    ScillaError::BalanceTransferFailed => TxnStatusCode::InsufficientBalance,
+                    _ => TxnStatusCode::Error,
                 }
             } else {
                 TxnStatusCode::Error

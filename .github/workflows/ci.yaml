@@ -11,6 +11,10 @@ on:
     types:
       - checks_requested
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
   # Run a decent number of samples for our randomized tests
@@ -26,9 +30,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "16"
-      - run: cd evm_scilla_js_tests
-      - run: npm install --save-dev prettier prettier-plugin-solidity
-      - run: npx prettier --write --plugin=prettier-plugin-solidity '../**/*.sol'
+      - run: npm install --save-dev prettier prettier-plugin-solidity solhint
+      - run: npx prettier --write --plugin=prettier-plugin-solidity './**/*.sol'
+      - run: npx solhint 'zilliqa/src/contracts/**/*.sol' --fix --noPrompt
       - name: Commit changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

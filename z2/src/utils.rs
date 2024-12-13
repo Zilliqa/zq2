@@ -121,3 +121,11 @@ pub fn parse_checkpoint_spec(spec: &str) -> Result<Checkpoint> {
         })
     }
 }
+
+pub fn string_decimal_to_hex(input: &str) -> Result<String> {
+    if let Ok(decimal_value) = input.trim().parse::<u64>() {
+        return Ok(format!("0x{:X}", decimal_value));
+    }
+
+    Err(anyhow!("Invalid decimal number provided."))
+}

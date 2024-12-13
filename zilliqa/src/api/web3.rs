@@ -5,11 +5,15 @@ use jsonrpsee::{types::Params, RpcModule};
 use sha3::{Digest, Keccak256};
 
 use super::to_hex::ToHex;
-use crate::node::Node;
+use crate::{cfg::EnabledApi, node::Node};
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
+        enabled_apis,
         [("web3_clientVersion", client_version), ("web3_sha3", sha3)],
     )
 }

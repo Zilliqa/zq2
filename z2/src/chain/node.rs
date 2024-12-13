@@ -7,7 +7,7 @@ use colored::Colorize;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
@@ -272,8 +272,11 @@ impl ChainNode {
     }
 
     pub fn chain(&self) -> Result<Chain> {
-        let chain_name = &self.chain.name();
-        chain_name.parse()
+        self.chain.chain()
+    }
+
+    pub fn chain_id(&self) -> u64 {
+        self.eth_chain_id
     }
 
     pub fn name(&self) -> String {
@@ -337,33 +340,7 @@ impl ChainNode {
             private_key
         } else {
             return Err(anyhow!(
-                "Found multiple private keys for the instance {}",
-                &self.machine.name
-            ));
-        };
-
-        Ok(private_key.value().await?)
-    }
-
-    pub async fn get_wallet_private_key(&self) -> Result<String> {
-        if self.role == NodeRole::Apps {
-            return Err(anyhow!(
-                "Node {} has role 'apps' and does not own a private key",
-                &self.machine.name
-            ));
-        }
-
-        let private_keys = retrieve_wallet_secret_by_node_name(
-            &self.chain.name(),
-            &self.machine.project_id,
-            &self.machine.name,
-        )
-        .await?;
-        let private_key = if let Some(private_key) = private_keys.first() {
-            private_key
-        } else {
-            return Err(anyhow!(
-                "Found multiple private keys for the instance {}",
+                "No private key for the instance {}",
                 &self.machine.name
             ));
         };
@@ -386,7 +363,7 @@ impl ChainNode {
             private_key.value().await?
         } else {
             return Err(anyhow!(
-                "Found multiple private keys for the instance {}",
+                "No private key for the instance {}",
                 &self.machine.name
             ));
         };
@@ -535,24 +512,94 @@ impl ChainNode {
                 ));
             };
 
-        let genesis_wallet =
-            EthereumAddress::from_private_key(&self.chain.genesis_wallet_private_key().await?)?;
+        let genesis_account =
+            EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
         let bootstrap_node =
             EthereumAddress::from_private_key(&selected_bootstrap.get_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
         let bootstrap_public_ip = selected_bootstrap.machine.external_address;
+        let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
+        // 4201 is the publically exposed port - We don't expose everything there.
+        let public_api = if self.role == NodeRole::Api {
+            // Enable all APIs, except `admin_` for API nodes.
+            json!({ "port": 4201, "enabled_apis": ["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] })
+        } else {
+            // Only enable `eth_blockNumber` for other nodes.
+            json!({"port": 4201, "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
+        };
+        // 4202 is not exposed, so enable everything for local debugging.
+        let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
+        let api_servers = json!([public_api, private_api]);
 
-        let mut var_map = BTreeMap::<&str, &str>::new();
-        var_map.insert("role", &role_name);
-        var_map.insert("eth_chain_id", &eth_chain_id);
-        var_map.insert("bootstrap_public_ip", &bootstrap_public_ip);
-        var_map.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
-        var_map.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
-        var_map.insert("set_bootstrap_address", set_bootstrap_address);
-        var_map.insert("genesis_address", &genesis_wallet.address);
+        // Enable Otterscan indices on API nodes.
+        let enable_ots_indices = self.role == NodeRole::Api;
 
-        let ctx = Context::from_serialize(var_map)?;
+        let mut ctx = Context::new();
+        ctx.insert("role", &role_name);
+        ctx.insert("eth_chain_id", &eth_chain_id);
+        ctx.insert("bootstrap_public_ip", &bootstrap_public_ip);
+        ctx.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
+        ctx.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
+        ctx.insert("set_bootstrap_address", set_bootstrap_address);
+        ctx.insert("genesis_address", &genesis_account.address);
+        ctx.insert(
+            "whitelisted_evm_contract_addresses",
+            &whitelisted_evm_contract_addresses,
+        );
+        // convert json to toml formatting
+        let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
+        ctx.insert("api_servers", &toml_servers.to_string());
+        ctx.insert("enable_ots_indices", &enable_ots_indices);
+
+        if let Some(checkpoint_url) = self.chain.checkpoint_url() {
+            if self.role == NodeRole::Validator {
+                let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
+                ctx.insert("checkpoint_file", &format!("/{}", checkpoint_file));
+
+                let checkpoint_hex_block =
+                    crate::utils::string_decimal_to_hex(&checkpoint_file.replace(".dat", ""))?;
+
+                let json_response = self
+                    .chain
+                    .run_rpc_call(
+                        "eth_getBlockByNumber",
+                        &Some(format!("[\"{}\", false]", checkpoint_hex_block)),
+                        30,
+                    )
+                    .await?;
+
+                let parsed_json: Value = serde_json::from_str(&json_response)?;
+
+                let checkpoint_hash = parsed_json["result"]["hash"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "{}: Error retrieving the hash of the block {}",
+                            self.name(),
+                            checkpoint_hex_block
+                        )
+                    })?
+                    .strip_prefix("0x")
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "{}: Error stripping 0x from the hash of the block {}",
+                            self.name(),
+                            checkpoint_hex_block
+                        )
+                    })?;
+
+                ctx.insert("checkpoint_hash", checkpoint_hash);
+
+                log::info!(
+                    "Importing the checkpoint from the block {} ({} hex) whose hash is {}",
+                    checkpoint_file,
+                    checkpoint_hex_block,
+                    checkpoint_hash,
+                );
+            }
+        }
+
         Ok(Tera::one_off(spec_config, &ctx, false)?)
     }
 
@@ -588,12 +635,13 @@ impl ChainNode {
         };
 
         let genesis_key = if *role_name == NodeRole::Apps.to_string() {
-            &self.chain.genesis_wallet_private_key().await?
+            &self.chain.genesis_private_key().await?
         } else {
             ""
         };
 
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
+        let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
@@ -603,6 +651,7 @@ impl ChainNode {
         var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
+        var_map.insert("checkpoint_url", &checkpoint_url);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;
@@ -638,7 +687,12 @@ impl ChainNode {
         progress_bar.inc(1);
 
         progress_bar.start("Exporting the backup file");
-        machine.copy_from("/tmp/data.zip", filename).await?;
+        if filename.starts_with("gs://") {
+            let command = format!("sudo gsutil -m cp /tmp/data.zip {}", filename);
+            machine.run(&command, false).await?;
+        } else {
+            machine.copy_from("/tmp/data.zip", filename).await?;
+        }
         progress_bar.inc(1);
 
         progress_bar.start("Cleaning the backup files");
@@ -668,7 +722,12 @@ impl ChainNode {
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Importing the backup file", self.name()));
-        machine.copy_to(&[filename], "/tmp/data.zip").await?;
+        if filename.starts_with("gs://") {
+            let command = format!("sudo gsutil -m cp {} /tmp/data.zip", filename);
+            machine.run(&command, false).await?;
+        } else {
+            machine.copy_to(&[filename], "/tmp/data.zip").await?;
+        }
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Deleting the data folder", self.name()));
@@ -746,6 +805,36 @@ impl ChainNode {
 
         Ok(())
     }
+
+    pub async fn api_attach(&self, multi_progress: &MultiProgress) -> Result<()> {
+        let machine = &self.machine;
+        let progress_bar = multi_progress.add(cliclack::progress_bar(1));
+
+        progress_bar.start(format!("{}: Starting the service", self.name()));
+        machine
+            .run("sudo systemctl start api_healthcheck.service", false)
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.stop(format!("{} {}: Attach completed", "✔".green(), self.name()));
+
+        Ok(())
+    }
+
+    pub async fn api_detach(&self, multi_progress: &MultiProgress) -> Result<()> {
+        let machine = &self.machine;
+        let progress_bar = multi_progress.add(cliclack::progress_bar(1));
+
+        progress_bar.start(format!("{}: Stopping the service", self.name()));
+        machine
+            .run("sudo systemctl stop api_healthcheck.service", false)
+            .await?;
+        progress_bar.inc(1);
+
+        progress_bar.stop(format!("{} {}: Detach completed", "✔".green(), self.name()));
+
+        Ok(())
+    }
 }
 
 pub async fn retrieve_secret_by_role(
@@ -773,22 +862,6 @@ async fn retrieve_secret_by_node_name(
         project_id,
         format!(
             "labels.zq2-network={} AND labels.node-name={} AND labels.is-private-key=true",
-            chain_name, node_name
-        )
-        .as_str(),
-    )
-    .await
-}
-
-async fn retrieve_wallet_secret_by_node_name(
-    chain_name: &str,
-    project_id: &str,
-    node_name: &str,
-) -> Result<Vec<Secret>> {
-    Secret::get_secrets(
-        project_id,
-        format!(
-            "labels.zq2-network={} AND labels.node-name={} AND labels.is-reward-wallet=true",
             chain_name, node_name
         )
         .as_str(),

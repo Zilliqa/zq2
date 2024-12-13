@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -13,11 +12,11 @@ use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
 use crate::{
-    chain,
-    chain::node::NodeRole,
+    chain::{self, node::NodeRole},
+    deployer::ApiOperation,
     kpi,
     node_spec::{Composition, NodeSpec},
-    utils, validators,
+    utils,
 };
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
@@ -163,11 +162,10 @@ pub async fn run_kpi_collector(config_file: &str) -> Result<()> {
 pub async fn run_deployer_new(
     network_name: &str,
     eth_chain_id: u64,
-    project_id: &str,
     roles: Vec<NodeRole>,
 ) -> Result<()> {
     println!("🦆 Generating the deployer configuration file {network_name}.yaml .. ");
-    deployer::new(network_name, eth_chain_id, project_id, roles).await?;
+    deployer::new(network_name, eth_chain_id, roles).await?;
     Ok(())
 }
 
@@ -176,6 +174,7 @@ pub async fn run_deployer_install(
     node_selection: bool,
     max_parallel: Option<usize>,
     persistence_url: Option<String>,
+    checkpoint_url: Option<String>,
 ) -> Result<()> {
     println!("🦆 Installing {config_file} .. ");
     deployer::install_or_upgrade(
@@ -184,6 +183,7 @@ pub async fn run_deployer_install(
         node_selection,
         max_parallel.unwrap_or(50),
         persistence_url,
+        checkpoint_url,
     )
     .await?;
     Ok(())
@@ -200,6 +200,7 @@ pub async fn run_deployer_upgrade(
         true,
         node_selection,
         max_parallel.unwrap_or(1),
+        None,
         None,
     )
     .await?;
@@ -232,9 +233,17 @@ pub async fn run_rpc_call(
     params: &Option<String>,
     config_file: &str,
     timeout: &Option<usize>,
+    node_selection: bool,
 ) -> Result<()> {
     println!("🦆 Running RPC call for {config_file}' .. ");
-    deployer::run_rpc_call(method, params, config_file, timeout.unwrap_or(30)).await?;
+    deployer::run_rpc_call(
+        method,
+        params,
+        config_file,
+        timeout.unwrap_or(30),
+        node_selection,
+    )
+    .await?;
     Ok(())
 }
 
@@ -282,13 +291,9 @@ pub async fn run_deployer_generate_private_keys(
     Ok(())
 }
 
-pub async fn run_deployer_generate_reward_wallets(
-    config_file: &str,
-    node_selection: bool,
-    force: bool,
-) -> Result<()> {
-    println!("🦆 Running generate-reward-wallets for {config_file} .. ");
-    deployer::run_generate_reward_wallets(config_file, node_selection, force).await?;
+pub async fn run_deployer_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
+    println!("🦆 Running API operation '{operation}' for {config_file} .. ");
+    deployer::run_api_operation(config_file, operation).await?;
     Ok(())
 }
 

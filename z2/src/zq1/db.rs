@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
     collections::HashMap, convert::Infallible, fs, num::ParseIntError, path::Path,
     string::FromUtf8Error, sync::Arc,
@@ -223,14 +221,6 @@ impl Db {
         Ok(self
             .contract_init_state_2
             .get_u8(&ReadOptions::new(), format!("{:02x}", account).as_bytes())?)
-    }
-
-    pub(crate) fn put_init_state_2(&self, address: Address, init_data: &[u8]) -> Result<()> {
-        Ok(self.contract_init_state_2.put_u8(
-            &WriteOptions::new(),
-            format!("{:02x}", address).as_bytes(),
-            init_data,
-        )?)
     }
 
     pub fn contract_init_state_2(

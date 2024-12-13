@@ -1,6 +1,7 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
 use alloy::primitives::Address;
+use anyhow::{anyhow, Result};
 use libp2p::{Multiaddr, PeerId};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -37,14 +38,43 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnabledApi {
+    EnableAll(String),
+    Enabled {
+        namespace: String,
+        apis: Vec<String>,
+    },
+}
+
+impl EnabledApi {
+    pub fn enabled(&self, api: &str) -> bool {
+        // APIs with no namespace default to the 'zilliqa' namespace.
+        let (ns, method) = api.split_once('_').unwrap_or(("zilliqa", api));
+        match self {
+            EnabledApi::EnableAll(namespace) => namespace == ns,
+            EnabledApi::Enabled { namespace, apis } => {
+                namespace == ns && apis.iter().any(|m| m == method)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiServer {
+    /// The port to listen for JSON-RPC requests on.
+    pub port: u16,
+    /// RPC APIs to enable.
+    pub enabled_apis: Vec<EnabledApi>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
-    /// The port to listen for JSON-RPC requests on. Defaults to 4201.
-    #[serde(default = "json_rpc_port_default")]
-    pub json_rpc_port: u16,
-    /// If true, the JSON-RPC server is not started. Defaults to false.
-    #[serde(default = "disable_rpc_default")]
-    pub disable_rpc: bool,
+    /// RPC API endpoints to expose.
+    #[serde(default)]
+    pub api_servers: Vec<ApiServer>,
     /// Chain identifier. Doubles as shard_id internally.
     #[serde(default = "eth_chain_id_default")]
     pub eth_chain_id: u64,
@@ -81,6 +111,45 @@ pub struct NodeConfig {
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
     pub failed_request_sleep_duration: Duration,
+    /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
+    #[serde(default)]
+    pub enable_ots_indices: bool,
+}
+
+impl Default for NodeConfig {
+    fn default() -> Self {
+        NodeConfig {
+            api_servers: vec![],
+            eth_chain_id: eth_chain_id_default(),
+            consensus: ConsensusConfig::default(),
+            allowed_timestamp_skew: allowed_timestamp_skew_default(),
+            data_dir: None,
+            state_cache_size: state_cache_size_default(),
+            load_checkpoint: None,
+            do_checkpoints: false,
+            block_request_limit: block_request_limit_default(),
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
+            state_rpc_limit: state_rpc_limit_default(),
+            failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            enable_ots_indices: false,
+        }
+    }
+}
+
+impl NodeConfig {
+    pub fn validate(&self) -> Result<()> {
+        if let serde_json::Value::Object(map) =
+            serde_json::to_value(self.consensus.contract_upgrade_block_heights.clone())?
+        {
+            for (contract, block_height) in map {
+                if block_height.as_u64().unwrap_or(0) % self.consensus.blocks_per_epoch != 0 {
+                    return Err(anyhow!("Contract upgrades must be configured to occur at epoch boundaries. blocks_per_epoch: {}, contract {} configured to be upgraded block: {}", self.consensus.blocks_per_epoch, contract, block_height));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,16 +191,8 @@ pub fn state_cache_size_default() -> usize {
     256 * 1024 * 1024 // 256 MiB
 }
 
-pub fn json_rpc_port_default() -> u16 {
-    4201
-}
-
 pub fn eth_chain_id_default() -> u64 {
     700 + 0x8000
-}
-
-pub fn disable_rpc_default() -> bool {
-    false
 }
 
 pub fn block_request_limit_default() -> usize {
@@ -293,6 +354,37 @@ pub struct ConsensusConfig {
     /// bridged to other chains.
     #[serde(default)]
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    /// The block heights at which we perform EIP-1967 contract upgrades
+    #[serde(default)]
+    pub contract_upgrade_block_heights: ContractUpgradesBlockHeights,
+}
+
+impl Default for ConsensusConfig {
+    fn default() -> Self {
+        ConsensusConfig {
+            is_main: default_true(),
+            main_shard_id: None,
+            consensus_timeout: consensus_timeout_default(),
+            genesis_deposits: vec![],
+            genesis_accounts: vec![],
+            empty_block_timeout: empty_block_timeout_default(),
+            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+            scilla_address: scilla_address_default(),
+            scilla_stdlib_dir: scilla_stdlib_dir_default(),
+            scilla_ext_libs_path: scilla_ext_libs_path_default(),
+            local_address: local_address_default(),
+            rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
+            blocks_per_hour: 3600 * 40,
+            minimum_stake: 32_000_000_000_000_000_000u128.into(),
+            eth_block_gas_limit: EvmGas(84000000),
+            blocks_per_epoch: blocks_per_epoch_default(),
+            epochs_per_checkpoint: epochs_per_checkpoint_default(),
+            gas_price: 4_761_904_800_000u128.into(),
+            total_native_token_supply: total_native_token_supply_default(),
+            scilla_call_gas_exempt_addrs: vec![],
+            contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,4 +443,9 @@ fn default_true() -> bool {
 
 pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContractUpgradesBlockHeights {
+    pub deposit_v3: Option<u64>,
 }
