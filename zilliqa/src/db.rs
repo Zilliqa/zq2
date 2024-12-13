@@ -415,35 +415,18 @@ impl Db {
         }
 
         // Helper function used for inserting entries from memory (which backs storage trie) into state_trie db (for now it's sql-lite)
-        let db_flush =
-            |db: Arc<TrieStorage>, cache: Arc<MemoryDB>, max_batch_size: usize| -> Result<()> {
-                let mut cache_storage = cache.storage.write();
-                let mut storage_iter = cache_storage.iter();
-                debug!("Doing write to db with total items {}", cache_storage.len());
-                loop {
-                    let mut keys = Vec::with_capacity(max_batch_size);
-                    let mut values = Vec::with_capacity(max_batch_size);
-
-                    storage_iter
-                        .by_ref()
-                        .take(max_batch_size)
-                        .for_each(|(key, value)| {
-                            keys.push(key.to_vec());
-                            values.push(value.to_vec());
-                        });
-
-                    if keys.is_empty() {
-                        break;
-                    }
-                    db.insert_batch(keys, values)?;
-                }
-                cache_storage.clear();
-                Ok(())
-            };
+        let db_flush = |db: Arc<TrieStorage>, cache: Arc<MemoryDB>| -> Result<()> {
+            let mut cache_storage = cache.storage.write();
+            let (keys, values): (Vec<_>, Vec<_>) = cache_storage.drain().unzip();
+            debug!("Doing write to db with total items {}", keys.len());
+            db.insert_batch(keys, values)?;
+            Ok(())
+        };
 
         let mut processed_accounts = 0;
         let mut processed_storage_items = 0;
-        // This is taken directly from batch_write
+        // This is taken directly from batch_write. However, this can be as big as we think it's reasonable to be
+        // (ideally multiples of `32766 / 2` so that batch writes are fully utilized)
         // TODO: consider putting this const somewhere else as long as we use sql-lite
         // Also see: https://www.sqlite.org/limits.html#max_variable_number
         let maximum_sql_parameters = 32766 / 2;
@@ -510,11 +493,7 @@ impl Db {
                 ));
             }
             if processed_storage_items > maximum_sql_parameters {
-                db_flush(
-                    trie_storage.clone(),
-                    mem_storage.clone(),
-                    maximum_sql_parameters,
-                )?;
+                db_flush(trie_storage.clone(), mem_storage.clone())?;
                 processed_storage_items = 0;
             }
 
@@ -527,11 +506,7 @@ impl Db {
             }
         }
 
-        db_flush(
-            trie_storage.clone(),
-            mem_storage.clone(),
-            maximum_sql_parameters,
-        )?;
+        db_flush(trie_storage.clone(), mem_storage.clone())?;
 
         if state_trie.root_hash()? != parent.state_root_hash().0 {
             return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
