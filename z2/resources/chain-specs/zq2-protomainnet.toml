@@ -35,3 +35,7 @@ consensus.scilla_call_gas_exempt_addrs = [
   "0x20Dd5D5B5d4C72676514A0eA1052d0200003d69D",
   "0xbfDe2156aF75a29d36614bC1F8005DD816Bd9200"
 ]
+consensus.forks = [
+  { at_height = 0, failed_scilla_call_from_gas_exempt_caller_causes_revert = false },
+  { at_height = 5352000, failed_scilla_call_from_gas_exempt_caller_causes_revert = true },
+]

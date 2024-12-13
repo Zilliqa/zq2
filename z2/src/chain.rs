@@ -172,13 +172,13 @@ impl Chain {
         match self {
             Chain::Zq2ProtoTestnet => vec![
                 json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false }),
-                // estimated: 2024-12-18 11:57:19Z
-                json!({ "at_height": 8467000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true }),
+                // estimated: 2024-12-17T12:06:47Z
+                json!({ "at_height": 8381000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true }),
             ],
             Chain::Zq2ProtoMainnet => vec![
                 json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false }),
-                // estimated: 2024-12-18T11:59:45Z
-                json!({ "at_height": 5266000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true }),
+                // estimated: 2024-12-19T11:56:39Z
+                json!({ "at_height": 5352000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true }),
             ],
             _ => vec![],
         }
