@@ -542,7 +542,7 @@ impl ChainNode {
             "whitelisted_evm_contract_addresses",
             &whitelisted_evm_contract_addresses,
         );
-        ctx.insert("api_servers", &api_servers);
+        ctx.insert("api_servers", &api_servers.to_string());
         ctx.insert("enable_ots_indices", &enable_ots_indices);
 
         Ok(Tera::one_off(spec_config, &ctx, false)?)
