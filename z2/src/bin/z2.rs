@@ -11,6 +11,7 @@ use clap_verbosity_flag::{InfoLevel, Verbosity};
 use z2lib::{
     chain,
     components::Component,
+    deployer::ApiOperation,
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
@@ -90,16 +91,16 @@ enum DeployerCommands {
     Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
-    /// Backup locally a node data dir
+    /// Backup a node data dir
     Backup(DeployerBackupArgs),
-    /// Restore a node data dir from a local backup
+    /// Restore a node data dir from a backup
     Restore(DeployerRestoreArgs),
     /// Reset a network stopping all the nodes and cleaning the /data folder
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
-    /// Generate the validators reward wallets. --force to replace if already existing
-    GenerateRewardWallets(DeployerGenerateActionsArgs),
+    /// Perform operation over the network API nodes
+    Api(DeployerApiArgs),
     /// Generate the node private keys. --force to replace if already existing
     GeneratePrivateKeys(DeployerGenerateActionsArgs),
     /// Generate the genesis key. --force to replace if already existing
@@ -108,17 +109,14 @@ enum DeployerCommands {
 
 #[derive(Args, Debug)]
 pub struct DeployerNewArgs {
-    #[clap(long)]
     /// ZQ2 network name
+    #[clap(long)]
     network_name: Option<String>,
-    #[clap(long)]
     /// ZQ2 EVM chain ID
-    eth_chain_id: Option<u64>,
     #[clap(long)]
-    /// GCP project-id where the network is running
-    project_id: Option<String>,
-    #[clap(long, value_enum, value_delimiter = ',')]
+    eth_chain_id: Option<u64>,
     /// Virtual Machine roles
+    #[clap(long, value_enum, value_delimiter = ',')]
     roles: Option<Vec<chain::node::NodeRole>>,
 }
 
@@ -144,6 +142,9 @@ pub struct DeployerInstallArgs {
     /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long)]
     persistence_url: Option<String>,
+    /// gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the install will be performed only on the validator nodes
+    #[clap(long)]
+    checkpoint_url: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -175,16 +176,19 @@ pub struct DeployerRpcArgs {
     /// Method to run
     #[clap(long, short, about)]
     method: String,
-    /// List of parameters for the method. ie "["string_value", true]"
+    /// List of parameters for the method. ie "[\"string_value\",true]"
     #[clap(long, short, about)]
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerBackupArgs {
-    /// The path of the backup file
+    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long, short)]
     file: String,
     /// The network deployer config file
@@ -193,7 +197,7 @@ pub struct DeployerBackupArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerRestoreArgs {
-    /// The path of the backup file
+    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long, short)]
     file: String,
     /// Define the number of nodes to process in parallel. Default: 50
@@ -222,6 +226,15 @@ pub struct DeployerGenerateGenesisArgs {
     /// Generate and replace the existing key
     #[clap(long)]
     force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerApiArgs {
+    /// The operation to perform over the API nodes
+    #[clap(long, short)]
+    operation: ApiOperation,
+    /// The network deployer config file
+    config_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -406,9 +419,9 @@ struct JoinStruct {
     /// Specify the ZQ2 chain you want join
     #[clap(long = "chain")]
     chain_name: chain::Chain,
-    /// Specify the container label to run
-    #[clap(long = "container")]
-    container: Option<String>,
+    /// Specify the tag of the image to run
+    #[clap(long)]
+    image_tag: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -701,10 +714,6 @@ async fn main() -> Result<()> {
                     .network_name
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("--network-name is a mandatory argument"))?;
-                let project_id = arg
-                    .project_id
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("--project-id is a mandatory argument"))?;
                 let roles = arg
                     .roles
                     .clone()
@@ -712,7 +721,7 @@ async fn main() -> Result<()> {
                 let eth_chain_id = arg
                     .eth_chain_id
                     .ok_or_else(|| anyhow::anyhow!("--eth-chain-id is a mandatory argument"))?;
-                plumbing::run_deployer_new(&network_name, eth_chain_id, &project_id, roles)
+                plumbing::run_deployer_new(&network_name, eth_chain_id, roles)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer new command: {}", err)
@@ -725,11 +734,18 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
+
+                if arg.persistence_url.is_some() && arg.checkpoint_url.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "Provide only one of [--persistence-url] and [--checkpoint-url]"
+                    ));
+                }
                 plumbing::run_deployer_install(
                     &config_file,
                     arg.select,
                     arg.max_parallel,
                     arg.persistence_url.clone(),
+                    arg.checkpoint_url.clone(),
                 )
                 .await
                 .map_err(|err| {
@@ -799,6 +815,7 @@ async fn main() -> Result<()> {
                     &args.params,
                     &args.config_file,
                     &args.timeout,
+                    args.select,
                 )
                 .await
                 .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
@@ -888,20 +905,15 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::GenerateRewardWallets(ref arg) => {
+            DeployerCommands::Api(ref arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_generate_reward_wallets(&config_file, arg.select, arg.force)
+                plumbing::run_deployer_api_operation(&config_file, arg.operation.clone())
                     .await
-                    .map_err(|err| {
-                        anyhow::anyhow!(
-                            "Failed to run deployer generate-reward-wallets command: {}",
-                            err
-                        )
-                    })?;
+                    .map_err(|err| anyhow::anyhow!("Failed to run API operation: {}", err))?;
                 Ok(())
             }
         },
@@ -946,7 +958,7 @@ async fn main() -> Result<()> {
         },
         Commands::Join(ref args) => {
             let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain, &args.container).await?;
+            validators::gen_validator_startup_script(&chain, &args.image_tag).await?;
             Ok(())
         }
         Commands::Deposit(ref args) => {
@@ -955,7 +967,7 @@ async fn main() -> Result<()> {
             let stake = validators::StakeDeposit::new(
                 node,
                 args.amount,
-                args.chain_name.clone(),
+                args.chain_name.get_endpoint()?,
                 &args.private_key,
                 &args.reward_address,
             )?;

@@ -8,6 +8,8 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut restrict_concurrency = false;
     let mut do_checkpoints = false;
     let mut blocks_per_epoch = 10;
+    // Code below reads 0 to be "do not deploy deposit_v3"
+    let mut deposit_v3_upgrade_block_height = 0;
 
     let parsed_args =
         match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
@@ -60,6 +62,25 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         };
                         match val.base10_parse::<u64>() {
                             Ok(val) => blocks_per_epoch = val,
+                            Err(e) => return token_stream_with_error(args, e),
+                        };
+                    }
+                    "deposit_v3_upgrade_block_height" => {
+                        let syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Int(val),
+                            ..
+                        }) = a.value
+                        else {
+                            return token_stream_with_error(
+                                args,
+                                syn::Error::new_spanned(
+                                    a.value,
+                                    "Attribute parameter value must be an int",
+                                ),
+                            );
+                        };
+                        match val.base10_parse::<u64>() {
+                            Ok(val) => deposit_v3_upgrade_block_height = val,
                             Err(e) => return token_stream_with_error(args, e),
                         };
                     }
@@ -197,7 +218,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
             let addr = *addrs.iter().find(|a| a.is_ipv4()).unwrap();
 
             let mut stop = || {
-                std::process::Command::new("docker")
+                let mut stop_child = std::process::Command::new("docker")
                     .arg("stop")
                     .arg("--signal")
                     .arg("SIGKILL")
@@ -207,6 +228,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     .spawn()
                     .unwrap();
                 let _ = child.wait();
+                let _ = stop_child.wait();
             };
 
             // Silence the default panic hook.
@@ -234,8 +256,12 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
 
                     async move {
                         let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
+                        let mut deposit_v3_upgrade_block_height_option = Option::None;
+                        if #deposit_v3_upgrade_block_height != 0 {
+                            deposit_v3_upgrade_block_height_option = Option::Some(#deposit_v3_upgrade_block_height);
+                        };
                         let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"),
-                                                          scilla_stdlib_dir.to_string(), #do_checkpoints, #blocks_per_epoch);
+                                                          scilla_stdlib_dir.to_string(), #do_checkpoints, #blocks_per_epoch, deposit_v3_upgrade_block_height_option);
 
                         // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
                         let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(

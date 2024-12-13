@@ -1,12 +1,12 @@
 p2p_port = 3333
-bootstrap_address = [ "12D3KooWEpeCSbza6zYXJ8PY8v6iEZYzYD4mhk4QbmHGbjx186dS", "/ip4/34.87.62.126/tcp/3333" ]
+bootstrap_address = [ "12D3KooWAcATh49oLnRmftLHuydAu3ufWGDyuGAsqwwcKCS7BAxi", "/ip4/34.143.219.228/tcp/3333" ]
 
 [[nodes]]
 eth_chain_id = 33103
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [ ["0x3b5cf50bb3ed8d77d1895084092156c7549be7df", "900_000_000_000_000_000_000_000_000"] ]
-consensus.genesis_deposits = [ ["b95bb5b3669baa33ebedd784bcab7e281deba89537ccabbe2bbb81c7bdbbd11c8a8118dfc3fd8af17077c4636c52b508", "12D3KooWEpeCSbza6zYXJ8PY8v6iEZYzYD4mhk4QbmHGbjx186dS", "20_000_000_000_000_000_000_000_000", "0x3b5cf50bb3ed8d77d1895084092156c7549be7df"] ]
+consensus.genesis_accounts = [ ["0xb4492c468fe97cb73ea70a9a712cdd5b5ab621c3", "900_000_000_000_000_000_000_000_000" ] ]
+consensus.genesis_deposits = [ ["b5a1a63fd7cb5e30a88214067ac5c594a73e9b7bc27375cf6463ef01540c462b78a20145cff085b968aff59b6592fa19", "12D3KooWAcATh49oLnRmftLHuydAu3ufWGDyuGAsqwwcKCS7BAxi", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "0xb4492c468fe97cb73ea70a9a712cdd5b5ab621c3"] ]
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
@@ -15,3 +15,17 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
+consensus.scilla_call_gas_exempt_addrs = [
+  "0x60E6b5b1B8D3E373E1C04dC0b4f5624776bcBB60",
+  "0x7013Da2653453299Efb867EfcCCcB1A6d5FE1384",
+  "0x8618d39a8276D931603c6Bc7306af6A53aD2F1F3",
+  "0xE90Dd366D627aCc5feBEC126211191901A69f8a0",
+  "0x5900Ac075A67742f5eA4204650FEad9E674c664F",
+  "0x28e8d39fc68eaa27c88797eb7d324b4b97d5b844",
+  "0x51b9f3ddb948bcc16b89b48d83b920bc01dbed55",
+  "0x1fD09F6701a1852132A649fe9D07F2A3b991eCfA",
+  "0x878c5008A348A60a5B239844436A7b483fAdb7F2",
+  "0x8895Aa1bEaC254E559A3F91e579CF4a67B70ce02",
+  "0x453b11386FBd54bC532892c0217BBc316fc7b918",
+  "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057"
+]

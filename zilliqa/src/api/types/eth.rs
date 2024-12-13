@@ -79,12 +79,12 @@ pub struct AggregateQc {
 
 impl AggregateQc {
     pub fn from_agg(agg_qc: &Option<message::AggregateQc>) -> Option<Self> {
-        return agg_qc.as_ref().map(|agg_qc| Self {
+        agg_qc.as_ref().map(|agg_qc| Self {
             signature: agg_qc.signature.to_bytes(),
             cosigned: agg_qc.cosigned,
             view: agg_qc.view,
             quorum_certificates: agg_qc.qcs.iter().map(QuorumCertificate::from_qc).collect(),
-        });
+        })
     }
 }
 

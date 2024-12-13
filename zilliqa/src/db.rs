@@ -414,6 +414,9 @@ impl Db {
             }
         }
 
+        let mut processed_accounts = 0;
+        const COMPUTE_ROOT_HASH_EVERY_ACCOUNTS: usize = 10000;
+
         // then decode state
         loop {
             // Read account key and the serialised Account
@@ -472,6 +475,12 @@ impl Db {
                 ));
             }
             state_trie.insert(&account_hash, &serialised_account)?;
+
+            processed_accounts += 1;
+            // Occasionally flush the cached state changes to disk to minimise memory usage.
+            if processed_accounts % COMPUTE_ROOT_HASH_EVERY_ACCOUNTS == 0 {
+                let _ = state_trie.root_hash()?;
+            }
         }
 
         if state_trie.root_hash()? != parent.state_root_hash().0 {
@@ -584,7 +593,8 @@ impl Db {
             .lock()
             .unwrap()
             .query_row_and_then(
-                "SELECT height FROM blocks WHERE is_canonical = TRUE ORDER BY height DESC LIMIT 1",
+                // Two queries here are deliberate to ensure the index on `height` column is used
+                "SELECT height from (SELECT height, is_canonical FROM blocks ORDER BY height DESC) WHERE is_canonical = 1 LIMIT 1",
                 (),
                 |row| row.get(0),
             )
