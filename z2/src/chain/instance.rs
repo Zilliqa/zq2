@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
 
 use anyhow::{anyhow, Ok, Result};
 use serde_json::value::Value;
@@ -6,6 +6,7 @@ use serde_json::value::Value;
 use super::{
     config::NetworkConfig,
     node::{retrieve_secret_by_role, ChainNode, Machine, NodeRole},
+    Chain,
 };
 
 #[derive(Clone, Debug)]
@@ -13,19 +14,26 @@ pub struct ChainInstance {
     config: NetworkConfig,
     machines: Vec<Machine>,
     persistence_url: Option<String>,
+    checkpoint_url: Option<String>,
 }
 
 impl ChainInstance {
     pub async fn new(config: NetworkConfig) -> Result<Self> {
+        let chain = Chain::from_str(&config.name.clone())?;
         Ok(Self {
             config: config.clone(),
-            machines: Self::import_machines(&config.name, &config.project_id).await?,
+            machines: Self::import_machines(&config.name, chain.get_project_id()?).await?,
             persistence_url: None,
+            checkpoint_url: None,
         })
     }
 
     pub fn name(&self) -> String {
         self.config.name.clone()
+    }
+
+    pub fn chain(&self) -> Result<Chain> {
+        Ok(Chain::from_str(&self.name())?)
     }
 
     pub fn persistence_url(&self) -> Option<String> {
@@ -34,6 +42,14 @@ impl ChainInstance {
 
     pub fn set_persistence_url(&mut self, persistence_url: Option<String>) {
         self.persistence_url = persistence_url;
+    }
+
+    pub fn checkpoint_url(&self) -> Option<String> {
+        self.checkpoint_url.clone()
+    }
+
+    pub fn set_checkpoint_url(&mut self, checkpoint_url: Option<String>) {
+        self.checkpoint_url = checkpoint_url;
     }
 
     pub fn machines(&self) -> Vec<Machine> {
@@ -107,9 +123,11 @@ impl ChainInstance {
                     .get("name")
                     .and_then(|n| n.as_str())
                     .ok_or_else(|| anyhow!("name is missing or not a string"))?;
+                // Zone is often reported as a URL. get only the last element..
                 let zone = i
                     .get("zone")
                     .and_then(|z| z.as_str())
+                    .map(|z| z.rsplit_once('/').map_or(z, |(_, y)| y))
                     .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
                 let labels: BTreeMap<String, String> = i
                     .get("labels")
@@ -165,8 +183,12 @@ impl ChainInstance {
     }
 
     pub async fn genesis_private_key(&self) -> Result<String> {
-        let private_keys =
-            retrieve_secret_by_role(&self.config.name, &self.config.project_id, "genesis").await?;
+        let private_keys = retrieve_secret_by_role(
+            &self.config.name,
+            self.chain()?.get_project_id()?,
+            "genesis",
+        )
+        .await?;
 
         if let Some(private_key) = private_keys.first() {
             Ok(private_key.value().await?)
@@ -176,5 +198,47 @@ impl ChainInstance {
                 &self.name()
             ))
         }
+    }
+
+    pub async fn run_rpc_call(
+        &self,
+        method: &str,
+        params: &Option<String>,
+        timeout: usize,
+    ) -> Result<String> {
+        let endpoint = self.chain()?.get_endpoint()?;
+        let body = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
+            method,
+            params.clone().unwrap_or("[]".to_string()),
+        );
+
+        let args = &[
+            "--max-time",
+            &timeout.to_string(),
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type:application/json",
+            "-H",
+            "accept:application/json,*/*;q=0.5",
+            "--data",
+            &body,
+            endpoint,
+        ];
+
+        let output = zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd("curl", args)
+            .run_for_output()
+            .await?;
+        if !output.success {
+            return Err(anyhow!(
+                "getting local block number failed: {:?}",
+                output.stderr
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
     }
 }

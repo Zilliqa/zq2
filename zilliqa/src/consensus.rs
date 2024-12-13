@@ -13,6 +13,7 @@ use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use libp2p::PeerId;
+use once_cell::sync::Lazy;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -22,6 +23,7 @@ use crate::{
     block_store::BlockStore,
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
+    contracts,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -935,9 +937,10 @@ impl Consensus {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
     ) -> Result<Option<TransactionApplyResult>> {
         let state = &mut self.state;
-        Self::apply_transaction_at(state, txn, current_block, inspector)
+        Self::apply_transaction_at(state, txn, current_block, inspector, enable_inspector)
     }
 
     pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
@@ -945,10 +948,12 @@ impl Consensus {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        let result = state.apply_transaction(txn.clone(), current_block, inspector);
+        let result =
+            state.apply_transaction(txn.clone(), current_block, inspector, enable_inspector);
         let result = match result {
             Ok(r) => r,
             Err(error) => {
@@ -976,6 +981,10 @@ impl Consensus {
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
+        if !self.config.enable_ots_indices {
+            return Err(anyhow!("Otterscan indices are disabled"));
+        }
+
         self.db.get_touched_transactions(address)
     }
 
@@ -1217,6 +1226,11 @@ impl Consensus {
             Ok(())
         })?;
 
+        if self.block_is_first_in_epoch(proposal.header.number) {
+            // Update state with any contract upgrades for this block
+            self.contract_upgrade_apply_state_change(&mut state, proposal.header)?;
+        }
+
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1242,6 +1256,27 @@ impl Consensus {
 
         // Return the final proposal
         Ok(Some(proposal))
+    }
+
+    /// If there are any contract updates to be done then apply them to the state passed in
+    fn contract_upgrade_apply_state_change(
+        &mut self,
+        state: &mut State,
+        block_header: BlockHeader,
+    ) -> Result<()> {
+        if let Some(deposit_v3_deploy_height) = self
+            .config
+            .consensus
+            .contract_upgrade_block_heights
+            .deposit_v3
+        {
+            if deposit_v3_deploy_height == block_header.number {
+                let deposit_v3_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+                state.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
+            }
+        }
+        Ok(())
     }
 
     /// Assembles the Proposal block early.
@@ -1392,6 +1427,7 @@ impl Consensus {
                 tx.clone(),
                 proposal.header,
                 &mut inspector,
+                self.config.enable_ots_indices,
             )?;
 
             // Skip transactions whose execution resulted in an error and drop them.
@@ -1538,7 +1574,6 @@ impl Consensus {
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut updated_root_hash = state.root_hash()?;
         let mut tx_index_in_block = 0;
         let mut applied_transaction_hashes = Vec::<Hash>::new();
 
@@ -1569,12 +1604,18 @@ impl Consensus {
                 break;
             }
 
+            if gas_left < txn.tx.gas_limit() {
+                debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), "block out of space");
+                break;
+            }
+
             // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
                 txn.clone(),
                 executed_block_header,
                 inspector::noop(),
+                false,
             )?;
             self.db.insert_transaction(&txn.hash, &txn.tx)?;
 
@@ -1583,13 +1624,10 @@ impl Consensus {
                 continue;
             };
 
-            // Second - check for gas
-            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
-                g
-            } else {
-                state.set_to_root(updated_root_hash.into());
-                break;
-            };
+            // Reduce remaining gas in this block
+            gas_left = gas_left
+                .checked_sub(result.gas_used())
+                .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
             // Do necessary work to assemble the transaction
             transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
@@ -1604,7 +1642,6 @@ impl Consensus {
             receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
             tx_index_in_block += 1;
-            updated_root_hash = state.root_hash()?;
             applied_transaction_hashes.push(txn.hash);
         }
 
@@ -2589,6 +2626,10 @@ impl Consensus {
         &self.state
     }
 
+    pub fn state_mut(&mut self) -> &mut State {
+        &mut self.state
+    }
+
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
             .block_store
@@ -3009,7 +3050,12 @@ impl Consensus {
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
-                .apply_transaction(txn.clone(), block.header, &mut inspector)?
+                .apply_transaction(
+                    txn.clone(),
+                    block.header,
+                    &mut inspector,
+                    self.config.enable_ots_indices,
+                )?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
             self.transaction_pool.mark_executed(txn);
             for address in inspector.touched {
@@ -3090,6 +3136,13 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
+
+        if self.block_is_first_in_epoch(block.header.number) {
+            // Update state with any contract upgrades for this block
+            let mut state_clone = self.state.clone();
+            self.contract_upgrade_apply_state_change(&mut state_clone, block.header)?;
+            self.state = state_clone;
+        }
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(

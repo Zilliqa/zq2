@@ -1,6 +1,5 @@
 name: zq2-prototestnet
 eth_chain_id: 33103
-project_id: prj-d-zq2-testnet-g13pnaa8
 roles:
 - bootstrap
 - validator
@@ -8,6 +7,6 @@ roles:
 - apps
 - checkpoint
 versions:
-  zq2: e52dc2bb
+  zq2: v0.4.1
   otterscan: develop
   spout: main

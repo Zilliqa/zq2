@@ -14,24 +14,24 @@ use serde::{Deserialize, Serialize};
 use serde_yaml;
 use tera::Tera;
 use tokio::fs;
-use zilliqa::{
-    cfg,
-    cfg::{
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default, disable_rpc_default,
-        empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        local_address_default, max_blocks_in_flight_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default,
-        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_rpc_limit_default,
-        total_native_token_supply_default, Amount, ConsensusConfig, GenesisDeposit,
-    },
-    transaction::EvmGas,
-};
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::{
-    cfg::state_cache_size_default,
+    api,
+    cfg::{state_cache_size_default, ApiServer},
     crypto::{SecretKey, TransactionPublicKey},
+};
+use zilliqa::{
+    cfg::{
+        self, allowed_timestamp_skew_default, block_request_batch_size_default,
+        block_request_limit_default, consensus_timeout_default, empty_block_timeout_default,
+        eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
+        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
+        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
+        state_rpc_limit_default, total_native_token_supply_default, Amount, ConsensusConfig,
+        ContractUpgradesBlockHeights, GenesisDeposit,
+    },
+    transaction::EvmGas,
 };
 
 use crate::{
@@ -505,14 +505,17 @@ impl Setup {
                 external_address: None,
             };
             // @todo should pass this in!
+            let port = self.get_json_rpc_port(*node_index as u16, false);
             let mut node_config = cfg::NodeConfig {
-                json_rpc_port: self.get_json_rpc_port(u64::try_into(*node_index)?, false),
+                api_servers: vec![ApiServer {
+                    port,
+                    enabled_apis: api::all_enabled(),
+                }],
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
                 state_cache_size: state_cache_size_default(),
                 load_checkpoint: None,
                 do_checkpoints: false,
-                disable_rpc: disable_rpc_default(),
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
                     scilla_address: scilla_address_default(),
@@ -535,17 +538,16 @@ impl Setup {
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
                     total_native_token_supply: total_native_token_supply_default(),
                     scilla_call_gas_exempt_addrs: vec![],
+                    contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
                 state_rpc_limit: state_rpc_limit_default(),
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
+                enable_ots_indices: false,
             };
-            println!(
-                "🧩  Node {node_index} has RPC port {0}",
-                node_config.json_rpc_port
-            );
+            println!("🧩  Node {node_index} has RPC port {port}");
 
             let node_dir_path = self.get_node_dir(*node_index)?;
             if utils::file_exists(&node_dir_path).await? {
@@ -560,7 +562,6 @@ impl Setup {
             // Create if doesn't exist
             let data_dir_path = self.get_data_dir(*node_index)?;
             tokio::fs::create_dir(&data_dir_path).await?;
-            node_config.disable_rpc = false;
             node_config.eth_chain_id = CHAIN_ID | 0x8000;
             node_config.data_dir = Some(utils::string_from_path(&data_dir_path)?);
             node_config

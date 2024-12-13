@@ -10,18 +10,12 @@ use crate::github;
 pub struct NetworkConfig {
     pub(super) name: String,
     pub(super) eth_chain_id: u64,
-    pub(super) project_id: String,
     pub(super) roles: Vec<NodeRole>,
     pub(super) versions: HashMap<String, String>,
 }
 
 impl NetworkConfig {
-    pub async fn new(
-        name: String,
-        eth_chain_id: u64,
-        project_id: String,
-        roles: Vec<NodeRole>,
-    ) -> Result<Self> {
+    pub async fn new(name: String, eth_chain_id: u64, roles: Vec<NodeRole>) -> Result<Self> {
         let mut versions = HashMap::new();
 
         for r in roles.clone() {
@@ -42,7 +36,6 @@ impl NetworkConfig {
         Ok(Self {
             name,
             eth_chain_id,
-            project_id,
             roles,
             versions,
         })
@@ -56,9 +49,5 @@ impl NetworkConfig {
             "{file} does not contain a valid YAML network config object"
         ))?;
         Ok(config)
-    }
-
-    pub fn project_id(&self) -> String {
-        self.project_id.clone()
     }
 }

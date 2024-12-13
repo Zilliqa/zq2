@@ -8,14 +8,15 @@ use primitive_types::H160;
 use rand::Rng;
 use tracing::*;
 use zilliqa::{
+    api,
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
-        failed_request_sleep_duration_default, json_rpc_port_default, max_blocks_in_flight_default,
+        failed_request_sleep_duration_default, max_blocks_in_flight_default,
         minimum_time_left_for_empty_block_default, scilla_address_default,
         scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default,
-        state_rpc_limit_default, total_native_token_supply_default, Checkpoint, ConsensusConfig,
-        NodeConfig,
+        state_rpc_limit_default, total_native_token_supply_default, ApiServer, Checkpoint,
+        ConsensusConfig, ContractUpgradesBlockHeights, NodeConfig,
     },
     crypto::{Hash, SecretKey},
     transaction::EvmGas,
@@ -115,20 +116,24 @@ async fn block_and_tx_data_persistence(mut network: Network) {
             scilla_ext_libs_path: scilla_ext_libs_path_default(),
             total_native_token_supply: total_native_token_supply_default(),
             scilla_call_gas_exempt_addrs: vec![],
+            contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
         },
         allowed_timestamp_skew: allowed_timestamp_skew_default(),
         data_dir: None,
         state_cache_size: state_cache_size_default(),
         load_checkpoint: None,
         do_checkpoints: false,
-        disable_rpc: false,
-        json_rpc_port: json_rpc_port_default(),
+        api_servers: vec![ApiServer {
+            port: 4201,
+            enabled_apis: api::all_enabled(),
+        }],
         eth_chain_id: eth_chain_id_default(),
         block_request_limit: block_request_limit_default(),
         max_blocks_in_flight: max_blocks_in_flight_default(),
         block_request_batch_size: block_request_batch_size_default(),
         state_rpc_limit: state_rpc_limit_default(),
         failed_request_sleep_duration: failed_request_sleep_duration_default(),
+        enable_ots_indices: true,
     };
     let mut rng = network.rng.lock().unwrap();
     let result = crate::node(
