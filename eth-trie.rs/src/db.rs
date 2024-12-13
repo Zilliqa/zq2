@@ -46,7 +46,7 @@ pub trait DB: Send + Sync {
 pub struct MemoryDB {
     // If "light" is true, the data is deleted from the database at the time of submission.
     light: bool,
-    storage: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
+    pub storage: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
 impl MemoryDB {
