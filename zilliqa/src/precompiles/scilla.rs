@@ -345,21 +345,8 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
 
         // The behaviour is different for contracts having 21k gas and/or deployed with zq1
         // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
-        // 2. if gas == 21k and NOT gas_exempt -> mark entire txn as failed (not only the current precompile)
+        // 2. if precompile failed and gas_exempt -> mark entire txn as failed (not only the current precompile)
         // 3. Otherwise, let it run with what it's given and let the caller decide
-
-        // Below is case 2nd
-        if gas.limit() == 21000 && !gas_exempt {
-            ctx.external.enforce_transaction_failure = true;
-            return Ok(FrameOrResult::new_call_result(
-                InterpreterResult {
-                    result: InstructionResult::OutOfGas,
-                    gas,
-                    output: Bytes::new(),
-                },
-                inputs.return_memory_offset.clone(),
-            ));
-        }
 
         let outcome = scilla_call_precompile(
             &inputs,
@@ -393,6 +380,16 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
                 };
             }
             Err(PrecompileErrors::Fatal { msg }) => return Err(EVMError::Precompile(msg)),
+        }
+
+        // If precompile failed and this is whitelisted contract -> mark entire transaction as failed
+        match result.result {
+            InstructionResult::Return => {}
+            _ => {
+                if gas_exempt {
+                    ctx.external.enforce_transaction_failure = true;
+                }
+            }
         }
 
         Ok(FrameOrResult::new_call_result(
