@@ -133,6 +133,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         state_rpc_limit: state_rpc_limit_default(),
         failed_request_sleep_duration: failed_request_sleep_duration_default(),
         enable_ots_indices: true,
+        remote_api_url: Default::default(),
     };
     let mut rng = network.rng.lock().unwrap();
     let result = crate::node(

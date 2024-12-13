@@ -210,7 +210,7 @@ impl NodeLauncher {
         // 2. Internal check to see if node is possibly stuck.
         if self.watchdog.count > 3 {
             let rpc_url = self.config.remote_api_url.clone().unwrap_or_default();
-            // 3. External check to see if others are stuck too.
+            // 3. External check to see if others are stuck too, as opposed to timeouts.
             let client = jsonrpsee::http_client::HttpClientBuilder::default()
                 .request_timeout(self.config.consensus.consensus_timeout / 2) // fast call
                 .build(rpc_url.clone())?;
@@ -229,7 +229,7 @@ impl NodeLauncher {
                 .map(|s| u64::from_str_radix(s, 16).unwrap_or_default())
                 .unwrap_or_default();
 
-            // 4. If self < others for > threshold, then we're stuck
+            // 4. If self < others for > threshold, then we're stuck while others aren't.
             if self_highest < remote_highest {
                 tracing::warn!(?self_highest, ?remote_highest, "WDT node stuck at");
                 return Ok(true);

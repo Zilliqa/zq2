@@ -358,6 +358,7 @@ impl Network {
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
+            remote_api_url: Default::default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -481,6 +482,7 @@ impl Network {
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
+            remote_api_url: Default::default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
@@ -832,6 +834,7 @@ impl Network {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
                 trace!("Handling internal message from node in shard {source_shard}, targetting {destination_shard}");
                 match internal_message {
+                    InternalMessage::RestartShard(_) => todo!(),
                     InternalMessage::LaunchShard(new_network_id) => {
                         let secret_key = self.find_node(source).unwrap().1.secret_key;
                         if let Some(child_network) = self.children.get_mut(new_network_id) {
