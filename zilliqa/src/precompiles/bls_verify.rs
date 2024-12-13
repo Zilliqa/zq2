@@ -15,7 +15,12 @@ pub struct BlsVerify;
 
 // keep in-sync with zilliqa/src/contracts/deposit_v3.sol
 impl BlsVerify {
-    const BLS_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
+    /// We charge gas as if we were using Ethereum precompile gas prices for each operation:
+    ///     - Message to hash: SHA256 over 76 byte message: 60 + 12 * 3 = 96
+    ///     - Hash to point: Rough estimate                             = 100_000
+    ///     - Single pairing check on BLS12-381 (ref: EIP-1108)         = 79_000
+    ///                                                                 = 180_000
+    const BLS_VERIFY_GAS_PRICE: u64 = 180_000u64;
     fn bls_verify(
         input: &[u8],
         gas_limit: u64,
