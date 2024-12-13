@@ -414,7 +414,7 @@ impl Db {
             }
         }
 
-        // Helper function used for inserting entries from memory (which backs storage trie) into state_trie db (for now it's sql-lite)
+        // Helper function used for inserting entries from memory (which backs storage trie) into persistent storage
         let db_flush =
             |db: Arc<TrieStorage>, cache: Arc<MemoryDB>, max_batch_size: usize| -> Result<()> {
                 let mut cache_storage = cache.storage.write();
