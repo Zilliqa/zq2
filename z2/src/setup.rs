@@ -545,6 +545,7 @@ impl Setup {
                 state_rpc_limit: state_rpc_limit_default(),
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 enable_ots_indices: false,
+                remote_api_url: Default::default(),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 

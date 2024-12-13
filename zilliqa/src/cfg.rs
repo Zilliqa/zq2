@@ -113,7 +113,7 @@ pub struct NodeConfig {
     /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
     #[serde(default)]
     pub enable_ots_indices: bool,
-    /// Remote API url - set to the API gateway - used to query the highest canonical block number by the watchdog.
+    /// Remote API url - set to the API gateway/endpoint - used to query the highest canonical block number by the watchdog.
     #[serde(default)]
     pub remote_api_url: Option<String>,
 }
