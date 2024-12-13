@@ -39,3 +39,5 @@ enable_ots_indices = true
 file = "{{ checkpoint_file }}"
 hash = "{{ checkpoint_hash }}"
 {%- endif %}
+
+consensus.forks = {{ forks }}
