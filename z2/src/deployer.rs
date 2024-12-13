@@ -36,11 +36,18 @@ pub async fn install_or_upgrade(
     node_selection: bool,
     max_parallel: usize,
     persistence_url: Option<String>,
+    checkpoint_url: Option<String>,
 ) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let mut chain = ChainInstance::new(config).await?;
     chain.set_persistence_url(persistence_url);
+    chain.set_checkpoint_url(checkpoint_url);
     let mut chain_nodes = chain.nodes().await?;
+
+    if chain.checkpoint_url().is_some() {
+        chain_nodes.retain(|node| node.role == NodeRole::Validator);
+    }
+
     let node_names = chain_nodes
         .iter()
         .map(|n| n.name().clone())
