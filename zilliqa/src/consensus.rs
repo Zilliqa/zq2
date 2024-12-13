@@ -13,6 +13,7 @@ use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use libp2p::PeerId;
+use once_cell::sync::Lazy;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -22,6 +23,7 @@ use crate::{
     block_store::BlockStore,
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
+    contracts,
     crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -1223,6 +1225,19 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
+
+        if let Some(deposit_v3_deploy_height) = self
+            .config
+            .consensus
+            .contract_upgrade_block_heights
+            .deposit_v3
+        {
+            if deposit_v3_deploy_height == proposal.header.number {
+                let deposit_v3_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+                state.upgrade_deposit_contract(proposal.header, deposit_v3_contract)?;
+            }
+        }
 
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
@@ -2598,6 +2613,10 @@ impl Consensus {
         &self.state
     }
 
+    pub fn state_mut(&mut self) -> &mut State {
+        &mut self.state
+    }
+
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
             .block_store
@@ -3104,6 +3123,20 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
+
+        if let Some(deposit_v3_deploy_height) = self
+            .config
+            .consensus
+            .contract_upgrade_block_heights
+            .deposit_v3
+        {
+            if deposit_v3_deploy_height == block.header.number {
+                let deposit_v3_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+                self.state
+                    .upgrade_deposit_contract(block.header, deposit_v3_contract)?;
+            }
+        }
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(

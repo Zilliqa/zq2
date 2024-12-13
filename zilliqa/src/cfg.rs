@@ -338,6 +338,9 @@ pub struct ConsensusConfig {
     /// bridged to other chains.
     #[serde(default)]
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    /// The block heights at which we perform EIP-1967 contract upgrades
+    #[serde(default)]
+    pub contract_upgrade_block_heights: ContractUpgradesBlockHeights,
 }
 
 impl Default for ConsensusConfig {
@@ -363,6 +366,7 @@ impl Default for ConsensusConfig {
             gas_price: 4_761_904_800_000u128.into(),
             total_native_token_supply: total_native_token_supply_default(),
             scilla_call_gas_exempt_addrs: vec![],
+            contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
         }
     }
 }
@@ -423,4 +427,15 @@ fn default_true() -> bool {
 
 pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractUpgradesBlockHeights {
+    pub deposit_v3: Option<u64>,
+}
+
+impl Default for ContractUpgradesBlockHeights {
+    fn default() -> Self {
+        ContractUpgradesBlockHeights { deposit_v3: None }
+    }
 }

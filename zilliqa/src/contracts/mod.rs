@@ -1,4 +1,4 @@
-pub use deposit_v3 as deposit;
+pub use deposit_v2 as deposit;
 use serde_json::Value;
 
 pub mod deposit_init {
@@ -28,7 +28,7 @@ pub mod deposit_v2 {
 
     use super::{contract, Contract};
 
-    static CONTRACT: Lazy<Contract> =
+    pub static CONTRACT: Lazy<Contract> =
         Lazy::new(|| contract("src/contracts/deposit_v2.sol", "Deposit"));
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
@@ -76,7 +76,7 @@ pub mod deposit_v3 {
 
     use super::{contract, Contract};
 
-    static CONTRACT: Lazy<Contract> =
+    pub static CONTRACT: Lazy<Contract> =
         Lazy::new(|| contract("src/contracts/deposit_v3.sol", "Deposit"));
     pub static CONSTRUCTOR: Lazy<Constructor> =
         Lazy::new(|| CONTRACT.abi.constructor().unwrap().clone());
@@ -205,9 +205,9 @@ fn contract(src: &str, name: &str) -> Contract {
     Contract { abi, bytecode }
 }
 
-struct Contract {
-    abi: ethabi::Contract,
-    bytecode: Vec<u8>,
+pub struct Contract {
+    pub abi: ethabi::Contract,
+    pub bytecode: Vec<u8>,
 }
 
 /// This test asserts the contract binaries in this module are correct and reproducible, by recompiling the source
