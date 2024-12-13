@@ -254,16 +254,20 @@ impl NodeLauncher {
         let sleep = time::sleep(Duration::from_millis(5));
         tokio::pin!(sleep);
 
-        let wdt_dur = self
+        // Internal watchdog
+        let wdt_duration = self
             .config
             .consensus
             .consensus_timeout
             .add(self.config.consensus.empty_block_timeout)
-            .saturating_mul(5); // every 30s or so
-
-        let watchdog = time::sleep(wdt_dur);
+            .saturating_mul(5); // every 30s or so on default
+        let watchdog = if self.config.remote_api_url.is_none() {
+            time::sleep(Duration::MAX)
+        } else {
+            tracing::info!("WDT period: {:?}", wdt_duration);
+            time::sleep(wdt_duration)
+        };
         tokio::pin!(watchdog);
-        tracing::info!("Watchdog checks every {:?}", wdt_dur);
 
         self.node_launched = true;
 
@@ -381,7 +385,7 @@ impl NodeLauncher {
                         tracing::info!("WDT restarting {shard_id}.");
                         return self.node.lock().unwrap().internal_restart(shard_id);
                     };
-                    watchdog.as_mut().reset(Instant::now() + wdt_dur);
+                    watchdog.as_mut().reset(Instant::now() + wdt_duration);
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,
