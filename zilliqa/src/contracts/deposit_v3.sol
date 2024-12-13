@@ -493,7 +493,6 @@ contract Deposit is UUPSUpgradeable {
             revert RogueKeyCheckFailed();
         }
 
-
         if (msg.value < $.minimumStake) {
             revert StakeAmountTooLow();
         }
