@@ -12,8 +12,8 @@ use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
 use crate::{
-    chain,
-    chain::node::NodeRole,
+    chain::{self, node::NodeRole},
+    deployer::ApiOperation,
     kpi,
     node_spec::{Composition, NodeSpec},
     utils,
@@ -174,6 +174,7 @@ pub async fn run_deployer_install(
     node_selection: bool,
     max_parallel: Option<usize>,
     persistence_url: Option<String>,
+    checkpoint_url: Option<String>,
 ) -> Result<()> {
     println!("🦆 Installing {config_file} .. ");
     deployer::install_or_upgrade(
@@ -182,6 +183,7 @@ pub async fn run_deployer_install(
         node_selection,
         max_parallel.unwrap_or(50),
         persistence_url,
+        checkpoint_url,
     )
     .await?;
     Ok(())
@@ -198,6 +200,7 @@ pub async fn run_deployer_upgrade(
         true,
         node_selection,
         max_parallel.unwrap_or(1),
+        None,
         None,
     )
     .await?;
@@ -285,6 +288,12 @@ pub async fn run_deployer_generate_private_keys(
 ) -> Result<()> {
     println!("🦆 Running generate-private-keys for {config_file} .. ");
     deployer::run_generate_private_keys(config_file, node_selection, force).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
+    println!("🦆 Running API operation '{operation}' for {config_file} .. ");
+    deployer::run_api_operation(config_file, operation).await?;
     Ok(())
 }
 

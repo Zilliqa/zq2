@@ -1,8 +1,10 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::{anyhow, Result};
+use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
+use strum::Display;
 use tokio::{fs, sync::Semaphore, task};
 
 use crate::{
@@ -34,11 +36,18 @@ pub async fn install_or_upgrade(
     node_selection: bool,
     max_parallel: usize,
     persistence_url: Option<String>,
+    checkpoint_url: Option<String>,
 ) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let mut chain = ChainInstance::new(config).await?;
     chain.set_persistence_url(persistence_url);
+    chain.set_checkpoint_url(checkpoint_url);
     let mut chain_nodes = chain.nodes().await?;
+
+    if chain.checkpoint_url().is_some() {
+        chain_nodes.retain(|node| node.role == NodeRole::Validator);
+    }
+
     let node_names = chain_nodes
         .iter()
         .map(|n| n.name().clone())
@@ -228,7 +237,7 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
     println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
     println!(
         "\t--pop-signature {} \\",
-        node_ethereum_address.bls_pop_signature
+        serde_json::to_value(node_ethereum_address.secret_key.pop_prove()).unwrap()
     );
     println!("\t--private-key {} \\", genesis_private_key);
     println!("\t--reward-address {} \\", ZERO_ACCOUNT);
@@ -280,7 +289,7 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         let validator = validators::Validator::new(
             &node_ethereum_address.peer_id,
             &node_ethereum_address.bls_public_key,
-            &node_ethereum_address.bls_pop_signature,
+            &serde_json::to_value(node_ethereum_address.secret_key.pop_prove())?.to_string(),
         )?;
         let stake = validators::StakeDeposit::new(
             validator,
@@ -816,6 +825,78 @@ async fn generate_secret(
 
     // Process completed
     progress_bar.stop(format!("{} {}: Secret created", "✔".green(), name));
+
+    Ok(())
+}
+
+#[derive(Clone, Debug, Display, ValueEnum)]
+pub enum ApiOperation {
+    #[value(name = "attach")]
+    Attach,
+    #[value(name = "detach")]
+    Detach,
+}
+
+pub async fn run_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config).await?;
+    let chain_nodes = chain.nodes().await?;
+    let node_names = chain_nodes
+        .iter()
+        .filter(|n| n.role == NodeRole::Api)
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let target_nodes = {
+        let mut select = cliclack::multiselect("Select target nodes");
+
+        for name in &node_names {
+            select = select.item(name.clone(), name, "");
+        }
+
+        let selection = select.interact()?;
+        let mut nodes = chain_nodes.clone();
+        nodes.retain(|n| selection.contains(&n.name()));
+        nodes
+    };
+
+    let semaphore = Arc::new(Semaphore::new(50));
+    let mut futures = vec![];
+
+    let multi_progress =
+        cliclack::multi_progress(format!("Running API operation '{}'", operation).yellow());
+
+    for node in target_nodes {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let operation = operation.to_owned();
+        let mp = multi_progress.to_owned();
+        let future = task::spawn(async move {
+            let result = match operation {
+                ApiOperation::Attach => node.api_attach(&mp).await,
+                ApiOperation::Detach => node.api_detach(&mp).await,
+            };
+            drop(permit); // Release the permit when the task is done
+            (node, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    multi_progress.stop();
+
+    let mut failures = vec![];
+
+    for result in results {
+        if let (node, Err(err)) = result? {
+            println!("Node {} failed with error: {}", node.name(), err);
+            failures.push(node.name());
+        }
+    }
+
+    for failure in failures {
+        log::error!("FAILURE: {}", failure);
+    }
 
     Ok(())
 }

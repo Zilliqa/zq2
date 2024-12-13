@@ -11,11 +11,15 @@ use alloy::{
 use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};
 
-use crate::{crypto::Hash, node::Node};
+use crate::{cfg::EnabledApi, crypto::Hash, node::Node};
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
+        enabled_apis,
         [
             ("debug_getBadBlocks", debug_get_bad_blocks),
             ("debug_getTrieFlushInterval", debug_get_trie_flush_interval),

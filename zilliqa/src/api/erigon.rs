@@ -4,11 +4,15 @@ use anyhow::Result;
 use jsonrpsee::{types::Params, RpcModule};
 
 use super::types::eth;
-use crate::node::Node;
+use crate::{cfg::EnabledApi, node::Node};
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
     super::declare_module!(
         node,
+        enabled_apis,
         [
             ("erigon_blockNumber", block_number),
             ("erigon_forks", forks),
