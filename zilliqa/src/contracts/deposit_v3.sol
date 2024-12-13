@@ -471,7 +471,11 @@ contract Deposit is UUPSUpgradeable {
         }
         DepositStorage storage $ = _getDepositStorage();
 
-        bytes memory message = abi.encodePacked(blsPubKey, uint64(block.chainid), msg.sender);
+        bytes memory message = abi.encodePacked(
+            blsPubKey,
+            uint64(block.chainid),
+            msg.sender
+        );
 
         // Verify bls signature
         if (!_blsVerify(message, blsPubKey, signature)) {
