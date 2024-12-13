@@ -471,7 +471,7 @@ contract Deposit is UUPSUpgradeable {
         }
         DepositStorage storage $ = _getDepositStorage();
 
-        uint64 chain_id = uint64(block.chainid);
+        uint64 chainId = uint64(block.chainid);
         bytes memory message = new bytes(blsPubKey.length + 8 + 20); // blsPubKey + uint64 + address
 
         for (uint256 i = 0; i < blsPubKey.length; i++) {
@@ -480,7 +480,7 @@ contract Deposit is UUPSUpgradeable {
 
         for (uint256 i = 0; i < 8; i++) {
             message[blsPubKey.length + i] = bytes1(
-                uint8(chain_id >> (8 * (7 - i)))
+                uint8(chainId >> (8 * (7 - i)))
             );
         }
 
@@ -493,13 +493,13 @@ contract Deposit is UUPSUpgradeable {
             revert RogueKeyCheckFailed();
         }
 
-        Staker storage staker = $._stakersMap[blsPubKey];
 
         if (msg.value < $.minimumStake) {
             revert StakeAmountTooLow();
         }
 
         $._stakerKeys[msg.sender] = blsPubKey;
+        Staker storage staker = $._stakersMap[blsPubKey];
         staker.peerId = peerId;
         staker.rewardAddress = rewardAddress;
         staker.controlAddress = msg.sender;
