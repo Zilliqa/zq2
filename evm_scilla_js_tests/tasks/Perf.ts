@@ -1,6 +1,5 @@
-import {BN, Transaction, Zilliqa, bytes, getAddressFromPrivateKey, units} from "@zilliqa-js/zilliqa";
+import {BN, Transaction, Zilliqa, bytes, getAddressFromPrivateKey, units, Long} from "@zilliqa-js/zilliqa";
 import {subtask, task} from "hardhat/config";
-import Long from "long";
 import fs from "fs";
 import path from "path";
 import {

@@ -1,8 +1,6 @@
-import {getAddressFromPrivateKey} from "@zilliqa-js/crypto";
-import {BN, Zilliqa, bytes, toChecksumAddress} from "@zilliqa-js/zilliqa";
+import {BN, Zilliqa, bytes, getAddressFromPrivateKey, toChecksumAddress, Long} from "@zilliqa-js/zilliqa";
 import clc from "cli-color";
 import {ethers} from "ethers";
-import Long from "long";
 import hre from "hardhat";
 
 // Refer to README.md, section `Testing a newly deployed testnet/devent` for more info.
@@ -41,8 +39,8 @@ async function main() {
 
   zilliqa.wallet.addByPrivateKey(privateKey);
   const private_keys: string[] = hre.network["config"]["accounts"] as string[];
-  let txs = [ ];
-  let current_nonce = nonce+1;
+  let txs = [];
+  let current_nonce = nonce + 1;
   console.log(`Issuing ${private_keys.length} transactions ... `);
   for (const element of private_keys) {
     const wallet = new ethers.Wallet(element);
@@ -60,7 +58,7 @@ async function main() {
         false
       )
     );
-    txs.push(tx)
+    txs.push(tx);
     current_nonce += 1;
     console.log(`${JSON.stringify(tx)}`);
   }

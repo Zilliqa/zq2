@@ -1,8 +1,6 @@
 import hre from "hardhat";
 import clc from "cli-color";
-import {bytes, toChecksumAddress, Zilliqa} from "@zilliqa-js/zilliqa";
-import {getAddressFromPrivateKey} from "@zilliqa-js/crypto";
-import {BN, Long} from "@zilliqa-js/util";
+import {BN, bytes, getAddressFromPrivateKey, toChecksumAddress, Zilliqa, Long} from "@zilliqa-js/zilliqa";
 import {ethers} from "ethers";
 
 async function main() {
