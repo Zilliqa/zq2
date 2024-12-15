@@ -52,7 +52,20 @@ const config: HardhatUserConfig = {
       protocolVersion: 0x41,
       miningState: false
     },
-
+    prototestnet: {
+      url: "https://api.zq2-prototestnet.zilliqa.com",
+      websocketUrl: "ws://api.zq2-prototestnet.zilliqa.com",
+      accounts: [
+        "4CC853DE4F9FE4A9155185C65B56B6A9B024F896B54528B9E9448B6CD9B8F329",
+        "d96e9eb5b782a80ea153c937fa83e5948485fbfc8b7e7c069d7b914dbc350aba",
+        "589417286a3213dceb37f8f89bd164c3505a4cec9200c61f7c6db13a30a71b45"
+      ],
+      chainId: 33103,
+      zilliqaNetwork: true,
+      web3ClientVersion: "Zilliqa/v8.2",
+      protocolVersion: 0x41,
+      miningState: false
+    },
     public_devnet: {
       url: "https://api.devnet.zilliqa.com",
       websocketUrl: "ws://api.devnet.zilliqa.com",
