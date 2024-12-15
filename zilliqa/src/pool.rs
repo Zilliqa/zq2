@@ -396,7 +396,7 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use std::{path::PathBuf, sync::Arc};
 
     use alloy::{
         consensus::TxLegacy,
@@ -409,7 +409,7 @@ mod tests {
     use super::TransactionPool;
     use crate::{
         block_store::BlockStore,
-        cfg::{ConsensusConfig, NodeConfig, *},
+        cfg::NodeConfig,
         crypto::Hash,
         db::Db,
         node::{MessageSender, RequestId},
@@ -466,44 +466,7 @@ mod tests {
     }
 
     fn get_in_memory_state() -> Result<State> {
-        let node_config = NodeConfig {
-            eth_chain_id: 0,
-            allowed_timestamp_skew: allowed_timestamp_skew_default(),
-            data_dir: None,
-            state_cache_size: state_cache_size_default(),
-            load_checkpoint: None,
-            do_checkpoints: false,
-            disable_rpc: disable_rpc_default(),
-            json_rpc_port: json_rpc_port_default(),
-            consensus: ConsensusConfig {
-                genesis_deposits: vec![],
-                is_main: true,
-                consensus_timeout: Duration::from_secs(5),
-                // Give a genesis account 1 billion ZIL.
-                genesis_accounts: vec![],
-                empty_block_timeout: Duration::from_millis(25),
-                rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
-                blocks_per_hour: 3600 * 40,
-                minimum_stake: 32_000_000_000_000_000_000u128.into(),
-                eth_block_gas_limit: EvmGas(84000000),
-                gas_price: 4_761_904_800_000u128.into(),
-                local_address: local_address_default(),
-                main_shard_id: None,
-                minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
-                scilla_address: scilla_address_default(),
-                blocks_per_epoch: 10,
-                epochs_per_checkpoint: 1,
-                scilla_stdlib_dir: scilla_stdlib_dir_default(),
-                scilla_ext_libs_path: scilla_ext_libs_path_default(),
-                total_native_token_supply: total_native_token_supply_default(),
-                scilla_call_gas_exempt_addrs: vec![],
-            },
-            block_request_limit: block_request_limit_default(),
-            max_blocks_in_flight: max_blocks_in_flight_default(),
-            block_request_batch_size: block_request_batch_size_default(),
-            state_rpc_limit: state_rpc_limit_default(),
-            failed_request_sleep_duration: failed_request_sleep_duration_default(),
-        };
+        let node_config = NodeConfig::default();
 
         let (s1, _) = tokio::sync::mpsc::unbounded_channel();
         let (s2, _) = tokio::sync::mpsc::unbounded_channel();

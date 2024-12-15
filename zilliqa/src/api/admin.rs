@@ -7,10 +7,17 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use serde::{Deserialize, Serialize};
 
-use crate::{api::to_hex::ToHex, node::Node};
+use crate::{api::to_hex::ToHex, cfg::EnabledApi, node::Node};
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
-    super::declare_module!(node, [("admin_generateCheckpoint", checkpoint)])
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
+    super::declare_module!(
+        node,
+        enabled_apis,
+        [("admin_generateCheckpoint", checkpoint)]
+    )
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
