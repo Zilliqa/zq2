@@ -24,14 +24,14 @@ import {
 
 import {perfConfig} from "./Perf.config";
 import {HardhatRuntimeEnvironment} from "hardhat/types";
-import {AddedAccount, TransactionReceipt} from "web3-core";
 import {Block} from "@ethersproject/providers";
+import {ethers} from "ethers";
 
-let web3Account: AddedAccount;
+let web3Account: ethers.Wallet;
 
 task("perf", "Performance measurement task").setAction(async (taskArgs, hre) => {
   let zilliqa = new Zilliqa(hre.getNetworkUrl());
-  web3Account = hre.web3.eth.accounts.wallet.add(perfConfig.sourceOfFunds);
+  web3Account = new hre.ethers.Wallet(perfConfig.sourceOfFunds, hre.ethers.provider);
 
   const provider = new hre.ethers.providers.WebSocketProvider(hre.getWebsocketUrl());
   const blocks: Block[] = [];
@@ -132,7 +132,7 @@ function generateBalanceReadRequests(
   } else {
     return Array.from({length: iterations}, async (_, i): Promise<ReadCallResult> => {
       const start = Date.now();
-      hre.ethers.provider.getBalance(accounts[i % accounts.length]);
+      await hre.ethers.provider.getBalance(accounts[i % accounts.length]);
       const end = Date.now();
       return {
         latency: end - start,
@@ -185,10 +185,8 @@ async function generateCallContractTransactions(
           console.error(`Failed to get the contract ABI for ${callContract.name}`);
           return;
         }
-        const contract = new hre.web3.eth.Contract(abi, callContract.address, {
-          from: web3Account.address
-        });
-        const method = contract.methods[transition.name];
+        const contract = new ethers.Contract(callContract.address, abi, web3Account);
+        const method = contract[transition.name];
         if (method === undefined) {
           console.error(`Failed to get the method ${transition.name}`);
           return;
@@ -199,18 +197,15 @@ async function generateCallContractTransactions(
             let success = false;
             let latency = 0;
             let receiptLatency = 0;
-            await method(...transition.args)
-              .send({gasLimit: 1000000})
-              .on("transactionHash", function () {
-                latency = Date.now() - start;
-              })
-              .on("receipt", function (receipt: TransactionReceipt) {
-                success = receipt.status;
-                receiptLatency = Date.now() - start;
-              })
-              .on("error", function () {
-                success = false;
-              });
+            try {
+              const tx = await method(...transition.args, {gasLimit: 1000000});
+              const receipt = await tx.wait();
+              success = receipt.status === 1;
+              receiptLatency = Date.now() - start;
+            } catch (error) {
+              success = false;
+            }
+            latency = Date.now() - start;
             return {
               latency,
               receiptLatency,
@@ -252,10 +247,10 @@ interface TestData {
 }
 
 async function waitForReceipt(tx: Transaction) {
-  let receipt = tx.getReceipt();
+  let receipt = await tx.getReceipt();
   while (!receipt) {
     await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for 1 second
-    receipt = tx.getReceipt();
+    receipt = await tx.getReceipt();
   }
   return receipt;
 }

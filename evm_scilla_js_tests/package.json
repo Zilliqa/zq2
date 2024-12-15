@@ -19,8 +19,6 @@
     "@nomicfoundation/hardhat-toolbox": "^2.0.2",
     "@nomiclabs/hardhat-ethers": "2.2.3",
     "@nomiclabs/hardhat-etherscan": "^3.1.8",
-    "@nomiclabs/hardhat-web3": "^2.0.1",
-    "@openzeppelin/contracts": "^4.9.3",
     "@typechain/ethers-v5": "^10.2.1",
     "@typechain/hardhat": "^6.1.6",
     "@types/chai": "^4.3.6",
@@ -43,8 +41,7 @@
     "prettier-plugin-solidity": "^1.4.1",
     "ts-node": "^10.9.2",
     "typechain": "^8.3.2",
-    "typescript": "^5.7.2",
-    "web3": "^1.10.2"
+    "typescript": "^5.7.2"
   },
   "dependencies": {
     "@types/deep-equal-in-any-order": "^1.0.4",

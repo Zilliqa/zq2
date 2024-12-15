@@ -1,5 +1,4 @@
 import "@nomicfoundation/hardhat-toolbox";
-import "@nomiclabs/hardhat-web3";
 import {HardhatUserConfig} from "hardhat/types";
 import "dotenv/config";
 import {ENV_VARS} from "./helpers/EnvVarParser";

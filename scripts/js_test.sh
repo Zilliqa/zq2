@@ -27,11 +27,12 @@ nvm install 16.0
 echo "Using nvm 16"
 nvm use 16.0
 node --version
+npm install pnpm
 
 echo "Installing tests"
 
 # Install tests
-npm install > /dev/null 2>&1
+pnpm install > /dev/null 2>&1
 
 # Need to fund scilla addresses which are distinct from zilliqa, or they will fail due to out of funds
 echo "Funding tests"
