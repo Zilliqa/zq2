@@ -42,7 +42,7 @@ const config: HardhatUserConfig = {
 
   networks: {
     from_env: {
-      url: process.env.CHAIN_URL,
+      url: process.env.CHAIN_URL ?? "",
       websocketUrl: process.env.CHAIN_WEBSOCKET_URL ?? "",
       accounts: [...loadFromSignersFile(process.env.CHAIN_NAME!)],
       chainId: Number(process.env.CHAIN_ID ?? 0x8000),
