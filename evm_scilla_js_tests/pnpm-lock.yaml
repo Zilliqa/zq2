@@ -94,7 +94,7 @@ importers:
         specifier: ^5.7.2
         version: 5.7.2(bufferutil@4.0.8)(utf-8-validate@5.0.10)
       hardhat:
-        specifier: ^2.18.0
+        specifier: ^2.22.17
         version: 2.22.17(bufferutil@4.0.8)(ts-node@10.9.2(@types/node@22.10.2)(typescript@5.7.2))(typescript@5.7.2)(utf-8-validate@5.0.10)
       hardhat-scilla-plugin:
         specifier: 3.8.0
