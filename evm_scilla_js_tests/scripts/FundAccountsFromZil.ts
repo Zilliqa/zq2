@@ -10,7 +10,7 @@ async function main() {
 
   // Constants needed for ZIL transfer
   const msgVersion = 1; // current msgVersion
-  const VERSION = bytes.pack(await hre.getZilliqaChainId(), msgVersion);
+  const VERSION = bytes.pack(hre.getZilliqaChainId(), msgVersion);
 
   const accounts: string[] = await provider.send("eth_accounts", []);
   let balances = await Promise.all(
