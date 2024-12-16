@@ -6,7 +6,13 @@ GetStateProof
 
 state,proof,get
 
+# Status
+
+Deprecated
+
 # Description
+
+This is no longer a valid endpoint in Zilliqa 2.0 and always returns empty vectors for backwards compatibility.
 
 This API returns the state proof for the corresponding TxBlock for a smart contract.
 

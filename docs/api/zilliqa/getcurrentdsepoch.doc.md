@@ -6,11 +6,16 @@ GetCurrentDSEpoch
 
 DS,epoch,get,current
 
+# Status
+
+Deprecated
+
 # Description
+
+This API is deprecated in ZQ2. It now returns a placeholder value for backwards compatibility.
 
 Returns the current number of DS blocks in the network. This is represented as a
 `String`.
-Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 

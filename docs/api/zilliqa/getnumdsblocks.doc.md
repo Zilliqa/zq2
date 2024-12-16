@@ -8,9 +8,11 @@ DS,get,blocks,count,number
 
 # Status
 
-NotDocumented
+Deprecated
 
 # Description
+
+This API is deprecated in ZQ2. It now returns a placeholder value for backwards compatibility.
 
 Returns the current number of validated Directory Service blocks in the network. This is represented as a `String`.
 
@@ -81,4 +83,3 @@ func GetNumDSBlocks() {
 | `jsonrpc` | string | Required | `"2.0"`            |
 | `method`  | string | Required | `"GetNumDSBlocks"` |
 | `params`  | string | Required | Empty string `""`  |
-
