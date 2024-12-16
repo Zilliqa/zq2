@@ -394,8 +394,6 @@ impl HashBuilder {
 
 #[cfg(test)]
 mod tests {
-    use blsful::Pairing;
-
     use super::*;
 
     #[test]

@@ -230,8 +230,6 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
 pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNode) -> Result<()> {
     let private_keys = node.get_private_key().await?;
     let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
-    let node_ethereum_pop_signature =
-        EthereumAddress::bls_pop_signature(&private_keys, node.chain_id())?;
     let reward_private_keys = node.get_wallet_private_key().await?;
     let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
 
@@ -239,7 +237,10 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
     println!("z2 deposit --chain {} \\", node.chain()?);
     println!("\t--peer-id {} \\", node_ethereum_address.peer_id);
     println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
-    println!("\t--pop-signature {} \\", node_ethereum_pop_signature);
+    println!(
+        "\t--pop-signature {} \\",
+        node_ethereum_address.bls_pop_signature(node.chain_id())?
+    );
     println!("\t--private-key {} \\", genesis_private_key);
     println!("\t--reward-address {} \\", ZERO_ACCOUNT);
     println!("\t--amount {VALIDATOR_DEPOSIT_IN_MILLIONS}\n");
@@ -284,8 +285,6 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         let genesis_private_key = chain.genesis_private_key().await?;
         let private_keys = node.get_private_key().await?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
-        let node_ethereum_pop_signature =
-            EthereumAddress::bls_pop_signature(&private_keys, node.chain_id())?;
         let reward_private_keys = node.get_wallet_private_key().await?;
         let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
 
@@ -294,7 +293,9 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         let validator = validators::Validator::new(
             &node_ethereum_address.peer_id,
             &node_ethereum_address.bls_public_key,
-            &node_ethereum_pop_signature.to_string(),
+            &node_ethereum_address
+                .bls_pop_signature(node.chain_id())?
+                .to_string(),
         )?;
         let stake = validators::StakeDeposit::new(
             validator,
