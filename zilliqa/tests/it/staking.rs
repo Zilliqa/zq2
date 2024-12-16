@@ -87,6 +87,7 @@ async fn deposit_stake(
     hash
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn deposit_v3_stake(
     network: &mut Network,
     control_wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
@@ -338,7 +339,7 @@ async fn get_signing_address(
         .into_address()
         .unwrap()
 }
-
+#[allow(dead_code)]
 async fn get_control_address(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
     staker: &NodePublicKey,

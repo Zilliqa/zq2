@@ -35,3 +35,5 @@ consensus.scilla_call_gas_exempt_addrs = [
   "0x20Dd5D5B5d4C72676514A0eA1052d0200003d69D",
   "0xbfDe2156aF75a29d36614bC1F8005DD816Bd9200"
 ]
+# Zilliqa Contract upgrade block heights
+consensus.contract_upgrade_block_heights.deposit_v3 = 5353200
