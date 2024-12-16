@@ -369,6 +369,8 @@ contract Deposit is UUPSUpgradeable {
     ) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
         $._stakersMap[blsPubKey].controlAddress = controlAddress;
+        delete $._stakerKeys[msg.sender];
+        $._stakerKeys[controlAddress] = blsPubKey;
     }
 
     function getPeerId(
