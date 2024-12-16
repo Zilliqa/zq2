@@ -11,6 +11,7 @@ use alloy::{
 use anyhow::{anyhow, Result};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use tracing::debug;
@@ -18,7 +19,7 @@ use tracing::debug;
 use crate::{
     block_store::BlockStore,
     cfg::{Amount, NodeConfig, ScillaExtLibsPath},
-    contracts,
+    contracts::{self, Contract},
     crypto::{self, Hash},
     db::TrieStorage,
     error::ensure_success,
@@ -160,7 +161,8 @@ impl State {
 
         state.deploy_initial_deposit_contract(&config)?;
 
-        state.upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO))?;
+        let deposit_contract = Lazy::<contracts::Contract>::force(&contracts::deposit::CONTRACT);
+        state.upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO), deposit_contract)?;
 
         Ok(state)
     }
@@ -223,7 +225,11 @@ impl State {
 
     /// Uses an Eip1967 proxy to update the deposit contract.
     /// Return new deposit implementation address
-    fn upgrade_deposit_contract(&mut self, current_block: BlockHeader) -> Result<Address> {
+    pub fn upgrade_deposit_contract(
+        &mut self,
+        current_block: BlockHeader,
+        contract: &Contract,
+    ) -> Result<Address> {
         let current_version = self.deposit_contract_version(current_block)?;
         debug!(
             "Upgrading deposit contract from version {} to verion {}",
@@ -233,12 +239,12 @@ impl State {
 
         // Deploy latest deposit implementation
         let new_deposit_impl_addr =
-            self.force_deploy_contract_evm(contracts::deposit::BYTECODE.to_vec(), None, 0)?;
+            self.force_deploy_contract_evm(contract.bytecode.to_vec(), None, 0)?;
 
         let new_deposit_impl_reinitialize_data =
             contracts::deposit::REINITIALIZE.encode_input(&[])?;
-        let deposit_upgrade_to_and_call_data = contracts::deposit_init::UPGRADE_TO_AND_CALL
-            .encode_input(&[
+        let deposit_upgrade_to_and_call_data =
+            contract.abi.function("upgradeToAndCall")?.encode_input(&[
                 Token::Address(ethabi::Address::from(new_deposit_impl_addr.into_array())),
                 Token::Bytes(new_deposit_impl_reinitialize_data),
             ])?;
@@ -632,8 +638,9 @@ mod tests {
             .contains(&deposit_init_addr.0.to_string().split_off(2)));
 
         // Update to deposit v2
+        let deposit_v2 = Lazy::<contracts::Contract>::force(&contracts::deposit_v2::CONTRACT);
         let deposit_v2_addr = state
-            .upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO))
+            .upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO), deposit_v2)
             .unwrap();
 
         let proxy_storage_at = state

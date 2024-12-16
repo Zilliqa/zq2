@@ -275,6 +275,10 @@ impl ChainNode {
         self.chain.chain()
     }
 
+    pub fn chain_id(&self) -> u64 {
+        self.eth_chain_id
+    }
+
     pub fn name(&self) -> String {
         self.machine.name.clone()
     }
@@ -527,6 +531,7 @@ impl ChainNode {
         // 4202 is not exposed, so enable everything for local debugging.
         let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
+
         // Enable Otterscan indices on API nodes.
         let enable_ots_indices = self.role == NodeRole::Api;
 
@@ -542,8 +547,58 @@ impl ChainNode {
             "whitelisted_evm_contract_addresses",
             &whitelisted_evm_contract_addresses,
         );
-        ctx.insert("api_servers", &api_servers);
+        // convert json to toml formatting
+        let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
+        ctx.insert("api_servers", &toml_servers.to_string());
         ctx.insert("enable_ots_indices", &enable_ots_indices);
+
+        if let Some(checkpoint_url) = self.chain.checkpoint_url() {
+            if self.role == NodeRole::Validator {
+                let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
+                ctx.insert("checkpoint_file", &format!("/{}", checkpoint_file));
+
+                let checkpoint_hex_block =
+                    crate::utils::string_decimal_to_hex(&checkpoint_file.replace(".dat", ""))?;
+
+                let json_response = self
+                    .chain
+                    .run_rpc_call(
+                        "eth_getBlockByNumber",
+                        &Some(format!("[\"{}\", false]", checkpoint_hex_block)),
+                        30,
+                    )
+                    .await?;
+
+                let parsed_json: Value = serde_json::from_str(&json_response)?;
+
+                let checkpoint_hash = parsed_json["result"]["hash"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "{}: Error retrieving the hash of the block {}",
+                            self.name(),
+                            checkpoint_hex_block
+                        )
+                    })?
+                    .strip_prefix("0x")
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "{}: Error stripping 0x from the hash of the block {}",
+                            self.name(),
+                            checkpoint_hex_block
+                        )
+                    })?;
+
+                ctx.insert("checkpoint_hash", checkpoint_hash);
+
+                log::info!(
+                    "Importing the checkpoint from the block {} ({} hex) whose hash is {}",
+                    checkpoint_file,
+                    checkpoint_hex_block,
+                    checkpoint_hash,
+                );
+            }
+        }
 
         Ok(Tera::one_off(spec_config, &ctx, false)?)
     }
@@ -586,6 +641,7 @@ impl ChainNode {
         };
 
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
+        let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
@@ -595,6 +651,7 @@ impl ChainNode {
         var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
+        var_map.insert("checkpoint_url", &checkpoint_url);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;
@@ -630,7 +687,12 @@ impl ChainNode {
         progress_bar.inc(1);
 
         progress_bar.start("Exporting the backup file");
-        machine.copy_from("/tmp/data.zip", filename).await?;
+        if filename.starts_with("gs://") {
+            let command = format!("sudo gsutil -m cp /tmp/data.zip {}", filename);
+            machine.run(&command, false).await?;
+        } else {
+            machine.copy_from("/tmp/data.zip", filename).await?;
+        }
         progress_bar.inc(1);
 
         progress_bar.start("Cleaning the backup files");
@@ -660,7 +722,12 @@ impl ChainNode {
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Importing the backup file", self.name()));
-        machine.copy_to(&[filename], "/tmp/data.zip").await?;
+        if filename.starts_with("gs://") {
+            let command = format!("sudo gsutil -m cp {} /tmp/data.zip", filename);
+            machine.run(&command, false).await?;
+        } else {
+            machine.copy_to(&[filename], "/tmp/data.zip").await?;
+        }
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Deleting the data folder", self.name()));

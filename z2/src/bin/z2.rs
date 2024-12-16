@@ -91,9 +91,9 @@ enum DeployerCommands {
     Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
-    /// Backup locally a node data dir
+    /// Backup a node data dir
     Backup(DeployerBackupArgs),
-    /// Restore a node data dir from a local backup
+    /// Restore a node data dir from a backup
     Restore(DeployerRestoreArgs),
     /// Reset a network stopping all the nodes and cleaning the /data folder
     Reset(DeployerActionsArgs),
@@ -142,6 +142,9 @@ pub struct DeployerInstallArgs {
     /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long)]
     persistence_url: Option<String>,
+    /// gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the install will be performed only on the validator nodes
+    #[clap(long)]
+    checkpoint_url: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -173,7 +176,7 @@ pub struct DeployerRpcArgs {
     /// Method to run
     #[clap(long, short, about)]
     method: String,
-    /// List of parameters for the method. ie "["string_value", true]"
+    /// List of parameters for the method. ie "[\"string_value\",true]"
     #[clap(long, short, about)]
     params: Option<String>,
     /// The network deployer config file
@@ -185,7 +188,7 @@ pub struct DeployerRpcArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerBackupArgs {
-    /// The path of the backup file
+    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long, short)]
     file: String,
     /// The network deployer config file
@@ -194,7 +197,7 @@ pub struct DeployerBackupArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerRestoreArgs {
-    /// The path of the backup file
+    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
     #[clap(long, short)]
     file: String,
     /// Define the number of nodes to process in parallel. Default: 50
@@ -731,11 +734,18 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
+
+                if arg.persistence_url.is_some() && arg.checkpoint_url.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "Provide only one of [--persistence-url] and [--checkpoint-url]"
+                    ));
+                }
                 plumbing::run_deployer_install(
                     &config_file,
                     arg.select,
                     arg.max_parallel,
                     arg.persistence_url.clone(),
+                    arg.checkpoint_url.clone(),
                 )
                 .await
                 .map_err(|err| {

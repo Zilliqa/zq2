@@ -12,6 +12,7 @@ Simple Terraform template of the Python provisioning script
 for the Zilliqa 2.0 validators running on GCP.
 
 templatefile() vars:
+- checkpoint_url, the ZQ2 checkpoint URL used for recover the validator nodes
 - persistence_url, the ZQ2 persistence URL used for recover the network
 - conifg, the ZQ2 validators configuration file
 - docker_image, the ZQ2 docker image (incl. version)
@@ -34,7 +35,14 @@ SPOUT_IMAGE="{{ spout_image }}"
 SECRET_KEY="{{ secret_key }}"
 GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
+CHECKPOINT_URL="{{ checkpoint_url }}"
 SUBDOMAIN=base64.b64decode(query_metadata_key("subdomain")).decode('utf-8')
+
+def mount_checkpoint_file():
+    if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
+        CHECKPOINT_FILENAME = os.path.basename(urlparse(CHECKPOINT_URL).path)
+        return f"-v /tmp/{CHECKPOINT_FILENAME}:/{CHECKPOINT_FILENAME}"
+    return ""
 
 VERSIONS={
     "zilliqa": ZQ2_IMAGE.split(":")[-1] if ZQ2_IMAGE.split(":")[-1] else "latest",
@@ -112,7 +120,7 @@ start() {
     --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
     -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
-    ${ZQ2_IMAGE} ${1} --log-json
+    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} ${1} --log-json
 }
 
 stop() {
@@ -448,12 +456,20 @@ def go(role):
     install_ops_agent()
     install_gcloud()
     match role:
-        case "validator" | "bootstrap" | "checkpoint":
+        case "bootstrap" | "checkpoint":
             log("Configuring a validator node")
             configure_logrotate()
             stop_zq2()
             install_zilliqa()
             download_persistence()
+            start_zq2()
+        case "validator":
+            log("Configuring a validator node")
+            configure_logrotate()
+            stop_zq2()
+            install_zilliqa()
+            download_persistence()
+            download_checkpoint()
             start_zq2()
         case "api":
             log("Configuring an API node")
@@ -609,6 +625,13 @@ def download_persistence():
             run_or_die(["tar", "xf", f"{PERSISTENCE_FILENAME}"])
             run_or_die(["rm", "-f", f"{PERSISTENCE_FILENAME}"])
 
+def download_checkpoint():
+    if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
+        PERSISTENCE_DIR="/data"
+        run_or_die(["rm", "-rf", f"{PERSISTENCE_DIR}"])
+        os.makedirs(PERSISTENCE_DIR, exist_ok=True)
+        CHECKPOINT_FILENAME = os.path.basename(urlparse(CHECKPOINT_URL).path)
+        run_or_die(["gsutil", "-m", "cp", f"{CHECKPOINT_URL}", f"/tmp/{CHECKPOINT_FILENAME}"])
 
 def start_zq2():
     run_or_die(["sudo", "systemctl", "start", "zilliqa"])

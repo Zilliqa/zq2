@@ -14,6 +14,7 @@ pub struct ChainInstance {
     config: NetworkConfig,
     machines: Vec<Machine>,
     persistence_url: Option<String>,
+    checkpoint_url: Option<String>,
 }
 
 impl ChainInstance {
@@ -23,6 +24,7 @@ impl ChainInstance {
             config: config.clone(),
             machines: Self::import_machines(&config.name, chain.get_project_id()?).await?,
             persistence_url: None,
+            checkpoint_url: None,
         })
     }
 
@@ -40,6 +42,14 @@ impl ChainInstance {
 
     pub fn set_persistence_url(&mut self, persistence_url: Option<String>) {
         self.persistence_url = persistence_url;
+    }
+
+    pub fn checkpoint_url(&self) -> Option<String> {
+        self.checkpoint_url.clone()
+    }
+
+    pub fn set_checkpoint_url(&mut self, checkpoint_url: Option<String>) {
+        self.checkpoint_url = checkpoint_url;
     }
 
     pub fn machines(&self) -> Vec<Machine> {
@@ -188,5 +198,47 @@ impl ChainInstance {
                 &self.name()
             ))
         }
+    }
+
+    pub async fn run_rpc_call(
+        &self,
+        method: &str,
+        params: &Option<String>,
+        timeout: usize,
+    ) -> Result<String> {
+        let endpoint = self.chain()?.get_endpoint()?;
+        let body = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
+            method,
+            params.clone().unwrap_or("[]".to_string()),
+        );
+
+        let args = &[
+            "--max-time",
+            &timeout.to_string(),
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type:application/json",
+            "-H",
+            "accept:application/json,*/*;q=0.5",
+            "--data",
+            &body,
+            endpoint,
+        ];
+
+        let output = zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd("curl", args)
+            .run_for_output()
+            .await?;
+        if !output.success {
+            return Err(anyhow!(
+                "getting local block number failed: {:?}",
+                output.stderr
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
     }
 }

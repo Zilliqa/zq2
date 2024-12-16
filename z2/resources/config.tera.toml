@@ -32,3 +32,9 @@ api_servers = {{ api_servers }}
 {%- if enable_ots_indices %}
 enable_ots_indices = true
 {%- endif %}
+
+{%- if checkpoint_file %}
+[nodes.load_checkpoint]
+file = "{{ checkpoint_file }}"
+hash = "{{ checkpoint_hash }}"
+{%- endif %}
