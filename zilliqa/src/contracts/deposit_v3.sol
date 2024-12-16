@@ -44,19 +44,12 @@ struct Staker {
     address controlAddress;
     // The address which rewards for this staker will be sent to.
     address rewardAddress;
+    // The address whose key with which validators sign cross-chain events 
+    address signingAddress;
     // libp2p peer ID, corresponding to the staker's `blsPubKey`
     bytes peerId;
     // Invariants: Items are always sorted by `startedAt`. No two items have the same value of `startedAt`.
     Deque.Withdrawals withdrawals;
-}
-
-// Parameters passed to the deposit contract constructor, for each staker who should be in the initial committee.
-struct InitialStaker {
-    bytes blsPubKey;
-    bytes peerId;
-    address rewardAddress;
-    address controlAddress;
-    uint256 amount;
 }
 
 contract Deposit is UUPSUpgradeable {
@@ -322,6 +315,25 @@ contract Deposit is UUPSUpgradeable {
         return $._stakersMap[blsPubKey].rewardAddress;
     }
 
+    function getSigningAddress(
+        bytes calldata blsPubKey
+    ) public view returns (address) {
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
+        DepositStorage storage $ = _getDepositStorage();
+        if ($._stakersMap[blsPubKey].controlAddress == address(0)) {
+            revert KeyNotStaked();
+        }
+        address signingAddress = $._stakersMap[blsPubKey].signingAddress;
+        // If the staker was an InitialStaker on contract initialisation and have not called setSigningAddress() then there will be no signingAddress.
+        // Default to controlAddress to avoid revert
+        if (signingAddress == address(0)) {
+            signingAddress = $._stakersMap[blsPubKey].controlAddress;
+        }
+        return signingAddress;
+    }
+
     function getControlAddress(
         bytes calldata blsPubKey
     ) public view returns (address) {
@@ -341,6 +353,14 @@ contract Deposit is UUPSUpgradeable {
     ) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
         $._stakersMap[blsPubKey].rewardAddress = rewardAddress;
+    }
+
+    function setSigningAddress(
+        bytes calldata blsPubKey,
+        address signingAddress
+    ) public onlyControlAddress(blsPubKey) {
+        DepositStorage storage $ = _getDepositStorage();
+        $._stakersMap[blsPubKey].signingAddress = signingAddress;
     }
 
     function setControlAddress(
@@ -458,7 +478,8 @@ contract Deposit is UUPSUpgradeable {
         bytes calldata blsPubKey,
         bytes calldata peerId,
         bytes calldata signature,
-        address rewardAddress
+        address rewardAddress,
+        address signingAddress
     ) public payable {
         if (blsPubKey.length != 48) {
             revert UnexpectedArgumentLength("bls public key", 48);
@@ -482,6 +503,7 @@ contract Deposit is UUPSUpgradeable {
             revert RogueKeyCheckFailed();
         }
 
+
         if (msg.value < $.minimumStake) {
             revert StakeAmountTooLow();
         }
@@ -490,6 +512,7 @@ contract Deposit is UUPSUpgradeable {
         Staker storage staker = $._stakersMap[blsPubKey];
         staker.peerId = peerId;
         staker.rewardAddress = rewardAddress;
+        staker.signingAddress = signingAddress;
         staker.controlAddress = msg.sender;
 
         updateLatestComputedEpoch();
