@@ -70,7 +70,8 @@ use zilliqa::{
         max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
         scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
         state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        Amount, ApiServer, Checkpoint, ConsensusConfig, GenesisDeposit, NodeConfig,
+        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights,
+        GenesisDeposit, NodeConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -242,12 +243,14 @@ struct Network {
     do_checkpoints: bool,
     blocks_per_epoch: u64,
     consensus_tick_countdown: u64,
+    deposit_v3_upgrade_block_height: Option<u64>,
 }
 
 impl Network {
     // This is only used in the zilliqa_macros::test macro. Consider refactoring this to a builder
     // or removing entirely (and calling new_shard there)?
     /// Create a main shard network with reasonable defaults.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rng: Arc<Mutex<ChaCha8Rng>>,
         nodes: usize,
@@ -256,6 +259,7 @@ impl Network {
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
         blocks_per_epoch: u64,
+        deposit_v3_upgrade_block_height: Option<u64>,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -268,6 +272,7 @@ impl Network {
             scilla_stdlib_dir,
             do_checkpoints,
             blocks_per_epoch,
+            deposit_v3_upgrade_block_height,
         )
     }
 
@@ -283,6 +288,7 @@ impl Network {
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
         blocks_per_epoch: u64,
+        deposit_v3_upgrade_block_height: Option<u64>,
     ) -> Network {
         let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -315,6 +321,10 @@ impl Network {
             })
             .collect();
 
+        let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
+            deposit_v3: deposit_v3_upgrade_block_height,
+        };
+
         let config = NodeConfig {
             eth_chain_id: shard_id,
             consensus: ConsensusConfig {
@@ -342,6 +352,7 @@ impl Network {
                     // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
                     Address::new(get_contract_address(secret_key_to_address(&genesis_key).0, 2).0),
                 ],
+                contract_upgrade_block_heights,
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -419,6 +430,7 @@ impl Network {
             blocks_per_epoch,
             scilla_stdlib_dir,
             consensus_tick_countdown: 10,
+            deposit_v3_upgrade_block_height,
         }
     }
 
@@ -441,6 +453,9 @@ impl Network {
     }
 
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
+        let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
+            deposit_v3: self.deposit_v3_upgrade_block_height,
+        };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             api_servers: vec![ApiServer {
@@ -475,6 +490,7 @@ impl Network {
                 scilla_call_gas_exempt_addrs: vec![Address::new(
                     get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
                 )],
+                contract_upgrade_block_heights,
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -862,6 +878,7 @@ impl Network {
                                     self.scilla_stdlib_dir.clone(),
                                     self.do_checkpoints,
                                     self.blocks_per_epoch,
+                                    self.deposit_v3_upgrade_block_height,
                                 ),
                             );
                         }

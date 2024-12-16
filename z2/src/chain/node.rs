@@ -275,6 +275,10 @@ impl ChainNode {
         self.chain.chain()
     }
 
+    pub fn chain_id(&self) -> u64 {
+        self.eth_chain_id
+    }
+
     pub fn name(&self) -> String {
         self.machine.name.clone()
     }
@@ -550,6 +554,54 @@ impl ChainNode {
         ctx.insert("enable_ots_indices", &enable_ots_indices);
         ctx.insert("remote_api_url", remote_api_url);
 
+        if let Some(checkpoint_url) = self.chain.checkpoint_url() {
+            if self.role == NodeRole::Validator {
+                let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
+                ctx.insert("checkpoint_file", &format!("/{}", checkpoint_file));
+
+                let checkpoint_hex_block =
+                    crate::utils::string_decimal_to_hex(&checkpoint_file.replace(".dat", ""))?;
+
+                let json_response = self
+                    .chain
+                    .run_rpc_call(
+                        "eth_getBlockByNumber",
+                        &Some(format!("[\"{}\", false]", checkpoint_hex_block)),
+                        30,
+                    )
+                    .await?;
+
+                let parsed_json: Value = serde_json::from_str(&json_response)?;
+
+                let checkpoint_hash = parsed_json["result"]["hash"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "{}: Error retrieving the hash of the block {}",
+                            self.name(),
+                            checkpoint_hex_block
+                        )
+                    })?
+                    .strip_prefix("0x")
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "{}: Error stripping 0x from the hash of the block {}",
+                            self.name(),
+                            checkpoint_hex_block
+                        )
+                    })?;
+
+                ctx.insert("checkpoint_hash", checkpoint_hash);
+
+                log::info!(
+                    "Importing the checkpoint from the block {} ({} hex) whose hash is {}",
+                    checkpoint_file,
+                    checkpoint_hex_block,
+                    checkpoint_hash,
+                );
+            }
+        }
+
         Ok(Tera::one_off(spec_config, &ctx, false)?)
     }
 
@@ -591,6 +643,7 @@ impl ChainNode {
         };
 
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
+        let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
@@ -600,6 +653,7 @@ impl ChainNode {
         var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
+        var_map.insert("checkpoint_url", &checkpoint_url);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;

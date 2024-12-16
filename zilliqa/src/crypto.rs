@@ -12,6 +12,7 @@ use blsful::{
     inner_types::Group, vsss_rs::ShareIdentifier, AggregateSignature, Bls12381G2, Bls12381G2Impl,
     MultiPublicKey, MultiSignature, PublicKey, Signature,
 };
+use crypto_bigint::generic_array::GenericArray;
 use itertools::Itertools;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
 use serde::{
@@ -216,7 +217,7 @@ impl TransactionPublicKey {
 /// The secret key type used as the basis of all cryptography in the node.
 /// Any of the `NodePublicKey` or `TransactionPublicKey`s, or a libp2p identity, can be derived
 /// from this.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy)]
 pub struct SecretKey {
     bytes: [u8; 32],
 }
@@ -252,9 +253,25 @@ impl SecretKey {
         blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes)
     }
 
+    // Used in deposit_v2
     pub fn pop_prove(&self) -> blsful::ProofOfPossession<Bls12381G2Impl> {
         let sk = blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes);
         sk.proof_of_possession().expect("sk != 0")
+    }
+
+    /// Sigature for staking deposit contract authorisation.
+    /// Sign over message made up of validator node's bls public key, chain_id and evm address.
+    // Used in deposit_v3
+    pub fn deposit_auth_signature(
+        &self,
+        chain_id: u64,
+        address: Address,
+    ) -> blsful::Signature<Bls12381G2Impl> {
+        let mut message = [0u8; 76];
+        message[..48].copy_from_slice(&self.as_bls().public_key().0.to_compressed());
+        message[48..56].copy_from_slice(&chain_id.to_be_bytes());
+        message[56..].copy_from_slice(&address.0.to_vec());
+        self.sign(&message).0
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -282,6 +299,14 @@ impl SecretKey {
             .expect("`SecretKey::from_bytes` returns an `Err` only when the length is not 32, we know the length is 32")
             .into();
         keypair.into()
+    }
+
+    pub fn to_evm_address(&self) -> Address {
+        let ecdsa_key =
+            k256::ecdsa::SigningKey::from_bytes(GenericArray::from_slice(&self.bytes)).unwrap();
+        let tx_pubkey =
+            TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
+        tx_pubkey.into_addr()
     }
 }
 
