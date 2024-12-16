@@ -445,7 +445,13 @@ pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractUpgradesBlockHeights {
     pub deposit_v3: Option<u64>,
+}
+
+impl Default for ContractUpgradesBlockHeights {
+    fn default() -> Self {
+        ContractUpgradesBlockHeights { deposit_v3: None }
+    }
 }
