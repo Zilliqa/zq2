@@ -1,6 +1,7 @@
 use std::ops::DerefMut;
 
-use blsful::{inner_types::G2Projective, vsss_rs::ShareIdentifier};
+use alloy::primitives::Address;
+use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
 use ethabi::Token;
 use ethers::{
     middleware::SignerMiddleware,
@@ -13,10 +14,7 @@ use rand::Rng;
 use revm::primitives::Address;
 use tracing::{info, trace};
 use zilliqa::{
-    contracts,
-    crypto::{NodePublicKey, SecretKey},
-    message::MAX_COMMITTEE_SIZE,
-    state::contract_addr,
+    contracts, crypto::{NodePublicKey, SecretKey}, message::MAX_COMMITTEE_SIZE, state::contract_addr
 };
 
 use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
@@ -46,7 +44,7 @@ async fn deposit_stake(
     new_validator_key: SecretKey,
     stake: u128,
     reward_address: H160,
-    deposit_signature_raw: &G2Projective,
+    pop: blsful::Signature<Bls12381G2Impl>,
 ) -> H256 {
     // Transfer the new validator enough ZIL to stake.
     let tx = TransactionRequest::pay(staker_wallet.address(), stake + 58190476400000000000);
@@ -72,7 +70,7 @@ async fn deposit_stake(
                             .to_peer_id()
                             .to_bytes(),
                     ),
-                    Token::Bytes(deposit_signature_raw.to_compressed().to_vec()),
+                    Token::Bytes(pop.as_raw_value().to_compressed().to_vec()),
                     Token::Address(reward_address),
                 ])
                 .unwrap(),
@@ -445,8 +443,10 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
 
     let staker_wallet = network.wallet_of_node(index).await;
-    let deposit_pop_signature = new_validator_key.pop_prove();
-
+    let pop = new_validator_key.pop_prove(
+        network.shard_id,
+        Address::from(staker_wallet.address().to_fixed_bytes()),
+    );
     let deposit_hash = deposit_stake(
         &mut network,
         &wallet,
@@ -454,7 +454,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         new_validator_key,
         32 * 10u128.pow(18),
         reward_address,
-        &deposit_pop_signature.0,
+        pop,
     )
     .await;
 
@@ -605,8 +605,10 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let reward_address = H160::random_using(&mut network.rng.lock().unwrap().deref_mut());
 
     let staker_wallet = network.wallet_of_node(index).await;
-    let deposit_signature = new_validator_key.pop_prove();
-
+    let pop = new_validator_key.pop_prove(
+        network.shard_id,
+        Address::from(staker_wallet.address().to_fixed_bytes()),
+    );
     deposit_stake(
         &mut network,
         &wallet,
