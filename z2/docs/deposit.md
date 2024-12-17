@@ -54,7 +54,7 @@ $ echo '{"secret_key":"96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e029
   z2 deposit --chain zq2-prototestnet \
   --peer-id  12D3KooWGu8PBoj6vMPafnhA2P7sLumSV1NhQJZ2W2AGiBgc5ATW \
   --private-key 96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419 \
-  --reward-address 0x3946f9872247af2eb4fe44c81c463e801925b8d4 \
+  --reward-address 0xe29a3e99a6997B1571DA24d6517e7b3acaFB5d9e \
   --signing-address 0x3946f9872247af2eb4fe44c81c463e801925b8d4 \
   --amount 100 \
   --public-key 825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804 \
