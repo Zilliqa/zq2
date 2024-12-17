@@ -18,10 +18,9 @@ use libp2p::{
     multiaddr::{Multiaddr, Protocol},
     noise,
     request_response::{self, OutboundFailure, ProtocolSupport},
-    swarm::{dial_opts::DialOpts, NetworkBehaviour, SwarmEvent},
+    swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, StreamProtocol, Swarm,
 };
-use rand::rngs::OsRng;
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
@@ -125,13 +124,17 @@ impl P2pNode {
                             .map_err(|e| anyhow!(e))?,
                     )
                     .map_err(|e| anyhow!(e))?,
-                    autonat_client: autonat::v2::client::Behaviour::new(OsRng, Default::default()),
-                    autonat_server: autonat::v2::server::Behaviour::new(OsRng),
-                    identify: identify::Behaviour::new(
-                        identify::Config::new("/zilliqa/1.0.0".to_owned(), key_pair.public())
-                            .with_hide_listen_addrs(true),
-                    ),
+                    autonat_client: autonat::v2::client::Behaviour::default(),
+                    autonat_server: autonat::v2::server::Behaviour::default(),
                     kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
+                    // FIXME: This is a hack.
+                    // By exposing the listen addresses, the nodes are able to get the correct remote ip/port to connect to.
+                    // Otherwise, when running locally in docker, the nodes connect to each other via the gateway acting as a NAT router.
+                    // So, the nodes are unable to see each other directly and remain isolated, defeating kademlia and autonat.
+                    identify: identify::Behaviour::new(
+                        identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
+                            .with_hide_listen_addrs(!cfg!(debug_assertions)),
+                    ),
                 })
             })?
             // Set the idle connection timeout to 10 seconds. Some protocols (such as autonat) rely on using a
@@ -231,17 +234,8 @@ impl P2pNode {
 
         if let Some((peer, address)) = &self.config.bootstrap_address {
             if self.swarm.local_peer_id() != peer {
-                self.swarm.dial(
-                    DialOpts::peer_id(*peer)
-                        .override_role() // hole-punch
-                        .addresses(vec![address.clone()])
-                        .build(),
-                )?;
-                self.swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(peer, address.clone());
-                self.swarm.behaviour_mut().kademlia.bootstrap()?;
+                self.swarm.dial(address.clone())?;
+                self.swarm.add_peer_address(*peer, address.clone());
             }
         }
 
@@ -255,6 +249,14 @@ impl P2pNode {
                     match event {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info: identify::Info{ listen_addrs, observed_addr, protocols, .. }, .. })) => {
+                            self.swarm.add_external_address(observed_addr);
+                            if protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
+                                for addr in listen_addrs {
+                                    self.swarm.add_peer_address(peer_id, addr);
+                                }
+                            }
                         }
                         SwarmEvent::NewExternalAddrOfPeer { peer_id, address } => {
                             self.swarm
