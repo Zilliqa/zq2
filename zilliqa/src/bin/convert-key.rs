@@ -5,11 +5,13 @@ use crypto_bigint::generic_array::GenericArray;
 use serde::Deserialize;
 use serde_json::json;
 use zilliqa::crypto::{SecretKey, TransactionPublicKey};
+use alloy::primitives::Address;
 
 #[derive(Deserialize)]
 struct Input {
     secret_key: String,
     chain_id: u64,
+    address: Option<String>
 }
 
 fn main() -> Result<()> {
@@ -26,12 +28,18 @@ fn main() -> Result<()> {
 
     let tx_pubkey = TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
 
+    // default to address derived from pub key
+    let address = match input.address {
+        None => tx_pubkey.into_addr(),
+        Some(addr) => addr.parse::<Address>().unwrap()
+    };
+
     let output = json!({
         "bls_public_key": secret_key.node_public_key(),
         "peer_id": secret_key.to_libp2p_keypair().public().to_peer_id(),
         "tx_pubkey": tx_pubkey,
-        "address": tx_pubkey.into_addr(),
-        "deposit_auth_signature": hex::encode(secret_key.deposit_auth_signature(input.chain_id, tx_pubkey.into_addr()).as_raw_value().to_compressed()),
+        "address": address,
+        "deposit_auth_signature": hex::encode(secret_key.deposit_auth_signature(input.chain_id, address).as_raw_value().to_compressed()),
     });
 
     println!("{output}");

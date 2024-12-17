@@ -29,7 +29,10 @@ Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <
 **Note**: The `--private-key` parameter should be the private key of a wallet that has secured a minimum stake amount of 10 million ZILs.
 
 ### Generating Required Values
-To generate the `public-key`, `deposit-auth-signature` and `peer-id`, use the following command inside the zq2 folder. Please pass `PRIVATE_KEY_OF_VALIDATOR` and `CHAIN_ID` to the command input.
+To generate the `public-key`, `deposit-auth-signature` and `peer-id`, use the following command inside the zq2 folder. Please pass `PRIVATE_KEY_OF_VALIDATOR` and `CHAIN_ID` to the command input. 
+
+By default this tool signs over the address derived from the given secret key to generate the `deposit-auth-signature`, you may want to override this for example if deploying via a Deleagtion contract. To override pass in `"address": "<CONTROL_ADDRESS>"`.
+
 ```bash
 echo '{"secret_key":"<PRIVATE_KEY_OF_VALIDATOR>", "chain_id": <CHAIN_ID>}' | cargo run --bin convert-key
 ```
