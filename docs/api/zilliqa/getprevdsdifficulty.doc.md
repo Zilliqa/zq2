@@ -8,11 +8,11 @@ get,difficulty,DS
 
 # Status
 
-NeverImplemented
+Deprecated
 
 # Description
 
-This is no longer a valid endpoint in Zilliqa 2.0 and always returns 0 for backwards compatibility.
+This API is deprecated in ZQ2. It now always returns 0 for backwards compatibility.
 
 Returns the minimum DS difficulty of the previous block. This is represented as an `Number`.
 

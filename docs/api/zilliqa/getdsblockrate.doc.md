@@ -6,10 +6,15 @@ GetDSBlockRate
 
 DS,block,get,rate
 
+# Status
+
+Deprecated
+
 # Description
 
+This API is deprecated in ZQ2. It now returns a placeholder value for backwards compatibility.
+
 Returns the current Directory Service blockrate per second.
-Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 
