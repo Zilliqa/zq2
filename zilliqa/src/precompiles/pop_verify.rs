@@ -13,8 +13,7 @@ use crate::exec::PendingState;
 
 pub struct PopVerify;
 
-/// A custom Proof of Possession in which the bls public key, an evm address and a chain_id are signed over
-// keep in-sync with zilliqa/src/contracts/deposit.sol
+// keep in-sync with zilliqa/src/contracts/deposit_v2.sol
 impl PopVerify {
     const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
     fn pop_verify(
@@ -34,7 +33,7 @@ impl PopVerify {
             return Err(PrecompileError::Other("ABI inputs missing".into()).into());
         };
 
-        let Ok(pop) = <blsful::Bls12381G2Impl as blsful::Pairing>::Signature::try_from(
+        let Ok(pop) = blsful::ProofOfPossession::<Bls12381G2Impl>::try_from(
             decoded[0].to_owned().into_bytes().unwrap(),
         ) else {
             return Err(PrecompileError::Other("ABI signature invalid".into()).into());
@@ -46,22 +45,7 @@ impl PopVerify {
             return Err(PrecompileError::Other("ABI pubkey invalid".into()).into());
         };
 
-        // message which pop signs over
-        let mut pop_message = [0u8; 98];
-        pop_message[..48].copy_from_slice(&pk.0.to_compressed());
-        pop_message[48..56].copy_from_slice(&_context.env.cfg.chain_id.to_le_bytes());
-        pop_message[56..].copy_from_slice(
-            &_context
-                .env
-                .tx
-                .caller
-                .to_checksum_buffer(Some(_context.env.cfg.chain_id))
-                .into_inner(),
-        );
-
-        let result = blsful::Signature::Basic(pop)
-            .verify(&pk, pop_message)
-            .is_ok();
+        let result = pop.verify(pk).is_ok();
 
         // FIXME: Gas?
         let output = encode(&[Token::Bool(result)]);

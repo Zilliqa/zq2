@@ -253,13 +253,18 @@ impl SecretKey {
         blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes)
     }
 
-    pub fn pop_prove(&self, chain_id: u64, address: Address) -> blsful::Signature<Bls12381G2Impl> {
-        // message which pop signs over
-        let mut pop_message = [0u8; 98];
-        pop_message[..48].copy_from_slice(&self.as_bls().public_key().0.to_compressed());
-        pop_message[48..56].copy_from_slice(&chain_id.to_le_bytes());
-        pop_message[56..].copy_from_slice(&address.to_checksum_buffer(Some(chain_id)).into_inner());
-        self.sign(&pop_message).0
+    /// Sigature for staking deposit contract authorisation.
+    /// Sign over message made up of validator node's bls public key, chain_id and evm address.
+    pub fn deposit_auth_signature(
+        &self,
+        chain_id: u64,
+        address: Address,
+    ) -> blsful::Signature<Bls12381G2Impl> {
+        let mut message = [0u8; 76];
+        message[..48].copy_from_slice(&self.as_bls().public_key().0.to_compressed());
+        message[48..56].copy_from_slice(&chain_id.to_be_bytes());
+        message[56..].copy_from_slice(&address.0.to_vec());
+        self.sign(&message).0
     }
 
     /// Sigature for staking deposit contract authorisation.

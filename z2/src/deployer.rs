@@ -230,8 +230,6 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
 pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNode) -> Result<()> {
     let private_keys = node.get_private_key().await?;
     let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
-    let reward_private_keys = node.get_wallet_private_key().await?;
-    let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
 
     println!("Validator {}:", node.name());
     println!("z2 deposit --chain {} \\", node.chain()?);
@@ -239,7 +237,10 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
     println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
     println!(
         "\t--pop-signature {} \\",
-        node_ethereum_address.bls_pop_signature(node.chain_id())?
+        node_ethereum_address.secret_key.deposit_auth_signature(
+            node.chain_id(),
+            node_ethereum_address.secret_key.to_evm_address()
+        )
     );
     println!("\t--private-key {} \\", genesis_private_key);
     println!("\t--reward-address {} \\", ZERO_ACCOUNT);
@@ -285,8 +286,6 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         let genesis_private_key = chain.genesis_private_key().await?;
         let private_keys = node.get_private_key().await?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
-        let reward_private_keys = node.get_wallet_private_key().await?;
-        let node_reward_ethereum_address = EthereumAddress::from_private_key(&reward_private_keys)?;
 
         println!("Validator {}:", node.name());
 
@@ -294,7 +293,11 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
             &node_ethereum_address.peer_id,
             &node_ethereum_address.bls_public_key,
             &node_ethereum_address
-                .bls_pop_signature(node.chain_id())?
+                .secret_key
+                .deposit_auth_signature(
+                    node.chain_id(),
+                    node_ethereum_address.secret_key.to_evm_address(),
+                )
                 .to_string(),
         )?;
         let stake = validators::StakeDeposit::new(
