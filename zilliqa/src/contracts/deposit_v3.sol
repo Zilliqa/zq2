@@ -635,19 +635,19 @@ contract Deposit is UUPSUpgradeable {
         // Enqueue the withdrawal for this staker.
         Deque.Withdrawals storage withdrawals = staker.withdrawals;
         Withdrawal storage currentWithdrawal;
-        // We know `withdrawals` is sorted by `startedAt`. We also know `block.timestamp` is monotonically
-        // non-decreasing. Therefore if there is an existing entry with a `startedAt = block.timestamp`, it must be
+        // We know `withdrawals` is sorted by `startedAt`. We also know `block.number` is monotonically
+        // non-decreasing. Therefore if there is an existing entry with a `startedAt = block.number`, it must be
         // at the end of the queue.
         if (
             withdrawals.length() != 0 &&
-            withdrawals.back().startedAt == block.timestamp
+            withdrawals.back().startedAt == block.number
         ) {
             // They have already made a withdrawal at this time, so grab a reference to the existing one.
             currentWithdrawal = withdrawals.back();
         } else {
             // Add a new withdrawal to the end of the queue.
             currentWithdrawal = withdrawals.pushBack();
-            currentWithdrawal.startedAt = block.timestamp;
+            currentWithdrawal.startedAt = block.number;
             currentWithdrawal.amount = 0;
         }
         currentWithdrawal.amount += amount;
@@ -661,6 +661,7 @@ contract Deposit is UUPSUpgradeable {
         _withdraw(count);
     }
 
+    /// Unbonding period for withdrawals measured in number of blocks (note that we have 1 second block times)
     function withdrawalPeriod() public view returns (uint256) {
         // shorter unbonding period for testing deposit withdrawals
         if (block.chainid == 33469) return 5 minutes;
@@ -680,7 +681,7 @@ contract Deposit is UUPSUpgradeable {
 
         while (count > 0) {
             Withdrawal storage withdrawal = withdrawals.front();
-            if (withdrawal.startedAt + withdrawalPeriod() <= block.timestamp) {
+            if (withdrawal.startedAt + withdrawalPeriod() <= block.number) {
                 releasedAmount += withdrawal.amount;
                 withdrawals.popFront();
             } else {
