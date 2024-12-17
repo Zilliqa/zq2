@@ -1,17 +1,17 @@
 use std::io;
 
+use alloy::primitives::Address;
 use anyhow::Result;
 use crypto_bigint::generic_array::GenericArray;
 use serde::Deserialize;
 use serde_json::json;
 use zilliqa::crypto::{SecretKey, TransactionPublicKey};
-use alloy::primitives::Address;
 
 #[derive(Deserialize)]
 struct Input {
     secret_key: String,
     chain_id: u64,
-    address: Option<String>
+    address: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     // default to address derived from pub key
     let address = match input.address {
         None => tx_pubkey.into_addr(),
-        Some(addr) => addr.parse::<Address>().unwrap()
+        Some(addr) => addr.parse::<Address>().unwrap(),
     };
 
     let output = json!({
