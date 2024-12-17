@@ -48,15 +48,8 @@ struct Staker {
     bytes peerId;
     // Invariants: Items are always sorted by `startedAt`. No two items have the same value of `startedAt`.
     Deque.Withdrawals withdrawals;
-}
-
-// Parameters passed to the deposit contract constructor, for each staker who should be in the initial committee.
-struct InitialStaker {
-    bytes blsPubKey;
-    bytes peerId;
-    address rewardAddress;
-    address controlAddress;
-    uint256 amount;
+    // The address whose key with which validators sign cross-chain events
+    address signingAddress;
 }
 
 contract Deposit is UUPSUpgradeable {
@@ -322,6 +315,25 @@ contract Deposit is UUPSUpgradeable {
         return $._stakersMap[blsPubKey].rewardAddress;
     }
 
+    function getSigningAddress(
+        bytes calldata blsPubKey
+    ) public view returns (address) {
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
+        DepositStorage storage $ = _getDepositStorage();
+        if ($._stakersMap[blsPubKey].controlAddress == address(0)) {
+            revert KeyNotStaked();
+        }
+        address signingAddress = $._stakersMap[blsPubKey].signingAddress;
+        // If the staker was an InitialStaker on contract initialisation and have not called setSigningAddress() then there will be no signingAddress.
+        // Default to controlAddress to avoid revert
+        if (signingAddress == address(0)) {
+            signingAddress = $._stakersMap[blsPubKey].controlAddress;
+        }
+        return signingAddress;
+    }
+
     function getControlAddress(
         bytes calldata blsPubKey
     ) public view returns (address) {
@@ -343,12 +355,22 @@ contract Deposit is UUPSUpgradeable {
         $._stakersMap[blsPubKey].rewardAddress = rewardAddress;
     }
 
+    function setSigningAddress(
+        bytes calldata blsPubKey,
+        address signingAddress
+    ) public onlyControlAddress(blsPubKey) {
+        DepositStorage storage $ = _getDepositStorage();
+        $._stakersMap[blsPubKey].signingAddress = signingAddress;
+    }
+
     function setControlAddress(
         bytes calldata blsPubKey,
         address controlAddress
     ) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
         $._stakersMap[blsPubKey].controlAddress = controlAddress;
+        delete $._stakerKeys[msg.sender];
+        $._stakerKeys[controlAddress] = blsPubKey;
     }
 
     function getPeerId(
@@ -458,7 +480,8 @@ contract Deposit is UUPSUpgradeable {
         bytes calldata blsPubKey,
         bytes calldata peerId,
         bytes calldata signature,
-        address rewardAddress
+        address rewardAddress,
+        address signingAddress
     ) public payable {
         if (blsPubKey.length != 48) {
             revert UnexpectedArgumentLength("bls public key", 48);
@@ -490,6 +513,7 @@ contract Deposit is UUPSUpgradeable {
         Staker storage staker = $._stakersMap[blsPubKey];
         staker.peerId = peerId;
         staker.rewardAddress = rewardAddress;
+        staker.signingAddress = signingAddress;
         staker.controlAddress = msg.sender;
 
         updateLatestComputedEpoch();
@@ -611,19 +635,19 @@ contract Deposit is UUPSUpgradeable {
         // Enqueue the withdrawal for this staker.
         Deque.Withdrawals storage withdrawals = staker.withdrawals;
         Withdrawal storage currentWithdrawal;
-        // We know `withdrawals` is sorted by `startedAt`. We also know `block.timestamp` is monotonically
-        // non-decreasing. Therefore if there is an existing entry with a `startedAt = block.timestamp`, it must be
+        // We know `withdrawals` is sorted by `startedAt`. We also know `block.number` is monotonically
+        // non-decreasing. Therefore if there is an existing entry with a `startedAt = block.number`, it must be
         // at the end of the queue.
         if (
             withdrawals.length() != 0 &&
-            withdrawals.back().startedAt == block.timestamp
+            withdrawals.back().startedAt == block.number
         ) {
             // They have already made a withdrawal at this time, so grab a reference to the existing one.
             currentWithdrawal = withdrawals.back();
         } else {
             // Add a new withdrawal to the end of the queue.
             currentWithdrawal = withdrawals.pushBack();
-            currentWithdrawal.startedAt = block.timestamp;
+            currentWithdrawal.startedAt = block.number;
             currentWithdrawal.amount = 0;
         }
         currentWithdrawal.amount += amount;
@@ -637,6 +661,7 @@ contract Deposit is UUPSUpgradeable {
         _withdraw(count);
     }
 
+    /// Unbonding period for withdrawals measured in number of blocks (note that we have 1 second block times)
     function withdrawalPeriod() public view returns (uint256) {
         // shorter unbonding period for testing deposit withdrawals
         if (block.chainid == 33469) return 5 minutes;
@@ -656,7 +681,7 @@ contract Deposit is UUPSUpgradeable {
 
         while (count > 0) {
             Withdrawal storage withdrawal = withdrawals.front();
-            if (withdrawal.startedAt + withdrawalPeriod() <= block.timestamp) {
+            if (withdrawal.startedAt + withdrawalPeriod() <= block.number) {
                 releasedAmount += withdrawal.amount;
                 withdrawals.popFront();
             } else {
