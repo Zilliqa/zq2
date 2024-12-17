@@ -29,14 +29,14 @@ pub struct Validator {
 }
 
 impl Validator {
-    pub fn new(peer_id: &str, public_key: &str, pop_signature: &str) -> Result<Self> {
+    pub fn new(peer_id: &str, public_key: &str, deposit_auth_signature: &str) -> Result<Self> {
         Ok(Self {
             peer_id: PeerId::from_str(peer_id).unwrap(),
             public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
                 .unwrap(),
             pop: blsful::Signature::Basic(
                 <blsful::Bls12381G2Impl as blsful::Pairing>::Signature::try_from(
-                    hex::decode(pop_signature).unwrap(),
+                    hex::decode(deposit_auth_signature).unwrap(),
                 )
                 .unwrap(),
             ),
@@ -51,6 +51,7 @@ pub struct StakeDeposit {
     chain_endpoint: String,
     private_key: String,
     reward_address: H160,
+    signing_address: H160,
 }
 
 impl StakeDeposit {
@@ -60,6 +61,7 @@ impl StakeDeposit {
         chain_endpoint: &str,
         private_key: &str,
         reward_address: &str,
+        signing_address: &str,
     ) -> Result<Self> {
         Ok(Self {
             validator,
@@ -67,6 +69,7 @@ impl StakeDeposit {
             chain_endpoint: chain_endpoint.to_owned(),
             private_key: private_key.to_owned(),
             reward_address: H160(hex_string_to_u8_20(reward_address).unwrap()),
+            signing_address: H160(hex_string_to_u8_20(signing_address).unwrap()),
         })
     }
 }
@@ -194,12 +197,13 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake.amount as u128 * 1_000_000u128 * 10u128.pow(18))
         .data(
-            contracts::deposit::DEPOSIT
+            contracts::deposit_v3::DEPOSIT
                 .encode_input(&[
                     Token::Bytes(stake.validator.public_key.as_bytes()),
                     Token::Bytes(stake.validator.peer_id.to_bytes()),
                     Token::Bytes(stake.validator.pop.as_raw_value().to_compressed().to_vec()),
                     Token::Address(stake.reward_address),
+                    Token::Address(stake.signing_address),
                 ])
                 .unwrap(),
         );

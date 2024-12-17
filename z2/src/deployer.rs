@@ -236,7 +236,7 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
     println!("\t--peer-id {} \\", node_ethereum_address.peer_id);
     println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
     println!(
-        "\t--pop-signature {} \\",
+        "\t--deposit-auth-signature {} \\",
         node_ethereum_address.secret_key.deposit_auth_signature(
             node.chain_id(),
             node_ethereum_address.secret_key.to_evm_address()
@@ -244,6 +244,7 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
     );
     println!("\t--private-key {} \\", genesis_private_key);
     println!("\t--reward-address {} \\", ZERO_ACCOUNT);
+    println!("\t--staking-address {} \\", ZERO_ACCOUNT);
     println!("\t--amount {VALIDATOR_DEPOSIT_IN_MILLIONS}\n");
 
     Ok(())
@@ -305,6 +306,7 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
             VALIDATOR_DEPOSIT_IN_MILLIONS,
             chain.chain()?.get_endpoint()?,
             &genesis_private_key,
+            ZERO_ACCOUNT,
             ZERO_ACCOUNT,
         )?;
 

@@ -444,9 +444,12 @@ struct DepositStruct {
     /// Specify the staking reward address
     #[clap(long, short)]
     reward_address: String,
+    /// Specify the signing address
+    #[clap(long, short)]
+    signing_address: String,
     /// Specify the Validator Proof-of-Possession
     #[clap(long)]
-    pop_signature: String,
+    deposit_auth_signature: String,
 }
 
 #[derive(Args, Debug)]
@@ -962,14 +965,18 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Deposit(ref args) => {
-            let node =
-                validators::Validator::new(&args.peer_id, &args.public_key, &args.pop_signature)?;
+            let node = validators::Validator::new(
+                &args.peer_id,
+                &args.public_key,
+                &args.deposit_auth_signature,
+            )?;
             let stake = validators::StakeDeposit::new(
                 node,
                 args.amount,
                 args.chain_name.get_endpoint()?,
                 &args.private_key,
                 &args.reward_address,
+                &args.signing_address,
             )?;
             validators::deposit_stake(&stake).await
         }
