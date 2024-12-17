@@ -2,6 +2,8 @@
 version: "3"
 services:
   node0:
+    depends_on:
+      - node3 
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
@@ -21,6 +23,8 @@ services:
         ipv4_address: 198.51.100.100
 
   node1:
+    depends_on:
+      - node3
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
@@ -35,6 +39,8 @@ services:
         ipv4_address: 198.51.100.101
 
   node2:
+    depends_on:
+      - node3
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
