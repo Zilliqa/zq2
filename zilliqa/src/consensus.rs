@@ -157,6 +157,7 @@ pub struct Consensus {
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,
+    new_view_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
     state: State,
@@ -329,6 +330,7 @@ impl Consensus {
             votes: BTreeMap::new(),
             buffered_votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
+            new_view_message_cache: None,
             high_qc,
             state,
             db,
@@ -435,15 +437,18 @@ impl Consensus {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
         let leader = self.leader_at_block(&block, view);
-        Ok((
-            leader.map(|leader| leader.peer_id),
+        let new_view_message = (
+            leader.map(|leader: Validator| leader.peer_id),
             ExternalMessage::NewView(Box::new(NewView::new(
                 self.secret_key,
                 self.high_qc,
                 view,
                 self.secret_key.node_public_key(),
             ))),
-        ))
+        );
+
+        self.new_view_message_cache = Some(new_view_message.clone());
+        Ok(new_view_message)
     }
 
     pub fn public_key(&self) -> NodePublicKey {
@@ -554,7 +559,15 @@ impl Consensus {
                     % self.config.consensus.consensus_timeout.as_secs())
                     == 0
             {
-                return Ok(Some(self.build_new_view()?));
+                if let Some((_, ExternalMessage::NewView(new_view))) =
+                    self.new_view_message_cache.as_ref()
+                {
+                    if new_view.view == self.get_view()? {
+                        return Ok(self.new_view_message_cache.clone());
+                    }
+                    // If new_view message is not for this view then it must be outdated
+                    self.new_view_message_cache = None;
+                }
             }
 
             return Ok(None);
