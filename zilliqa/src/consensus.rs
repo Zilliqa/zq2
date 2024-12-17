@@ -565,8 +565,9 @@ impl Consensus {
                     if new_view.view == self.get_view()? {
                         return Ok(self.new_view_message_cache.clone());
                     }
+                    // If new_view message is not for this view then it must be outdated
+                    self.new_view_message_cache = None;
                 }
-                self.new_view_message_cache = None;
             }
 
             return Ok(None);
