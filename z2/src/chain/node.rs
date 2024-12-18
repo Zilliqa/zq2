@@ -546,7 +546,8 @@ impl ChainNode {
         ctx.insert("genesis_address", &genesis_account.address);
         ctx.insert(
             "whitelisted_evm_contract_addresses",
-            &whitelisted_evm_contract_addresses,
+            &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
+                .to_string(),
         );
         ctx.insert(
             "contract_upgrade_block_heights",
