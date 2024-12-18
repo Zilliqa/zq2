@@ -331,7 +331,7 @@ impl GetTxResponse {
             amount,
             signature,
             receipt: GetTxResponseReceipt {
-                cumulative_gas: ScillaGas(receipt.cumulative_gas_used.0),
+                cumulative_gas: receipt.cumulative_gas_used.into(),
                 epoch_num: block_number,
                 transitions: receipt
                     .transitions
@@ -659,7 +659,7 @@ pub struct TransactionBody {
     #[serde(rename = "gasPrice")]
     pub gas_price: String,
     pub nonce: String,
-    pub receipt: TransactionReceipt,
+    pub receipt: TransactionReceiptResponse,
     #[serde(rename = "senderPubKey")]
     pub sender_pub_key: String,
     pub signature: String,
