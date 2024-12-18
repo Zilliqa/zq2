@@ -498,24 +498,54 @@ fn get_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<Value> {
 
 // GetBlockchainInfo
 fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainInfo> {
+    let transaction_rate = get_tx_rate(Params::new(None), node)?;
+    let tx_block_rate = calculate_tx_block_rate(node)?;
+    let sharding_structure = get_sharding_structure(Params::new(None), node)?;
+
     let node = node.lock().unwrap();
 
+    let num_peers = node.get_peer_num();
     let num_tx_blocks = node.get_chain_tip();
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    let num_transactions = node.consensus.block_store.get_num_transactions()?;
+    let ds_block_rate = tx_block_rate / TX_BLOCKS_PER_DS_BLOCK as f64;
+
+    // num_txns_ds_epoch
+    let current_epoch = node.get_chain_tip() / TX_BLOCKS_PER_DS_BLOCK;
+    let current_epoch_first = current_epoch * TX_BLOCKS_PER_DS_BLOCK;
+    let mut num_txns_ds_epoch = 0;
+    for i in current_epoch_first..node.get_chain_tip() {
+        let block = node
+            .consensus
+            .block_store
+            .get_canonical_block_by_number(i)?
+            .ok_or_else(|| anyhow!("Block not found"))?;
+        num_txns_ds_epoch += block.transactions.len();
+    }
+
+    // num_txns_tx_epoch
+    let latest_block = node
+        .consensus
+        .block_store
+        .get_canonical_block_by_number(node.get_chain_tip())?;
+    let num_txns_tx_epoch = match latest_block {
+        Some(block) => block.transactions.len(),
+        None => 0,
+    };
 
     Ok(BlockchainInfo {
-        num_peers: 0,
+        num_peers: num_peers as u16,
         num_tx_blocks,
         num_ds_blocks,
-        num_transactions: 0,
-        transaction_rate: 0.0,
-        tx_block_rate: 0.0,
-        ds_block_rate: 0.0,
+        num_transactions: num_transactions as u64,
+        transaction_rate,
+        tx_block_rate,
+        ds_block_rate,
         current_mini_epoch: num_tx_blocks,
         current_ds_epoch: num_ds_blocks,
-        num_txns_ds_epoch: 0,
-        num_txns_tx_epoch: 0,
-        sharding_structure: ShardingStructure { num_peers: vec![0] },
+        num_txns_ds_epoch: num_txns_ds_epoch as u64,
+        num_txns_tx_epoch: num_txns_tx_epoch as u64,
+        sharding_structure,
     })
 }
 
