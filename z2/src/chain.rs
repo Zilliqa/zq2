@@ -153,6 +153,7 @@ impl Chain {
         }
     }
 
+    // Warning: Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
     pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgradesBlockHeights {
         match self {
             Self::Zq2Devnet => ContractUpgradesBlockHeights {

@@ -363,6 +363,7 @@ pub struct ConsensusConfig {
     #[serde(default)]
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
     /// The block heights at which we perform EIP-1967 contract upgrades
+    /// Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
     #[serde(default)]
     pub contract_upgrade_block_heights: ContractUpgradesBlockHeights,
     /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
