@@ -7,6 +7,7 @@ use clap::ValueEnum;
 use colored::Colorize;
 use strum::EnumProperty;
 use strum_macros::{Display, EnumString};
+use zilliqa::cfg::ContractUpgradesBlockHeights;
 
 #[derive(Clone, Debug, ValueEnum, Display, EnumString, EnumProperty)]
 // TODO: decomment when became available
@@ -148,6 +149,21 @@ impl Chain {
                 "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057",
             ],
             _ => vec![],
+        }
+    }
+
+    pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgradesBlockHeights {
+        match self {
+            Self::Zq2Devnet => ContractUpgradesBlockHeights {
+                deposit_v3: Some(3600),
+            },
+            Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
+                deposit_v3: Some(5299200),
+            },
+            Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
+                deposit_v3: Some(8406000),
+            },
+            _ => ContractUpgradesBlockHeights::default(),
         }
     }
 

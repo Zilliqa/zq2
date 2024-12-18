@@ -445,7 +445,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     assert!(!stakers.contains(&new_validator_key.node_public_key()));
 
     let staker_wallet = network.wallet_of_node(index).await;
-    let deposit_pop_signature = new_validator_key.pop_prove();
+    let deposit_auth_signature = new_validator_key.pop_prove();
 
     let deposit_hash = deposit_stake(
         &mut network,
@@ -454,7 +454,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         new_validator_key,
         32 * 10u128.pow(18),
         reward_address,
-        &deposit_pop_signature.0,
+        &deposit_auth_signature.0,
     )
     .await;
 

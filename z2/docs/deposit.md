@@ -11,9 +11,10 @@ z2 deposit \
   --private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND> \
   --amount <AMOUNT_IN_ZIL> \
   --reward-address <REWARD_ADDRESS_OF_VALIDATOR> \
-  --pop-signature <BLS_POP_SIGNATURE>
+  --signing-address <SIGNING_ADDRESS_OF_VALIDATOR> \
+  --deposit-auth-signature <DEPOSIT_AUTH_SIGNATURE>
 
-Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND> --amount <AMOUNT_IN_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR> --pop-signature <BLS_POP_SIGNATURE>
+Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND> --amount <AMOUNT_IN_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR> --signing-address <SIGNING_ADDRESS_OF_VALIDATOR> --deposit-auth-signature <DEPOSIT_AUTH_SIGNATURE>
 ```
 ## Parameters
 * `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
@@ -22,21 +23,38 @@ Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <
 * `--private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND>`: The private key of the wallet that has a minimum stake amount of 10 million.
 * `--amount <AMOUNT_IN_MILLION_ZIL>`: The amount in ZIL to deposit. The valid range is from 10 million to 255 million ZIL, allowing a deposit of up to 255 million ZIL.
 * `--reward-address <REWARD_ADDRESS>`: Specifies the address to receive rewards. You can generate a new wallet address to receive the rewards.
-* `--pop-signature <BLS_POP_SIGNATURE>`: The BLS proof-of-possession signature of the validator node.
+* `--signing-address <SIGNING_ADDRESS>`: Specifies the address which signs cross-chain events.
+* `--deposit-auth-signature <DEPOSIT_AUTH_SIGNATURE>`: BLS signature of the validator node signing over control address and chain Id.
 
 **Note**: The `--private-key` parameter should be the private key of a wallet that has secured a minimum stake amount of 10 million ZILs.
 
 ### Generating Required Values
-To generate the `public-key`, `pop-signature` and `peer-id`, use the following command inside the zq2 folder. Please pass `PRIVATE_KEY_OF_VALIDATOR` to the command input.
+To generate the `public-key`, `deposit-auth-signature` and `peer-id`, use the following command inside the zq2 folder. Please pass `PRIVATE_KEY_OF_VALIDATOR` and `CHAIN_ID` to the command input. 
+
+
 ```bash
-echo '{"secret_key":"<PRIVATE_KEY_OF_VALIDATOR>"}' | cargo run --bin convert-key
+echo '{"secret_key":"<PRIVATE_KEY_OF_VALIDATOR>", "chain_id": <CHAIN_ID>}' | cargo run --bin convert-key
 ```
+
+By default this tool signs over the address derived from the given secret key to generate the `deposit-auth-signature`, you may want to override this for example if deploying via a Delegation contract. To override pass in `"control_address": "<CONTROL_ADDRESS>"`.
+
+
 #### Sample run
 ```bash
-$ echo '{"secret_key":"96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419"}' | cargo run --bin convert-key
+$ echo '{"secret_key":"96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419", "chain_id": 33469}' | cargo run --bin convert-key
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.67s
      Running `target/debug/convert-key`
-{"address":"0x3946f9872247af2eb4fe44c81c463e801925b8d4","bls_pop_signature":"90dbc73ac9f40b75acd8279a50447f5f4e61c377f4147d1dc4b6f139b84d5c48180aae67c76db3abc4c205e4c48df5160a88ae1b84ed4869c9660458d7feb5100ccc499dbd4f2131b5a90e34261ae6ea9246abf8c32b75b1f16e63a66eec2214","bls_public_key":"825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804","peer_id":"12D3KooWGu8PBoj6vMPafnhA2P7sLumSV1NhQJZ2W2AGiBgc5ATW","tx_pubkey":{"Ecdsa":["3056301006072A8648CE3D020106052B8104000A03420004B7C457DC36C75EADA5675629F1CE0FA93534FB76ADFC49840CC050AE2995FC87764AEB8975D049D19FDA6BFF2B3FF51608034A3FC6708F476A0C9306BA5CBE14",true]}}
+{"bls_public_key":"825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804","control_address":"0x3946f9872247af2eb4fe44c81c463e801925b8d4","deposit_auth_signature":"a53efd8bad058e4e551b7e9681613a278b782acfe05fb98d536bc95029278704adbb85891cdc7fa384ab7d5008fdd42c0ea70404ab4ec07bcf5e738c92b2be88debdc33014852ead1d9976fcbf7760043615ba74f36181fc87db21f8f8997a44","peer_id":"12D3KooWGu8PBoj6vMPafnhA2P7sLumSV1NhQJZ2W2AGiBgc5ATW","tx_pubkey":{"Ecdsa":["3056301006072A8648CE3D020106052B8104000A03420004B7C457DC36C75EADA5675629F1CE0FA93534FB76ADFC49840CC050AE2995FC87764AEB8975D049D19FDA6BFF2B3FF51608034A3FC6708F476A0C9306BA5CBE14",true]}}
+```
+
+Or with delegation contract control address:
+
+```bash
+$ echo '{"secret_key":"96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419", "chain_id": 33469, "control_address": "0x81fbbe8916a4e986735296e130a87a97226480c5"}' | cargo run --bin convert-key
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.67s
+     Running `target/debug/convert-key`
+{"bls_public_key":"825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804","control_address":"0x81fbbe8916a4e986735296e130a87a97226480c5","deposit_auth_signature":"b4770471f1b6b798b3a5cf19b6f574724777f2fbf7b7f520e75fc8461cafcfd84114316fe2aeaf35b52b9ca519310f8c0bf5cd941426e4a78cc7e10c6da80f245a9ddadc42de3f8a35db42d633b2b03847b33883f702eb13c332988d34d68d90","peer_id":"12D3KooWGu8PBoj6vMPafnhA2P7sLumSV1NhQJZ2W2AGiBgc5ATW","tx_pubkey":{"Ecdsa":["3056301006072A8648CE3D020106052B8104000A03420004B7C457DC36C75EADA5675629F1CE0FA93534FB76ADFC49840CC050AE2995FC87764AEB8975D049D19FDA6BFF2B3FF51608034A3FC6708F476A0C9306BA5CBE14",true]}}
+
 ```
 
 ### Run z2 deposit
@@ -49,7 +67,8 @@ $ echo '{"secret_key":"96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e029
   --peer-id  12D3KooWGu8PBoj6vMPafnhA2P7sLumSV1NhQJZ2W2AGiBgc5ATW \
   --private-key 96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419 \
   --reward-address 0xe29a3e99a6997B1571DA24d6517e7b3acaFB5d9e \
+  --signing-address 0x3946f9872247af2eb4fe44c81c463e801925b8d4 \
   --amount 100 \
   --public-key 825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804 \
-  --pop-signature  90dbc73ac9f40b75acd8279a50447f5f4e61c377f4147d1dc4b6f139b84d5c48180aae67c76db3abc4c205e4c48df5160a88ae1b84ed4869c9660458d7feb5100ccc499dbd4f2131b5a90e34261ae6ea9246abf8c32b75b1f16e63a66eec2214 
+  --deposit-auth-signature  b12ab1e18e2393f165c083f9685f708aa7a1578d2685e18f4f19d950ad27c10c8dd0cf4cb637b7b215687afe861906ec064a7d89acbba718e6590cfd3baebe06bc7779028207909fff9c9c3db34f0ce812969e37d252907f9496e50bd725bb5e 
 ```
