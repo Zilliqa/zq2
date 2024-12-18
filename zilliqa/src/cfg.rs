@@ -433,6 +433,7 @@ impl Default for Forks {
         vec![Fork {
             at_height: 0,
             failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+            call_mode_1_sets_caller_to_parent_caller: true,
         }]
         .try_into()
         .unwrap()
@@ -460,6 +461,16 @@ pub struct Fork {
     /// precompile and the inner Scilla call fails, the entire transaction will revert. If false, the normal EVM
     /// semantics apply where the caller can decide how to act based on the success of the inner call.
     pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
+    /// If true, if a call is made to the `scilla_call` precompile with `call_mode` / `keep_origin` set to `1`, the
+    /// `_sender` of the inner Scilla call will be set to the caller of the current call-stack. If false, the `_sender`
+    /// will be set to the original transaction signer.
+    ///
+    /// For example:
+    /// A (EOA) -> B (EVM) -> C (EVM) -> D (Scilla)
+    ///
+    /// When this flag is true, `D` will see the `_sender` as `B`. When this flag is false, `D` will see the `_sender`
+    /// as `A`.
+    pub call_mode_1_sets_caller_to_parent_caller: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

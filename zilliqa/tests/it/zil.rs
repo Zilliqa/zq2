@@ -1098,6 +1098,11 @@ async fn scilla_precompiles(mut network: Network) {
           e = {_eventname : "Inserted"; a : a; b : b};
           event e
         end
+
+        transition LogSender()
+          e = {_eventname : "LogSender"; sender : _sender};
+          event e
+        end
     "#;
 
     let data = r#"[
@@ -1129,6 +1134,7 @@ async fn scilla_precompiles(mut network: Network) {
     )
     .await;
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let evm_contract_address = receipt.contract_address.unwrap();
 
     let read = |fn_name, var_name: &'_ str, keys: &[H160], ty| {
         let abi = &abi;
@@ -1201,7 +1207,7 @@ async fn scilla_precompiles(mut network: Network) {
         Token::Uint(5.into()),
     ];
     let tx = TransactionRequest::new()
-        .to(receipt.contract_address.unwrap())
+        .to(evm_contract_address)
         .data(function.encode_input(input).unwrap())
         .gas(84_000_000);
 
@@ -1262,6 +1268,34 @@ async fn scilla_precompiles(mut network: Network) {
     .into_uint()
     .unwrap();
     assert_eq!(val, 5.into());
+
+    // Construct a transaction which logs the `_sender` from the Scilla call.
+    let function = abi.function("callScillaNoArgs").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("LogSender".to_owned()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(evm_contract_address)
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // Run the transaction.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.logs.len(), 1);
+    let log = &receipt.logs[0];
+    let data = ethabi::decode(&[ParamType::String], &log.data).unwrap()[0]
+        .clone()
+        .into_string()
+        .unwrap();
+    let scilla_log: Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(scilla_log["_eventname"], "LogSender");
+    assert_eq!(scilla_log["params"][0]["vname"], "sender");
+    assert_eq!(
+        scilla_log["params"][0]["value"],
+        format!("{:?}", wallet.address())
+    );
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
