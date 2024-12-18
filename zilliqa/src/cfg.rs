@@ -114,6 +114,9 @@ pub struct NodeConfig {
     /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
     #[serde(default)]
     pub enable_ots_indices: bool,
+    /// Maximum allowed RPC response size
+    #[serde(default = "max_rpc_response_size_default")]
+    pub max_rpc_response_size: u32,
 }
 
 impl Default for NodeConfig {
@@ -133,6 +136,7 @@ impl Default for NodeConfig {
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
+            max_rpc_response_size: max_rpc_response_size_default(),
         }
     }
 }
@@ -205,6 +209,10 @@ pub fn max_blocks_in_flight_default() -> u64 {
 
 pub fn block_request_batch_size_default() -> u64 {
     100
+}
+
+pub fn max_rpc_response_size_default() -> u32 {
+    10 * 1024 * 1024 // 10 MB
 }
 
 pub fn state_rpc_limit_default() -> usize {

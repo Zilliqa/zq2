@@ -17,7 +17,7 @@ use opentelemetry_semantic_conventions::{
 };
 use tokio::{
     select,
-    sync::{mpsc, mpsc::UnboundedSender},
+    sync::mpsc::{self, UnboundedSender},
     time::{self, Instant},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -130,6 +130,7 @@ impl NodeLauncher {
                 .allow_headers([header::CONTENT_TYPE]);
             let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
             let server = jsonrpsee::server::ServerBuilder::new()
+                .max_response_body_size(config.max_rpc_response_size)
                 .set_http_middleware(middleware)
                 .set_id_provider(EthIdProvider)
                 .build((Ipv4Addr::UNSPECIFIED, api_server.port))
@@ -137,7 +138,8 @@ impl NodeLauncher {
 
             match server {
                 Ok(server) => {
-                    info!("JSON-RPC server listening on port {}", api_server.port);
+                    let port = server.local_addr()?.port();
+                    info!("JSON-RPC server listening on port {}", port);
                     let handle = server.start(rpc_module);
                     tokio::spawn(handle.stopped());
                 }
