@@ -24,24 +24,36 @@ Usage: z2 deposit --chain <CHAIN_NAME> --public-key <BLS_PUBLIC_KEY> --peer-id <
 * `--amount <AMOUNT_IN_MILLION_ZIL>`: The amount in ZIL to deposit. The valid range is from 10 million to 255 million ZIL, allowing a deposit of up to 255 million ZIL.
 * `--reward-address <REWARD_ADDRESS>`: Specifies the address to receive rewards. You can generate a new wallet address to receive the rewards.
 * `--signing-address <SIGNING_ADDRESS>`: Specifies the address which signs cross-chain events.
-* `--deposit-auth-signature <DEPOSIT_AUTH_SIGNATURE>`: The BLS proof-of-possession signature of the validator node.
+* `--deposit-auth-signature <DEPOSIT_AUTH_SIGNATURE>`: BLS signature of the validator node signing over control address and chain Id.
 
 **Note**: The `--private-key` parameter should be the private key of a wallet that has secured a minimum stake amount of 10 million ZILs.
 
 ### Generating Required Values
 To generate the `public-key`, `deposit-auth-signature` and `peer-id`, use the following command inside the zq2 folder. Please pass `PRIVATE_KEY_OF_VALIDATOR` and `CHAIN_ID` to the command input. 
 
-By default this tool signs over the address derived from the given secret key to generate the `deposit-auth-signature`, you may want to override this for example if deploying via a Delegation contract. To override pass in `"address": "<CONTROL_ADDRESS>"`.
 
 ```bash
 echo '{"secret_key":"<PRIVATE_KEY_OF_VALIDATOR>", "chain_id": <CHAIN_ID>}' | cargo run --bin convert-key
 ```
+
+By default this tool signs over the address derived from the given secret key to generate the `deposit-auth-signature`, you may want to override this for example if deploying via a Delegation contract. To override pass in `"control_address": "<CONTROL_ADDRESS>"`.
+
+
 #### Sample run
 ```bash
 $ echo '{"secret_key":"96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419", "chain_id": 33469}' | cargo run --bin convert-key
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.67s
      Running `target/debug/convert-key`
-{"address":"0x3946f9872247af2eb4fe44c81c463e801925b8d4","deposit_auth_signature":"a53efd8bad058e4e551b7e9681613a278b782acfe05fb98d536bc95029278704adbb85891cdc7fa384ab7d5008fdd42c0ea70404ab4ec07bcf5e738c92b2be88debdc33014852ead1d9976fcbf7760043615ba74f36181fc87db21f8f8997a44","bls_public_key":"825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804","peer_id":"12D3KooWGu8PBoj6vMPafnhA2P7sLumSV1NhQJZ2W2AGiBgc5ATW","tx_pubkey":{"Ecdsa":["3056301006072A8648CE3D020106052B8104000A03420004B7C457DC36C75EADA5675629F1CE0FA93534FB76ADFC49840CC050AE2995FC87764AEB8975D049D19FDA6BFF2B3FF51608034A3FC6708F476A0C9306BA5CBE14",true]}}
+{"bls_public_key":"825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804","control_address":"0x3946f9872247af2eb4fe44c81c463e801925b8d4","deposit_auth_signature":"a53efd8bad058e4e551b7e9681613a278b782acfe05fb98d536bc95029278704adbb85891cdc7fa384ab7d5008fdd42c0ea70404ab4ec07bcf5e738c92b2be88debdc33014852ead1d9976fcbf7760043615ba74f36181fc87db21f8f8997a44","peer_id":"12D3KooWGu8PBoj6vMPafnhA2P7sLumSV1NhQJZ2W2AGiBgc5ATW","tx_pubkey":{"Ecdsa":["3056301006072A8648CE3D020106052B8104000A03420004B7C457DC36C75EADA5675629F1CE0FA93534FB76ADFC49840CC050AE2995FC87764AEB8975D049D19FDA6BFF2B3FF51608034A3FC6708F476A0C9306BA5CBE14",true]}}
+```
+
+Or with delegation contract control address:
+
+```bash
+$ echo '{"secret_key":"96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419", "chain_id": 33469, "control_address": "0x81fbbe8916a4e986735296e130a87a97226480c5"}' | cargo run --bin convert-key
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.67s
+     Running `target/debug/convert-key`
+{"bls_public_key":"825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804","control_address":"0x81fbbe8916a4e986735296e130a87a97226480c5","deposit_auth_signature":"b4770471f1b6b798b3a5cf19b6f574724777f2fbf7b7f520e75fc8461cafcfd84114316fe2aeaf35b52b9ca519310f8c0bf5cd941426e4a78cc7e10c6da80f245a9ddadc42de3f8a35db42d633b2b03847b33883f702eb13c332988d34d68d90","peer_id":"12D3KooWGu8PBoj6vMPafnhA2P7sLumSV1NhQJZ2W2AGiBgc5ATW","tx_pubkey":{"Ecdsa":["3056301006072A8648CE3D020106052B8104000A03420004B7C457DC36C75EADA5675629F1CE0FA93534FB76ADFC49840CC050AE2995FC87764AEB8975D049D19FDA6BFF2B3FF51608034A3FC6708F476A0C9306BA5CBE14",true]}}
 
 ```
 

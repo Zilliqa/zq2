@@ -11,7 +11,7 @@ use zilliqa::crypto::{SecretKey, TransactionPublicKey};
 struct Input {
     secret_key: String,
     chain_id: u64,
-    address: Option<String>,
+    control_address: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     let tx_pubkey = TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
 
     // default to address derived from pub key
-    let address = match input.address {
+    let address = match input.control_address {
         None => tx_pubkey.into_addr(),
         Some(addr) => addr.parse::<Address>().unwrap(),
     };
@@ -38,7 +38,7 @@ fn main() -> Result<()> {
         "bls_public_key": secret_key.node_public_key(),
         "peer_id": secret_key.to_libp2p_keypair().public().to_peer_id(),
         "tx_pubkey": tx_pubkey,
-        "address": address,
+        "control_address": address,
         "deposit_auth_signature": hex::encode(secret_key.deposit_auth_signature(input.chain_id, address).as_raw_value().to_compressed()),
     });
 

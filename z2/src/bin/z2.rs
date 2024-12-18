@@ -447,7 +447,7 @@ struct DepositStruct {
     /// Specify the signing address
     #[clap(long, short)]
     signing_address: String,
-    /// Specify the Validator Proof-of-Possession
+    /// Specify the Validator deposit signature
     #[clap(long)]
     deposit_auth_signature: String,
 }
