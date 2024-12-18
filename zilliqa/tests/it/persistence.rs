@@ -8,18 +8,8 @@ use primitive_types::H160;
 use rand::Rng;
 use tracing::*;
 use zilliqa::{
-    api,
-    cfg::{
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default, eth_chain_id_default,
-        failed_request_sleep_duration_default, max_blocks_in_flight_default,
-        max_rpc_response_size_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
-        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights, NodeConfig,
-    },
+    cfg::Checkpoint,
     crypto::{Hash, SecretKey},
-    transaction::EvmGas,
 };
 
 use crate::{
@@ -92,50 +82,9 @@ async fn block_and_tx_data_persistence(mut network: Network) {
 
     // drop and re-create the node using the same datadir:
     drop(inner);
+    let config = node.inner.lock().unwrap().config.clone();
     #[allow(clippy::redundant_closure_call)]
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
-    let config = NodeConfig {
-        consensus: ConsensusConfig {
-            is_main: true,
-            genesis_accounts: Network::genesis_accounts(&network.genesis_key),
-            empty_block_timeout: Duration::from_millis(25),
-            local_address: "host.docker.internal".to_owned(),
-            rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
-            blocks_per_hour: 3600 * 40,
-            minimum_stake: 32_000_000_000_000_000_000u128.into(),
-            eth_block_gas_limit: EvmGas(84000000),
-            gas_price: 4_761_904_800_000u128.into(),
-            consensus_timeout: consensus_timeout_default(),
-            genesis_deposits: Vec::new(),
-            main_shard_id: None,
-            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
-            scilla_address: scilla_address_default(),
-            blocks_per_epoch: 10,
-            epochs_per_checkpoint: 1,
-            scilla_stdlib_dir: scilla_stdlib_dir_default(),
-            scilla_ext_libs_path: scilla_ext_libs_path_default(),
-            total_native_token_supply: total_native_token_supply_default(),
-            scilla_call_gas_exempt_addrs: vec![],
-            contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
-        },
-        allowed_timestamp_skew: allowed_timestamp_skew_default(),
-        data_dir: None,
-        state_cache_size: state_cache_size_default(),
-        load_checkpoint: None,
-        do_checkpoints: false,
-        api_servers: vec![ApiServer {
-            port: 4201,
-            enabled_apis: api::all_enabled(),
-        }],
-        eth_chain_id: eth_chain_id_default(),
-        block_request_limit: block_request_limit_default(),
-        max_blocks_in_flight: max_blocks_in_flight_default(),
-        block_request_batch_size: block_request_batch_size_default(),
-        state_rpc_limit: state_rpc_limit_default(),
-        failed_request_sleep_duration: failed_request_sleep_duration_default(),
-        enable_ots_indices: true,
-        max_rpc_response_size: max_rpc_response_size_default(),
-    };
     let mut rng = network.rng.lock().unwrap();
     let result = crate::node(
         config,

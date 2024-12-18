@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    cfg::{ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
+    cfg::{Fork, ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
     constants, contracts,
     crypto::{Hash, NodePublicKey},
     db::TrieStorage,
@@ -425,6 +425,7 @@ impl DatabaseRef for &State {
 /// The external context used by [Evm].
 pub struct ExternalContext<'a, I> {
     pub inspector: I,
+    pub fork: Fork,
     pub scilla_call_gas_exempt_addrs: &'a [Address],
     // This flag is only used for zq1 whitelisted contracts, and it's used to detect if the entire transaction should be marked as failed
     pub enforce_transaction_failure: bool,
@@ -516,6 +517,7 @@ impl State {
 
         let external_context = ExternalContext {
             inspector,
+            fork: self.forks.get(current_block.number),
             scilla_call_gas_exempt_addrs: &self.scilla_call_gas_exempt_addrs,
             enforce_transaction_failure: false,
         };

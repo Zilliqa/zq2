@@ -29,7 +29,7 @@ use zilliqa::{
         max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
         scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
         state_rpc_limit_default, total_native_token_supply_default, Amount, ConsensusConfig,
-        ContractUpgradesBlockHeights, GenesisDeposit,
+        ContractUpgradesBlockHeights, Forks, GenesisDeposit,
     },
     transaction::EvmGas,
 };
@@ -539,6 +539,7 @@ impl Setup {
                     total_native_token_supply: total_native_token_supply_default(),
                     scilla_call_gas_exempt_addrs: vec![],
                     contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
+                    forks: Forks::default(),
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
