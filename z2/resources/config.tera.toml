@@ -5,6 +5,7 @@ bootstrap_address = [ "{{ bootstrap_peer_id }}", "/ip4/{{ bootstrap_public_ip }}
 {%- endif %}
 
 [[nodes]]
+remote_api_url = "{{ remote_api_url }}"
 eth_chain_id = {{ eth_chain_id }}
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"

@@ -519,6 +519,7 @@ impl ChainNode {
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
         let bootstrap_public_ip = selected_bootstrap.machine.external_address;
+        let remote_api_url = self.chain()?.get_endpoint()?;
         let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         // 4201 is the publically exposed port - We don't expose everything there.
         let public_api = if self.role == NodeRole::Api {
@@ -551,6 +552,7 @@ impl ChainNode {
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
         ctx.insert("api_servers", &toml_servers.to_string());
         ctx.insert("enable_ots_indices", &enable_ots_indices);
+        ctx.insert("remote_api_url", remote_api_url);
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator {

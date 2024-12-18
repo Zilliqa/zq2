@@ -354,6 +354,11 @@ impl Node {
         Ok(())
     }
 
+    pub fn internal_restart(&self, shard_id: u64) -> Result<()> {
+        self.message_sender
+            .send_message_to_coordinator(InternalMessage::RestartShard(shard_id))
+    }
+
     pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
         let to = self.chain_id.eth;
         tracing::debug!(%from, %to, %message, "handling message");
@@ -365,7 +370,9 @@ impl Node {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(source))?;
             }
-            InternalMessage::LaunchShard(..) | InternalMessage::ExportBlockCheckpoint(..) => {
+            InternalMessage::LaunchShard(..)
+            | InternalMessage::ExportBlockCheckpoint(..)
+            | InternalMessage::RestartShard(..) => {
                 warn!(
                     "{message} type messages should be handled by the coordinator, not forwarded to a node.",
                 );

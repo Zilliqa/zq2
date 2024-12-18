@@ -339,6 +339,8 @@ pub enum InternalMessage {
         TrieStorage,
         Box<Path>,
     ),
+    /// Notifies the coordinator to restart a node of the given shard
+    RestartShard(u64),
 }
 
 /// Returns a terse, human-readable summary of a message.
@@ -351,6 +353,7 @@ impl Display for InternalMessage {
             InternalMessage::ExportBlockCheckpoint(block, ..) => {
                 write!(f, "ExportCheckpoint({})", block.number())
             }
+            InternalMessage::RestartShard(id) => write!(f, "RestartShard({id})"),
         }
     }
 }
