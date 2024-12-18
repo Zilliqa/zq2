@@ -226,6 +226,21 @@ impl Node {
         Ok(())
     }
 
+    /// Checks if node is in the current committee, and returns the highest canonical block number
+    fn is_current_committee(&self) -> Result<bool> {
+        let head_block = self.consensus.head_block();
+        let state_at = self.get_state(&head_block)?;
+        let committee = state_at.get_stakers(head_block.header)?;
+
+        if committee
+            .iter()
+            .any(|pk| *pk == self.consensus.public_key())
+        {
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     pub fn handle_request(
         &mut self,
         from: PeerId,
@@ -262,6 +277,17 @@ impl Node {
             ExternalMessage::BlockRequest(request) => {
                 if from == self.peer_id {
                     debug!("block_store::BlockRequest : ignoring blocks request to self");
+                    return Ok(());
+                }
+
+                // Return a null response, to indicate that we're not servicing this request.
+                // Note - https://github.com/Zilliqa/zq2/issues/1878
+                if self.is_current_committee()? {
+                    warn!("block_store::BlockRequest : sending empty block response.");
+                    self.request_responses.send((
+                        response_channel,
+                        ExternalMessage::BlockResponse(BlockResponse::default()),
+                    ))?;
                     return Ok(());
                 }
 
@@ -931,6 +957,13 @@ impl Node {
             "block_store::handle_block_response - received blocks response of length {}",
             response.proposals.len()
         );
+
+        info!(
+            "block response from: {from} len: {} availability: {:?}",
+            response.proposals.len(),
+            response.availability
+        );
+
         self.consensus
             .receive_block_availability(from, &response.availability)?;
 
