@@ -171,14 +171,14 @@ impl Chain {
     pub fn get_forks(&self) -> Vec<Value> {
         match self {
             Chain::Zq2ProtoTestnet => vec![
-                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false }),
+                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false }),
                 // estimated: 2024-12-18T14:57:53Z
-                json!({ "at_height": 8404000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true }),
+                json!({ "at_height": 8404000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
             ],
             Chain::Zq2ProtoMainnet => vec![
-                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false }),
+                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false }),
                 // estimated: 2024-12-19T15:03:05Z
-                json!({ "at_height": 5299000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true }),
+                json!({ "at_height": 5299000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
             ],
             _ => vec![],
         }
