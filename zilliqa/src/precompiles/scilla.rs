@@ -335,9 +335,48 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
 pub fn scilla_call_handle_register<I: ScillaInspector>(
     handler: &mut EvmHandler<'_, ExternalContext<I>, PendingState>,
 ) {
+    // Create handler
+    let prev_handle = handler.execution.create.clone();
+    handler.execution.create = Arc::new(move |ctx, inputs| {
+        // Reserve enough space to store the caller.
+        ctx.external.callers.reserve(
+            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
+        );
+        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
+            ctx.external.callers.push(Address::ZERO);
+        }
+        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+
+        prev_handle(ctx, inputs)
+    });
+
+    // EOF create handler
+    let prev_handle = handler.execution.eofcreate.clone();
+    handler.execution.eofcreate = Arc::new(move |ctx, inputs| {
+        // Reserve enough space to store the caller.
+        ctx.external.callers.reserve(
+            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
+        );
+        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
+            ctx.external.callers.push(Address::ZERO);
+        }
+        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+
+        prev_handle(ctx, inputs)
+    });
+
     // Call handler
     let prev_handle = handler.execution.call.clone();
     handler.execution.call = Arc::new(move |ctx, inputs| {
+        // Reserve enough space to store the caller.
+        ctx.external.callers.reserve(
+            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
+        );
+        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
+            ctx.external.callers.push(Address::ZERO);
+        }
+        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+
         if inputs.bytecode_address != Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53") {
             return prev_handle(ctx, inputs);
         }
@@ -502,7 +541,16 @@ fn scilla_call_precompile<I: ScillaInspector>(
         scilla,
         evmctx.env.tx.caller,
         if keep_origin {
-            evmctx.env.tx.caller
+            if external_context
+                .fork
+                .call_mode_1_sets_caller_to_parent_caller
+            {
+                // Use the caller of the parent call-stack.
+                external_context.callers[evmctx.journaled_state.depth - 1]
+            } else {
+                // Use the original transaction signer.
+                evmctx.env.tx.caller
+            }
         } else {
             input.caller
         },
