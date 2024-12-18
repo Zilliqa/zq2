@@ -1111,6 +1111,16 @@ impl BlockStore {
         Ok(())
     }
 
+    pub fn add_peer(&mut self, peer: PeerId) -> Result<()> {
+        self.peers.entry(peer).or_insert_with(PeerInfo::new);
+        Ok(())
+    }
+
+    pub fn remove_peer(&mut self, peer: PeerId) -> Result<()> {
+        self.peers.remove(&peer);
+        Ok(())
+    }
+
     fn peer_info(&mut self, peer: PeerId) -> &mut PeerInfo {
         self.peers.entry(peer).or_insert_with(PeerInfo::new)
     }

@@ -399,25 +399,11 @@ impl Consensus {
                 .get_block(high_qc.block_hash)?
                 .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
 
-            let executed_block = BlockHeader {
-                number: high_block.header.number + 1,
-                ..Default::default()
-            };
-            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
-
-            // Grab last seen committee's peerIds in case others also went offline
-            let committee = state_at.get_stakers(executed_block)?;
-            let recent_peer_ids: Vec<_> = committee
-                .iter()
-                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
-                .filter_map(|&peer_public_key| {
-                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
-                })
-                .collect();
-
+            // Start with an empty list of peers, which will be populated with time
             consensus
                 .block_store
-                .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
+                .set_peers_and_view(high_block.view(), &Vec::new())?;
+
             // It is likley that we missed the most recent proposal. Request it now
             consensus
                 .block_store

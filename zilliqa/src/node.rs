@@ -218,8 +218,14 @@ impl Node {
                     self.consensus.handle_new_transaction(t)?;
                 }
             }
-            _ => {
-                warn!("unexpected message type");
+            ExternalMessage::AddPeer => {
+                self.consensus.block_store.add_peer(from)?;
+            }
+            ExternalMessage::RemovePeer => {
+                self.consensus.block_store.remove_peer(from)?;
+            }
+            msg => {
+                warn!(?msg, "unexpected message type");
             }
         }
 

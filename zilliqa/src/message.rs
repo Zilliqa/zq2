@@ -250,6 +250,9 @@ pub enum ExternalMessage {
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
+    /// Peer management
+    AddPeer,
+    RemovePeer,
 }
 
 impl ExternalMessage {
@@ -315,6 +318,8 @@ impl Display for ExternalMessage {
                 }
             },
             ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
+            ExternalMessage::AddPeer => write!(f, "AddPeer"),
+            ExternalMessage::RemovePeer => write!(f, "RemovePeer"),
         }
     }
 }
