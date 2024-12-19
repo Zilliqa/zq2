@@ -1,5 +1,5 @@
 import {JsonRpcProvider} from "@ethersproject/providers";
-import {Account} from "@zilliqa-js/account";
+import {Account} from "@zilliqa-js/zilliqa";
 import {Wallet} from "ethers";
 import {HardhatRuntimeEnvironment} from "hardhat/types";
 

@@ -1,7 +1,5 @@
-import {BN, bytes, getAddressFromPrivateKey, units, Zilliqa} from "@zilliqa-js/zilliqa";
+import {BN, bytes, getAddressFromPrivateKey, units, Zilliqa, Long} from "@zilliqa-js/zilliqa";
 import {ethers} from "ethers";
-import Long from "long";
-
 export interface Account {
   privateKey: string;
   ethAddress: string;

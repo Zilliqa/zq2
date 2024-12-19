@@ -4,6 +4,10 @@ pragma solidity ^0.8.9;
 contract Precompiles {
   bytes public idStored;
   uint256 public modExpResult;
+  uint256 public pairingResult;
+  uint256[2] public ecAddResult;
+  uint256[2] public ecMulResult;
+  bytes32[2] public blake2Result;
 
   constructor() {}
 
@@ -56,12 +60,13 @@ contract Precompiles {
     }
   }
 
-  function testEcAdd(uint256 a_x, uint256 a_y, uint256 b_x, uint256 b_y) public returns (uint256[2] memory p) {
+  function testEcAdd(uint256 a_x, uint256 a_y, uint256 b_x, uint256 b_y) public {
     uint256[4] memory input;
     input[0] = a_x;
     input[1] = a_y;
     input[2] = b_x;
     input[3] = b_y;
+    uint256[2] memory p;
     assembly {
       // input size  = (256 / 8) * 4 = 0x80
       // output size = (256 / 8) * 2 = 0x40
@@ -69,13 +74,16 @@ contract Precompiles {
         revert(0, 0)
       }
     }
+
+    ecAddResult = p;
   }
 
-  function testEcMul(uint256 p_x, uint256 p_y, uint256 s) public returns (uint256[2] memory p) {
+  function testEcMul(uint256 p_x, uint256 p_y, uint256 s) public {
     uint256[3] memory input;
     input[0] = p_x;
     input[1] = p_y;
     input[2] = s;
+    uint256[2] memory p;
     assembly {
       // input size  = (256 / 8) * 3 = 0x60
       // output size = (256 / 8) * 2 = 0x40
@@ -83,6 +91,7 @@ contract Precompiles {
         revert(0, 0)
       }
     }
+    ecMulResult = p;
   }
 
   function testEcPairing(uint256[] memory pairs) public returns (uint256) {
@@ -94,16 +103,12 @@ contract Precompiles {
         revert(0, 0)
       }
     }
+
+    pairingResult = pairs[0];
     return pairs[0];
   }
 
-  function testBlake2(
-    uint32 rounds,
-    bytes32[2] memory h,
-    bytes32[4] memory m,
-    bytes8[2] memory t,
-    bool f
-  ) public returns (bytes32[2] memory) {
+  function testBlake2(uint32 rounds, bytes32[2] memory h, bytes32[4] memory m, bytes8[2] memory t, bool f) public {
     bytes32[2] memory output;
 
     bytes memory args = abi.encodePacked(rounds, h[0], h[1], m[0], m[1], m[2], m[3], t[0], t[1], f);
@@ -114,6 +119,6 @@ contract Precompiles {
       }
     }
 
-    return output;
+    blake2Result = output;
   }
 }
