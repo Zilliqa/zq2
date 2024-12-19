@@ -275,6 +275,16 @@ pub async fn run_deployer_restart(config_file: &str, node_selection: bool) -> Re
     Ok(())
 }
 
+pub async fn run_deployer_block_number(
+    config_file: &str,
+    node_selection: bool,
+    follow: bool,
+) -> Result<()> {
+    println!("🦆 Running block-number for {config_file} .. ");
+    deployer::run_block_number(config_file, node_selection, follow).await?;
+    Ok(())
+}
+
 pub async fn run_deployer_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
     println!("🦆 Running generate-genesis-key for {config_file} .. ");
     deployer::run_generate_genesis_key(config_file, force).await?;

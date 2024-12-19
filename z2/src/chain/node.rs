@@ -250,6 +250,66 @@ impl Machine {
 
         Ok(block_number)
     }
+
+    pub async fn get_rpc_response(
+        &self,
+        method: &str,
+        params: &Option<String>,
+        timeout: usize,
+    ) -> Result<String> {
+        let body = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
+            method,
+            params.clone().unwrap_or("[]".to_string()),
+        );
+
+        let args = &[
+            "--max-time",
+            &timeout.to_string(),
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type:application/json",
+            "-H",
+            "accept:application/json,*/*;q=0.5",
+            "--data",
+            &body,
+            &format!("http://{}:4201", self.external_address),
+        ];
+
+        let output = zqutils::commands::CommandBuilder::new()
+            .silent()
+            .cmd("curl", args)
+            .run_for_output()
+            .await?;
+        if !output.success {
+            return Err(anyhow!(
+                "getting rpc response for {} with params {:?} failed: {:?}",
+                method,
+                params,
+                output.stderr
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+    }
+
+    pub async fn get_block_number(&self, timeout: usize) -> Result<u64> {
+        let response: Value = serde_json::from_str(
+            &self
+                .get_rpc_response("eth_blockNumber", &None, timeout)
+                .await?,
+        )?;
+        let block_number = response
+            .get("result")
+            .ok_or_else(|| anyhow!("response has no result"))?
+            .as_str()
+            .ok_or_else(|| anyhow!("result is not a string"))?
+            .strip_prefix("0x")
+            .ok_or_else(|| anyhow!("result does not start with 0x"))?;
+
+        Ok(u64::from_str_radix(block_number, 16)?)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -818,6 +878,89 @@ impl ChainNode {
             "✔".green(),
             self.name()
         ));
+
+        Ok(())
+    }
+
+    pub async fn get_block(
+        &self,
+        multi_progress: &indicatif::MultiProgress,
+        follow: bool,
+    ) -> Result<()> {
+        const BAR_SIZE: u64 = 40;
+        const INTERVAL_IN_SEC: u64 = 5;
+        const BAR_BLOCK_PER_TIME: u64 = 8;
+        const BAR_REFRESH_IN_MILLIS: u64 = INTERVAL_IN_SEC * 1000 / BAR_SIZE * BAR_BLOCK_PER_TIME;
+
+        let progress_bar = multi_progress.add(indicatif::ProgressBar::new(BAR_SIZE));
+        progress_bar.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template(&format!(
+                    "{{spinner:.green}} {{bar:{}.cyan/blue}} {{msg}}",
+                    BAR_SIZE
+                ))
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+
+        let block_number = self
+            .machine
+            .get_block_number(INTERVAL_IN_SEC as usize)
+            .await
+            .ok();
+
+        let block_number_as_string = block_number.map_or("---".to_string(), |v| v.to_string());
+        let message = format!("{:>12} => {}", block_number_as_string, self.name());
+        progress_bar.set_message(message.clone());
+
+        if follow {
+            let mut previous_block_number = block_number.unwrap_or_default();
+            loop {
+                let start_time = tokio::time::Instant::now();
+
+                for i in 1..=(BAR_SIZE / BAR_BLOCK_PER_TIME) {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(BAR_REFRESH_IN_MILLIS))
+                        .await;
+                    progress_bar.set_position(i * BAR_BLOCK_PER_TIME);
+                }
+
+                let response = self
+                    .machine
+                    .get_block_number(INTERVAL_IN_SEC as usize)
+                    .await
+                    .ok();
+
+                let (blocks_per_sec, current_block) = if let Some(current_block_number) = response {
+                    let blocks_per_sec = format!(
+                        "{:.0}",
+                        (current_block_number - previous_block_number) as f64
+                            / start_time.elapsed().as_secs_f64()
+                    );
+
+                    let blocks_per_sec = if blocks_per_sec == "0" {
+                        "---".to_string()
+                    } else {
+                        blocks_per_sec
+                    };
+
+                    previous_block_number = current_block_number;
+                    (blocks_per_sec, current_block_number.to_string())
+                } else {
+                    ("---".to_string(), "---".to_string())
+                };
+
+                let message = format!(
+                    "{:>5} block/s {:>12} => {}",
+                    blocks_per_sec,
+                    current_block,
+                    self.name()
+                );
+                progress_bar.set_message(message);
+                progress_bar.set_position(0);
+            }
+        }
+
+        progress_bar.finish_with_message(message);
 
         Ok(())
     }
