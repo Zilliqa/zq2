@@ -67,11 +67,11 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
-        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights,
-        GenesisDeposit, NodeConfig,
+        max_blocks_in_flight_default, max_rpc_response_size_default,
+        minimum_time_left_for_empty_block_default, scilla_address_default,
+        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, Amount, ApiServer, Checkpoint,
+        ConsensusConfig, ContractUpgradesBlockHeights, Forks, GenesisDeposit, NodeConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -353,6 +353,7 @@ impl Network {
                     Address::new(get_contract_address(secret_key_to_address(&genesis_key).0, 2).0),
                 ],
                 contract_upgrade_block_heights,
+                forks: Forks::default(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -369,6 +370,7 @@ impl Network {
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
+            max_rpc_response_size: max_rpc_response_size_default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -490,6 +492,7 @@ impl Network {
                     get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
                 )],
                 contract_upgrade_block_heights,
+                forks: Forks::default(),
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -497,6 +500,7 @@ impl Network {
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
+            max_rpc_response_size: max_rpc_response_size_default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());

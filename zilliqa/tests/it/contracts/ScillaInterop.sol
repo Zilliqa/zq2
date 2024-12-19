@@ -11,6 +11,35 @@ library ScillaConnector {
      * @dev Calls a ZRC2 contract function with two arguments
      * @param target The address of the ZRC2 contract
      * @param tran_name The name of the function to call
+     */
+    function call(address target, string memory tran_name) internal {
+        bytes memory encodedArgs = abi.encode(
+            target,
+            tran_name,
+            CALL_SCILLA_WITH_THE_SAME_SENDER
+        );
+        uint256 argsLength = encodedArgs.length;
+
+        assembly {
+            let ok := call(
+                gas(),
+                SCILLA_CALL_PRECOMPILE_ADDRESS,
+                0,
+                add(encodedArgs, 0x20),
+                argsLength,
+                0x20,
+                0
+            )
+            if iszero(ok) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    /**
+     * @dev Calls a ZRC2 contract function with two arguments
+     * @param target The address of the ZRC2 contract
+     * @param tran_name The name of the function to call
      * @param arg1 The first argument to the function
      * @param arg2 The second argument to the function
      */
@@ -313,6 +342,13 @@ contract ScillaInterop {
         address key2
     ) public view returns (uint128) {
         return scillaContract.readNestedMapUint128(varName, key1, key2);
+    }
+
+    function callScillaNoArgs(
+        address scillaContract,
+        string memory transitionName
+    ) public {
+        scillaContract.call(transitionName);
     }
 
     function callScilla(

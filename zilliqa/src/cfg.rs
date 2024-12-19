@@ -114,6 +114,9 @@ pub struct NodeConfig {
     /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
     #[serde(default)]
     pub enable_ots_indices: bool,
+    /// Maximum allowed RPC response size
+    #[serde(default = "max_rpc_response_size_default")]
+    pub max_rpc_response_size: u32,
 }
 
 impl Default for NodeConfig {
@@ -133,6 +136,7 @@ impl Default for NodeConfig {
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
+            max_rpc_response_size: max_rpc_response_size_default(),
         }
     }
 }
@@ -205,6 +209,10 @@ pub fn max_blocks_in_flight_default() -> u64 {
 
 pub fn block_request_batch_size_default() -> u64 {
     100
+}
+
+pub fn max_rpc_response_size_default() -> u32 {
+    10 * 1024 * 1024 // 10 MB
 }
 
 pub fn state_rpc_limit_default() -> usize {
@@ -357,6 +365,10 @@ pub struct ConsensusConfig {
     /// The block heights at which we perform EIP-1967 contract upgrades
     #[serde(default)]
     pub contract_upgrade_block_heights: ContractUpgradesBlockHeights,
+    /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
+    /// difference applies.
+    #[serde(default)]
+    pub forks: Forks,
 }
 
 impl Default for ConsensusConfig {
@@ -383,8 +395,82 @@ impl Default for ConsensusConfig {
             total_native_token_supply: total_native_token_supply_default(),
             scilla_call_gas_exempt_addrs: vec![],
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
+            forks: Default::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "Vec<Fork>", into = "Vec<Fork>")]
+pub struct Forks(Vec<Fork>);
+
+impl TryFrom<Vec<Fork>> for Forks {
+    type Error = anyhow::Error;
+
+    fn try_from(mut forks: Vec<Fork>) -> Result<Self, Self::Error> {
+        // Sort forks by height so we can binary search to find the current fork.
+        forks.sort_unstable_by_key(|f| f.at_height);
+
+        // Assert we have a fork that starts at the genesis block.
+        if forks.first().ok_or_else(|| anyhow!("no forks"))?.at_height != 0 {
+            return Err(anyhow!("first fork must start at height 0"));
+        }
+
+        Ok(Forks(forks))
+    }
+}
+
+impl From<Forks> for Vec<Fork> {
+    fn from(forks: Forks) -> Self {
+        forks.0
+    }
+}
+
+impl Default for Forks {
+    /// The default implementation of [Forks] returns a single fork at the genesis block, with the most up-to-date
+    /// execution logic.
+    fn default() -> Self {
+        vec![Fork {
+            at_height: 0,
+            failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+            call_mode_1_sets_caller_to_parent_caller: true,
+        }]
+        .try_into()
+        .unwrap()
+    }
+}
+
+impl Forks {
+    pub fn get(&self, height: u64) -> Fork {
+        // Binary search to find the fork at the specified height. If an entry was not found at exactly the specified
+        // height, the `Err` returned from `binary_search_by_key` will contain the index where an element with this
+        // height could be inserted. By subtracting one from this, we get the maximum entry with a height less than the
+        // searched height.
+        let index = self
+            .0
+            .binary_search_by_key(&height, |f| f.at_height)
+            .unwrap_or_else(|i| i - 1);
+        self.0[index]
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct Fork {
+    pub at_height: u64,
+    /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`
+    /// precompile and the inner Scilla call fails, the entire transaction will revert. If false, the normal EVM
+    /// semantics apply where the caller can decide how to act based on the success of the inner call.
+    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
+    /// If true, if a call is made to the `scilla_call` precompile with `call_mode` / `keep_origin` set to `1`, the
+    /// `_sender` of the inner Scilla call will be set to the caller of the current call-stack. If false, the `_sender`
+    /// will be set to the original transaction signer.
+    ///
+    /// For example:
+    /// A (EOA) -> B (EVM) -> C (EVM) -> D (Scilla)
+    ///
+    /// When this flag is true, `D` will see the `_sender` as `B`. When this flag is false, `D` will see the `_sender`
+    /// as `A`.
+    pub call_mode_1_sets_caller_to_parent_caller: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

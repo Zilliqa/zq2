@@ -520,6 +520,7 @@ impl ChainNode {
         let eth_chain_id = self.eth_chain_id.to_string();
         let bootstrap_public_ip = selected_bootstrap.machine.external_address;
         let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
+        let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
         let public_api = if self.role == NodeRole::Api {
             // Enable all APIs, except `admin_` for API nodes.
@@ -545,12 +546,27 @@ impl ChainNode {
         ctx.insert("genesis_address", &genesis_account.address);
         ctx.insert(
             "whitelisted_evm_contract_addresses",
-            &whitelisted_evm_contract_addresses,
+            &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
+                .to_string(),
+        );
+        ctx.insert(
+            "contract_upgrade_block_heights",
+            &serde_json::from_value::<toml::Value>(json!(contract_upgrade_block_heights))?
+                .to_string(),
         );
         // convert json to toml formatting
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
         ctx.insert("api_servers", &toml_servers.to_string());
         ctx.insert("enable_ots_indices", &enable_ots_indices);
+        ctx.insert(
+            "forks",
+            &self
+                .chain()?
+                .get_forks()
+                .into_iter()
+                .map(|f| Ok(serde_json::from_value::<toml::Value>(f)?.to_string()))
+                .collect::<Result<Vec<_>>>()?,
+        );
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator {

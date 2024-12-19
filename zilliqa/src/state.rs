@@ -18,7 +18,7 @@ use tracing::debug;
 
 use crate::{
     block_store::BlockStore,
-    cfg::{Amount, NodeConfig, ScillaExtLibsPath},
+    cfg::{Amount, Forks, NodeConfig, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
     db::TrieStorage,
@@ -53,6 +53,7 @@ pub struct State {
     pub gas_price: u128,
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
     pub chain_id: ChainId,
+    pub forks: Forks,
     pub block_store: Arc<BlockStore>,
 }
 
@@ -72,6 +73,7 @@ impl State {
             gas_price: *consensus_config.gas_price,
             scilla_call_gas_exempt_addrs: consensus_config.scilla_call_gas_exempt_addrs.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
+            forks: consensus_config.forks.clone(),
             block_store,
         }
     }
@@ -284,6 +286,7 @@ impl State {
             scilla_call_gas_exempt_addrs: self.scilla_call_gas_exempt_addrs.clone(),
             chain_id: self.chain_id,
             block_store: self.block_store.clone(),
+            forks: self.forks.clone(),
         }
     }
 

@@ -335,9 +335,48 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
 pub fn scilla_call_handle_register<I: ScillaInspector>(
     handler: &mut EvmHandler<'_, ExternalContext<I>, PendingState>,
 ) {
+    // Create handler
+    let prev_handle = handler.execution.create.clone();
+    handler.execution.create = Arc::new(move |ctx, inputs| {
+        // Reserve enough space to store the caller.
+        ctx.external.callers.reserve(
+            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
+        );
+        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
+            ctx.external.callers.push(Address::ZERO);
+        }
+        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+
+        prev_handle(ctx, inputs)
+    });
+
+    // EOF create handler
+    let prev_handle = handler.execution.eofcreate.clone();
+    handler.execution.eofcreate = Arc::new(move |ctx, inputs| {
+        // Reserve enough space to store the caller.
+        ctx.external.callers.reserve(
+            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
+        );
+        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
+            ctx.external.callers.push(Address::ZERO);
+        }
+        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+
+        prev_handle(ctx, inputs)
+    });
+
     // Call handler
     let prev_handle = handler.execution.call.clone();
     handler.execution.call = Arc::new(move |ctx, inputs| {
+        // Reserve enough space to store the caller.
+        ctx.external.callers.reserve(
+            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
+        );
+        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
+            ctx.external.callers.push(Address::ZERO);
+        }
+        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+
         if inputs.bytecode_address != Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53") {
             return prev_handle(ctx, inputs);
         }
@@ -350,21 +389,8 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
 
         // The behaviour is different for contracts having 21k gas and/or deployed with zq1
         // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
-        // 2. if gas == 21k and NOT gas_exempt -> mark entire txn as failed (not only the current precompile)
+        // 2. if precompile failed and gas_exempt -> mark entire txn as failed (not only the current precompile)
         // 3. Otherwise, let it run with what it's given and let the caller decide
-
-        // Below is case 2nd
-        if gas.limit() == 21000 && !gas_exempt {
-            ctx.external.enforce_transaction_failure = true;
-            return Ok(FrameOrResult::new_call_result(
-                InterpreterResult {
-                    result: InstructionResult::OutOfGas,
-                    gas,
-                    output: Bytes::new(),
-                },
-                inputs.return_memory_offset.clone(),
-            ));
-        }
 
         let outcome = scilla_call_precompile(
             &inputs,
@@ -398,6 +424,22 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
                 };
             }
             Err(PrecompileErrors::Fatal { msg }) => return Err(EVMError::Precompile(msg)),
+        }
+
+        if ctx
+            .external
+            .fork
+            .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        {
+            // If precompile failed and this is whitelisted contract -> mark entire transaction as failed
+            match result.result {
+                InstructionResult::Return => {}
+                _ => {
+                    if gas_exempt {
+                        ctx.external.enforce_transaction_failure = true;
+                    }
+                }
+            }
         }
 
         Ok(FrameOrResult::new_call_result(
@@ -499,7 +541,16 @@ fn scilla_call_precompile<I: ScillaInspector>(
         scilla,
         evmctx.env.tx.caller,
         if keep_origin {
-            evmctx.env.tx.caller
+            if external_context
+                .fork
+                .call_mode_1_sets_caller_to_parent_caller
+            {
+                // Use the caller of the parent call-stack.
+                external_context.callers[evmctx.journaled_state.depth - 1]
+            } else {
+                // Use the original transaction signer.
+                evmctx.env.tx.caller
+            }
         } else {
             input.caller
         },
