@@ -186,6 +186,7 @@ impl Consensus {
         config: NodeConfig,
         message_sender: MessageSender,
         reset_timeout: UnboundedSender<Duration>,
+        initial_peers: Vec<PeerId>,
         db: Arc<Db>,
     ) -> Result<Self> {
         trace!(
@@ -399,10 +400,11 @@ impl Consensus {
                 .get_block(high_qc.block_hash)?
                 .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
 
-            // Start with an empty list of peers, which will be populated with time
+            // Start with an initial list of peers, which will change over time.
+
             consensus
                 .block_store
-                .set_peers_and_view(high_block.view(), &Vec::new())?;
+                .set_peers_and_view(high_block.view(), &initial_peers)?;
 
             // It is likley that we missed the most recent proposal. Request it now
             consensus

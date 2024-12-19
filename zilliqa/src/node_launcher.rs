@@ -95,6 +95,7 @@ impl NodeLauncher {
         outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
+        initial_peers: Vec<PeerId>,
         peer_num: Arc<AtomicUsize>,
     ) -> Result<(Self, NodeInputChannels)> {
         /// Helper to create a (sender, receiver) pair for a channel.
@@ -117,6 +118,7 @@ impl NodeLauncher {
             local_outbound_message_sender,
             request_responses_sender,
             reset_timeout_sender.clone(),
+            initial_peers,
             peer_num,
         )?;
         let node = Arc::new(Mutex::new(node));

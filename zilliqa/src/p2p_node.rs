@@ -165,6 +165,16 @@ impl P2pNode {
         })
     }
 
+    fn get_peers_by_topic(&self, topic: &TopicHash) -> Vec<PeerId> {
+        self.swarm
+            .behaviour()
+            .gossipsub
+            .all_peers()
+            .filter(|p| p.1.contains(&topic))
+            .map(|p| p.0.clone())
+            .collect()
+    }
+
     pub fn shard_id_to_topic(shard_id: u64) -> IdentTopic {
         IdentTopic::new(shard_id.to_string())
     }
@@ -193,12 +203,15 @@ impl P2pNode {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
             return Ok(());
         }
+
+        let initial_peers = self.get_peers_by_topic(&topic.hash());
         let (mut node, input_channels) = NodeLauncher::new(
             self.secret_key,
             config,
             self.outbound_message_sender.clone(),
             self.local_message_sender.clone(),
             self.request_responses_sender.clone(),
+            initial_peers,
             self.peer_num.clone(),
         )
         .await?;

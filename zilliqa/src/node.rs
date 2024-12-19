@@ -177,6 +177,7 @@ impl Node {
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
         request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         reset_timeout: UnboundedSender<Duration>,
+        initial_peers: Vec<PeerId>,
         peer_num: Arc<AtomicUsize>,
     ) -> Result<Node> {
         config.validate()?;
@@ -201,7 +202,14 @@ impl Node {
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
-            consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
+            consensus: Consensus::new(
+                secret_key,
+                config,
+                message_sender,
+                reset_timeout,
+                initial_peers,
+                db,
+            )?,
             peer_num,
         };
         Ok(node)
