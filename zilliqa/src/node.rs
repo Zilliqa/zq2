@@ -232,19 +232,21 @@ impl Node {
         Ok(())
     }
 
-    /// Checks if node is in the current committee, and returns the highest canonical block number
-    fn is_current_committee(&self) -> Result<bool> {
+    /// Checks if node is in the current committee, and if the requestor is also in the committee
+    fn can_service_request(&self, requestor: &PeerId) -> Result<bool> {
         let head_block = self.consensus.head_block();
         let state_at = self.get_state(&head_block)?;
         let committee = state_at.get_stakers(head_block.header)?;
 
-        if committee
-            .iter()
-            .any(|pk| *pk == self.consensus.public_key())
+        // check if I am in the committee, and requestor is not.
+        if committee.contains(&self.consensus.public_key())
+            && !committee
+                .into_iter()
+                .any(|pk| state_at.get_peer_id(pk).unwrap() == Some(*requestor))
         {
-            return Ok(true);
+            return Ok(false);
         }
-        Ok(false)
+        Ok(true)
     }
 
     pub fn handle_request(
@@ -288,7 +290,7 @@ impl Node {
 
                 // Return a null response, to indicate that we're not servicing this request.
                 // Note - https://github.com/Zilliqa/zq2/issues/1878
-                if self.is_current_committee()? {
+                if !self.can_service_request(&from)? {
                     warn!("block_store::BlockRequest : sending empty block response.");
                     self.request_responses.send((
                         response_channel,
