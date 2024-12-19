@@ -2607,12 +2607,12 @@ impl Consensus {
 
     /// Calculate how long we should wait before timing out for this view
     pub fn exponential_backoff_timeout(&self, view: u64) -> u64 {
-        let view_difference = view.saturating_sub(self.high_qc.view);
+        let view_difference = view.saturating_sub(self.high_qc.view) as u32;
         // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
         // in other words, the current view is always at least 2 views ahead of the highQC's view
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
-        let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as u64;
-        consensus_timeout * 2u64.pow((view_difference as u32).saturating_sub(2))
+        let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as f32;
+        (consensus_timeout * (1.5f32).powi(view_difference.saturating_sub(2) as i32)).floor() as u64
     }
 
     /// Find minimum number of views which could have passed by in the given time difference.
@@ -2622,11 +2622,11 @@ impl Consensus {
         consensus_timeout: Duration,
     ) -> u64 {
         let normalised_time_difference =
-            (time_difference.as_millis() / consensus_timeout.as_millis()) as u64;
+            (time_difference.as_millis() / consensus_timeout.as_millis()) as f32;
         let mut views = 0;
-        let mut total = 0;
+        let mut total = 0.0;
         loop {
-            total += 2u64.pow(views);
+            total += (1.5f32).powi(views);
             if total > normalised_time_difference {
                 break;
             }
@@ -3316,47 +3316,43 @@ mod tests {
     use super::*;
     #[test]
     fn test_minimum_views_in_time_difference() {
+        // 2 views ahead - 1.5 ^ 0 = 1
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(4),
-                Duration::from_secs(5)
+                Duration::from_secs(0),
+                Duration::from_secs(1)
             ),
             0
         );
+        // 3 views ahead - 1.5^0 + 1.5^1 = 2.5
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(5),
-                Duration::from_secs(5)
+                Duration::from_secs(2),
+                Duration::from_secs(1)
             ),
             1
         );
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(14),
-                Duration::from_secs(5)
-            ),
-            1
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(15),
-                Duration::from_secs(5)
+                Duration::from_secs(3),
+                Duration::from_secs(1)
             ),
             2
         );
+        // 5 views ahead - 1.5^0 + 1.5^1 + 1.5^2 + 1.5^3 = 8.125
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(34),
-                Duration::from_secs(5)
-            ),
-            2
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(35),
-                Duration::from_secs(5)
+                Duration::from_secs(8),
+                Duration::from_secs(1)
             ),
             3
+        );
+        assert_eq!(
+            Consensus::minimum_views_in_time_difference(
+                Duration::from_secs(9),
+                Duration::from_secs(1)
+            ),
+            4
         );
     }
 }
