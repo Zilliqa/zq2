@@ -968,7 +968,7 @@ async fn main() -> Result<()> {
             let node = validators::Validator::new(
                 &args.peer_id,
                 &args.public_key,
-                &args.deposit_auth_signature,
+                hex::decode(&args.deposit_auth_signature)?.try_into()?,
             )?;
             let stake = validators::StakeDeposit::new(
                 node,

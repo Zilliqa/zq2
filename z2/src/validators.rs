@@ -29,17 +29,16 @@ pub struct Validator {
 }
 
 impl Validator {
-    pub fn new(peer_id: &str, public_key: &str, deposit_auth_signature: &str) -> Result<Self> {
+    pub fn new(
+        peer_id: &str,
+        public_key: &str,
+        deposit_auth_signature: blsful::Signature<Bls12381G2Impl>,
+    ) -> Result<Self> {
         Ok(Self {
             peer_id: PeerId::from_str(peer_id).unwrap(),
             public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
                 .unwrap(),
-            pop: blsful::Signature::Basic(
-                <blsful::Bls12381G2Impl as blsful::Pairing>::Signature::try_from(
-                    hex::decode(deposit_auth_signature).unwrap(),
-                )
-                .unwrap(),
-            ),
+            pop: deposit_auth_signature,
         })
     }
 }

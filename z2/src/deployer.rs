@@ -293,13 +293,10 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         let validator = validators::Validator::new(
             &node_ethereum_address.peer_id,
             &node_ethereum_address.bls_public_key,
-            &node_ethereum_address
-                .secret_key
-                .deposit_auth_signature(
-                    node.chain_id(),
-                    node_ethereum_address.secret_key.to_evm_address(),
-                )
-                .to_string(),
+            node_ethereum_address.secret_key.deposit_auth_signature(
+                node.chain_id(),
+                node_ethereum_address.secret_key.to_evm_address(),
+            ),
         )?;
         let stake = validators::StakeDeposit::new(
             validator,
