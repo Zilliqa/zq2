@@ -251,7 +251,7 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
     );
     println!("\t--private-key {} \\", genesis_private_key);
     println!("\t--reward-address {} \\", ZERO_ACCOUNT);
-    println!("\t--staking-address {} \\", ZERO_ACCOUNT);
+    println!("\t--signing-address {} \\", ZERO_ACCOUNT);
     println!("\t--amount {VALIDATOR_DEPOSIT_IN_MILLIONS}\n");
 
     Ok(())
