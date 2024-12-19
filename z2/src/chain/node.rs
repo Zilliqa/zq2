@@ -558,15 +558,15 @@ impl ChainNode {
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
         ctx.insert("api_servers", &toml_servers.to_string());
         ctx.insert("enable_ots_indices", &enable_ots_indices);
-        ctx.insert(
-            "forks",
-            &self
-                .chain()?
-                .get_forks()
-                .into_iter()
-                .map(|f| Ok(serde_json::from_value::<toml::Value>(f)?.to_string()))
-                .collect::<Result<Vec<_>>>()?,
-        );
+        if let Some(forks) = self.chain()?.get_forks() {
+            ctx.insert(
+                "forks",
+                &forks
+                    .into_iter()
+                    .map(|f| Ok(serde_json::from_value::<toml::Value>(f)?.to_string()))
+                    .collect::<Result<Vec<_>>>()?,
+            );
+        }
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator {
