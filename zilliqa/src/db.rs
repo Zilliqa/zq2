@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     fs::{self, File, OpenOptions},
-    io::{BufReader, BufWriter, Read, Write},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -214,6 +214,7 @@ impl Db {
                     return Err(anyhow!("data is incompatible with this version - please delete the data and re-sync"));
                 }
 
+                version_file.seek(SeekFrom::Start(0))?;
                 version_file.write_all(CURRENT_DB_VERSION.as_bytes())?;
 
                 let db_path = path.join("db.sqlite3");
