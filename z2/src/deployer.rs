@@ -398,13 +398,9 @@ pub async fn run_rpc_call(
         let current_params = params.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
-            let result = run_node_rpc_call(
-                &current_method,
-                &current_params,
-                &machine.external_address,
-                timeout,
-            )
-            .await;
+            let result = machine
+                .get_rpc_response(&current_method, &current_params, timeout)
+                .await;
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -430,47 +426,6 @@ pub async fn run_rpc_call(
     }
 
     Ok(())
-}
-
-async fn run_node_rpc_call(
-    method: &str,
-    params: &Option<String>,
-    endpoint: &str,
-    timeout: usize,
-) -> Result<String> {
-    let body = format!(
-        "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
-        method,
-        params.clone().unwrap_or("[]".to_string()),
-    );
-
-    let args = &[
-        "--max-time",
-        &timeout.to_string(),
-        "-X",
-        "POST",
-        "-H",
-        "Content-Type:application/json",
-        "-H",
-        "accept:application/json,*/*;q=0.5",
-        "--data",
-        &body,
-        &format!("http://{endpoint}:4201"),
-    ];
-
-    let output = zqutils::commands::CommandBuilder::new()
-        .silent()
-        .cmd("curl", args)
-        .run_for_output()
-        .await?;
-    if !output.success {
-        return Err(anyhow!(
-            "getting local block number failed: {:?}",
-            output.stderr
-        ));
-    }
-
-    Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
 }
 
 pub async fn run_backup(config_file: &str, filename: &str) -> Result<()> {
@@ -905,6 +860,68 @@ pub async fn run_api_operation(config_file: &str, operation: ApiOperation) -> Re
     let results = futures::future::join_all(futures).await;
 
     multi_progress.stop();
+
+    let mut failures = vec![];
+
+    for result in results {
+        if let (node, Err(err)) = result? {
+            println!("Node {} failed with error: {}", node.name(), err);
+            failures.push(node.name());
+        }
+    }
+
+    for failure in failures {
+        log::error!("FAILURE: {}", failure);
+    }
+
+    Ok(())
+}
+
+pub async fn run_block_number(config_file: &str, node_selection: bool, follow: bool) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config).await?;
+    let mut chain_nodes = chain.nodes().await?;
+    chain_nodes.retain(|node| node.role != NodeRole::Apps);
+
+    let node_names = chain_nodes
+        .iter()
+        .filter(|n| n.role != NodeRole::Apps)
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let target_nodes = if node_selection {
+        let mut select = cliclack::multiselect("Select target nodes");
+
+        for name in &node_names {
+            select = select.item(name.clone(), name, "");
+        }
+
+        let selection = select.interact()?;
+        let mut nodes = chain_nodes.clone();
+        nodes.retain(|n| selection.contains(&n.name()));
+        nodes
+    } else {
+        chain_nodes.sort_by_key(|node| node.name());
+        chain_nodes
+    };
+
+    let semaphore = Arc::new(Semaphore::new(50));
+    let mut futures = vec![];
+
+    let multi_progress = indicatif::MultiProgress::new();
+
+    for node in target_nodes {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let mp = multi_progress.to_owned();
+        let future = task::spawn(async move {
+            let result = node.get_block(&mp, follow).await;
+            drop(permit); // Release the permit when the task is done
+            (node, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
 
     let mut failures = vec![];
 
