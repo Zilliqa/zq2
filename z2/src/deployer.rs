@@ -6,6 +6,7 @@ use cliclack::MultiProgress;
 use colored::Colorize;
 use strum::Display;
 use tokio::{fs, sync::Semaphore, task};
+use zilliqa::crypto::SecretKey;
 
 use crate::{
     address::EthereumAddress,
@@ -304,7 +305,7 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
                     .secret_key
                     .deposit_auth_signature(
                         node.chain_id(),
-                        node_ethereum_address.secret_key.to_evm_address(),
+                        SecretKey::from_hex(&genesis_private_key)?.to_evm_address(),
                     )
                     .as_raw_value()
                     .to_compressed(),
