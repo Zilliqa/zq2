@@ -563,7 +563,9 @@ impl Consensus {
                     self.new_view_message_cache.as_ref()
                 {
                     if new_view.view == self.get_view()? {
-                        return Ok(self.new_view_message_cache.clone());
+                        // When re-sending new view messages we broadcast them, rather than only sending them to the
+                        // view leader. This speeds up network recovery when many nodes have different high QCs.
+                        return Ok(Some((None, ExternalMessage::NewView(new_view.clone()))));
                     }
                     // If new_view message is not for this view then it must be outdated
                     self.new_view_message_cache = None;
@@ -1793,20 +1795,6 @@ impl Consensus {
         new_view: NewView,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         trace!("Received new view for height: {:?}", new_view.view);
-        let mut current_view = self.get_view()?;
-
-        // The leader for this view should be chosen according to the parent of the highest QC
-        // What happens when there are multiple QCs with different parents?
-        // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            trace!(new_view.view, "skipping new view, not the leader");
-            return Ok(None);
-        }
-        // if the vote is too old and does not count anymore
-        if new_view.view < current_view {
-            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
-            return Ok(None);
-        }
 
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
@@ -1822,9 +1810,23 @@ impl Consensus {
 
         new_view.verify(*public_key)?;
 
-        // check if the sender's qc is higher than our high_qc or even higher than our view
+        // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
-        current_view = self.get_view()?;
+
+        // The leader for this view should be chosen according to the parent of the highest QC
+        // What happens when there are multiple QCs with different parents?
+        // if we are not the leader of the round in which the vote counts
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
+            trace!(new_view.view, "skipping new view, not the leader");
+            return Ok(None);
+        }
+
+        let mut current_view = self.get_view()?;
+        // if the vote is too old and does not count anymore
+        if new_view.view < current_view {
+            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
+            return Ok(None);
+        }
 
         let NewViewVote {
             mut signatures,
@@ -2020,7 +2022,7 @@ impl Consensus {
             return Ok(());
         };
 
-        let new_high_qc_block_view = new_high_qc_block.view();
+        let new_high_qc_view = new_high_qc_block.view();
 
         if self.high_qc.block_hash == Hash::ZERO {
             trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
@@ -2034,17 +2036,17 @@ impl Consensus {
                 })?
                 .view();
             // If `from_agg` then we always release the lock because the supermajority has a different high_qc.
-            if from_agg || new_high_qc_block_view > current_high_qc_view {
+            if from_agg || new_high_qc_view > current_high_qc_view {
                 trace!(
-                    "updating view from {} to {}, high QC view is {}",
-                    view,
-                    new_high_qc_block_view + 1,
+                    new_high_qc_view,
                     current_high_qc_view,
+                    current_view = view,
+                    "updating high qc"
                 );
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
-                if new_high_qc_block_view >= view {
-                    self.set_view(new_high_qc_block_view + 1)?;
+                if new_high_qc_view >= view {
+                    self.set_view(new_high_qc_view + 1)?;
                 }
             }
         }
