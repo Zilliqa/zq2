@@ -160,7 +160,7 @@ impl Chain {
                 deposit_v3: Some(3600),
             },
             Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
-                deposit_v3: Some(5299200),
+                deposit_v3: Some(5340000),
             },
             Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
@@ -178,8 +178,8 @@ impl Chain {
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
                 json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false }),
-                // estimated: 2024-12-19T15:03:05Z
-                json!({ "at_height": 5299000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
+                // estimated: 2024-12-20T16:13:19Z
+                json!({ "at_height": 5340000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
             ]),
             _ => None,
         }
