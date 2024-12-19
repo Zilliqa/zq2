@@ -243,7 +243,7 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
                 .secret_key
                 .deposit_auth_signature(
                     node.chain_id(),
-                    SecretKey::from_hex(&genesis_private_key)?.to_evm_address()
+                    SecretKey::from_hex(genesis_private_key)?.to_evm_address()
                 )
                 .as_raw_value()
                 .to_compressed()
