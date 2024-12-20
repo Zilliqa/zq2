@@ -73,6 +73,11 @@ resource "google_compute_firewall" "allow_ingress_from_iap" {
     protocol = "tcp"
     ports    = ["22"]
   }
+
+  allow {
+    protocol = "tcp"
+    ports    = ["4202"]
+  }
 }
 
 resource "google_compute_firewall" "allow_p2p" {
