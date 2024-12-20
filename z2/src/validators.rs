@@ -1,6 +1,6 @@
 /// Code to render the validator join configuration and startup script.
 use std::env;
-use std::{convert::TryFrom, path::Path, str::FromStr};
+use std::{convert::TryFrom, path::Path};
 
 use anyhow::{anyhow, Context as _, Result};
 use ethabi::Token;
@@ -26,18 +26,21 @@ use crate::{chain::Chain, github, utils};
 
 #[derive(Debug)]
 pub struct Validator {
-    peer_id: libp2p::PeerId,
+    peer_id: PeerId,
     public_key: NodePublicKey,
     deposit_auth_signature: BlsSignature,
 }
 
 impl Validator {
-    pub fn new(peer_id: &str, public_key: &str, deposit_auth_signature: &str) -> Result<Self> {
+    pub fn new(
+        peer_id: PeerId,
+        public_key: NodePublicKey,
+        deposit_auth_signature: BlsSignature,
+    ) -> Result<Self> {
         Ok(Self {
-            peer_id: PeerId::from_str(peer_id).unwrap(),
-            public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
-                .unwrap(),
-            deposit_auth_signature: BlsSignature::from_string(deposit_auth_signature).unwrap(),
+            peer_id,
+            public_key,
+            deposit_auth_signature,
         })
     }
 }

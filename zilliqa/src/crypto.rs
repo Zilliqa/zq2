@@ -87,12 +87,14 @@ impl BlsSignature {
         self.0.as_raw_value().to_compressed().to_vec()
     }
 
-    pub fn to_string(self) -> String {
-        hex::encode(self.to_bytes())
-    }
-
     pub fn from_string(str: &str) -> Result<Self> {
         Self::from_bytes(&hex::decode(str)?)
+    }
+}
+
+impl Display for BlsSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.to_bytes()))
     }
 }
 

@@ -8,6 +8,7 @@ use alloy::primitives::B256;
 use anyhow::{anyhow, Context, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use libp2p::PeerId;
 use z2lib::{
     chain::{self, node::NodePort},
     components::Component,
@@ -15,7 +16,7 @@ use z2lib::{
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{BlsSignature, NodePublicKey, SecretKey};
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -1020,9 +1021,10 @@ async fn main() -> Result<()> {
         }
         Commands::Deposit(ref args) => {
             let node = validators::Validator::new(
-                &args.peer_id,
-                &args.public_key,
-                &args.deposit_auth_signature,
+                PeerId::from_str(&args.peer_id).unwrap(),
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap(),
+                BlsSignature::from_string(&args.deposit_auth_signature).unwrap(),
             )?;
             let stake = validators::StakeDeposit::new(
                 node,
