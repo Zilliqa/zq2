@@ -2,9 +2,7 @@ import {extendEnvironment} from "hardhat/config";
 import {HardhatRuntimeEnvironment} from "hardhat/types/runtime";
 import SingerPool from "./helpers/parallel-tests/SignerPool";
 import {Contract, ethers, Signer, Wallet} from "ethers";
-import {Contract as Web3Contract} from "web3-eth-contract";
 import {JsonRpcProvider, TransactionRequest, TransactionResponse} from "@ethersproject/providers";
-import BN from "bn.js";
 import {ScillaContract, Setup} from "hardhat-scilla-plugin";
 import {Account} from "@zilliqa-js/zilliqa";
 
@@ -37,11 +35,6 @@ declare module "hardhat/types/runtime" {
     deployScillaContractWithSigner: (name: string, signer: Account, ...args: any[]) => Promise<ScillaContract>;
     deployContract: (name: string, ...args: any[]) => Promise<Contract>;
     deployContractWithSigner: (name: string, signer: Signer, ...args: any[]) => Promise<Contract>;
-    deployContractWeb3: (
-      contractName: string,
-      options: {gasPrice?: string; gasLimit?: number; value?: BN},
-      ...args: any[]
-    ) => Promise<Web3Contract>;
   }
 }
 
@@ -162,39 +155,5 @@ extendEnvironment((hre: HardhatRuntimeEnvironment) => {
   hre.deployContractWithSigner = async (name: string, signer: Signer, ...args: any[]): Promise<Contract> => {
     const factory = await hre.ethers.getContractFactory(name);
     return (await factory.connect(signer).deploy(...args)).deployed();
-  };
-
-  // TODO: remove any type from `options`
-  hre.deployContractWeb3 = async (
-    contractName: string,
-    options: {gasPrice?: string; gasLimit?: number; value?: BN},
-    ...args: any[]
-  ): Promise<Web3Contract> => {
-    const signer = await hre.getEthSignerForContractDeployment();
-
-    const contractRaw = hre.artifacts.readArtifactSync(contractName);
-    const contract = new hre.web3.eth.Contract(contractRaw.abi);
-    const gasPrice = options.gasPrice || (await hre.web3.eth.getGasPrice());
-    const value = options.value || 0;
-
-    const signerAddress = await signer.getAddress();
-
-    const estimatedGas = await contract.deploy({data: contractRaw.bytecode, arguments: args}).estimateGas({
-      from: signerAddress,
-      value
-    });
-
-    const gasLimit = options.gasLimit || estimatedGas;
-
-    const deployedContract = await contract.deploy({data: contractRaw.bytecode, arguments: args}).send({
-      from: signerAddress,
-      gas: gasLimit,
-      gasPrice,
-      value
-    });
-
-    deployedContract.options.from = signerAddress;
-    deployedContract.options.gas = gasLimit;
-    return deployedContract;
   };
 });

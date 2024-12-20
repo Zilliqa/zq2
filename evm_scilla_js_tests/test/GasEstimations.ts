@@ -1,7 +1,7 @@
 import {expect} from "chai";
 import hre, {ethers} from "hardhat";
 
-describe("Gas estimation with web3.js", function () {
+describe("Gas estimation", function () {
   const CREATE2_MIN_GAS = 32000;
 
   describe("When a fund transfer is made", function () {
