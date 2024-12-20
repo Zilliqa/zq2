@@ -15,6 +15,22 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use super::instance::ChainInstance;
 use crate::{address::EthereumAddress, chain::Chain, secret::Secret};
 
+#[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
+pub enum NodePort {
+    #[default]
+    Default,
+    Admin,
+}
+
+impl NodePort {
+    pub fn value(&self) -> u64 {
+        match self {
+            NodePort::Default => 4201,
+            NodePort::Admin => 4202,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Components {
     #[serde(rename = "zq2")]
@@ -256,6 +272,7 @@ impl Machine {
         method: &str,
         params: &Option<String>,
         timeout: usize,
+        port: NodePort,
     ) -> Result<String> {
         let body = format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
@@ -274,14 +291,25 @@ impl Machine {
             "accept:application/json,*/*;q=0.5",
             "--data",
             &body,
-            &format!("http://{}:4201", self.external_address),
+            &format!("http://{}:{}", self.external_address, port.value()),
         ];
 
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("curl", args)
-            .run_for_output()
-            .await?;
+        let output = if port == NodePort::Admin {
+            let inner_command = format!(
+                r#"curl --max-time {} -X POST -H 'content-type: application/json' -H 'accept:application/json,*/*;q=0.5' -d '{}' http://localhost:{}"#,
+                &timeout.to_string(),
+                &body,
+                port.value()
+            );
+            self.run(&inner_command, false).await?
+        } else {
+            zqutils::commands::CommandBuilder::new()
+                .silent()
+                .cmd("curl", args)
+                .run_for_output()
+                .await?
+        };
+
         if !output.success {
             return Err(anyhow!(
                 "getting rpc response for {} with params {:?} failed: {:?}",
@@ -297,7 +325,7 @@ impl Machine {
     pub async fn get_block_number(&self, timeout: usize) -> Result<u64> {
         let response: Value = serde_json::from_str(
             &self
-                .get_rpc_response("eth_blockNumber", &None, timeout)
+                .get_rpc_response("eth_blockNumber", &None, timeout, NodePort::Default)
                 .await?,
         )?;
         let block_number = response

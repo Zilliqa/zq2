@@ -342,6 +342,7 @@ Options:
   -m, --method <METHOD>    Method to run
   -p, --params <PARAMS>    List of parameters for the method. ie "[\"string_value\",true]"
       --select             Enable nodes selection
+      --port <PORT>        The port where to run the rpc call on [possible values: default, admin]
   -v, --verbose...         Increase logging verbosity
   -q, --quiet...           Decrease logging verbosity
   -h, --help               Print help

@@ -12,7 +12,10 @@ use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
 use crate::{
-    chain::{self, node::NodeRole},
+    chain::{
+        self,
+        node::{NodePort, NodeRole},
+    },
     deployer::ApiOperation,
     kpi,
     node_spec::{Composition, NodeSpec},
@@ -234,6 +237,7 @@ pub async fn run_rpc_call(
     config_file: &str,
     timeout: &Option<usize>,
     node_selection: bool,
+    port: NodePort,
 ) -> Result<()> {
     println!("🦆 Running RPC call for {config_file}' .. ");
     deployer::run_rpc_call(
@@ -242,6 +246,7 @@ pub async fn run_rpc_call(
         config_file,
         timeout.unwrap_or(30),
         node_selection,
+        port,
     )
     .await?;
     Ok(())
