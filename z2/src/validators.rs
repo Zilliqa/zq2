@@ -3,7 +3,6 @@ use std::env;
 use std::{convert::TryFrom, path::Path, str::FromStr};
 
 use anyhow::{anyhow, Context as _, Result};
-use blsful::{vsss_rs::ShareIdentifier, Bls12381G2Impl};
 use ethabi::Token;
 use ethers::{
     core::types::TransactionRequest,
@@ -17,15 +16,19 @@ use serde::Deserialize;
 use tera::Tera;
 use tokio::{fs::File, io::AsyncWriteExt};
 use toml::Value;
-use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
+use zilliqa::{
+    contracts,
+    crypto::{BlsSignature, NodePublicKey},
+    state::contract_addr,
+};
 
 use crate::{chain::Chain, github, utils};
 
 #[derive(Debug)]
 pub struct Validator {
     peer_id: libp2p::PeerId,
-    public_key: zilliqa::crypto::NodePublicKey,
-    pop: blsful::Signature<Bls12381G2Impl>,
+    public_key: NodePublicKey,
+    deposit_auth_signature: BlsSignature,
 }
 
 impl Validator {
@@ -34,12 +37,7 @@ impl Validator {
             peer_id: PeerId::from_str(peer_id).unwrap(),
             public_key: NodePublicKey::from_bytes(hex::decode(public_key).unwrap().as_slice())
                 .unwrap(),
-            pop: blsful::Signature::Basic(
-                <blsful::Bls12381G2Impl as blsful::Pairing>::Signature::try_from(
-                    hex::decode(deposit_auth_signature).unwrap(),
-                )
-                .unwrap(),
-            ),
+            deposit_auth_signature: BlsSignature::from_string(deposit_auth_signature).unwrap(),
         })
     }
 }
@@ -201,7 +199,7 @@ pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
                 .encode_input(&[
                     Token::Bytes(stake.validator.public_key.as_bytes()),
                     Token::Bytes(stake.validator.peer_id.to_bytes()),
-                    Token::Bytes(stake.validator.pop.as_raw_value().to_compressed().to_vec()),
+                    Token::Bytes(stake.validator.deposit_auth_signature.to_bytes()),
                     Token::Address(stake.reward_address),
                     Token::Address(stake.signing_address),
                 ])

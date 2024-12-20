@@ -24,7 +24,7 @@ use crate::{
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
     contracts,
-    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -43,7 +43,7 @@ use crate::{
 
 #[derive(Debug)]
 struct NewViewVote {
-    signatures: Vec<NodeSignature>,
+    signatures: Vec<BlsSignature>,
     cosigned: BitArray,
     cosigned_weight: u128,
     qcs: BTreeMap<usize, QuorumCertificate>,
@@ -98,7 +98,7 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-type BlockVotes = (Vec<NodeSignature>, BitArray, u128, bool);
+type BlockVotes = (Vec<BlsSignature>, BitArray, u128, bool);
 
 #[derive(Debug)]
 struct CachedLeader {
@@ -2058,13 +2058,13 @@ impl Consensus {
         &self,
         view: u64,
         qcs: BTreeMap<usize, QuorumCertificate>,
-        signatures: &[NodeSignature],
+        signatures: &[BlsSignature],
         cosigned: BitArray,
     ) -> Result<AggregateQc> {
         assert_eq!(qcs.len(), signatures.len());
 
         Ok(AggregateQc {
-            signature: NodeSignature::aggregate(signatures)?,
+            signature: BlsSignature::aggregate(signatures)?,
             cosigned,
             view,
             // Because qcs is a map from index to qc, this will
@@ -2079,7 +2079,7 @@ impl Consensus {
     fn qc_from_bits(
         &self,
         block_hash: Hash,
-        signatures: &[NodeSignature],
+        signatures: &[BlsSignature],
         cosigned: BitArray,
         view: u64,
     ) -> QuorumCertificate {

@@ -39,7 +39,7 @@ fn main() -> Result<()> {
         "peer_id": secret_key.to_libp2p_keypair().public().to_peer_id(),
         "tx_pubkey": tx_pubkey,
         "control_address": address,
-        "deposit_auth_signature": hex::encode(secret_key.deposit_auth_signature(input.chain_id, address).as_raw_value().to_compressed()),
+        "deposit_auth_signature": secret_key.deposit_auth_signature(input.chain_id, address).to_string(),
     });
 
     println!("{output}");

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
+    crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::TrieStorage,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
@@ -111,7 +111,7 @@ impl Proposal {
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Vote {
     /// A signature on the block_hash and view.
-    signature: NodeSignature,
+    signature: BlsSignature,
     pub block_hash: Hash,
     pub public_key: NodePublicKey,
     pub view: u64,
@@ -137,7 +137,7 @@ impl Vote {
     }
 
     // Make this a getter to force the use of ::new
-    pub fn signature(&self) -> NodeSignature {
+    pub fn signature(&self) -> BlsSignature {
         self.signature
     }
 
@@ -153,7 +153,7 @@ impl Vote {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewView {
     /// A signature on the view, QC hash and validator index.
-    pub signature: NodeSignature,
+    pub signature: BlsSignature,
     pub qc: QuorumCertificate,
     pub view: u64,
     pub public_key: NodePublicKey,
@@ -358,7 +358,7 @@ impl Display for InternalMessage {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub struct QuorumCertificate {
     /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
-    pub signature: NodeSignature,
+    pub signature: BlsSignature,
     pub cosigned: BitArray,
     pub block_hash: Hash,
     pub view: u64,
@@ -367,7 +367,7 @@ pub struct QuorumCertificate {
 impl QuorumCertificate {
     pub fn genesis() -> Self {
         Self {
-            signature: NodeSignature::identity(),
+            signature: BlsSignature::identity(),
             cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
             block_hash: Hash::ZERO,
             view: 0,
@@ -376,7 +376,7 @@ impl QuorumCertificate {
 
     pub fn new_with_identity(block_hash: Hash, view: u64) -> Self {
         QuorumCertificate {
-            signature: NodeSignature::identity(),
+            signature: BlsSignature::identity(),
             cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
             block_hash,
             view,
@@ -384,13 +384,13 @@ impl QuorumCertificate {
     }
 
     pub fn new(
-        signatures: &[NodeSignature],
+        signatures: &[BlsSignature],
         cosigned: BitArray,
         block_hash: Hash,
         view: u64,
     ) -> Self {
         QuorumCertificate {
-            signature: NodeSignature::aggregate(signatures).unwrap(),
+            signature: BlsSignature::aggregate(signatures).unwrap(),
             cosigned,
             block_hash,
             view,
@@ -419,7 +419,7 @@ impl QuorumCertificate {
         bytes.extend_from_slice(self.block_hash.as_bytes());
         bytes.extend_from_slice(&self.view.to_be_bytes());
 
-        NodeSignature::verify_aggregate(&self.signature, &bytes, public_keys).is_ok()
+        BlsSignature::verify_aggregate(&self.signature, &bytes, public_keys).is_ok()
     }
 
     pub fn compute_hash(&self) -> Hash {
@@ -451,7 +451,7 @@ impl Display for QuorumCertificate {
 /// A collection of `n - f` [QuorumCertificate]s.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AggregateQc {
-    pub signature: NodeSignature,
+    pub signature: BlsSignature,
     pub cosigned: BitArray,
     pub view: u64,
     pub qcs: Vec<QuorumCertificate>,
@@ -497,7 +497,7 @@ pub struct BlockHeader {
     /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
     /// It also includes a pointer to the parent block.
     pub qc: QuorumCertificate,
-    pub signature: NodeSignature,
+    pub signature: BlsSignature,
     pub state_root_hash: Hash,
     pub transactions_root_hash: Hash,
     pub receipts_root_hash: Hash,
@@ -521,7 +521,7 @@ impl BlockHeader {
             number: 0,
             hash: BlockHeader::genesis_hash(),
             qc: QuorumCertificate::genesis(),
-            signature: NodeSignature::identity(),
+            signature: BlsSignature::identity(),
             state_root_hash,
             transactions_root_hash: Hash::ZERO,
             receipts_root_hash: Hash::ZERO,
@@ -554,7 +554,7 @@ impl Default for BlockHeader {
             number: 0,
             hash: Hash::ZERO,
             qc: QuorumCertificate::genesis(),
-            signature: NodeSignature::identity(),
+            signature: BlsSignature::identity(),
             state_root_hash: Hash(Keccak256::digest([alloy::rlp::EMPTY_STRING_CODE]).into()),
             transactions_root_hash: Hash::ZERO,
             receipts_root_hash: Hash::ZERO,
@@ -588,7 +588,7 @@ impl Block {
             SystemTime::UNIX_EPOCH,
             EvmGas(0),
             EvmGas(0),
-            Either::Right(NodeSignature::identity()),
+            Either::Right(BlsSignature::identity()),
         )
     }
 
@@ -636,7 +636,7 @@ impl Block {
         timestamp: SystemTime,
         gas_used: EvmGas,
         gas_limit: EvmGas,
-        secret_key_or_signature: Either<SecretKey, NodeSignature>,
+        secret_key_or_signature: Either<SecretKey, BlsSignature>,
     ) -> Self {
         let block = Block {
             header: BlockHeader {
@@ -644,7 +644,7 @@ impl Block {
                 number,
                 hash: Hash::ZERO,
                 qc,
-                signature: NodeSignature::identity(),
+                signature: BlsSignature::identity(),
                 state_root_hash,
                 transactions_root_hash,
                 receipts_root_hash,
@@ -703,7 +703,7 @@ impl Block {
         self.header.qc.block_hash
     }
 
-    pub fn signature(&self) -> NodeSignature {
+    pub fn signature(&self) -> BlsSignature {
         self.header.signature
     }
 
