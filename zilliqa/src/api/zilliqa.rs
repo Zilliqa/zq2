@@ -1215,9 +1215,7 @@ fn get_recent_transactions(
     let mut blocks_searched = 0;
     while block_number > 0 && txns.len() < 100 && blocks_searched < 100 {
         let block = match node
-            .consensus
-            .block_store
-            .get_canonical_block_by_number(block_number)?
+            .get_block(block_number)?
         {
             Some(block) => block,
             None => continue,
@@ -1249,9 +1247,7 @@ fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
 fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let latest_block = node
-        .consensus
-        .block_store
-        .get_canonical_block_by_number(node.get_chain_tip())?;
+        .get_block(node.get_chain_tip())?;
     let num_transactions = match latest_block {
         Some(block) => block.transactions.len(),
         None => 0,
@@ -1268,9 +1264,7 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
     let mut num_txns_epoch = 0;
     for i in current_epoch_first..node.get_chain_tip() {
         let block = node
-            .consensus
-            .block_store
-            .get_canonical_block_by_number(i)?
+            .get_block(i)?
             .ok_or_else(|| anyhow!("Block not found"))?;
         num_txns_epoch += block.transactions.len();
     }

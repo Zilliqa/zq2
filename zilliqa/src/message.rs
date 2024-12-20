@@ -189,20 +189,6 @@ impl NewView {
     }
 }
 
-/// Each node advertises one or more block strategies. Each strategy signifies a willingness to maintain
-/// some group of blocks; when we attempt to fetch a block or block range, we will try to pick a peer that
-/// maintains the blocks we are interested in.
-///
-/// This allows us to compute the blocks a peer is likely to have in its cache before having to be told.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum BlockStrategy {
-    /// "I have these blocks at the moment and I won't drop them until view .."
-    /// None == unlimited
-    CachedViewRange(Range<u64>, Option<u64>),
-    /// Latest N blocks.
-    Latest(u64),
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockRequest {
     pub from_view: u64,
@@ -212,10 +198,6 @@ pub struct BlockRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub proposals: Vec<Proposal>,
-    pub from_view: u64,
-    /// When we send a block response, we may also send data on what blocks we are prepared
-    /// to serve.
-    pub availability: Option<Vec<BlockStrategy>>,
 }
 
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
@@ -286,15 +268,14 @@ impl Display for ExternalMessage {
                 let first = views.next();
                 let last = views.last();
                 match (first, last) {
-                    (None, None) => write!(f, "BlockResponse([], avail={:?})", r.availability),
+                    (None, None) => write!(f, "BlockResponse([])"),
                     (Some(first), None) => {
-                        write!(f, "BlockResponse([{first}, avail={:?}])", r.availability)
+                        write!(f, "BlockResponse([{first}])")
                     }
                     (Some(first), Some(last)) => {
                         write!(
                             f,
-                            "BlockResponse([{first}, ..., {last}, avail={:?}])",
-                            r.availability
+                            "BlockResponse([{first}, ..., {last}])",
                         )
                     }
                     (None, Some(_)) => unreachable!(),

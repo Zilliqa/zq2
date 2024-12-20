@@ -265,14 +265,6 @@ impl Node {
                     return Ok(());
                 }
 
-                trace!(
-                    "block_store::BlockRequest : received a block request - {}",
-                    self.peer_id
-                );
-                // Note that it is very important that we limit this by number of blocks
-                // returned, _not_ by max view range returned. If we don't, then any
-                // view gap larger than block_request_limit will never be filliable
-                // because no node will ever be prepared to return the block after it.
                 let proposals: Vec<Proposal> = (request.from_view..=request.to_view)
                     .take(self.config.block_request_limit)
                     .filter_map(|view| {
@@ -283,17 +275,11 @@ impl Node {
                     })
                     .collect::<Result<_>>()?;
 
-                let availability = self.consensus.block_store.availability()?;
-                trace!("block_store::BlockRequest - responding to new blocks request {id:?} from {from:?} of {request:?} with props {0:?} availability {availability:?}",
-                       proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
-
                 // Send the response to this block request.
                 self.request_responses.send((
                     response_channel,
                     ExternalMessage::BlockResponse(BlockResponse {
                         proposals,
-                        from_view: request.from_view,
-                        availability,
                     }),
                 ))?;
             }
@@ -928,21 +914,17 @@ impl Node {
 
     fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
         trace!(
-            "block_store::handle_block_response - received blocks response of length {}",
+            "Received blocks response of length {}",
             response.proposals.len()
         );
-        self.consensus
-            .receive_block_availability(from, &response.availability)?;
-
-        self.consensus
-            .buffer_lack_of_proposals(response.from_view, &response.proposals)?;
 
         for block in response.proposals {
-            // Buffer the block so that we know we have it - in fact, add it to the cache so
-            // that we can include it in the chain if necessary.
-            self.consensus.buffer_proposal(from, block)?;
+            let proposal = self.consensus.receive_block(from, block)?;
+            if let Some(proposal) = proposal {
+                self.message_sender
+                    .broadcast_external_message(ExternalMessage::Proposal(proposal))?;
+            }
         }
-        trace!("block_store::handle_block_response: finished handling response");
         Ok(())
     }
 

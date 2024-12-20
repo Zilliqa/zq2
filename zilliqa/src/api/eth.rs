@@ -29,7 +29,7 @@ use tracing::*;
 use super::{
     to_hex::ToHex,
     types::eth::{
-        self, CallParams, ErrorCode, HashOrTransaction, OneOrMany, SyncingResult, SyncingStruct,
+        self, CallParams, ErrorCode, HashOrTransaction, OneOrMany,
         TransactionReceipt,
     },
 };
@@ -110,7 +110,6 @@ pub fn rpc_module(
             ("eth_signTransaction", sign_transaction),
             ("eth_simulateV1", simulate_v1),
             ("eth_submitWork", submit_work),
-            ("eth_syncing", syncing),
             ("eth_uninstallFilter", uninstall_filter),
         ],
     );
@@ -835,21 +834,6 @@ fn mining(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
 
 fn protocol_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
     Ok("0x41".to_string())
-}
-
-fn syncing(params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingResult> {
-    expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    if let Some((starting_block, current_block, highest_block)) =
-        node.lock().unwrap().consensus.get_sync_data()?
-    {
-        Ok(SyncingResult::Struct(SyncingStruct {
-            starting_block,
-            current_block,
-            highest_block,
-        }))
-    } else {
-        Ok(SyncingResult::Bool(false))
-    }
 }
 
 #[allow(clippy::redundant_allocation)]

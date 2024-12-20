@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use zilliqa::range_map::RangeMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct NodeDesc {
@@ -26,38 +25,12 @@ pub struct NodeSpec {
 
 impl fmt::Display for Composition {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut map: RangeMap = RangeMap::new();
-        self.nodes
-            .iter()
-            .filter_map(|(x, y)| if y.is_validator { Some(x) } else { None })
-            .for_each(|x| {
-                map.with_elem(*x);
-            });
-        write!(f, "{}", map)
+        write!(f, "no")
     }
 }
 
 fn indices_from_string(input: &str) -> Result<HashSet<u64>> {
-    // We support a-b and a,b,c .
-    let components = input.split(',');
-    let mut result = RangeMap::new();
-    // Now, each component is either a-b or a number
-    for c in components {
-        if let Ok(val) = c.trim().parse::<u64>() {
-            result.with_elem(val);
-        } else {
-            let ranges = c.split('-').collect::<Vec<&str>>();
-            if ranges.len() != 2 {
-                return Err(anyhow!(
-                    "Composition element {c} is neither a number nor a range"
-                ));
-            }
-            let left = ranges[0].trim().parse::<u64>()?;
-            let right = ranges[1].trim().parse::<u64>()?;
-            result.with_closed_tuple((left, right));
-        }
-    }
-    Ok(result.iter_values().collect::<HashSet<u64>>())
+    Ok(HashSet::new())
 }
 
 impl Composition {

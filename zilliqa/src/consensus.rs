@@ -29,13 +29,10 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
-        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
-        ExternalMessage, InternalMessage, NewView, ProcessProposal, Proposal, QuorumCertificate,
-        Vote, MAX_COMMITTEE_SIZE,
+        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockResponse, ExternalMessage, InternalMessage, NewView, ProcessProposal, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
-    range_map::RangeMap,
     state::State,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -288,7 +285,7 @@ impl Consensus {
                             .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
 
                         let head_block = block_store
-                            .get_canonical_block_by_number(highest_block_number)?
+                            .get_block_by_number(highest_block_number)?
                             .ok_or_else(|| anyhow!("missing head block!"))?;
                         trace!(
                             "recovery: highest_block_number {highest_block_number} view {0}",
@@ -392,39 +389,6 @@ impl Consensus {
                 );
                 consensus.db.set_view(min_view_since_high_qc_updated)?;
             }
-
-            // Remind block_store of our peers and request any potentially missing blocks
-            let high_block = consensus
-                .block_store
-                .get_block(high_qc.block_hash)?
-                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-
-            let executed_block = BlockHeader {
-                number: high_block.header.number + 1,
-                ..Default::default()
-            };
-            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
-
-            // Grab last seen committee's peerIds in case others also went offline
-            let committee = state_at.get_stakers(executed_block)?;
-            let recent_peer_ids: Vec<_> = committee
-                .iter()
-                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
-                .filter_map(|&peer_public_key| {
-                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
-                })
-                .collect();
-
-            consensus
-                .block_store
-                .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
-            // It is likley that we missed the most recent proposal. Request it now
-            consensus
-                .block_store
-                .request_blocks(&RangeMap::from_closed_interval(
-                    high_block.view(),
-                    high_block.view() + 1,
-                ))?;
         }
 
         Ok(consensus)
@@ -458,11 +422,11 @@ impl Consensus {
     pub fn head_block(&self) -> Block {
         let highest_block_number = self
             .block_store
-            .get_highest_canonical_block_number()
+            .get_highest_block_number()
             .unwrap()
             .unwrap();
         self.block_store
-            .get_canonical_block_by_number(highest_block_number)
+            .get_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
     }
@@ -658,7 +622,7 @@ impl Consensus {
             block.hash()
         );
 
-        if self.block_store.contains_block(&block.hash())? {
+        if self.block_store.contains_block(block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
             return Ok(None);
         }
@@ -2463,21 +2427,6 @@ impl Consensus {
         Ok(())
     }
 
-    // Receives availability and passes it on to the block store.
-    pub fn receive_block_availability(
-        &mut self,
-        from: PeerId,
-        availability: &Option<Vec<BlockStrategy>>,
-    ) -> Result<()> {
-        trace!(
-            "Received block availability from {:?} avail {:?}",
-            from,
-            availability
-        );
-        self.block_store.update_availability(from, availability)?;
-        Ok(())
-    }
-
     // Checks for the validity of a block and adds it to our block store if valid.
     // Returns true when the block is valid and newly seen and false otherwise.
     // Optionally returns a proposal that should be sent as the result of this newly received block. This occurs when
@@ -2490,9 +2439,9 @@ impl Consensus {
             proposal.number(),
             proposal.view()
         );
-        self.block_store
-            .received_process_proposal(proposal.header.view);
+
         let result = self.proposal(from, proposal, true)?;
+
         // Processing the received block can either result in:
         // * A `Proposal`, if we have buffered votes for this block which form a supermajority, meaning we can
         // propose the next block.
@@ -2507,25 +2456,14 @@ impl Consensus {
         let hash = block.hash();
         debug!(?from, ?hash, ?block.header.view, ?block.header.number, "added block");
         let _ = self.new_blocks.send(block.header);
-        // We may have child blocks; process them too.
-        self.block_store
-            .process_block(from, block)?
-            .into_iter()
-            .try_for_each(|(from_id, child_proposal)| -> Result<()> {
-                // The only reason this can fail is permanent failure of the messaging mechanism, so
-                // propagate it back here.
-                // Mark this block in the cache as "we're about to process this one"
-                let view = child_proposal.header.view;
-                self.message_sender.send_external_message(
-                    self.peer_id(),
-                    ExternalMessage::ProcessProposal(ProcessProposal {
-                        from: from_id.to_bytes(),
-                        block: child_proposal,
-                    }),
-                )?;
-                self.block_store.expect_process_proposal(view);
-                Ok(())
-            })?;
+        if let Some(child_proposal) = self.block_store.process_block(from, block)? {
+            self.message_sender.send_external_message(
+                self.peer_id(),
+                ExternalMessage::BlockResponse(BlockResponse {
+                    proposals: vec![child_proposal],
+                }),
+            )?;
+        }
         Ok(())
     }
 
@@ -2574,7 +2512,7 @@ impl Consensus {
     }
 
     pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.block_store.get_canonical_block_by_number(number)
+        self.block_store.get_block_by_number(number)
     }
 
     fn set_finalized_view(&mut self, view: u64) -> Result<()> {
@@ -2648,7 +2586,7 @@ impl Consensus {
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
             .block_store
-            .get_canonical_block_by_number(number)?
+            .get_block_by_number(number)?
             .map(|block| self.state.at_root(block.state_root_hash().into())))
     }
 
@@ -3252,64 +3190,9 @@ impl Consensus {
         self.block_store.report_outgoing_message_failure(failure)
     }
 
-    pub fn tick(&mut self) -> Result<()> {
-        trace!("consensus::tick()");
-        trace!("request_missing_blocks from timer");
-
-        // Drives the block fetching state machine - see docs/fetching_blocks.md
-        if self.block_store.request_missing_blocks()? {
-            // We're syncing..
-            // Is it likely that the next thing in the buffer could be the next block?
-            let likely_blocks = self.block_store.next_proposals_if_likely()?;
-            if likely_blocks.is_empty() {
-                trace!("no blocks buffered");
-                // If there are no next blocks buffered, someone may well have lied to us about
-                // where the gaps in the view range are. This should be a rare occurrence, so in
-                // lieu of timing it out, just zap the view range gap and we'll take the hit on
-                // any rerequests.
-                self.block_store.delete_empty_view_range_cache();
-            } else {
-                likely_blocks.into_iter().for_each(|(from, block)| {
-                    trace!(
-                        "buffer may contain the next block - {0:?} v={1} n={2}",
-                        block.hash(),
-                        block.view(),
-                        block.number()
-                    );
-                    // Ignore errors here - just carry on and wait for re-request to clean up.
-                    let view = block.view();
-                    let _ = self.message_sender.send_external_message(
-                        self.peer_id(),
-                        ExternalMessage::ProcessProposal(ProcessProposal {
-                            from: from.to_bytes(),
-                            block,
-                        }),
-                    );
-                    self.block_store.expect_process_proposal(view);
-                });
-            }
-        } else {
-            trace!("not syncing ...");
-        }
-        Ok(())
-    }
-
     pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
         self.block_store.buffer_proposal(from, proposal)?;
         Ok(())
-    }
-
-    pub fn buffer_lack_of_proposals(
-        &mut self,
-        from_view: u64,
-        proposals: &Vec<Proposal>,
-    ) -> Result<()> {
-        self.block_store
-            .buffer_lack_of_proposals(from_view, proposals)
-    }
-
-    pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
-        self.block_store.get_sync_data()
     }
 }
 
