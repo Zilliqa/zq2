@@ -80,6 +80,7 @@ start() {
     DOCKER_COMMAND="docker run -td \
     -p 3333:3333/udp \
     -p 4201:4201 \
+    -p 4202:4202 \
     --net=host \
     --name zilliqa-${ZQ_VERSION} \
     -e RUST_LOG='zilliqa=debug' \
