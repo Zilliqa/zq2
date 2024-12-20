@@ -364,20 +364,21 @@ impl ChainNode {
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
 
+        // TODO implement a more effective check
         // Check the node is making progress
-        if self.role != NodeRole::Apps {
-            let first_block_number = self.machine.get_local_block_number().await?;
-            loop {
-                let next_block_number = self.machine.get_local_block_number().await?;
-                println!(
-                    "Polled block number at {next_block_number}, waiting for {} more blocks",
-                    (first_block_number + 10).saturating_sub(next_block_number)
-                );
-                if next_block_number >= first_block_number + 10 {
-                    break;
-                }
-            }
-        }
+        // if self.role != NodeRole::Apps {
+        //     let first_block_number = self.machine.get_local_block_number().await?;
+        //     loop {
+        //         let next_block_number = self.machine.get_local_block_number().await?;
+        //         println!(
+        //             "Polled block number at {next_block_number}, waiting for {} more blocks",
+        //             (first_block_number + 10).saturating_sub(next_block_number)
+        //         );
+        //         if next_block_number >= first_block_number + 10 {
+        //             break;
+        //         }
+        //     }
+        // }
 
         Ok(())
     }
