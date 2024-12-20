@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use alloy::eips::BlockNumberOrTag;
+use alloy::eips::BlockId;
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use serde::{Deserialize, Serialize};
@@ -32,11 +32,11 @@ pub struct CheckpointResponse {
 
 fn checkpoint(params: Params, node: &Arc<Mutex<Node>>) -> Result<CheckpointResponse> {
     let mut params = params.sequence();
-    let block_number: BlockNumberOrTag = params.next()?;
+    let block_id: BlockId = params.next()?;
     let mut node = node.lock().unwrap();
     let block = node
-        .get_block(block_number)?
-        .ok_or(anyhow!("Block {block_number} does not exist"))?;
+        .get_block(block_id)?
+        .ok_or(anyhow!("Block {block_id} does not exist"))?;
 
     let (file_name, hash) = node.consensus.checkpoint_at(block.number())?;
     Ok(CheckpointResponse {

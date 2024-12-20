@@ -274,7 +274,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_block_receipts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TransactionReceipt>> {
-    let block_id: B256 = params.one()?;
+    let block_id: BlockId = params.one()?;
 
     let node = node.lock().unwrap();
 
