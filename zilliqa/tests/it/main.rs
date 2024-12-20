@@ -126,6 +126,7 @@ fn node(
     secret_key: SecretKey,
     onchain_key: SigningKey,
     index: usize,
+    initial_peers: Vec<PeerId>,
     datadir: Option<TempDir>,
 ) -> Result<(
     TestNode,
@@ -178,6 +179,7 @@ fn node(
         local_message_sender,
         request_responses_sender,
         reset_timeout_sender,
+        initial_peers,
         Arc::new(AtomicUsize::new(0)),
     )?;
     let node = Arc::new(Mutex::new(node));
@@ -212,6 +214,7 @@ struct TestNode {
 }
 
 struct Network {
+    pub initial_peers: Vec<PeerId>,
     pub genesis_deposits: Vec<GenesisDeposit>,
     /// Child shards.
     pub children: HashMap<u64, Network>,
@@ -261,7 +264,7 @@ impl Network {
         blocks_per_epoch: u64,
         deposit_v3_upgrade_block_height: Option<u64>,
     ) -> Network {
-        Self::new_shard(
+        let mut network = Self::new_shard(
             rng,
             nodes,
             None,
@@ -273,7 +276,12 @@ impl Network {
             do_checkpoints,
             blocks_per_epoch,
             deposit_v3_upgrade_block_height,
-        )
+        );
+        // Add a non-validator node to the network.
+        let index = network.add_node();
+        network.initial_peers = vec![network.nodes[index].peer_id];
+
+        network
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -372,6 +380,11 @@ impl Network {
             max_rpc_response_size: max_rpc_response_size_default(),
         };
 
+        let initial_peers: Vec<PeerId> = keys
+            .iter()
+            .map(|k| k.0.to_libp2p_keypair().public().to_peer_id())
+            .collect();
+
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
             Vec<_>,
             Vec<_>,
@@ -386,6 +399,7 @@ impl Network {
                     key.0,
                     key.1,
                     i,
+                    initial_peers.clone(),
                     Some(tempfile::tempdir().unwrap()),
                 )
                 .unwrap()
@@ -412,6 +426,7 @@ impl Network {
         }
 
         Network {
+            initial_peers,
             genesis_deposits,
             nodes,
             disconnected: HashSet::new(),
@@ -503,8 +518,15 @@ impl Network {
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
         let onchain_key = options.onchain_key_or_random(self.rng.clone());
-        let (node, receiver, local_receiver, request_responses) =
-            node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
+        let (node, receiver, local_receiver, request_responses) = node(
+            config,
+            secret_key,
+            onchain_key,
+            self.nodes.len(),
+            self.initial_peers.clone(),
+            None,
+        )
+        .unwrap();
 
         trace!("Node {}: {}", node.index, node.peer_id);
 
@@ -558,7 +580,15 @@ impl Network {
 
                 let config = self.nodes[i].inner.lock().unwrap().config.clone();
 
-                node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
+                node(
+                    config,
+                    key.0,
+                    key.1,
+                    i,
+                    self.initial_peers.clone(),
+                    Some(new_data_dir),
+                )
+                .unwrap()
             })
             .multiunzip();
 

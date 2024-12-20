@@ -75,6 +75,7 @@ pub fn process_empty(c: &mut Criterion) {
         .unwrap(),
         message_sender,
         reset_timeout_sender,
+        Vec::new(),
         Arc::new(db),
     )
     .unwrap();
@@ -195,6 +196,7 @@ fn consensus(
         config,
         message_sender,
         reset_timeout_sender,
+        Vec::new(),
         Arc::new(db),
     )
     .unwrap()
