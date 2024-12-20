@@ -446,17 +446,18 @@ impl P2pNode {
                 () = &mut sleep => {
                     if let Some((peer, address)) = &self.config.bootstrap_address {
                         if self.swarm.local_peer_id() != peer {
-                            self.swarm.dial(
+                            if let Ok(()) = self.swarm.dial(
                                 DialOpts::peer_id(*peer)
                                     .override_role() // hole-punch
                                     .addresses(vec![address.clone()])
                                     .build(),
-                            )?;
-                            self.swarm
-                                .behaviour_mut()
-                                .kademlia
-                                .add_address(peer, address.clone());
-                            self.swarm.behaviour_mut().kademlia.bootstrap()?;
+                            ) {
+                                self.swarm
+                                    .behaviour_mut()
+                                    .kademlia
+                                    .add_address(peer, address.clone());
+                                self.swarm.behaviour_mut().kademlia.bootstrap()?;
+                            }
                         }
                     }
                 },
