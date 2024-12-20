@@ -91,6 +91,8 @@ enum DeployerCommands {
     Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
+    /// Run command over SSH in the internal network nodes
+    Ssh(DeployerSshArgs),
     /// Backup a node data dir
     Backup(DeployerBackupArgs),
     /// Restore a node data dir from a backup
@@ -201,6 +203,19 @@ pub struct DeployerRpcArgs {
     /// The port where to run the rpc call on
     #[clap(long, short, about)]
     port: Option<NodePort>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerSshArgs {
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// The network deployer config file
+    config_file: String,
+    /// Method to run
+    // #[clap(long, short, about, allow_hyphen_values = true, num_args = 1..)]
+    #[arg(trailing_var_arg = true)]
+    command: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -830,7 +845,7 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             DeployerCommands::Rpc(ref args) => {
-                plumbing::run_rpc_call(
+                plumbing::run_deployer_rpc(
                     &args.method,
                     &args.params,
                     &args.config_file,
@@ -840,6 +855,14 @@ async fn main() -> Result<()> {
                 )
                 .await
                 .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
+                Ok(())
+            }
+            DeployerCommands::Ssh(ref args) => {
+                plumbing::run_deployer_ssh(args.command.clone(), &args.config_file, args.select)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer ssh command: {}", err)
+                    })?;
                 Ok(())
             }
             DeployerCommands::Backup(ref arg) => {

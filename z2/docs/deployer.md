@@ -19,6 +19,7 @@ Commands:
   get-deposit-commands   Generate in output the commands to deposit stake amount to all the validators
   deposit                Deposit the stake amounts to all the validators
   rpc                    Run RPC calls over the internal network nodes
+  ssh                    Run command over SSH in the internal network nodes
   backup                 Backup a node data dir
   restore                Restore a node data dir from a backup
   reset                  Reset a network stopping all the nodes and cleaning the /data folder
@@ -361,6 +362,43 @@ Configuration file: zq2-prototestnet.yaml
 
 ```bash
 z2 deployer rpc -m eth_blockNumber zq2-prototestnet.yaml
+```
+
+## Run SSH commands over all the nodes
+
+```bash
+z2 deployer ssh --help
+```
+
+```bash
+Run command over SSH in the internal network nodes
+
+Usage: z2 deployer ssh [OPTIONS] <CONFIG_FILE> [COMMAND]...
+
+Arguments:
+  <CONFIG_FILE>  The network deployer config file
+  [COMMAND]...   Method to run
+
+Options:
+      --select      Enable nodes selection
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Start the zilliqa service in the `zq2-prototestnet` nodes
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer ssh zq2-prototestnet.yaml -- "sudo systemctl start zilliqa.service"
 ```
 
 ## Generate in output the config file to join the network
