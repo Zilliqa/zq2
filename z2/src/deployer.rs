@@ -13,7 +13,7 @@ use crate::{
     chain::{
         config::NetworkConfig,
         instance::ChainInstance,
-        node::{ChainNode, NodeRole},
+        node::{ChainNode, NodePort, NodeRole},
     },
     secret::Secret,
     validators,
@@ -351,6 +351,7 @@ pub async fn run_rpc_call(
     config_file: &str,
     timeout: usize,
     node_selection: bool,
+    port: NodePort,
 ) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
@@ -394,12 +395,13 @@ pub async fn run_rpc_call(
         .unwrap_or_default();
 
     for machine in target_nodes {
+        let current_port = port.to_owned();
         let current_method = method.to_owned();
         let current_params = params.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
             let result = machine
-                .get_rpc_response(&current_method, &current_params, timeout)
+                .get_rpc_response(&current_method, &current_params, timeout, current_port)
                 .await;
             drop(permit); // Release the permit when the task is done
             (machine, result)

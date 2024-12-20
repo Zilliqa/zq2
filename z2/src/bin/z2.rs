@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use z2lib::{
-    chain,
+    chain::{self, node::NodePort},
     components::Component,
     deployer::ApiOperation,
     node_spec::{Composition, NodeSpec},
@@ -191,13 +191,16 @@ pub struct DeployerRpcArgs {
     #[clap(long, short, about)]
     method: String,
     /// List of parameters for the method. ie "[\"string_value\",true]"
-    #[clap(long, short, about)]
+    #[clap(long)]
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
     /// Enable nodes selection
     #[clap(long)]
     select: bool,
+    /// The port where to run the rpc call on
+    #[clap(long, short, about)]
+    port: Option<NodePort>,
 }
 
 #[derive(Args, Debug)]
@@ -833,6 +836,7 @@ async fn main() -> Result<()> {
                     &args.config_file,
                     &args.timeout,
                     args.select,
+                    args.port.clone().unwrap_or_default(),
                 )
                 .await
                 .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
