@@ -459,6 +459,7 @@ def go(role):
         case "bootstrap" | "checkpoint":
             log("Configuring a validator node")
             configure_logrotate()
+            pull_zq2_image()
             stop_zq2()
             install_zilliqa()
             download_persistence()
@@ -466,6 +467,7 @@ def go(role):
         case "validator":
             log("Configuring a validator node")
             configure_logrotate()
+            pull_zq2_image()
             stop_zq2()
             install_zilliqa()
             download_persistence()
@@ -476,6 +478,7 @@ def go(role):
             stop_api_checkpoint()
             install_api_checkpoint()
             configure_logrotate()
+            pull_zq2_image()
             stop_zq2()
             install_zilliqa()
             download_persistence()
@@ -635,6 +638,9 @@ def download_checkpoint():
 
 def start_zq2():
     run_or_die(["sudo", "systemctl", "start", "zilliqa"])
+
+def pull_zq2_image():
+    run_or_die(["sudo", "docker", "pull", f"{ZQ2_IMAGE}"])
 
 def stop_zq2():
     if os.path.exists("/etc/systemd/system/zilliqa.service"):
