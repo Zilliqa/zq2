@@ -23,9 +23,10 @@ consensus.contract_upgrade_block_heights = {{ contract_upgrade_block_heights }}
 
 {%- if role == "checkpoint" %}
 # Checkpoint configuration
-do_checkpoints=true
-consensus.blocks_per_epoch=3600
-consensus.epochs_per_checkpoint=24
+# don't generate checkpoints :)
+#do_checkpoints=true
+#consensus.blocks_per_epoch=3600
+#consensus.epochs_per_checkpoint=24
 {%- endif %}
 
 api_servers = {{ api_servers }}

@@ -245,6 +245,9 @@ impl P2pNode {
             }
         }
 
+        let sleep = tokio::time::sleep(Duration::from_secs(30));
+        tokio::pin!(sleep);
+
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
 
         loop {
@@ -439,6 +442,23 @@ impl P2pNode {
                 _ = signal::ctrl_c() => {
                     self.shard_threads.shutdown().await;
                     break;
+                },
+                () = &mut sleep => {
+                    if let Some((peer, address)) = &self.config.bootstrap_address {
+                        if self.swarm.local_peer_id() != peer {
+                            self.swarm.dial(
+                                DialOpts::peer_id(*peer)
+                                    .override_role() // hole-punch
+                                    .addresses(vec![address.clone()])
+                                    .build(),
+                            )?;
+                            self.swarm
+                                .behaviour_mut()
+                                .kademlia
+                                .add_address(peer, address.clone());
+                            self.swarm.behaviour_mut().kademlia.bootstrap()?;
+                        }
+                    }
                 },
             }
             self.peer_num.store(
