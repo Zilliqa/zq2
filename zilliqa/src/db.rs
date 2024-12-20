@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use crate::{
-    crypto::{Hash, NodeSignature},
+    crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     state::Account,
@@ -77,7 +77,7 @@ macro_rules! make_wrapper {
 
 sqlify_with_bincode!(AggregateQc);
 sqlify_with_bincode!(QuorumCertificate);
-sqlify_with_bincode!(NodeSignature);
+sqlify_with_bincode!(BlsSignature);
 sqlify_with_bincode!(SignedTransaction);
 
 make_wrapper!(Vec<ScillaException>, VecScillaExceptionSqlable);

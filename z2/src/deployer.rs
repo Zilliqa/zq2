@@ -231,24 +231,16 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
 pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNode) -> Result<()> {
     let private_keys = node.get_private_key().await?;
     let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+    let deposit_auth_signature = node_ethereum_address.secret_key.deposit_auth_signature(
+        node.chain_id(),
+        SecretKey::from_hex(genesis_private_key)?.to_evm_address(),
+    );
 
     println!("Validator {}:", node.name());
     println!("z2 deposit --chain {} \\", node.chain()?);
     println!("\t--peer-id {} \\", node_ethereum_address.peer_id);
     println!("\t--public-key {} \\", node_ethereum_address.bls_public_key);
-    println!(
-        "\t--deposit-auth-signature {} \\",
-        hex::encode(
-            node_ethereum_address
-                .secret_key
-                .deposit_auth_signature(
-                    node.chain_id(),
-                    SecretKey::from_hex(genesis_private_key)?.to_evm_address()
-                )
-                .as_raw_value()
-                .to_compressed()
-        )
-    );
+    println!("\t--deposit-auth-signature {} \\", deposit_auth_signature);
     println!("\t--private-key {} \\", genesis_private_key);
     println!("\t--reward-address {} \\", ZERO_ACCOUNT);
     println!("\t--signing-address {} \\", ZERO_ACCOUNT);
@@ -294,22 +286,17 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         let genesis_private_key = chain.genesis_private_key().await?;
         let private_keys = node.get_private_key().await?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+        let deposit_auth_signature = node_ethereum_address.secret_key.deposit_auth_signature(
+            node.chain_id(),
+            SecretKey::from_hex(&genesis_private_key)?.to_evm_address(),
+        );
 
         println!("Validator {}:", node.name());
 
         let validator = validators::Validator::new(
-            &node_ethereum_address.peer_id,
-            &node_ethereum_address.bls_public_key,
-            &hex::encode(
-                node_ethereum_address
-                    .secret_key
-                    .deposit_auth_signature(
-                        node.chain_id(),
-                        SecretKey::from_hex(&genesis_private_key)?.to_evm_address(),
-                    )
-                    .as_raw_value()
-                    .to_compressed(),
-            ),
+            node_ethereum_address.peer_id,
+            node_ethereum_address.bls_public_key,
+            deposit_auth_signature,
         )?;
         let stake = validators::StakeDeposit::new(
             validator,

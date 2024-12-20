@@ -460,7 +460,7 @@ impl ChainNode {
         let ethereum_address = EthereumAddress::from_private_key(&private_key)?;
 
         let mut labels = BTreeMap::<String, String>::new();
-        labels.insert("peer-id".to_string(), ethereum_address.peer_id.clone());
+        labels.insert("peer-id".to_string(), ethereum_address.peer_id.to_string());
 
         self.machine.add_labels(labels).await?;
 
