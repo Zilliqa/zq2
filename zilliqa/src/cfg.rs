@@ -538,12 +538,15 @@ pub struct ContractUpgradesBlockHeights {
     pub deposit_v3: Option<u64>,
 }
 
-
 impl ContractUpgradesBlockHeights {
     // toml doesnt like Option types. Map items in struct and remove keys for None values
     pub fn to_toml(&self) -> toml::Value {
         toml::Value::Table(
-            json!(self).as_object().unwrap().clone().into_iter()
+            json!(self)
+                .as_object()
+                .unwrap()
+                .clone()
+                .into_iter()
                 .filter_map(|(k, v)| {
                     if v.is_null() {
                         None // Skip null values
@@ -551,7 +554,7 @@ impl ContractUpgradesBlockHeights {
                         Some((k, toml::Value::Integer(v.as_u64().unwrap() as i64)))
                     }
                 })
-                .collect()
+                .collect(),
         )
     }
 }

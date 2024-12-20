@@ -165,7 +165,7 @@ impl Chain {
             Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
             },
-            _ => ContractUpgradesBlockHeights::default()
+            _ => ContractUpgradesBlockHeights::default(),
         }
     }
 
