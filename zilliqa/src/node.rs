@@ -170,6 +170,7 @@ impl ChainId {
 }
 
 impl Node {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: NodeConfig,
         secret_key: SecretKey,

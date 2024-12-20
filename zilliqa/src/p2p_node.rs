@@ -171,7 +171,7 @@ impl P2pNode {
             .gossipsub
             .all_peers()
             .filter(|p| p.1.contains(&topic))
-            .map(|p| p.0.clone())
+            .map(|p| *p.0)
             .collect()
     }
 
