@@ -23,6 +23,7 @@ Commands:
   restore                Restore a node data dir from a backup
   reset                  Reset a network stopping all the nodes and cleaning the /data folder
   restart                Restart a network stopping all the nodes and starting the service again
+  block-number           Show the network nodes block number
   api                    Perform operation over the network API nodes
   generate-private-keys  Generate the node private keys. --force to replace if already existing
   generate-genesis-key   Generate the genesis key. --force to replace if already existing

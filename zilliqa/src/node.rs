@@ -401,7 +401,7 @@ impl Node {
                     .send_external_message(leader, response)
                     .unwrap();
             } else {
-                self.message_sender.broadcast_proposal(response)?;
+                self.message_sender.broadcast_external_message(response)?;
             }
             return Ok(true);
         }

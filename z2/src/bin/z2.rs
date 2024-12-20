@@ -99,6 +99,8 @@ enum DeployerCommands {
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
+    /// Show the network nodes block number
+    BlockNumber(DeployerBlockNumberArgs),
     /// Perform operation over the network API nodes
     Api(DeployerApiArgs),
     /// Generate the node private keys. --force to replace if already existing
@@ -166,6 +168,18 @@ pub struct DeployerActionsArgs {
     /// Enable nodes selection
     #[clap(long)]
     select: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerBlockNumberArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// After showing the block numbers, watch for changes
+    #[clap(long)]
+    follow: bool,
 }
 
 #[derive(Args, Debug)]
@@ -873,6 +887,19 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer restart command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::BlockNumber(ref arg) => {
+                let config_file: String = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_block_number(&config_file, arg.select, arg.follow)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer block-number command: {}", err)
                     })?;
                 Ok(())
             }
