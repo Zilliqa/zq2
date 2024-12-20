@@ -231,7 +231,7 @@ pub async fn run_deployer_deposit(config_file: &str, node_selection: bool) -> Re
     Ok(())
 }
 
-pub async fn run_rpc_call(
+pub async fn run_deployer_rpc(
     method: &str,
     params: &Option<String>,
     config_file: &str,
@@ -249,6 +249,16 @@ pub async fn run_rpc_call(
         port,
     )
     .await?;
+    Ok(())
+}
+
+pub async fn run_deployer_ssh(
+    command: Vec<String>,
+    config_file: &str,
+    node_selection: bool,
+) -> Result<()> {
+    println!("🦆 Running SSH command for {config_file}' .. ");
+    deployer::run_ssh_command(command, config_file, node_selection).await?;
     Ok(())
 }
 

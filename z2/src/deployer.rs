@@ -430,6 +430,88 @@ pub async fn run_rpc_call(
     Ok(())
 }
 
+pub async fn run_ssh_command(
+    command: Vec<String>,
+    config_file: &str,
+    node_selection: bool,
+) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config).await?;
+
+    // Create a list of chain instances
+    let mut machines = chain.machines();
+    let machine_names = machines.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
+
+    let target_nodes = if node_selection {
+        let mut select = cliclack::multiselect("Select target nodes");
+
+        for name in &machine_names {
+            select = select.item(name.clone(), name, "");
+        }
+
+        let selection = select.interact()?;
+        let mut machines = machines.clone();
+        machines.retain(|m| selection.contains(&m.name));
+        machines
+    } else {
+        machines.sort_by_key(|machine| machine.name.to_owned());
+        machines
+    };
+
+    let semaphore = Arc::new(Semaphore::new(50)); // Limit to 50 concurrent tasks
+    let mut futures = vec![];
+
+    println!("Running SSH command on {} nodes", chain.name());
+    println!("🦆 Running the SSH command: '{}' .. ", command.join(" "));
+
+    let column_width = target_nodes
+        .iter()
+        .map(|m| m.name.len())
+        .max()
+        .unwrap_or_default();
+
+    for machine in target_nodes {
+        let current_command = command.to_owned();
+        let permit = semaphore.clone().acquire_owned().await?;
+        let future = task::spawn(async move {
+            let result = machine.run(&current_command.join(" "), false).await;
+            drop(permit); // Release the permit when the task is done
+            (machine, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    for result in results {
+        match result? {
+            (machine, Ok(output)) => {
+                let output = if !output.success {
+                    format!(
+                        "{}: {}",
+                        "ERROR".red(),
+                        std::str::from_utf8(&output.stderr)?.trim().to_owned().red()
+                    )
+                } else {
+                    std::str::from_utf8(&output.stdout)?.trim().to_owned()
+                };
+
+                println!(
+                    "---\n{:<width$}\n{}",
+                    machine.name.bold(),
+                    output,
+                    width = column_width
+                );
+            }
+            (machine, Err(err)) => {
+                log::error!("Node {} failed with error: {}", machine.name, err);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn run_backup(config_file: &str, filename: &str) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
