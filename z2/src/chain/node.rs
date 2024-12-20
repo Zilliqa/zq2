@@ -612,8 +612,7 @@ impl ChainNode {
         );
         ctx.insert(
             "contract_upgrade_block_heights",
-            &serde_json::from_value::<toml::Value>(json!(contract_upgrade_block_heights))?
-                .to_string(),
+            &contract_upgrade_block_heights.to_toml().to_string(),
         );
         // convert json to toml formatting
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
