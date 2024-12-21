@@ -26,6 +26,7 @@ use tokio::{
     signal::{self, unix::SignalKind},
     sync::mpsc::{self, error::SendError, UnboundedSender},
     task::JoinSet,
+    time::{self, Instant},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
@@ -239,6 +240,9 @@ impl P2pNode {
             }
         }
 
+        let sleep = time::sleep(Duration::from_millis(5));
+        tokio::pin!(sleep);
+
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
 
         loop {
@@ -294,7 +298,6 @@ impl P2pNode {
                                 }
                             }
                         }
-
                         SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source })) => {
                             match message {
                                 request_response::Message::Request { request, channel: _channel, request_id: _request_id, .. } => {
@@ -434,6 +437,28 @@ impl P2pNode {
                         break;
                     }
                 }
+                () = &mut sleep => {
+                    let net_info = self.swarm.network_info();
+                    trace!("p2p_node tick {0} / {1} ", net_info.num_peers(), net_info.connection_counters().num_connections() );
+                    if net_info.num_peers() == 0 && net_info.connection_counters().num_connections() == 0 {
+                        // We have no peers and no connections. Try bootstrapping..
+                        if let Some((peer, address)) = &self.config.bootstrap_address {
+                            if self.swarm.local_peer_id() == peer {
+                                debug!("p2p_node: can't bootstrap against myself");
+                            } else {
+                                debug!("p2p_node: no peers and no connections - bootstrapping!");
+                                self.swarm
+                                    .behaviour_mut()
+                                    .kademlia
+                                    .add_address(peer, address.clone());
+                                self.swarm.behaviour_mut().kademlia.bootstrap()?;
+                            }
+                        } else {
+                            debug!("p2p_node: no peers and no connections, but no bootstrap either! We may be stuck");
+                        }
+                    }
+                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(10000));
+                },
                 _ = terminate.recv() => {
                     self.shard_threads.shutdown().await;
                     break;
