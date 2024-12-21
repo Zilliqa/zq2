@@ -7,6 +7,7 @@ use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use serde::{Deserialize, Serialize};
 
+use super::types::{eth::QuorumCertificate, hex};
 use crate::{api::to_hex::ToHex, cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
@@ -16,8 +17,38 @@ pub fn rpc_module(
     super::declare_module!(
         node,
         enabled_apis,
-        [("admin_generateCheckpoint", checkpoint)]
+        [
+            ("admin_consensusInfo", consensus_info),
+            ("admin_generateCheckpoint", checkpoint),
+        ]
     )
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ConsensusInfo {
+    #[serde(serialize_with = "hex")]
+    view: u64,
+    high_qc: QuorumCertificate,
+    milliseconds_since_last_view_change: u64,
+    milliseconds_until_next_view_change: u64,
+}
+
+fn consensus_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<ConsensusInfo> {
+    let node = node.lock().unwrap();
+
+    let view = node.consensus.get_view()?;
+    let high_qc = QuorumCertificate::from_qc(&node.consensus.high_qc);
+    let (milliseconds_since_last_view_change, exponential_backoff_timeout, _) =
+        node.consensus.get_consensus_timeout_params()?;
+    let milliseconds_until_next_view_change =
+        exponential_backoff_timeout.saturating_sub(milliseconds_since_last_view_change);
+
+    Ok(ConsensusInfo {
+        view,
+        high_qc,
+        milliseconds_since_last_view_change,
+        milliseconds_until_next_view_change,
+    })
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
