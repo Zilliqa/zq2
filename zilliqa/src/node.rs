@@ -209,15 +209,25 @@ impl Node {
 
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
-        // We only expect `NewTransaction`s to be broadcast.
-        // `Proposals` are re-routed to `handle_request()`.
         match message {
+            // `NewTransaction`s are always broadcasted.
             ExternalMessage::NewTransaction(t) => {
                 // Don't process again txn sent by this node (it's already in the mempool)
                 if self.peer_id != from {
                     self.consensus.handle_new_transaction(t)?;
                 }
             }
+            // Repeated `NewView`s might get broadcast.
+            ExternalMessage::NewView(m) => {
+                if let Some((block, transactions)) = self.consensus.new_view(*m)? {
+                    self.message_sender
+                        .broadcast_proposal(ExternalMessage::Proposal(Proposal::from_parts(
+                            block,
+                            transactions,
+                        )))?;
+                }
+            }
+            // `Proposals` are re-routed to `handle_request()`
             _ => {
                 warn!("unexpected message type");
             }
