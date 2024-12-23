@@ -593,6 +593,7 @@ impl Consensus {
         Ok(Some(new_view))
     }
 
+    /// All values returned in milliseconds
     pub fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
         let time_since_last_view_change = SystemTime::now()
             .duration_since(self.view_updated_at)
