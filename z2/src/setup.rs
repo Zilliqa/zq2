@@ -521,7 +521,6 @@ impl Setup {
                     scilla_address: scilla_address_default(),
                     scilla_stdlib_dir: scilla_stdlib_dir_default(),
                     scilla_ext_libs_path: scilla_ext_libs_path_default(),
-                    minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                     main_shard_id: None,
                     local_address: local_address_default(),
                     consensus_timeout: consensus_timeout_default(),
