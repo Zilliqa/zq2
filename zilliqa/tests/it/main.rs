@@ -331,7 +331,6 @@ impl Network {
                 genesis_deposits: genesis_deposits.clone(),
                 is_main: send_to_parent.is_none(),
                 consensus_timeout: Duration::from_secs(5),
-                minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 empty_block_timeout: Duration::from_millis(25),
@@ -481,7 +480,6 @@ impl Network {
                 eth_block_gas_limit: EvmGas(84000000),
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
-                minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 scilla_address: scilla_address_default(),
                 blocks_per_epoch: self.blocks_per_epoch,
                 epochs_per_checkpoint: 1,
