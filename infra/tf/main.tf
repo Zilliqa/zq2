@@ -231,7 +231,7 @@ resource "google_compute_firewall" "allow_api_external_http" {
   network = local.network_name
 
   direction     = "INGRESS"
-  source_ranges = local.google_load_balancer_ip_ranges
+  source_ranges = concat(local.google_load_balancer_ip_ranges, ["0.0.0.0/0"])
 
   target_tags = [format("%s-%s", var.chain_name, "api")]
 
