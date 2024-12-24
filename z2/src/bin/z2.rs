@@ -94,9 +94,9 @@ enum DeployerCommands {
     Rpc(DeployerRpcArgs),
     /// Run command over SSH in the internal network nodes
     Ssh(DeployerSshArgs),
-    /// Backup a node data dir
+    /// Backup a node data dir in the persistence bucket
     Backup(DeployerBackupArgs),
-    /// Restore a node data dir from a backup
+    /// Restore a node data dir from a backup in the persistence bucket
     Restore(DeployerRestoreArgs),
     /// Reset a network stopping all the nodes and cleaning the /data folder
     Reset(DeployerActionsArgs),
@@ -144,7 +144,7 @@ pub struct DeployerInstallArgs {
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
-    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-folder
     #[clap(long)]
     persistence_url: Option<String>,
     /// gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the install will be performed only on the validator nodes
@@ -221,18 +221,24 @@ pub struct DeployerSshArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerBackupArgs {
-    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    /// The name of the backup folder. If zip is specified, it represents the name of the zip file.
     #[clap(long, short)]
-    file: String,
+    name: Option<String>,
+    /// If specified, create a zip file containing the backup
+    #[clap(long)]
+    zip: bool,
     /// The network deployer config file
     config_file: Option<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerRestoreArgs {
-    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    /// The name of the backup folder. If zip is specified, it represents the name of the zip file.
     #[clap(long, short)]
-    file: String,
+    name: Option<String>,
+    /// If specified, restore the persistence from a zip file
+    #[clap(long)]
+    zip: bool,
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
@@ -872,7 +878,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_backup(&config_file, &arg.file)
+                plumbing::run_deployer_backup(&config_file, arg.name.clone(), arg.zip)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer backup command: {}", err)
@@ -885,11 +891,16 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_restore(&config_file, &arg.file, arg.max_parallel)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer restore command: {}", err)
-                    })?;
+                plumbing::run_deployer_restore(
+                    &config_file,
+                    arg.max_parallel,
+                    arg.name.clone(),
+                    arg.zip,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer restore command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::Reset(ref arg) => {

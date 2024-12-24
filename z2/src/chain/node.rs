@@ -165,31 +165,7 @@ impl Machine {
         Ok(())
     }
 
-    async fn copy_from(&self, file_from: &str, file_to: &str) -> Result<()> {
-        let file_from = &format!("{0}:{file_from}", &self.name);
-        let args = &[
-            "compute",
-            "scp",
-            "--project",
-            &self.project_id,
-            "--zone",
-            &self.zone,
-            "--tunnel-through-iap",
-            "--strict-host-key-checking=no",
-            "--scp-flag=-r",
-            file_from,
-            file_to,
-        ];
-
-        zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("gcloud", args)
-            .run()
-            .await?;
-        Ok(())
-    }
-
-    async fn copy_to(&self, file_from: &[&str], file_to: &str) -> Result<()> {
+    async fn copy(&self, file_from: &[&str], file_to: &str) -> Result<()> {
         let tgt_spec = format!("{0}:{file_to}", &self.name);
         let args = [
             &[
@@ -483,11 +459,11 @@ impl ChainNode {
             .await?;
 
         self.machine
-            .copy_to(&[config_toml], "/tmp/config.toml")
+            .copy(&[config_toml], "/tmp/config.toml")
             .await?;
 
         self.machine
-            .copy_to(&[provisioning_script], "/tmp/provision_node.py")
+            .copy(&[provisioning_script], "/tmp/provision_node.py")
             .await?;
 
         if self.role == NodeRole::Checkpoint {
@@ -497,7 +473,7 @@ impl ChainNode {
                 .await?;
 
             self.machine
-                .copy_to(&[checkpoint_cron_job], "/tmp/checkpoint_cron_job.sh")
+                .copy(&[checkpoint_cron_job], "/tmp/checkpoint_cron_job.sh")
                 .await?;
         }
 
@@ -768,41 +744,83 @@ impl ChainNode {
         Ok(filename.to_owned())
     }
 
-    pub async fn backup_to(&self, filename: &str) -> Result<()> {
+    pub async fn backup_to(&self, name: Option<String>, zip: bool) -> Result<()> {
         let machine = &self.machine;
+
+        let mut backup_name = name.unwrap_or(self.name());
+
+        if zip {
+            backup_name = format!("{}.zip", backup_name);
+        }
 
         let multi_progress =
             cliclack::multi_progress(format!("Backing up {} ...", self.name()).yellow());
-        let progress_bar = multi_progress.add(cliclack::progress_bar(5));
+        let bar_length = if zip { 6 } else { 4 };
+        let progress_bar = multi_progress.add(cliclack::progress_bar(bar_length));
 
+        // clean previous backup files
+        progress_bar.start("Clean the previous backup files");
+        let command = format!(
+            "sudo gsutil ls gs://{}-persistence/{}",
+            self.chain()?,
+            backup_name
+        );
+        let result = machine.run(&command, false).await;
+        if result.is_ok() {
+            let command = format!(
+                "sudo gsutil -m rm -rf gs://{}-persistence/{}",
+                self.chain()?,
+                backup_name
+            );
+            machine.run(&command, false).await?;
+        }
+        progress_bar.inc(1);
+
+        // stop the service
         progress_bar.start("Stopping the service");
         machine
             .run("sudo systemctl stop zilliqa.service", false)
             .await?;
         progress_bar.inc(1);
 
-        progress_bar.start("Packaging the data dir");
-        machine
-            .run(
-                "sudo apt install -y zip && sudo zip -r /tmp/data.zip /data",
-                false,
-            )
-            .await?;
-        progress_bar.inc(1);
+        if zip {
+            // create the zip file
+            progress_bar.start("Packaging the data dir");
+            machine
+                .run(
+                    "sudo apt install -y zip && sudo zip -r /tmp/data.zip /data",
+                    false,
+                )
+                .await?;
+            progress_bar.inc(1);
 
-        progress_bar.start("Exporting the backup file");
-        if filename.starts_with("gs://") {
-            let command = format!("sudo gsutil -m cp /tmp/data.zip {}", filename);
+            // upload the zip file to the bucket
+            progress_bar.start("Exporting the backup file");
+            let command = format!(
+                "sudo gsutil -m cp /tmp/data.zip gs://{}-persistence/{}",
+                self.chain()?,
+                backup_name
+            );
             machine.run(&command, false).await?;
+            progress_bar.inc(1);
+
+            // clean the temp backup file
+            progress_bar.start("Cleaning the temp backup files");
+            machine.run("sudo rm -rf /tmp/data.zip", false).await?;
+            progress_bar.inc(1);
         } else {
-            machine.copy_from("/tmp/data.zip", filename).await?;
+            // export the backup files
+            progress_bar.start("Exporting the backup files");
+            let command = format!(
+                "sudo gsutil -m cp -r /data gs://{}-persistence/{}",
+                self.chain()?,
+                backup_name
+            );
+            machine.run(&command, false).await?;
+            progress_bar.inc(1);
         }
-        progress_bar.inc(1);
 
-        progress_bar.start("Cleaning the backup files");
-        machine.run("sudo rm -rf /tmp/data.zip", false).await?;
-        progress_bar.inc(1);
-
+        // start the service
         progress_bar.start("Starting the service");
         machine
             .run("sudo systemctl start zilliqa.service", false)
@@ -815,42 +833,76 @@ impl ChainNode {
         Ok(())
     }
 
-    pub async fn restore_from(&self, filename: &str, multi_progress: &MultiProgress) -> Result<()> {
+    pub async fn restore_from(
+        &self,
+        name: Option<String>,
+        zip: bool,
+        multi_progress: &MultiProgress,
+    ) -> Result<()> {
         let machine = &self.machine;
-        let progress_bar = multi_progress.add(cliclack::progress_bar(6));
 
+        let mut backup_name = name.unwrap_or(self.name());
+
+        if zip {
+            backup_name = format!("{}.zip", backup_name);
+        }
+
+        let bar_length = if zip { 6 } else { 4 };
+        let progress_bar = multi_progress.add(cliclack::progress_bar(bar_length));
+
+        // stop the service
         progress_bar.start(format!("{}: Stopping the service", self.name()));
         machine
             .run("sudo systemctl stop zilliqa.service", false)
             .await?;
         progress_bar.inc(1);
 
-        progress_bar.start(format!("{}: Importing the backup file", self.name()));
-        if filename.starts_with("gs://") {
-            let command = format!("sudo gsutil -m cp {} /tmp/data.zip", filename);
+        if zip {
+            progress_bar.start(format!("{}: Importing the backup file", self.name()));
+            let command = format!(
+                "sudo gsutil -m cp gs://{}-persistence/{}.zip /tmp/data.zip",
+                self.chain()?,
+                backup_name
+            );
             machine.run(&command, false).await?;
+            progress_bar.inc(1);
+
+            progress_bar.start(format!("{}: Deleting the data folder", self.name()));
+            machine.run("sudo rm -rf /data", false).await?;
+            progress_bar.inc(1);
+
+            progress_bar.start(format!("{}: Restoring the data folder", self.name()));
+            machine
+                .run(
+                    "sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /",
+                    false,
+                )
+                .await?;
+            progress_bar.inc(1);
+
+            progress_bar.start(format!("{}: Cleaning the backup files", self.name()));
+            machine.run("sudo rm -f /tmp/data.zip", false).await?;
+            progress_bar.inc(1);
         } else {
-            machine.copy_to(&[filename], "/tmp/data.zip").await?;
+            // delete the data folder
+            progress_bar.start(format!("{}: Deleting the data folder", self.name()));
+            machine
+                .run("sudo rm -rf /data && sudo mkdir -p /data", false)
+                .await?;
+            progress_bar.inc(1);
+
+            // import the backup files
+            progress_bar.start(format!("{}: Importing the backup files", self.name()));
+            let command = format!(
+                "sudo gsutil -m cp -r gs://{}-persistence/{}/* /data",
+                self.chain()?,
+                backup_name
+            );
+            machine.run(&command, false).await?;
+            progress_bar.inc(1);
         }
-        progress_bar.inc(1);
 
-        progress_bar.start(format!("{}: Deleting the data folder", self.name()));
-        machine.run("sudo rm -rf /data", false).await?;
-        progress_bar.inc(1);
-
-        progress_bar.start(format!("{}: Restoring the data folder", self.name()));
-        machine
-            .run(
-                "sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /",
-                false,
-            )
-            .await?;
-        progress_bar.inc(1);
-
-        progress_bar.start(format!("{}: Cleaning the backup files", self.name()));
-        machine.run("sudo rm -f /tmp/data.zip", false).await?;
-        progress_bar.inc(1);
-
+        // start the service
         progress_bar.start(format!("{}: Starting the service", self.name()));
         machine
             .run("sudo systemctl start zilliqa.service", false)

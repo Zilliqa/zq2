@@ -499,7 +499,7 @@ pub async fn run_ssh_command(
     Ok(())
 }
 
-pub async fn run_backup(config_file: &str, filename: &str) -> Result<()> {
+pub async fn run_backup(config_file: &str, name: Option<String>, zip: bool) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let chain_nodes = chain.nodes().await?;
@@ -522,10 +522,15 @@ pub async fn run_backup(config_file: &str, filename: &str) -> Result<()> {
         nodes.first().unwrap().clone()
     };
 
-    source_node.backup_to(filename).await
+    source_node.backup_to(name, zip).await
 }
 
-pub async fn run_restore(config_file: &str, filename: &str, max_parallel: usize) -> Result<()> {
+pub async fn run_restore(
+    config_file: &str,
+    max_parallel: usize,
+    name: Option<String>,
+    zip: bool,
+) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let chain_nodes = chain.nodes().await?;
@@ -554,11 +559,11 @@ pub async fn run_restore(config_file: &str, filename: &str, max_parallel: usize)
     let multi_progress = cliclack::multi_progress("Restoring the nodes data dir".yellow());
 
     for node in target_nodes {
+        let name = name.clone();
         let permit = semaphore.clone().acquire_owned().await?;
-        let file = filename.to_owned();
         let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
-            let result = node.restore_from(&file, &mp).await;
+            let result = node.restore_from(name, zip, &mp).await;
             drop(permit); // Release the permit when the task is done
             (node, result)
         });

@@ -616,7 +616,7 @@ def configure_logrotate():
     with open("/etc/logrotate.d/zilliqa.conf", "w") as f:
         f.write(LOGROTATE_CONFIG)
 
-def download_persistence():
+def download_persistence_file():
     if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
         PERSISTENCE_DIR="/data"
         run_or_die(["rm", "-rf", f"{PERSISTENCE_DIR}"])
@@ -627,6 +627,20 @@ def download_persistence():
             os.chdir(PERSISTENCE_DIR)
             run_or_die(["tar", "xf", f"{PERSISTENCE_FILENAME}"])
             run_or_die(["rm", "-f", f"{PERSISTENCE_FILENAME}"])
+
+def download_persistence_folder():
+    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
+        PERSISTENCE_DIR="/data"
+        run_or_die(["sudo", "rm", "-rf", f"{PERSISTENCE_DIR}"])
+        os.makedirs(PERSISTENCE_DIR, exist_ok=True)
+        run_or_die(["sudo", "gsutil", "-m", "cp", "-r", f"{PERSISTENCE_URL}/*", f"{PERSISTENCE_DIR}"])
+
+def download_persistence():
+    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
+        if PERSISTENCE_URL.endswith(".tar.gz"):
+            download_persistence_file()
+        else:
+            download_persistence_folder()
 
 def download_checkpoint():
     if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
