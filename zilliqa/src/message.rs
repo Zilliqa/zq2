@@ -209,7 +209,7 @@ pub struct BlockRequest {
     pub to_view: u64,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub proposals: Vec<Proposal>,
     pub from_view: u64,
@@ -225,6 +225,13 @@ impl fmt::Debug for BlockResponse {
             .field("from_view", &self.from_view)
             .finish_non_exhaustive()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBlock {
+    pub from_height: u64,
+    pub from_hash: Hash,
+    pub batch_size: u64,
 }
 
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
@@ -259,6 +266,8 @@ pub enum ExternalMessage {
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
+    RequestFromHeight(RequestBlock),
+    RequestFromHash(RequestBlock),
 }
 
 impl ExternalMessage {
@@ -274,6 +283,16 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::RequestFromHeight(r) => {
+                write!(
+                    f,
+                    "RequestFromHeight({}, num={})",
+                    r.from_height, r.batch_size
+                )
+            }
+            ExternalMessage::RequestFromHash(r) => {
+                write!(f, "RequestFromHash({}, num={})", r.from_hash, r.batch_size)
+            }
             ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
             ExternalMessage::Vote(v) => write!(f, "Vote({})", v.view),
             ExternalMessage::NewView(n) => write!(f, "NewView({})", n.view),
