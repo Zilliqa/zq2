@@ -24,7 +24,7 @@ use crate::{
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
     contracts,
-    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -43,7 +43,7 @@ use crate::{
 
 #[derive(Debug)]
 struct NewViewVote {
-    signatures: Vec<NodeSignature>,
+    signatures: Vec<BlsSignature>,
     cosigned: BitArray,
     cosigned_weight: u128,
     qcs: BTreeMap<usize, QuorumCertificate>,
@@ -98,7 +98,7 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-type BlockVotes = (Vec<NodeSignature>, BitArray, u128, bool);
+type BlockVotes = (Vec<BlsSignature>, BitArray, u128, bool);
 
 #[derive(Debug)]
 struct CachedLeader {
@@ -563,7 +563,9 @@ impl Consensus {
                     self.new_view_message_cache.as_ref()
                 {
                     if new_view.view == self.get_view()? {
-                        return Ok(self.new_view_message_cache.clone());
+                        // When re-sending new view messages we broadcast them, rather than only sending them to the
+                        // view leader. This speeds up network recovery when many nodes have different high QCs.
+                        return Ok(Some((None, ExternalMessage::NewView(new_view.clone()))));
                     }
                     // If new_view message is not for this view then it must be outdated
                     self.new_view_message_cache = None;
@@ -608,7 +610,7 @@ impl Consensus {
         Ok(Some(new_view))
     }
 
-    fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
+    pub fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
         let time_since_last_view_change = SystemTime::now()
             .duration_since(self.view_updated_at)
             .unwrap_or_default()
@@ -1793,20 +1795,6 @@ impl Consensus {
         new_view: NewView,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         trace!("Received new view for height: {:?}", new_view.view);
-        let mut current_view = self.get_view()?;
-
-        // The leader for this view should be chosen according to the parent of the highest QC
-        // What happens when there are multiple QCs with different parents?
-        // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            trace!(new_view.view, "skipping new view, not the leader");
-            return Ok(None);
-        }
-        // if the vote is too old and does not count anymore
-        if new_view.view < current_view {
-            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
-            return Ok(None);
-        }
 
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
@@ -1822,9 +1810,23 @@ impl Consensus {
 
         new_view.verify(*public_key)?;
 
-        // check if the sender's qc is higher than our high_qc or even higher than our view
+        // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
-        current_view = self.get_view()?;
+
+        // The leader for this view should be chosen according to the parent of the highest QC
+        // What happens when there are multiple QCs with different parents?
+        // if we are not the leader of the round in which the vote counts
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
+            trace!(new_view.view, "skipping new view, not the leader");
+            return Ok(None);
+        }
+
+        let mut current_view = self.get_view()?;
+        // if the vote is too old and does not count anymore
+        if new_view.view < current_view {
+            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
+            return Ok(None);
+        }
 
         let NewViewVote {
             mut signatures,
@@ -2020,7 +2022,7 @@ impl Consensus {
             return Ok(());
         };
 
-        let new_high_qc_block_view = new_high_qc_block.view();
+        let new_high_qc_view = new_high_qc_block.view();
 
         if self.high_qc.block_hash == Hash::ZERO {
             trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
@@ -2034,17 +2036,17 @@ impl Consensus {
                 })?
                 .view();
             // If `from_agg` then we always release the lock because the supermajority has a different high_qc.
-            if from_agg || new_high_qc_block_view > current_high_qc_view {
+            if from_agg || new_high_qc_view > current_high_qc_view {
                 trace!(
-                    "updating view from {} to {}, high QC view is {}",
-                    view,
-                    new_high_qc_block_view + 1,
+                    new_high_qc_view,
                     current_high_qc_view,
+                    current_view = view,
+                    "updating high qc"
                 );
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
-                if new_high_qc_block_view >= view {
-                    self.set_view(new_high_qc_block_view + 1)?;
+                if new_high_qc_view >= view {
+                    self.set_view(new_high_qc_view + 1)?;
                 }
             }
         }
@@ -2056,13 +2058,13 @@ impl Consensus {
         &self,
         view: u64,
         qcs: BTreeMap<usize, QuorumCertificate>,
-        signatures: &[NodeSignature],
+        signatures: &[BlsSignature],
         cosigned: BitArray,
     ) -> Result<AggregateQc> {
         assert_eq!(qcs.len(), signatures.len());
 
         Ok(AggregateQc {
-            signature: NodeSignature::aggregate(signatures)?,
+            signature: BlsSignature::aggregate(signatures)?,
             cosigned,
             view,
             // Because qcs is a map from index to qc, this will
@@ -2077,7 +2079,7 @@ impl Consensus {
     fn qc_from_bits(
         &self,
         block_hash: Hash,
-        signatures: &[NodeSignature],
+        signatures: &[BlsSignature],
         cosigned: BitArray,
         view: u64,
     ) -> QuorumCertificate {
@@ -2607,12 +2609,12 @@ impl Consensus {
 
     /// Calculate how long we should wait before timing out for this view
     pub fn exponential_backoff_timeout(&self, view: u64) -> u64 {
-        let view_difference = view.saturating_sub(self.high_qc.view);
+        let view_difference = view.saturating_sub(self.high_qc.view) as u32;
         // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
         // in other words, the current view is always at least 2 views ahead of the highQC's view
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
-        let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as u64;
-        consensus_timeout * 2u64.pow((view_difference as u32).saturating_sub(2))
+        let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as f32;
+        (consensus_timeout * (1.5f32).powi(view_difference.saturating_sub(2) as i32)).floor() as u64
     }
 
     /// Find minimum number of views which could have passed by in the given time difference.
@@ -2622,11 +2624,11 @@ impl Consensus {
         consensus_timeout: Duration,
     ) -> u64 {
         let normalised_time_difference =
-            (time_difference.as_millis() / consensus_timeout.as_millis()) as u64;
+            (time_difference.as_millis() / consensus_timeout.as_millis()) as f32;
         let mut views = 0;
-        let mut total = 0;
+        let mut total = 0.0;
         loop {
-            total += 2u64.pow(views);
+            total += (1.5f32).powi(views);
             if total > normalised_time_difference {
                 break;
             }
@@ -3316,47 +3318,43 @@ mod tests {
     use super::*;
     #[test]
     fn test_minimum_views_in_time_difference() {
+        // 2 views ahead - 1.5 ^ 0 = 1
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(4),
-                Duration::from_secs(5)
+                Duration::from_secs(0),
+                Duration::from_secs(1)
             ),
             0
         );
+        // 3 views ahead - 1.5^0 + 1.5^1 = 2.5
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(5),
-                Duration::from_secs(5)
+                Duration::from_secs(2),
+                Duration::from_secs(1)
             ),
             1
         );
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(14),
-                Duration::from_secs(5)
-            ),
-            1
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(15),
-                Duration::from_secs(5)
+                Duration::from_secs(3),
+                Duration::from_secs(1)
             ),
             2
         );
+        // 5 views ahead - 1.5^0 + 1.5^1 + 1.5^2 + 1.5^3 = 8.125
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(34),
-                Duration::from_secs(5)
-            ),
-            2
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(35),
-                Duration::from_secs(5)
+                Duration::from_secs(8),
+                Duration::from_secs(1)
             ),
             3
+        );
+        assert_eq!(
+            Consensus::minimum_views_in_time_difference(
+                Duration::from_secs(9),
+                Duration::from_secs(1)
+            ),
+            4
         );
     }
 }

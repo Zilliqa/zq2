@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use libp2p::{Multiaddr, PeerId};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::json;
 
 use crate::{
     crypto::{Hash, NodePublicKey},
@@ -363,6 +364,7 @@ pub struct ConsensusConfig {
     #[serde(default)]
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
     /// The block heights at which we perform EIP-1967 contract upgrades
+    /// Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
     #[serde(default)]
     pub contract_upgrade_block_heights: ContractUpgradesBlockHeights,
     /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
@@ -534,4 +536,25 @@ pub fn total_native_token_supply_default() -> Amount {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContractUpgradesBlockHeights {
     pub deposit_v3: Option<u64>,
+}
+
+impl ContractUpgradesBlockHeights {
+    // toml doesnt like Option types. Map items in struct and remove keys for None values
+    pub fn to_toml(&self) -> toml::Value {
+        toml::Value::Table(
+            json!(self)
+                .as_object()
+                .unwrap()
+                .clone()
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    if v.is_null() {
+                        None // Skip null values
+                    } else {
+                        Some((k, toml::Value::Integer(v.as_u64().unwrap() as i64)))
+                    }
+                })
+                .collect(),
+        )
+    }
 }

@@ -55,18 +55,18 @@ pub fn rpc_module(
         enabled_apis,
         [
             ("eth_accounts", accounts),
+            ("eth_blobBaseFee", blob_base_fee),
             ("eth_blockNumber", block_number),
             ("eth_call", call),
             ("eth_chainId", chain_id),
             ("eth_estimateGas", estimate_gas),
-            ("eth_getBalance", get_balance),
-            ("eth_getBlockReceipts", get_block_receipts),
-            ("eth_getCode", get_code),
-            ("eth_getStorageAt", get_storage_at),
-            ("eth_getTransactionCount", get_transaction_count),
+            ("eth_feeHistory", fee_history),
             ("eth_gasPrice", get_gas_price),
-            ("eth_getBlockByNumber", get_block_by_number),
+            ("eth_getAccount", get_account),
+            ("eth_getBalance", get_balance),
             ("eth_getBlockByHash", get_block_by_hash),
+            ("eth_getBlockByNumber", get_block_by_number),
+            ("eth_getBlockReceipts", get_block_receipts),
             (
                 "eth_getBlockTransactionCountByHash",
                 get_block_transaction_count_by_hash
@@ -75,7 +75,12 @@ pub fn rpc_module(
                 "eth_getBlockTransactionCountByNumber",
                 get_block_transaction_count_by_number
             ),
+            ("eth_getCode", get_code),
+            ("eth_getFilterChanges", get_filter_changes),
+            ("eth_getFilterLogs", get_filter_logs),
             ("eth_getLogs", get_logs),
+            ("eth_getProof", get_proof),
+            ("eth_getStorageAt", get_storage_at),
             (
                 "eth_getTransactionByBlockHashAndIndex",
                 get_transaction_by_block_hash_and_index
@@ -85,17 +90,28 @@ pub fn rpc_module(
                 get_transaction_by_block_number_and_index
             ),
             ("eth_getTransactionByHash", get_transaction_by_hash),
+            ("eth_getTransactionCount", get_transaction_count),
             ("eth_getTransactionReceipt", get_transaction_receipt),
-            ("eth_sendRawTransaction", send_raw_transaction),
-            ("eth_getUncleCountByBlockHash", get_uncle_count),
-            ("eth_getUncleCountByBlockNumber", get_uncle_count),
             ("eth_getUncleByBlockHashAndIndex", get_uncle),
             ("eth_getUncleByBlockNumberAndIndex", get_uncle),
+            ("eth_getUncleCountByBlockHash", get_uncle_count),
+            ("eth_getUncleCountByBlockNumber", get_uncle_count),
+            ("eth_hashrate", hashrate),
+            ("eth_maxPriorityFeePerGas", max_priority_fee_per_gas),
             ("eth_mining", mining),
+            ("eth_newBlockFilter", new_block_filter),
+            ("eth_newFilter", new_filter),
+            (
+                "eth_newPendingTransactionFilter",
+                new_pending_transaction_filter
+            ),
             ("eth_protocolVersion", protocol_version),
+            ("eth_sendRawTransaction", send_raw_transaction),
+            ("eth_signTransaction", sign_transaction),
+            ("eth_simulateV1", simulate_v1),
+            ("eth_submitWork", submit_work),
             ("eth_syncing", syncing),
-            ("net_peerCount", net_peer_count),
-            ("net_listening", net_listening),
+            ("eth_uninstallFilter", uninstall_filter),
         ],
     );
 
@@ -258,7 +274,7 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_block_receipts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TransactionReceipt>> {
-    let block_id: B256 = params.one()?;
+    let block_id: BlockId = params.one()?;
 
     let node = node.lock().unwrap();
 
@@ -836,14 +852,6 @@ fn syncing(params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingResult> {
     }
 }
 
-fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok("0x0".to_string())
-}
-
-fn net_listening(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
-    Ok(true)
-}
-
 #[allow(clippy::redundant_allocation)]
 async fn subscribe(
     params: Params<'_>,
@@ -967,4 +975,94 @@ async fn subscribe(
     }
 
     Ok(())
+}
+
+/// eth_blobBaseFee
+/// Returns the expected base fee for blobs in the next block
+fn blob_base_fee(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_feeHistory
+/// Returns the collection of historical gas information
+fn fee_history(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_getAccount
+/// Retrieve account details by specifying an address and a block number/tag.
+fn get_account(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_getFilterChanges
+/// Polling method for a filter, which returns an array of events that have occurred since the last poll.
+fn get_filter_changes(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_getFilterLogs
+/// Returns an array of all logs matching filter with given id.
+fn get_filter_logs(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_getProof
+/// Returns the account and storage values of the specified account including the Merkle-proof.
+fn get_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_hashrate
+/// Returns the number of hashes per second that the node is mining with.
+fn hashrate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_maxPriorityFeePerGas
+/// Get the priority fee needed to be included in a block.
+fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_newBlockFilter
+/// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
+fn new_block_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_newFilter
+/// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
+fn new_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_newPendingTransactionFilter
+/// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
+fn new_pending_transaction_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_signTransaction
+/// Signs a transaction that can be submitted to the network later using eth_sendRawTransaction
+fn sign_transaction(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_simulateV1
+/// Simulates a series of transactions at a specific block height with optional state overrides. This method allows you to test transactions with custom block and state parameters without actually submitting them to the network.
+fn simulate_v1(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_submitWork
+/// Used for submitting a proof-of-work solution.
+fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_uninstallFilter
+/// It uninstalls a filter with the given filter id.
+fn uninstall_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
 }

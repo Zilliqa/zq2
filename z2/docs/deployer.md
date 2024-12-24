@@ -19,10 +19,12 @@ Commands:
   get-deposit-commands   Generate in output the commands to deposit stake amount to all the validators
   deposit                Deposit the stake amounts to all the validators
   rpc                    Run RPC calls over the internal network nodes
-  backup                 Backup a node data dir
-  restore                Restore a node data dir from a backup
+  ssh                    Run command over SSH in the internal network nodes
+  backup                 Backup a node data dir in the persistence bucket
+  restore                Restore a node data dir from a backup in the persistence bucket
   reset                  Reset a network stopping all the nodes and cleaning the /data folder
   restart                Restart a network stopping all the nodes and starting the service again
+  block-number           Show the network nodes block number
   api                    Perform operation over the network API nodes
   generate-private-keys  Generate the node private keys. --force to replace if already existing
   generate-genesis-key   Generate the genesis key. --force to replace if already existing
@@ -237,7 +239,7 @@ Options:
       --max-parallel <MAX_PARALLEL>
           Define the number of nodes to process in parallel. Default: 50
       --persistence-url <PERSISTENCE_URL>
-          gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+          gsutil URI of the persistence file. Ie. gs://my-bucket/my-folder
       --checkpoint-url <CHECKPOINT_URL>
           gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the install will be performed only on the validator nodes
   -v, --verbose...
@@ -341,6 +343,7 @@ Options:
   -m, --method <METHOD>    Method to run
   -p, --params <PARAMS>    List of parameters for the method. ie "[\"string_value\",true]"
       --select             Enable nodes selection
+      --port <PORT>        The port where to run the rpc call on [possible values: default, admin]
   -v, --verbose...         Increase logging verbosity
   -q, --quiet...           Decrease logging verbosity
   -h, --help               Print help
@@ -359,6 +362,43 @@ Configuration file: zq2-prototestnet.yaml
 
 ```bash
 z2 deployer rpc -m eth_blockNumber zq2-prototestnet.yaml
+```
+
+## Run SSH commands over all the nodes
+
+```bash
+z2 deployer ssh --help
+```
+
+```bash
+Run command over SSH in the internal network nodes
+
+Usage: z2 deployer ssh [OPTIONS] <CONFIG_FILE> [COMMAND]...
+
+Arguments:
+  <CONFIG_FILE>  The network deployer config file
+  [COMMAND]...   Method to run
+
+Options:
+      --select      Enable nodes selection
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Start the zilliqa service in the `zq2-prototestnet` nodes
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer ssh zq2-prototestnet.yaml -- "sudo systemctl start zilliqa.service"
 ```
 
 ## Generate in output the config file to join the network
@@ -420,15 +460,16 @@ z2 deployer backup --help
 ```
 
 ```bash
-Backup a node data dir
+Backup a node data dir in the persistence bucket
 
-Usage: z2 deployer backup [OPTIONS] --file <FILE> [CONFIG_FILE]
+Usage: z2 deployer backup [OPTIONS] [CONFIG_FILE]
 
 Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
-  -f, --file <FILE>  The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+  -n, --name <NAME>  The name of the backup folder. If zip is specified, it represents the name of the zip file
+      --zip          If specified, create a zip file containing the backup
   -v, --verbose...   Increase logging verbosity
   -q, --quiet...     Decrease logging verbosity
   -h, --help         Print help
@@ -454,15 +495,16 @@ z2 deployer restore --help
 ```
 
 ```bash
-Restore a node data dir from a backup
+Restore a node data dir from a backup in the persistence bucket
 
-Usage: z2 deployer restore [OPTIONS] --file <FILE> [CONFIG_FILE]
+Usage: z2 deployer restore [OPTIONS] [CONFIG_FILE]
 
 Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
-  -f, --file <FILE>                  The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+  -n, --name <NAME>                  The name of the backup folder. If zip is specified, it represents the name of the zip file
+      --zip                          If specified, restore the persistence from a zip file
       --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
   -v, --verbose...                   Increase logging verbosity
   -q, --quiet...                     Decrease logging verbosity

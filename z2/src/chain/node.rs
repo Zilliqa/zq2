@@ -15,6 +15,22 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use super::instance::ChainInstance;
 use crate::{address::EthereumAddress, chain::Chain, secret::Secret};
 
+#[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
+pub enum NodePort {
+    #[default]
+    Default,
+    Admin,
+}
+
+impl NodePort {
+    pub fn value(&self) -> u64 {
+        match self {
+            NodePort::Default => 4201,
+            NodePort::Admin => 4202,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum Components {
     #[serde(rename = "zq2")]
@@ -149,31 +165,7 @@ impl Machine {
         Ok(())
     }
 
-    async fn copy_from(&self, file_from: &str, file_to: &str) -> Result<()> {
-        let file_from = &format!("{0}:{file_from}", &self.name);
-        let args = &[
-            "compute",
-            "scp",
-            "--project",
-            &self.project_id,
-            "--zone",
-            &self.zone,
-            "--tunnel-through-iap",
-            "--strict-host-key-checking=no",
-            "--scp-flag=-r",
-            file_from,
-            file_to,
-        ];
-
-        zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("gcloud", args)
-            .run()
-            .await?;
-        Ok(())
-    }
-
-    async fn copy_to(&self, file_from: &[&str], file_to: &str) -> Result<()> {
+    async fn copy(&self, file_from: &[&str], file_to: &str) -> Result<()> {
         let tgt_spec = format!("{0}:{file_to}", &self.name);
         let args = [
             &[
@@ -250,6 +242,78 @@ impl Machine {
 
         Ok(block_number)
     }
+
+    pub async fn get_rpc_response(
+        &self,
+        method: &str,
+        params: &Option<String>,
+        timeout: usize,
+        port: NodePort,
+    ) -> Result<String> {
+        let body = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
+            method,
+            params.clone().unwrap_or("[]".to_string()),
+        );
+
+        let args = &[
+            "--max-time",
+            &timeout.to_string(),
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type:application/json",
+            "-H",
+            "accept:application/json,*/*;q=0.5",
+            "--data",
+            &body,
+            &format!("http://{}:{}", self.external_address, port.value()),
+        ];
+
+        let output = if port == NodePort::Admin {
+            let inner_command = format!(
+                r#"curl --max-time {} -X POST -H 'content-type: application/json' -H 'accept:application/json,*/*;q=0.5' -d '{}' http://localhost:{}"#,
+                &timeout.to_string(),
+                &body,
+                port.value()
+            );
+            self.run(&inner_command, false).await?
+        } else {
+            zqutils::commands::CommandBuilder::new()
+                .silent()
+                .cmd("curl", args)
+                .run_for_output()
+                .await?
+        };
+
+        if !output.success {
+            return Err(anyhow!(
+                "getting rpc response for {} with params {:?} failed: {:?}",
+                method,
+                params,
+                output.stderr
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+    }
+
+    pub async fn get_block_number(&self, timeout: usize) -> Result<u64> {
+        let response: Value = serde_json::from_str(
+            &self
+                .get_rpc_response("eth_blockNumber", &None, timeout, NodePort::Default)
+                .await?,
+        )?;
+        let block_number = response
+            .get("result")
+            .ok_or_else(|| anyhow!("response has no result"))?
+            .as_str()
+            .ok_or_else(|| anyhow!("result is not a string"))?
+            .strip_prefix("0x")
+            .ok_or_else(|| anyhow!("result does not start with 0x"))?;
+
+        Ok(u64::from_str_radix(block_number, 16)?)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -304,20 +368,21 @@ impl ChainNode {
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
 
+        // TODO implement a more effective check
         // Check the node is making progress
-        if self.role != NodeRole::Apps {
-            let first_block_number = self.machine.get_local_block_number().await?;
-            loop {
-                let next_block_number = self.machine.get_local_block_number().await?;
-                println!(
-                    "Polled block number at {next_block_number}, waiting for {} more blocks",
-                    (first_block_number + 10).saturating_sub(next_block_number)
-                );
-                if next_block_number >= first_block_number + 10 {
-                    break;
-                }
-            }
-        }
+        // if self.role != NodeRole::Apps {
+        //     let first_block_number = self.machine.get_local_block_number().await?;
+        //     loop {
+        //         let next_block_number = self.machine.get_local_block_number().await?;
+        //         println!(
+        //             "Polled block number at {next_block_number}, waiting for {} more blocks",
+        //             (first_block_number + 10).saturating_sub(next_block_number)
+        //         );
+        //         if next_block_number >= first_block_number + 10 {
+        //             break;
+        //         }
+        //     }
+        // }
 
         Ok(())
     }
@@ -371,7 +436,7 @@ impl ChainNode {
         let ethereum_address = EthereumAddress::from_private_key(&private_key)?;
 
         let mut labels = BTreeMap::<String, String>::new();
-        labels.insert("peer-id".to_string(), ethereum_address.peer_id.clone());
+        labels.insert("peer-id".to_string(), ethereum_address.peer_id.to_string());
 
         self.machine.add_labels(labels).await?;
 
@@ -394,11 +459,11 @@ impl ChainNode {
             .await?;
 
         self.machine
-            .copy_to(&[config_toml], "/tmp/config.toml")
+            .copy(&[config_toml], "/tmp/config.toml")
             .await?;
 
         self.machine
-            .copy_to(&[provisioning_script], "/tmp/provision_node.py")
+            .copy(&[provisioning_script], "/tmp/provision_node.py")
             .await?;
 
         if self.role == NodeRole::Checkpoint {
@@ -408,7 +473,7 @@ impl ChainNode {
                 .await?;
 
             self.machine
-                .copy_to(&[checkpoint_cron_job], "/tmp/checkpoint_cron_job.sh")
+                .copy(&[checkpoint_cron_job], "/tmp/checkpoint_cron_job.sh")
                 .await?;
         }
 
@@ -551,22 +616,21 @@ impl ChainNode {
         );
         ctx.insert(
             "contract_upgrade_block_heights",
-            &serde_json::from_value::<toml::Value>(json!(contract_upgrade_block_heights))?
-                .to_string(),
+            &contract_upgrade_block_heights.to_toml().to_string(),
         );
         // convert json to toml formatting
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
         ctx.insert("api_servers", &toml_servers.to_string());
         ctx.insert("enable_ots_indices", &enable_ots_indices);
-        ctx.insert(
-            "forks",
-            &self
-                .chain()?
-                .get_forks()
-                .into_iter()
-                .map(|f| Ok(serde_json::from_value::<toml::Value>(f)?.to_string()))
-                .collect::<Result<Vec<_>>>()?,
-        );
+        if let Some(forks) = self.chain()?.get_forks() {
+            ctx.insert(
+                "forks",
+                &forks
+                    .into_iter()
+                    .map(|f| Ok(serde_json::from_value::<toml::Value>(f)?.to_string()))
+                    .collect::<Result<Vec<_>>>()?,
+            );
+        }
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator {
@@ -680,41 +744,83 @@ impl ChainNode {
         Ok(filename.to_owned())
     }
 
-    pub async fn backup_to(&self, filename: &str) -> Result<()> {
+    pub async fn backup_to(&self, name: Option<String>, zip: bool) -> Result<()> {
         let machine = &self.machine;
+
+        let mut backup_name = name.unwrap_or(self.name());
+
+        if zip {
+            backup_name = format!("{}.zip", backup_name);
+        }
 
         let multi_progress =
             cliclack::multi_progress(format!("Backing up {} ...", self.name()).yellow());
-        let progress_bar = multi_progress.add(cliclack::progress_bar(5));
+        let bar_length = if zip { 6 } else { 4 };
+        let progress_bar = multi_progress.add(cliclack::progress_bar(bar_length));
 
+        // clean previous backup files
+        progress_bar.start("Clean the previous backup files");
+        let command = format!(
+            "sudo gsutil ls gs://{}-persistence/{}",
+            self.chain()?,
+            backup_name
+        );
+        let result = machine.run(&command, false).await;
+        if result.is_ok() {
+            let command = format!(
+                "sudo gsutil -m rm -rf gs://{}-persistence/{}",
+                self.chain()?,
+                backup_name
+            );
+            machine.run(&command, false).await?;
+        }
+        progress_bar.inc(1);
+
+        // stop the service
         progress_bar.start("Stopping the service");
         machine
             .run("sudo systemctl stop zilliqa.service", false)
             .await?;
         progress_bar.inc(1);
 
-        progress_bar.start("Packaging the data dir");
-        machine
-            .run(
-                "sudo apt install -y zip && sudo zip -r /tmp/data.zip /data",
-                false,
-            )
-            .await?;
-        progress_bar.inc(1);
+        if zip {
+            // create the zip file
+            progress_bar.start("Packaging the data dir");
+            machine
+                .run(
+                    "sudo apt install -y zip && sudo zip -r /tmp/data.zip /data",
+                    false,
+                )
+                .await?;
+            progress_bar.inc(1);
 
-        progress_bar.start("Exporting the backup file");
-        if filename.starts_with("gs://") {
-            let command = format!("sudo gsutil -m cp /tmp/data.zip {}", filename);
+            // upload the zip file to the bucket
+            progress_bar.start("Exporting the backup file");
+            let command = format!(
+                "sudo gsutil -m cp /tmp/data.zip gs://{}-persistence/{}",
+                self.chain()?,
+                backup_name
+            );
             machine.run(&command, false).await?;
+            progress_bar.inc(1);
+
+            // clean the temp backup file
+            progress_bar.start("Cleaning the temp backup files");
+            machine.run("sudo rm -rf /tmp/data.zip", false).await?;
+            progress_bar.inc(1);
         } else {
-            machine.copy_from("/tmp/data.zip", filename).await?;
+            // export the backup files
+            progress_bar.start("Exporting the backup files");
+            let command = format!(
+                "sudo gsutil -m cp -r /data gs://{}-persistence/{}",
+                self.chain()?,
+                backup_name
+            );
+            machine.run(&command, false).await?;
+            progress_bar.inc(1);
         }
-        progress_bar.inc(1);
 
-        progress_bar.start("Cleaning the backup files");
-        machine.run("sudo rm -rf /tmp/data.zip", false).await?;
-        progress_bar.inc(1);
-
+        // start the service
         progress_bar.start("Starting the service");
         machine
             .run("sudo systemctl start zilliqa.service", false)
@@ -727,42 +833,76 @@ impl ChainNode {
         Ok(())
     }
 
-    pub async fn restore_from(&self, filename: &str, multi_progress: &MultiProgress) -> Result<()> {
+    pub async fn restore_from(
+        &self,
+        name: Option<String>,
+        zip: bool,
+        multi_progress: &MultiProgress,
+    ) -> Result<()> {
         let machine = &self.machine;
-        let progress_bar = multi_progress.add(cliclack::progress_bar(6));
 
+        let mut backup_name = name.unwrap_or(self.name());
+
+        if zip {
+            backup_name = format!("{}.zip", backup_name);
+        }
+
+        let bar_length = if zip { 6 } else { 4 };
+        let progress_bar = multi_progress.add(cliclack::progress_bar(bar_length));
+
+        // stop the service
         progress_bar.start(format!("{}: Stopping the service", self.name()));
         machine
             .run("sudo systemctl stop zilliqa.service", false)
             .await?;
         progress_bar.inc(1);
 
-        progress_bar.start(format!("{}: Importing the backup file", self.name()));
-        if filename.starts_with("gs://") {
-            let command = format!("sudo gsutil -m cp {} /tmp/data.zip", filename);
+        if zip {
+            progress_bar.start(format!("{}: Importing the backup file", self.name()));
+            let command = format!(
+                "sudo gsutil -m cp gs://{}-persistence/{}.zip /tmp/data.zip",
+                self.chain()?,
+                backup_name
+            );
             machine.run(&command, false).await?;
+            progress_bar.inc(1);
+
+            progress_bar.start(format!("{}: Deleting the data folder", self.name()));
+            machine.run("sudo rm -rf /data", false).await?;
+            progress_bar.inc(1);
+
+            progress_bar.start(format!("{}: Restoring the data folder", self.name()));
+            machine
+                .run(
+                    "sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /",
+                    false,
+                )
+                .await?;
+            progress_bar.inc(1);
+
+            progress_bar.start(format!("{}: Cleaning the backup files", self.name()));
+            machine.run("sudo rm -f /tmp/data.zip", false).await?;
+            progress_bar.inc(1);
         } else {
-            machine.copy_to(&[filename], "/tmp/data.zip").await?;
+            // delete the data folder
+            progress_bar.start(format!("{}: Deleting the data folder", self.name()));
+            machine
+                .run("sudo rm -rf /data && sudo mkdir -p /data", false)
+                .await?;
+            progress_bar.inc(1);
+
+            // import the backup files
+            progress_bar.start(format!("{}: Importing the backup files", self.name()));
+            let command = format!(
+                "sudo gsutil -m cp -r gs://{}-persistence/{}/* /data",
+                self.chain()?,
+                backup_name
+            );
+            machine.run(&command, false).await?;
+            progress_bar.inc(1);
         }
-        progress_bar.inc(1);
 
-        progress_bar.start(format!("{}: Deleting the data folder", self.name()));
-        machine.run("sudo rm -rf /data", false).await?;
-        progress_bar.inc(1);
-
-        progress_bar.start(format!("{}: Restoring the data folder", self.name()));
-        machine
-            .run(
-                "sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /",
-                false,
-            )
-            .await?;
-        progress_bar.inc(1);
-
-        progress_bar.start(format!("{}: Cleaning the backup files", self.name()));
-        machine.run("sudo rm -f /tmp/data.zip", false).await?;
-        progress_bar.inc(1);
-
+        // start the service
         progress_bar.start(format!("{}: Starting the service", self.name()));
         machine
             .run("sudo systemctl start zilliqa.service", false)
@@ -818,6 +958,89 @@ impl ChainNode {
             "✔".green(),
             self.name()
         ));
+
+        Ok(())
+    }
+
+    pub async fn get_block(
+        &self,
+        multi_progress: &indicatif::MultiProgress,
+        follow: bool,
+    ) -> Result<()> {
+        const BAR_SIZE: u64 = 40;
+        const INTERVAL_IN_SEC: u64 = 5;
+        const BAR_BLOCK_PER_TIME: u64 = 8;
+        const BAR_REFRESH_IN_MILLIS: u64 = INTERVAL_IN_SEC * 1000 / BAR_SIZE * BAR_BLOCK_PER_TIME;
+
+        let progress_bar = multi_progress.add(indicatif::ProgressBar::new(BAR_SIZE));
+        progress_bar.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template(&format!(
+                    "{{spinner:.green}} {{bar:{}.cyan/blue}} {{msg}}",
+                    BAR_SIZE
+                ))
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+
+        let block_number = self
+            .machine
+            .get_block_number(INTERVAL_IN_SEC as usize)
+            .await
+            .ok();
+
+        let block_number_as_string = block_number.map_or("---".to_string(), |v| v.to_string());
+        let message = format!("{:>12} => {}", block_number_as_string, self.name());
+        progress_bar.set_message(message.clone());
+
+        if follow {
+            let mut previous_block_number = block_number.unwrap_or_default();
+            loop {
+                let start_time = tokio::time::Instant::now();
+
+                for i in 1..=(BAR_SIZE / BAR_BLOCK_PER_TIME) {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(BAR_REFRESH_IN_MILLIS))
+                        .await;
+                    progress_bar.set_position(i * BAR_BLOCK_PER_TIME);
+                }
+
+                let response = self
+                    .machine
+                    .get_block_number(INTERVAL_IN_SEC as usize)
+                    .await
+                    .ok();
+
+                let (blocks_per_sec, current_block) = if let Some(current_block_number) = response {
+                    let blocks_per_sec = format!(
+                        "{:.0}",
+                        (current_block_number - previous_block_number) as f64
+                            / start_time.elapsed().as_secs_f64()
+                    );
+
+                    let blocks_per_sec = if blocks_per_sec == "0" {
+                        "---".to_string()
+                    } else {
+                        blocks_per_sec
+                    };
+
+                    previous_block_number = current_block_number;
+                    (blocks_per_sec, current_block_number.to_string())
+                } else {
+                    ("---".to_string(), "---".to_string())
+                };
+
+                let message = format!(
+                    "{:>5} block/s {:>12} => {}",
+                    blocks_per_sec,
+                    current_block,
+                    self.name()
+                );
+                progress_bar.set_message(message);
+                progress_bar.set_position(0);
+            }
+        }
+
+        progress_bar.finish_with_message(message);
 
         Ok(())
     }

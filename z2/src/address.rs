@@ -1,13 +1,15 @@
 use anyhow::Result;
+use libp2p::PeerId;
+use revm::primitives::Address;
 use serde::Deserialize;
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{NodePublicKey, SecretKey};
 
 #[derive(Deserialize)]
 pub struct EthereumAddress {
     pub secret_key: SecretKey,
-    pub bls_public_key: String,
-    pub peer_id: String,
-    pub address: String,
+    pub bls_public_key: NodePublicKey,
+    pub peer_id: PeerId,
+    pub address: Address,
 }
 
 impl EthereumAddress {
@@ -16,13 +18,9 @@ impl EthereumAddress {
 
         Ok(EthereumAddress {
             secret_key,
-            bls_public_key: secret_key.node_public_key().to_string(),
-            peer_id: secret_key
-                .to_libp2p_keypair()
-                .public()
-                .to_peer_id()
-                .to_string(),
-            address: secret_key.to_evm_address().to_string(),
+            bls_public_key: secret_key.node_public_key(),
+            peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
+            address: secret_key.to_evm_address(),
         })
     }
 }

@@ -153,13 +153,15 @@ impl Chain {
         }
     }
 
+    // Warning: Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
     pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgradesBlockHeights {
         match self {
             Self::Zq2Devnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(3600),
             },
             Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
-                deposit_v3: Some(5299200),
+                // estimated: 2024-12-20T23:33:12Z
+                deposit_v3: Some(5342400),
             },
             Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
@@ -168,19 +170,19 @@ impl Chain {
         }
     }
 
-    pub fn get_forks(&self) -> Vec<Value> {
+    pub fn get_forks(&self) -> Option<Vec<Value>> {
         match self {
-            Chain::Zq2ProtoTestnet => vec![
+            Chain::Zq2ProtoTestnet => Some(vec![
                 json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false }),
                 // estimated: 2024-12-18T14:57:53Z
                 json!({ "at_height": 8404000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
-            ],
-            Chain::Zq2ProtoMainnet => vec![
+            ]),
+            Chain::Zq2ProtoMainnet => Some(vec![
                 json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false }),
-                // estimated: 2024-12-19T15:03:05Z
-                json!({ "at_height": 5299000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
-            ],
-            _ => vec![],
+                // estimated: 2024-12-20T23:33:12Z
+                json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
+            ]),
+            _ => None,
         }
     }
 

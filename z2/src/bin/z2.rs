@@ -8,14 +8,15 @@ use alloy::primitives::B256;
 use anyhow::{anyhow, Context, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use libp2p::PeerId;
 use z2lib::{
-    chain,
+    chain::{self, node::NodePort},
     components::Component,
     deployer::ApiOperation,
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{BlsSignature, NodePublicKey, SecretKey};
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -91,14 +92,18 @@ enum DeployerCommands {
     Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
-    /// Backup a node data dir
+    /// Run command over SSH in the internal network nodes
+    Ssh(DeployerSshArgs),
+    /// Backup a node data dir in the persistence bucket
     Backup(DeployerBackupArgs),
-    /// Restore a node data dir from a backup
+    /// Restore a node data dir from a backup in the persistence bucket
     Restore(DeployerRestoreArgs),
     /// Reset a network stopping all the nodes and cleaning the /data folder
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
+    /// Show the network nodes block number
+    BlockNumber(DeployerBlockNumberArgs),
     /// Perform operation over the network API nodes
     Api(DeployerApiArgs),
     /// Generate the node private keys. --force to replace if already existing
@@ -139,7 +144,7 @@ pub struct DeployerInstallArgs {
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
-    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-folder
     #[clap(long)]
     persistence_url: Option<String>,
     /// gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the install will be performed only on the validator nodes
@@ -169,6 +174,18 @@ pub struct DeployerActionsArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct DeployerBlockNumberArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// After showing the block numbers, watch for changes
+    #[clap(long)]
+    follow: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct DeployerRpcArgs {
     /// Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
     #[clap(long)]
@@ -177,29 +194,51 @@ pub struct DeployerRpcArgs {
     #[clap(long, short, about)]
     method: String,
     /// List of parameters for the method. ie "[\"string_value\",true]"
-    #[clap(long, short, about)]
+    #[clap(long)]
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
     /// Enable nodes selection
     #[clap(long)]
     select: bool,
+    /// The port where to run the rpc call on
+    #[clap(long, short, about)]
+    port: Option<NodePort>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerSshArgs {
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// The network deployer config file
+    config_file: String,
+    /// Method to run
+    // #[clap(long, short, about, allow_hyphen_values = true, num_args = 1..)]
+    #[arg(trailing_var_arg = true)]
+    command: Vec<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerBackupArgs {
-    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    /// The name of the backup folder. If zip is specified, it represents the name of the zip file.
     #[clap(long, short)]
-    file: String,
+    name: Option<String>,
+    /// If specified, create a zip file containing the backup
+    #[clap(long)]
+    zip: bool,
     /// The network deployer config file
     config_file: Option<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerRestoreArgs {
-    /// The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    /// The name of the backup folder. If zip is specified, it represents the name of the zip file.
     #[clap(long, short)]
-    file: String,
+    name: Option<String>,
+    /// If specified, restore the persistence from a zip file
+    #[clap(long)]
+    zip: bool,
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
@@ -813,15 +852,24 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             DeployerCommands::Rpc(ref args) => {
-                plumbing::run_rpc_call(
+                plumbing::run_deployer_rpc(
                     &args.method,
                     &args.params,
                     &args.config_file,
                     &args.timeout,
                     args.select,
+                    args.port.clone().unwrap_or_default(),
                 )
                 .await
                 .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
+                Ok(())
+            }
+            DeployerCommands::Ssh(ref args) => {
+                plumbing::run_deployer_ssh(args.command.clone(), &args.config_file, args.select)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer ssh command: {}", err)
+                    })?;
                 Ok(())
             }
             DeployerCommands::Backup(ref arg) => {
@@ -830,7 +878,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_backup(&config_file, &arg.file)
+                plumbing::run_deployer_backup(&config_file, arg.name.clone(), arg.zip)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer backup command: {}", err)
@@ -843,11 +891,16 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_restore(&config_file, &arg.file, arg.max_parallel)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer restore command: {}", err)
-                    })?;
+                plumbing::run_deployer_restore(
+                    &config_file,
+                    arg.max_parallel,
+                    arg.name.clone(),
+                    arg.zip,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer restore command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::Reset(ref arg) => {
@@ -873,6 +926,19 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer restart command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::BlockNumber(ref arg) => {
+                let config_file: String = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_block_number(&config_file, arg.select, arg.follow)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer block-number command: {}", err)
                     })?;
                 Ok(())
             }
@@ -966,9 +1032,10 @@ async fn main() -> Result<()> {
         }
         Commands::Deposit(ref args) => {
             let node = validators::Validator::new(
-                &args.peer_id,
-                &args.public_key,
-                &args.deposit_auth_signature,
+                PeerId::from_str(&args.peer_id).unwrap(),
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap(),
+                BlsSignature::from_string(&args.deposit_auth_signature).unwrap(),
             )?;
             let stake = validators::StakeDeposit::new(
                 node,
