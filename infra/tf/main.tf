@@ -45,9 +45,9 @@ resource "google_storage_bucket" "persistence" {
   }
 }
 
-resource "google_storage_bucket_iam_binding" "persistence_bucket_viewers" {
+resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {
   bucket = google_storage_bucket.persistence.name
-  role   = "roles/storage.objectViewer"
+  role   = "roles/storage.objectAdmin"
   members = [
     "serviceAccount:${module.bootstraps.service_account.email}",
     "serviceAccount:${module.validators.service_account.email}",
