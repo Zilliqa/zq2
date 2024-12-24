@@ -20,8 +20,8 @@ Commands:
   deposit                Deposit the stake amounts to all the validators
   rpc                    Run RPC calls over the internal network nodes
   ssh                    Run command over SSH in the internal network nodes
-  backup                 Backup a node data dir
-  restore                Restore a node data dir from a backup
+  backup                 Backup a node data dir in the persistence bucket
+  restore                Restore a node data dir from a backup in the persistence bucket
   reset                  Reset a network stopping all the nodes and cleaning the /data folder
   restart                Restart a network stopping all the nodes and starting the service again
   block-number           Show the network nodes block number
@@ -239,7 +239,7 @@ Options:
       --max-parallel <MAX_PARALLEL>
           Define the number of nodes to process in parallel. Default: 50
       --persistence-url <PERSISTENCE_URL>
-          gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+          gsutil URI of the persistence file. Ie. gs://my-bucket/my-folder
       --checkpoint-url <CHECKPOINT_URL>
           gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the install will be performed only on the validator nodes
   -v, --verbose...
@@ -460,15 +460,16 @@ z2 deployer backup --help
 ```
 
 ```bash
-Backup a node data dir
+Backup a node data dir in the persistence bucket
 
-Usage: z2 deployer backup [OPTIONS] --file <FILE> [CONFIG_FILE]
+Usage: z2 deployer backup [OPTIONS] [CONFIG_FILE]
 
 Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
-  -f, --file <FILE>  The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+  -n, --name <NAME>  The name of the backup folder. If zip is specified, it represents the name of the zip file
+      --zip          If specified, create a zip file containing the backup
   -v, --verbose...   Increase logging verbosity
   -q, --quiet...     Decrease logging verbosity
   -h, --help         Print help
@@ -494,15 +495,16 @@ z2 deployer restore --help
 ```
 
 ```bash
-Restore a node data dir from a backup
+Restore a node data dir from a backup in the persistence bucket
 
-Usage: z2 deployer restore [OPTIONS] --file <FILE> [CONFIG_FILE]
+Usage: z2 deployer restore [OPTIONS] [CONFIG_FILE]
 
 Arguments:
   [CONFIG_FILE]  The network deployer config file
 
 Options:
-  -f, --file <FILE>                  The path of the backup file. It can be local path or a gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+  -n, --name <NAME>                  The name of the backup folder. If zip is specified, it represents the name of the zip file
+      --zip                          If specified, restore the persistence from a zip file
       --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
   -v, --verbose...                   Increase logging verbosity
   -q, --quiet...                     Decrease logging verbosity

@@ -262,19 +262,20 @@ pub async fn run_deployer_ssh(
     Ok(())
 }
 
-pub async fn run_deployer_backup(config_file: &str, filename: &str) -> Result<()> {
+pub async fn run_deployer_backup(config_file: &str, name: Option<String>, zip: bool) -> Result<()> {
     println!("🦆 Backup process for {config_file} .. ");
-    deployer::run_backup(config_file, filename).await?;
+    deployer::run_backup(config_file, name, zip).await?;
     Ok(())
 }
 
 pub async fn run_deployer_restore(
     config_file: &str,
-    filename: &str,
     max_parallel: Option<usize>,
+    name: Option<String>,
+    zip: bool,
 ) -> Result<()> {
     println!("🦆 Restoring process for {config_file} .. ");
-    deployer::run_restore(config_file, filename, max_parallel.unwrap_or(50)).await?;
+    deployer::run_restore(config_file, max_parallel.unwrap_or(50), name, zip).await?;
     Ok(())
 }
 
