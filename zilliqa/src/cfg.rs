@@ -317,10 +317,6 @@ pub struct ConsensusConfig {
     /// Minimum time to wait for consensus to propose new block if there are no transactions. This therefore acts also as the minimum block time.
     #[serde(default = "empty_block_timeout_default")]
     pub empty_block_timeout: Duration,
-    /// Minimum remaining time before end of round in which Proposer has the opportunity to broadcast empty block proposal.
-    /// If there is less time than this value left in a round then the view will likely move on before a proposal has time to be finalised.
-    #[serde(default = "minimum_time_left_for_empty_block_default")]
-    pub minimum_time_left_for_empty_block: Duration,
     /// Address of the Scilla server. Defaults to "http://localhost:3000".
     #[serde(default = "scilla_address_default")]
     pub scilla_address: String,
@@ -382,7 +378,6 @@ impl Default for ConsensusConfig {
             genesis_deposits: vec![],
             genesis_accounts: vec![],
             empty_block_timeout: empty_block_timeout_default(),
-            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
             scilla_address: scilla_address_default(),
             scilla_stdlib_dir: scilla_stdlib_dir_default(),
             scilla_ext_libs_path: scilla_ext_libs_path_default(),
@@ -491,10 +486,6 @@ pub fn consensus_timeout_default() -> Duration {
 
 pub fn empty_block_timeout_default() -> Duration {
     Duration::from_millis(1000)
-}
-
-pub fn minimum_time_left_for_empty_block_default() -> Duration {
-    Duration::from_millis(3000)
 }
 
 pub fn scilla_address_default() -> String {
