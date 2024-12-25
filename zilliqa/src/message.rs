@@ -225,6 +225,11 @@ pub struct RequestBlock {
     pub batch_size: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseBlock {
+    pub proposals: Vec<Proposal>,
+}
+
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessProposal {
@@ -259,6 +264,8 @@ pub enum ExternalMessage {
     Acknowledgement,
     RequestFromHeight(RequestBlock),
     RequestFromHash(RequestBlock),
+    ResponseFromHeight(ResponseBlock),
+    ResponseFromHash(ResponseBlock),
 }
 
 impl ExternalMessage {
@@ -274,6 +281,12 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::ResponseFromHeight(r) => {
+                write!(f, "ResponseFromHeight({})", r.proposals.len())
+            }
+            ExternalMessage::ResponseFromHash(r) => {
+                write!(f, "ResponseFromHash({})", r.proposals.len())
+            }
             ExternalMessage::RequestFromHeight(r) => {
                 write!(
                     f,
