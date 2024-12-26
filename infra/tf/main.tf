@@ -65,18 +65,13 @@ resource "google_compute_firewall" "allow_ingress_from_iap" {
   network = local.network_name
 
   direction     = "INGRESS"
-  source_ranges = ["35.235.240.0/20"]
+  source_ranges = [local.iap_ip_range]
 
   target_tags = [var.chain_name]
 
   allow {
     protocol = "tcp"
     ports    = ["22"]
-  }
-
-  allow {
-    protocol = "tcp"
-    ports    = ["4202"]
   }
 }
 
@@ -231,7 +226,7 @@ resource "google_compute_firewall" "allow_api_external_http" {
   network = local.network_name
 
   direction     = "INGRESS"
-  source_ranges = concat(local.google_load_balancer_ip_ranges, ["0.0.0.0/0"])
+  source_ranges = concat(local.google_load_balancer_ip_ranges, [local.monitoring_ip_range])
 
   target_tags = [format("%s-%s", var.chain_name, "api")]
 

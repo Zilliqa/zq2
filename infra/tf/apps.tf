@@ -218,12 +218,14 @@ module "spout_security_policies" {
       description   = "Allow whitelisted IP address ranges"
       src_ip_ranges = ["*"]
     }
-    throttle = {
-      action        = "throttle"
-      priority      = 990
-      description   = "Limit requests per IP"
-      src_ip_ranges = ["0.0.0.0/0"]
+  }
 
+  custom_rules = {
+    throttle = {
+      action      = "throttle"
+      priority    = 990
+      description = "Limit requests per IP"
+      expression  = "!inIpRange(origin.ip, '${monitoring_ip_range}')"
       rate_limit_options = {
         enforce_on_key                       = "IP"
         exceed_action                        = "deny(429)"
