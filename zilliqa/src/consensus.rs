@@ -22,6 +22,7 @@ use tracing::*;
 use crate::{
     block_store::BlockStore,
     blockhooks,
+    blockstore::BlockStore as BlockStore2,
     cfg::{ConsensusConfig, NodeConfig},
     contracts,
     crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
@@ -150,6 +151,7 @@ pub struct Consensus {
     config: NodeConfig,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
+    blockstore: BlockStore2,
     pub block_store: BlockStore,
     latest_leader_cache: RefCell<Option<CachedLeader>>,
     votes: BTreeMap<Hash, BlockVotes>,
@@ -204,6 +206,8 @@ impl Consensus {
                 config.eth_chain_id,
             )?;
         }
+
+        let blockstore = BlockStore2::new(&config, db.clone(), message_sender.clone())?;
 
         // It is important to create the `BlockStore` after the checkpoint has been loaded into the DB. The
         // `BlockStore` pre-loads and caches information about the currently stored blocks.
@@ -323,6 +327,7 @@ impl Consensus {
         let mut consensus = Consensus {
             secret_key,
             config,
+            blockstore,
             block_store,
             latest_leader_cache: RefCell::new(None),
             message_sender,

@@ -26,3 +26,4 @@ pub mod state;
 pub mod time;
 pub mod transaction;
 pub mod zq1_proto;
+pub mod blockstore;
