@@ -225,7 +225,7 @@ module "spout_security_policies" {
       action      = "throttle"
       priority    = 990
       description = "Limit requests per IP"
-      expression  = "!inIpRange(origin.ip, '${monitoring_ip_range}')"
+      expression  = "!inIpRange(origin.ip, '${local.monitoring_ip_range}')"
       rate_limit_options = {
         enforce_on_key                       = "IP"
         exceed_action                        = "deny(429)"
