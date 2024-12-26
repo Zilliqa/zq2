@@ -540,22 +540,17 @@ impl ChainNode {
         }
 
         if self.role == NodeRole::Checkpoint {
-            let cmd_checkpoint_cron_job = "sudo chmod 777 /tmp/checkpoint_cron_job.sh && sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && echo '*/5 * * * * /checkpoint_cron_job.sh' | sudo crontab -";
-            let output_checkpoint_cron_job =
-                self.machine.run(cmd_checkpoint_cron_job, true).await?;
-            if !output_checkpoint_cron_job.success {
-                println!("{:?}", output_checkpoint_cron_job.stderr);
-                return Err(anyhow!("Error creating the checkpoint cron job"));
-            }
+            let cmd = r#"
+                sudo chmod 777 /tmp/checkpoint_cron_job.sh && \
+                sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && \
+                sudo chmod 777 /tmp/persistence_export_cron_job.sh && \
+                sudo mv /tmp/persistence_export_cron_job.sh /persistence_export_cron_job.sh && \
+                (echo '*/5 * * * * /checkpoint_cron_job.sh'; echo '0 */6 * * * /persistence_export_cron_job.sh') | sudo crontab -"#;
 
-            let cmd_persistence_export_cron_job = "sudo chmod 777 /tmp/persistence_export_cron_job.sh && sudo mv /tmp/persistence_export_cron_job.sh /persistence_export_cron_job.sh && (crontab -l 2>/dev/null; echo '*/30 * * * * /persistence_export_cron_job.sh') | sudo crontab -";
-            let output_persistence_export_cron_job = self
-                .machine
-                .run(cmd_persistence_export_cron_job, true)
-                .await?;
-            if !output_persistence_export_cron_job.success {
-                println!("{:?}", output_persistence_export_cron_job.stderr);
-                return Err(anyhow!("Error creating the persitence export cron job"));
+            let output = self.machine.run(cmd, true).await?;
+            if !output.success {
+                println!("{:?}", output.stderr);
+                return Err(anyhow!("Error setting up cron jobs"));
             }
         }
 
