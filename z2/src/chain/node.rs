@@ -475,6 +475,20 @@ impl ChainNode {
             self.machine
                 .copy(&[checkpoint_cron_job], "/tmp/checkpoint_cron_job.sh")
                 .await?;
+
+            let temp_persistence_export_cron_job = NamedTempFile::new()?;
+            let persistence_export_cron_job = &self
+                .create_persistence_export_cron_job(
+                    temp_persistence_export_cron_job.path().to_str().unwrap(),
+                )
+                .await?;
+
+            self.machine
+                .copy(
+                    &[persistence_export_cron_job],
+                    "/tmp/persistence_export_cron_job.sh",
+                )
+                .await?;
         }
 
         println!("Configuration files imported in the node");
@@ -491,11 +505,24 @@ impl ChainNode {
         }
 
         if self.role == NodeRole::Checkpoint {
-            let cmd = "sudo rm -f /tmp/checkpoint_cron_job.sh";
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
-                println!("{:?}", output.stderr);
-                return Err(anyhow!("Error removing previous checkpoint cronjob"));
+            let cmd_checkpoint_cron_job = "sudo rm -f /tmp/checkpoint_cron_job.sh";
+            let output_cmd_checkpoint_cron_job =
+                self.machine.run(cmd_checkpoint_cron_job, true).await?;
+            if !output_cmd_checkpoint_cron_job.success {
+                println!("{:?}", output_cmd_checkpoint_cron_job.stderr);
+                return Err(anyhow!("Error removing previous checkpoint cron job"));
+            }
+
+            let cmd_persistence_export_cron_job = "sudo rm -f /tmp/persistence_export_cron_job.sh";
+            let output_persistence_export_cron_job = self
+                .machine
+                .run(cmd_persistence_export_cron_job, true)
+                .await?;
+            if !output_persistence_export_cron_job.success {
+                println!("{:?}", output_persistence_export_cron_job.stderr);
+                return Err(anyhow!(
+                    "Error removing previous persistence export cron job"
+                ));
             }
         }
 
@@ -513,11 +540,22 @@ impl ChainNode {
         }
 
         if self.role == NodeRole::Checkpoint {
-            let cmd = "sudo chmod 777 /tmp/checkpoint_cron_job.sh && sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && echo '*/5 * * * * /checkpoint_cron_job.sh' | sudo crontab -";
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
-                println!("{:?}", output.stderr);
-                return Err(anyhow!("Error creating the checkpoint cronjob"));
+            let cmd_checkpoint_cron_job = "sudo chmod 777 /tmp/checkpoint_cron_job.sh && sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && echo '*/5 * * * * /checkpoint_cron_job.sh' | sudo crontab -";
+            let output_checkpoint_cron_job =
+                self.machine.run(cmd_checkpoint_cron_job, true).await?;
+            if !output_checkpoint_cron_job.success {
+                println!("{:?}", output_checkpoint_cron_job.stderr);
+                return Err(anyhow!("Error creating the checkpoint cron job"));
+            }
+
+            let cmd_persistence_export_cron_job = "sudo chmod 777 /tmp/persistence_export_cron_job.sh && sudo mv /tmp/persistence_export_cron_job.sh /persistence_export_cron_job.sh && (crontab -l 2>/dev/null; echo '*/30 * * * * /persistence_export_cron_job.sh') | sudo crontab -";
+            let output_persistence_export_cron_job = self
+                .machine
+                .run(cmd_persistence_export_cron_job, true)
+                .await?;
+            if !output_persistence_export_cron_job.success {
+                println!("{:?}", output_persistence_export_cron_job.stderr);
+                return Err(anyhow!("Error creating the persitence export cron job"));
             }
         }
 
@@ -545,7 +583,28 @@ impl ChainNode {
 
         let mut fh = File::create(filename).await?;
         fh.write_all(config_file.as_bytes()).await?;
-        println!("Cron job file created: {filename}");
+        println!("Checkpoint cron job file created: {filename}");
+
+        Ok(filename.to_owned())
+    }
+
+    async fn create_persistence_export_cron_job(&self, filename: &str) -> Result<String> {
+        let spec_config = include_str!("../../resources/persistence_export.tera.sh");
+
+        let chain_name = self.chain.name();
+        let eth_chain_id = self.eth_chain_id.to_string();
+
+        let mut var_map = BTreeMap::<&str, &str>::new();
+        var_map.insert("network_name", &chain_name);
+        var_map.insert("eth_chain_id", &eth_chain_id);
+
+        let ctx = Context::from_serialize(var_map)?;
+        let rendered_template = Tera::one_off(spec_config, &ctx, false)?;
+        let config_file = rendered_template.as_str();
+
+        let mut fh = File::create(filename).await?;
+        fh.write_all(config_file.as_bytes()).await?;
+        println!("Persistence export cron job file created: {filename}");
 
         Ok(filename.to_owned())
     }
