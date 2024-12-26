@@ -34,7 +34,7 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
-        ProcessProposal, Proposal,
+        ProcessProposal, Proposal, ResponseBlock,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -266,6 +266,131 @@ impl Node {
                         )))?;
                 }
                 // Acknowledge this new view.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            ExternalMessage::RequestFromHeight(request) => {
+                if from == self.peer_id {
+                    warn!("block_store::RequestFromHeight : ignoring blocks request to self");
+                    return Ok(());
+                }
+
+                // TODO: Check if we should service this request.
+                // Validators shall not respond to this request.
+
+                trace!(
+                    "block_store::RequestFromHeight : received a block request - {}",
+                    self.peer_id
+                );
+
+                // TODO: Replace this entire block with a single SQL query
+                let Some(alpha) = self.db.get_block_by_hash(&request.from_hash)? else {
+                    // We do not have the starting block
+                    self.request_responses.send((
+                        response_channel,
+                        ExternalMessage::ResponseFromHash(ResponseBlock { proposals: vec![] }),
+                    ))?;
+                    return Ok(());
+                };
+                let mut proposals = Vec::new();
+                for num in alpha.number().saturating_add(1)
+                    ..=alpha.number().saturating_add(request.batch_size as u64)
+                {
+                    let Some(block) = self.db.get_canonical_block_by_number(num)? else {
+                        // that's all we have!
+                        break;
+                    };
+                    proposals.push(self.block_to_proposal(block));
+                }
+
+                self.request_responses.send((
+                    response_channel,
+                    ExternalMessage::ResponseFromHash(ResponseBlock { proposals }),
+                ))?;
+            }
+            ExternalMessage::ResponseFromHeight(response) => {
+                // Check that we have enough to complete the process, otherwise ignore
+                if response.proposals.is_empty() {
+                    // Empty response, downgrade peer
+                    warn!("block_store::ResponseFromHeight : empty blocks in flight {from}",);
+                }
+                if response.proposals.len() < self.config.max_blocks_in_flight as usize {
+                    // Partial response, downgrade peer
+                    warn!("block_store::ResponseFromHeight : insufficient blocks in flight {from}",);
+                }
+
+                // TODO: Inject proposals
+                debug!(
+                    "block_store::ResponseFromHeight : injecting proposals {:?}",
+                    response
+                );
+
+                // Acknowledge this block response. This does nothing because the `BlockResponse` request was sent by
+                // us, but we keep it here for symmetry with the other handlers.
+                self.request_responses
+                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            ExternalMessage::RequestFromHash(request) => {
+                if from == self.peer_id {
+                    warn!("block_store::RequestFromHash : ignoring blocks request to self");
+                    return Ok(());
+                }
+
+                trace!(
+                    "block_store::RequestFromHash : received a block request - {}",
+                    self.peer_id
+                );
+
+                // TODO: Check if we should service this request
+                // Validators could respond to this request if there is nothing else to do.
+
+                let Some(omega_block) = self.db.get_block_by_hash(&request.from_hash)? else {
+                    // We do not have the starting block
+                    self.request_responses.send((
+                        response_channel,
+                        ExternalMessage::ResponseFromHash(ResponseBlock { proposals: vec![] }),
+                    ))?;
+                    return Ok(());
+                };
+
+                let mut proposals = Vec::new();
+                let mut hash = omega_block.parent_hash();
+                // grab up to batch_size blocks
+                while proposals.len() < request.batch_size {
+                    // grab the parent
+                    let Some(block) = self.db.get_block_by_hash(&hash)? else {
+                        // that's all we have!
+                        break;
+                    };
+                    hash = block.parent_hash();
+                    proposals.push(self.block_to_proposal(block));
+                }
+
+                self.request_responses.send((
+                    response_channel,
+                    ExternalMessage::ResponseFromHash(ResponseBlock { proposals }),
+                ))?;
+            }
+            ExternalMessage::ResponseFromHash(response) => {
+                // Check that we have enough to complete the process, otherwise ignore
+                if response.proposals.is_empty() {
+                    // Empty response, downgrade peer
+                    warn!("block_store::ResponseFromHeight : empty blocks in flight {from}",);
+                }
+                // Check that we have enough to complete the process, otherwise ignore
+                if response.proposals.len() * 2 < self.config.max_blocks_in_flight as usize {
+                    warn!("block_store::ResponseFromHash : insufficient blocks in flight {from}",);
+                    return Ok(());
+                }
+
+                // TODO: Inject proposals
+                debug!(
+                    "block_store::ResponseFromHash : injecting proposals {:?}",
+                    response
+                );
+
+                // Acknowledge this block response. This does nothing because the `BlockResponse` request was sent by
+                // us, but we keep it here for symmetry with the other handlers.
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }

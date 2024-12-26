@@ -220,9 +220,9 @@ pub struct BlockResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestBlock {
-    pub from_height: u64,
+    pub from_number: u64,
     pub from_hash: Hash,
-    pub batch_size: u64,
+    pub batch_size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -291,7 +291,7 @@ impl Display for ExternalMessage {
                 write!(
                     f,
                     "RequestFromHeight({}, num={})",
-                    r.from_height, r.batch_size
+                    r.from_number, r.batch_size
                 )
             }
             ExternalMessage::RequestFromHash(r) => {
