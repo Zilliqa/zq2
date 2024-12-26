@@ -208,7 +208,7 @@ impl Consensus {
             )?;
         }
 
-        let blockstore = BlockStore2::new(&config, db.clone(), message_sender.clone())?;
+        let blockstore = BlockStore2::new(&config, db.clone(), message_sender.clone(), Vec::new())?;
 
         // It is important to create the `BlockStore` after the checkpoint has been loaded into the DB. The
         // `BlockStore` pre-loads and caches information about the currently stored blocks.
