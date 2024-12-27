@@ -96,7 +96,7 @@ impl BlockStore {
         // no parent block, trigger sync
         if parent_block.is_none() {
             tracing::warn!(
-                "blockstore::ProcessProposal : Parent block {} not found, requesting missing blocks",
+                "blockstore::ProcessProposal : Parent block {} not found",
                 block.parent_hash()
             );
             self.request_missing_blocks(block)?;
@@ -219,9 +219,10 @@ struct PeerInfo {
 
 impl Ord for PeerInfo {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.score
-            .cmp(&other.score)
-            .then_with(|| self.last_used.cmp(&other.last_used))
+        other
+            .score
+            .cmp(&self.score)
+            .then_with(|| other.last_used.cmp(&self.last_used))
     }
 }
 

@@ -227,6 +227,12 @@ impl Node {
                         )))?;
                 }
             }
+            ExternalMessage::AddPeer => {
+                self.consensus.blockstore.add_peer(from);
+            }
+            ExternalMessage::RemovePeer => {
+                self.consensus.blockstore.remove_peer(from);
+            }
             // `Proposals` are re-routed to `handle_request()`
             _ => {
                 warn!("unexpected message type");

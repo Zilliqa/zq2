@@ -271,6 +271,8 @@ pub enum ExternalMessage {
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
+    AddPeer,
+    RemovePeer,
     RequestFromHeight(RequestBlock),
     RequestFromHash(RequestBlock),
     ResponseFromHeight(ResponseBlock),
@@ -290,6 +292,8 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::AddPeer => write!(f, "AddPeer"),
+            ExternalMessage::RemovePeer => write!(f, "RemovePeer"),
             ExternalMessage::ResponseFromHeight(r) => {
                 write!(f, "ResponseFromHeight({})", r.proposals.len())
             }

@@ -152,7 +152,7 @@ pub struct Consensus {
     config: NodeConfig,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
-    blockstore: BlockStore2,
+    pub blockstore: BlockStore2,
     pub block_store: BlockStore,
     latest_leader_cache: RefCell<Option<CachedLeader>>,
     votes: BTreeMap<Hash, BlockVotes>,
