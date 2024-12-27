@@ -41,6 +41,8 @@ pub struct BlockStore {
     request_timeout: Duration,
     // how many blocks to request at once
     max_blocks_in_flight: usize,
+    // our peer id
+    peer_id: PeerId,
 }
 
 impl BlockStore {
@@ -58,7 +60,8 @@ impl BlockStore {
                 last_used: Instant::now(),
             })
             .collect();
-
+        let peer_id = message_sender.our_peer_id;
+        
         Ok(Self {
             db,
             message_sender,
@@ -66,6 +69,7 @@ impl BlockStore {
             in_flight: None,
             request_timeout: config.consensus.consensus_timeout,
             max_blocks_in_flight: config.max_blocks_in_flight.max(31) as usize, // between 30 seconds and 3 days of blocks.
+            peer_id,
         })
     }
 
