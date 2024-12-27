@@ -276,58 +276,11 @@ impl Node {
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
             ExternalMessage::RequestFromHeight(request) => {
-                tracing::debug!(
-                    "blockstore::RequestFromHeight : received a block request from {}",
-                    from
-                );
-
-                if from == self.peer_id {
-                    warn!("blockstore::RequestFromHeight : ignoring blocks from self");
-                    return Ok(());
-                }
-
-                // TODO: Check if we should service this request.
-                // Validators shall not respond to this request.
-
-                let Some(alpha) = self.db.get_block_by_hash(&request.from_hash)? else {
-                    // We do not have the starting block
-                    tracing::warn!(
-                        "blockstore::RequestFromHeight : missing starting block {}",
-                        request.from_hash
-                    );
-                    self.request_responses.send((
-                        response_channel,
-                        ExternalMessage::ResponseFromHeight(ResponseBlock { proposals: vec![] }),
-                    ))?;
-                    return Ok(());
-                };
-
-                // TODO: Replace this with a single SQL query
-                let mut proposals = Vec::new();
-                let batch_size = self.config.max_blocks_in_flight.min(request.batch_size) as u64;
-                for num in
-                    alpha.number().saturating_add(1)..=alpha.number().saturating_add(batch_size)
-                {
-                    let Some(block) = self.db.get_canonical_block_by_number(num)? else {
-                        // that's all we have!
-                        break;
-                    };
-                    proposals.push(self.block_to_proposal(block));
-                }
-
-                let message = ExternalMessage::ResponseFromHeight(ResponseBlock { proposals });
-                tracing::trace!(
-                    ?message,
-                    "blockstore::RequestFromHeight : responding to block request from height"
-                );
+                let message = self
+                    .consensus
+                    .blockstore
+                    .handle_request_from_height(from, request)?;
                 self.request_responses.send((response_channel, message))?;
-            }
-            ExternalMessage::ResponseFromHeight(response) => {
-                self.consensus.blockstore.handle_response_from_height(from, response)?;
-                // Acknowledge this block response. This does nothing because the `BlockResponse` request was sent by
-                // us, but we keep it here for symmetry with the other handlers.
-                self.request_responses
-                    .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
             ExternalMessage::RequestFromHash(request) => {
                 debug!(
@@ -497,6 +450,11 @@ impl Node {
     pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
         match message {
+            ExternalMessage::ResponseFromHeight(response) => {
+                self.consensus
+                    .blockstore
+                    .handle_response_from_height(from, response)?;
+            }
             ExternalMessage::BlockResponse(m) => self.handle_block_response(from, m)?,
             ExternalMessage::Acknowledgement => {}
             _ => {
