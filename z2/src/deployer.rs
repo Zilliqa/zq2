@@ -953,7 +953,19 @@ pub async fn run_api_operation(config_file: &str, operation: ApiOperation) -> Re
     Ok(())
 }
 
-pub async fn run_block_number(config_file: &str, node_selection: bool, follow: bool) -> Result<()> {
+#[derive(Clone, Debug, Default, ValueEnum)]
+pub enum Metrics {
+    #[default]
+    BlockNumber,
+    ConsensusInfo,
+}
+
+pub async fn run_monitor(
+    config_file: &str,
+    metric: Metrics,
+    node_selection: bool,
+    follow: bool,
+) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
     let mut chain_nodes = chain.nodes().await?;
@@ -987,10 +999,14 @@ pub async fn run_block_number(config_file: &str, node_selection: bool, follow: b
     let multi_progress = indicatif::MultiProgress::new();
 
     for node in target_nodes {
+        let metric = metric.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
-            let result = node.get_block(&mp, follow).await;
+            let result = match metric {
+                Metrics::BlockNumber => node.get_block_number(&mp, follow).await,
+                Metrics::ConsensusInfo => node.get_consensus_info(&mp, follow).await,
+            };
             drop(permit); // Release the permit when the task is done
             (node, result)
         });

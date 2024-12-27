@@ -16,7 +16,7 @@ use crate::{
         self,
         node::{NodePort, NodeRole},
     },
-    deployer::ApiOperation,
+    deployer::{ApiOperation, Metrics},
     kpi,
     node_spec::{Composition, NodeSpec},
     utils,
@@ -291,13 +291,14 @@ pub async fn run_deployer_restart(config_file: &str, node_selection: bool) -> Re
     Ok(())
 }
 
-pub async fn run_deployer_block_number(
+pub async fn run_deployer_monitor(
     config_file: &str,
+    metric: Metrics,
     node_selection: bool,
     follow: bool,
 ) -> Result<()> {
-    println!("🦆 Running block-number for {config_file} .. ");
-    deployer::run_block_number(config_file, node_selection, follow).await?;
+    println!("🦆 Running monitor for {config_file} .. ");
+    deployer::run_monitor(config_file, metric, node_selection, follow).await?;
     Ok(())
 }
 
