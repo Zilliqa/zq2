@@ -13,7 +13,7 @@ use crate::{
     cfg::NodeConfig,
     db::Db,
     message::{Block, ExternalMessage, Proposal, RequestBlock},
-    node::{MessageSender, RequestId},
+    node::MessageSender,
 };
 
 /// Stores and manages the node's list of blocks. Also responsible for making requests for new blocks.
@@ -94,18 +94,18 @@ impl BlockStore {
         let parent_block = self.db.get_block_by_hash(&block.parent_hash())?;
 
         // no parent block, trigger sync
-        let peer = self.in_flight.take();
-        self.in_flight = self.get_next_peer(peer);
-
-        if parent_block.is_none() && self.in_flight.is_some() {
+        if parent_block.is_none() {
+            tracing::warn!(
+                "blockstore::ProcessProposal : Parent block {} not found, requesting missing blocks",
+                block.parent_hash()
+            );
             self.request_missing_blocks(block)?;
-            tracing::debug!("Parent block not found, requesting missing blocks",);
             return Ok(());
         }
         Ok(())
     }
 
-    pub fn buffer_proposal(&self, block: Block) {
+    pub fn buffer_proposal(&self, _block: Block) {
         // ...
     }
 
@@ -201,9 +201,7 @@ impl BlockStore {
             self.peers.push(peer);
         }
 
-        let Some(mut peer) = self.peers.pop() else {
-            return None;
-        };
+        let mut peer = self.peers.pop()?;
 
         // used to determine stale in-flight requests.
         peer.last_used = std::time::Instant::now();
