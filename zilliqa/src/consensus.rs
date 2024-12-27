@@ -650,6 +650,9 @@ impl Consensus {
             block.hash()
         );
 
+        // FIXME: Cleanup
+        self.blockstore.process_proposal(block.clone())?;
+
         if self.block_store.contains_block(&block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
             return Ok(None);

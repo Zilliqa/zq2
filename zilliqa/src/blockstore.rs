@@ -88,13 +88,20 @@ impl BlockStore {
         Ok(())
     }
 
-    pub fn process_proposal(&self, block: Block) -> Result<()> {
+    pub fn process_proposal(&mut self, block: Block) -> Result<()> {
         // ...
         // check if block parent exists
         let parent_block = self.db.get_block_by_hash(&block.parent_hash())?;
 
         // no parent block, trigger sync
-        if parent_block.is_none() {}
+        let peer = self.in_flight.take();
+        self.in_flight = self.get_next_peer(peer);
+
+        if parent_block.is_none() && self.in_flight.is_some() {
+            self.request_missing_blocks(block)?;
+            tracing::debug!("Parent block not found, requesting missing blocks",);
+            return Ok(());
+        }
         Ok(())
     }
 
@@ -108,7 +115,28 @@ impl BlockStore {
     /// If the block gap is large, we request blocks from the last known canonical block forwards.
     /// If the block gap is small, we request blocks from the latest block backwards.
     ///
-    pub fn request_missing_blocks(&mut self, omega_block: Block) -> Result<RequestId> {
+    pub fn request_missing_blocks(&mut self, omega_block: Block) -> Result<()> {
+        // Early exit if there's a request in-flight; and if it has not expired.
+        if let Some(peer) = self.in_flight.as_ref() {
+            if peer.last_used.elapsed() > self.request_timeout {
+                tracing::warn!(
+                    "In-flight request {} timed out, requesting from new peer",
+                    peer.peer_id
+                );
+                let mut peer = self.in_flight.take().unwrap();
+                peer.score += 1; // TODO: Downgrade score if we keep timing out.
+                self.in_flight = self.get_next_peer(Some(peer));
+            } else {
+                return Ok(());
+            }
+        } else {
+            self.in_flight = self.get_next_peer(None);
+            if self.in_flight.is_none() {
+                tracing::error!("No peers available to request missing blocks");
+                return Ok(());
+            }
+        }
+
         // highest canonical block we have
         // TODO: Replace this with a single SQL query.
         let height = self
@@ -123,7 +151,7 @@ impl BlockStore {
             .number
             .saturating_sub(alpha_block.header.number);
 
-        // TODO: Double-check computation
+        // TODO: Double-check hysteresis logic.
         let message = if block_gap > self.max_blocks_in_flight as u64 / 2 {
             // we're far from latest block
             ExternalMessage::RequestFromHeight(RequestBlock {
@@ -142,8 +170,11 @@ impl BlockStore {
 
         let peer = self.in_flight.as_ref().unwrap();
 
+        tracing::debug!(?message, "Requesting missing blocks from {}", peer.peer_id);
+
         self.message_sender
-            .send_external_message(peer.peer_id, message)
+            .send_external_message(peer.peer_id, message)?;
+        Ok(())
     }
 
     /// Add a peer to the list of peers.
@@ -163,7 +194,7 @@ impl BlockStore {
         self.peers.retain(|p| p.peer_id != peer);
     }
 
-    pub fn get_next_peer(&mut self, prev_peer: Option<PeerInfo>) -> Option<PeerInfo> {
+    fn get_next_peer(&mut self, prev_peer: Option<PeerInfo>) -> Option<PeerInfo> {
         // Push the current peer into the heap, risks spamming the same peer.
         // TODO: implement a better strategy for this.
         if let Some(peer) = prev_peer {
