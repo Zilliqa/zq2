@@ -13,7 +13,7 @@ use libp2p::PeerId;
 use crate::{
     cfg::NodeConfig,
     db::Db,
-    message::{Block, ExternalMessage, Proposal, RequestBlock, ResponseBlock},
+    message::{Block, ExternalMessage, InternalMessage, Proposal, RequestBlock, ResponseBlock},
     node::MessageSender,
 };
 
@@ -187,11 +187,18 @@ impl BlockStore {
         // Only issue is the timestamp skew. We should probably fix that.
         for p in proposals {
             tracing::trace!(
-                "Received proposal number: {} hash: {}",
+                "Inserting proposal number: {} hash: {}",
                 p.number(),
                 p.hash(),
             );
-            // replay the proposals
+
+            let (block, transactions) = p.into_parts();
+
+            // TODO: Bulk SQL insert
+            for tx in transactions {
+                self.db.insert_transaction(&tx.calculate_hash(), &tx)?;
+            }
+            self.db.insert_block(&block)?;
         }
 
         // We're done with this peer
