@@ -264,6 +264,14 @@ impl P2pNode {
                                 .kademlia
                                 .add_address(&peer_id, address.clone());
                         }
+                        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
+                            let message = ExternalMessage::AddPeer;
+                            self.send_to(&topic, |c| c.broadcasts.send((peer_id, message)))?;
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) => {
+                            let message = ExternalMessage::RemovePeer;
+                            self.send_to(&topic, |c| c.broadcasts.send((peer_id, message)))?;
+                        }                        
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                             message_id: msg_id,
                             message: gossipsub::Message {
