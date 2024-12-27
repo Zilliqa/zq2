@@ -297,17 +297,14 @@ impl Node {
                     );
                     self.request_responses.send((
                         response_channel,
-                        ExternalMessage::ResponseFromHash(ResponseBlock { proposals: vec![] }),
+                        ExternalMessage::ResponseFromHeight(ResponseBlock { proposals: vec![] }),
                     ))?;
                     return Ok(());
                 };
 
                 // TODO: Replace this with a single SQL query
                 let mut proposals = Vec::new();
-                let batch_size = self
-                    .config
-                    .max_blocks_in_flight
-                    .min(request.batch_size as u64);
+                let batch_size = self.config.max_blocks_in_flight.min(request.batch_size) as u64;
                 for num in
                     alpha.number().saturating_add(1)..=alpha.number().saturating_add(batch_size)
                 {
@@ -318,7 +315,7 @@ impl Node {
                     proposals.push(self.block_to_proposal(block));
                 }
 
-                let message = ExternalMessage::ResponseFromHash(ResponseBlock { proposals });
+                let message = ExternalMessage::ResponseFromHeight(ResponseBlock { proposals });
                 tracing::trace!(
                     ?message,
                     "blockstore::RequestFromHeight : responding to block request from height"
@@ -329,16 +326,16 @@ impl Node {
                 // Check that we have enough to complete the process, otherwise ignore
                 if response.proposals.is_empty() {
                     // Empty response, downgrade peer
-                    warn!("block_store::ResponseFromHeight : empty blocks in flight {from}",);
+                    warn!("blockstore::ResponseFromHeight : empty blocks in flight {from}",);
                 }
-                if response.proposals.len() < self.config.max_blocks_in_flight as usize {
+                if response.proposals.len() < self.config.max_blocks_in_flight {
                     // Partial response, downgrade peer
-                    warn!("block_store::ResponseFromHeight : insufficient blocks in flight {from}",);
+                    warn!("blockstore::ResponseFromHeight : insufficient blocks in flight {from}",);
                 }
 
                 // TODO: Inject proposals
                 debug!(
-                    "block_store::ResponseFromHeight : injecting proposals {:?}",
+                    "blockstore::ResponseFromHeight : injecting proposals {:?}",
                     response
                 );
 
@@ -377,9 +374,7 @@ impl Node {
                 let mut proposals = Vec::new();
                 let mut hash = omega_block.parent_hash();
                 // grab up to batch_size blocks
-                let batch_size = request
-                    .batch_size
-                    .min(self.config.max_blocks_in_flight as usize);
+                let batch_size = request.batch_size.min(self.config.max_blocks_in_flight);
                 while proposals.len() < batch_size {
                     // grab the parent
                     let Some(block) = self.db.get_block_by_hash(&hash)? else {

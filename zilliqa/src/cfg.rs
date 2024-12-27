@@ -101,7 +101,7 @@ pub struct NodeConfig {
     pub block_request_limit: usize,
     /// The maximum number of blocks to have outstanding requests for at a time when syncing.
     #[serde(default = "max_blocks_in_flight_default")]
-    pub max_blocks_in_flight: u64,
+    pub max_blocks_in_flight: usize,
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
     pub block_request_batch_size: u64,
@@ -204,7 +204,7 @@ pub fn block_request_limit_default() -> usize {
     100
 }
 
-pub fn max_blocks_in_flight_default() -> u64 {
+pub fn max_blocks_in_flight_default() -> usize {
     1000
 }
 
