@@ -13,7 +13,7 @@ use libp2p::PeerId;
 use crate::{
     cfg::NodeConfig,
     db::Db,
-    message::{Block, ExternalMessage, InternalMessage, Proposal, RequestBlock, ResponseBlock},
+    message::{Block, ExternalMessage, ProcessProposal, Proposal, RequestBlock, ResponseBlock},
     node::MessageSender,
 };
 
@@ -170,9 +170,9 @@ impl BlockStore {
             tracing::warn!("blockstore::ResponseFromHeight : partial blocks {from}",);
         }
 
-        // TODO: Inject proposals
-        tracing::debug!(
-            "blockstore::ResponseFromHeight : injecting {} proposals",
+        // TODO: Any additional checks we should do here?
+        tracing::info!(
+            "blockstore::ResponseFromHeight : injecting {} proposals from {from}",
             response.proposals.len()
         );
 
@@ -183,22 +183,21 @@ impl BlockStore {
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
-        // Just pump the Proposals back to ourselves, and it will be picked up and processed as if it were received.
-        // Only issue is the timestamp skew. We should probably fix that.
+        // Just pump the Proposals back to ourselves.
         for p in proposals {
             tracing::trace!(
-                "Inserting proposal number: {} hash: {}",
+                "Injecting proposal number: {} hash: {}",
                 p.number(),
                 p.hash(),
             );
 
-            let (block, transactions) = p.into_parts();
-
-            // TODO: Bulk SQL insert
-            for tx in transactions {
-                self.db.insert_transaction(&tx.calculate_hash(), &tx)?;
-            }
-            self.db.insert_block(&block)?;
+            self.message_sender.send_external_message(
+                self.peer_id,
+                ExternalMessage::ProcessProposal(ProcessProposal {
+                    from: self.peer_id.to_bytes(), // FIXME: change this to PeerId instead of Vec<u8>
+                    block: p,
+                }),
+            )?;
         }
 
         // We're done with this peer
@@ -249,7 +248,7 @@ impl BlockStore {
             .number
             .saturating_sub(alpha_block.header.number);
 
-        // TODO: Double-check hysteresis logic.
+        // TODO: Double-check hysteresis logic - may not even be necessary to do RequestFromHash
         let message = if block_gap > self.max_blocks_in_flight as u64 / 2 {
             // we're far from latest block
             ExternalMessage::RequestFromHeight(RequestBlock {
@@ -266,7 +265,7 @@ impl BlockStore {
 
         let peer = self.in_flight.as_ref().unwrap();
 
-        tracing::debug!(?message, "Requesting missing blocks from {}", peer.peer_id);
+        tracing::info!(?message, "Requesting missing blocks from {}", peer.peer_id);
 
         self.message_sender
             .send_external_message(peer.peer_id, message)?;
