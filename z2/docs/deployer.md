@@ -63,12 +63,13 @@ Options:
           Virtual Machine roles
 
           Possible values:
-          - bootstrap:  Virtual machine bootstrap
-          - validator:  Virtual machine validator
-          - api:        Virtual machine api
-          - apps:       Virtual machine apps
-          - checkpoint: Virtual machine checkpoint
-          - sentry:     Virtual machine sentry
+          - bootstrap:   Virtual machine bootstrap
+          - validator:   Virtual machine validator
+          - api:         Virtual machine api
+          - apps:        Virtual machine apps
+          - checkpoint:  Virtual machine checkpoint
+          - persistence: Virtual machine persistence
+          - sentry:      Virtual machine sentry
 
   -v, --verbose...
           Increase logging verbosity
@@ -421,12 +422,13 @@ Options:
           Node role. Default: validator
 
           Possible values:
-          - bootstrap:  Virtual machine bootstrap
-          - validator:  Virtual machine validator
-          - api:        Virtual machine api
-          - apps:       Virtual machine apps
-          - checkpoint: Virtual machine checkpoint
-          - sentry:     Virtual machine sentry
+          - bootstrap:   Virtual machine bootstrap
+          - validator:   Virtual machine validator
+          - api:         Virtual machine api
+          - apps:        Virtual machine apps
+          - checkpoint:  Virtual machine checkpoint
+          - persistence: Virtual machine persistence
+          - sentry:      Virtual machine sentry
 
   -v, --verbose...
           Increase logging verbosity

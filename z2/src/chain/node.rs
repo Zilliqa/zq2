@@ -95,6 +95,8 @@ pub enum NodeRole {
     Apps,
     /// Virtual machine checkpoint
     Checkpoint,
+    /// Virtual machine persistence
+    Persistence,
     /// Virtual machine sentry
     Sentry,
 }
@@ -108,6 +110,7 @@ impl FromStr for NodeRole {
             "apps" => Ok(NodeRole::Apps),
             "validator" => Ok(NodeRole::Validator),
             "checkpoint" => Ok(NodeRole::Checkpoint),
+            "persistence" => Ok(NodeRole::Persistence),
             "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
@@ -122,6 +125,7 @@ impl fmt::Display for NodeRole {
             NodeRole::Apps => write!(f, "apps"),
             NodeRole::Validator => write!(f, "validator"),
             NodeRole::Checkpoint => write!(f, "checkpoint"),
+            NodeRole::Persistence => write!(f, "persistence"),
             NodeRole::Sentry => write!(f, "sentry"),
         }
     }
@@ -551,7 +555,9 @@ impl ChainNode {
             self.machine
                 .copy(&[checkpoint_cron_job], "/tmp/checkpoint_cron_job.sh")
                 .await?;
+        }
 
+        if self.role == NodeRole::Persistence {
             let temp_persistence_export_cron_job = NamedTempFile::new()?;
             let persistence_export_cron_job = &self
                 .create_persistence_export_cron_job(
@@ -581,21 +587,19 @@ impl ChainNode {
         }
 
         if self.role == NodeRole::Checkpoint {
-            let cmd_checkpoint_cron_job = "sudo rm -f /tmp/checkpoint_cron_job.sh";
-            let output_cmd_checkpoint_cron_job =
-                self.machine.run(cmd_checkpoint_cron_job, true).await?;
-            if !output_cmd_checkpoint_cron_job.success {
-                println!("{:?}", output_cmd_checkpoint_cron_job.stderr);
+            let cmd = "sudo rm -f /tmp/checkpoint_cron_job.sh";
+            let output = self.machine.run(cmd, true).await?;
+            if !output.success {
+                println!("{:?}", output.stderr);
                 return Err(anyhow!("Error removing previous checkpoint cron job"));
             }
+        }
 
-            let cmd_persistence_export_cron_job = "sudo rm -f /tmp/persistence_export_cron_job.sh";
-            let output_persistence_export_cron_job = self
-                .machine
-                .run(cmd_persistence_export_cron_job, true)
-                .await?;
-            if !output_persistence_export_cron_job.success {
-                println!("{:?}", output_persistence_export_cron_job.stderr);
+        if self.role == NodeRole::Persistence {
+            let cmd = "sudo rm -f /tmp/persistence_export_cron_job.sh";
+            let output = self.machine.run(cmd, true).await?;
+            if !output.success {
+                println!("{:?}", output.stderr);
                 return Err(anyhow!(
                     "Error removing previous persistence export cron job"
                 ));
@@ -619,14 +623,25 @@ impl ChainNode {
             let cmd = r#"
                 sudo chmod 777 /tmp/checkpoint_cron_job.sh && \
                 sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && \
-                sudo chmod 777 /tmp/persistence_export_cron_job.sh && \
-                sudo mv /tmp/persistence_export_cron_job.sh /persistence_export_cron_job.sh && \
-                (echo '*/5 * * * * /checkpoint_cron_job.sh'; echo '0 */6 * * * /persistence_export_cron_job.sh') | sudo crontab -"#;
+                echo '*/30 * * * * /checkpoint_cron_job.sh' | sudo crontab -"#;
 
             let output = self.machine.run(cmd, true).await?;
             if !output.success {
                 println!("{:?}", output.stderr);
-                return Err(anyhow!("Error setting up cron jobs"));
+                return Err(anyhow!("Error creating the checkpoint cronjob"));
+            }
+        }
+
+        if self.role == NodeRole::Persistence {
+            let cmd = r#"
+                sudo chmod 777 /tmp/persistence_export_cron_job.sh && \
+                sudo mv /tmp/persistence_export_cron_job.sh /persistence_export_cron_job.sh && \
+                echo '0 */2 * * * /persistence_export_cron_job.sh' | sudo crontab -"#;
+
+            let output = self.machine.run(cmd, true).await?;
+            if !output.success {
+                println!("{:?}", output.stderr);
+                return Err(anyhow!("Error creating the persistence export cronjob"));
             }
         }
 
@@ -942,7 +957,7 @@ impl ChainNode {
             // export the backup files
             progress_bar.start("Exporting the backup files");
             let command = format!(
-                "sudo gsutil -m cp -r /data gs://{}-persistence/{}",
+                "sudo gsutil -m cp -r /data gs://{}-persistence/{}/",
                 self.chain()?,
                 backup_name
             );
@@ -1016,15 +1031,13 @@ impl ChainNode {
         } else {
             // delete the data folder
             progress_bar.start(format!("{}: Deleting the data folder", self.name()));
-            machine
-                .run("sudo rm -rf /data && sudo mkdir -p /data", false)
-                .await?;
+            machine.run("sudo rm -rf /data", false).await?;
             progress_bar.inc(1);
 
             // import the backup files
             progress_bar.start(format!("{}: Importing the backup files", self.name()));
             let command = format!(
-                "sudo gsutil -m cp -r gs://{}-persistence/{}/* /data",
+                "sudo gsutil -m cp -r gs://{}-persistence/{}/* /",
                 self.chain()?,
                 backup_name
             );
