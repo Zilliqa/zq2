@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::Result;
 
+use itertools::Itertools;
 use libp2p::PeerId;
 
 use crate::{
@@ -99,6 +100,61 @@ impl BlockStore {
         // ...
     }
 
+    fn block_to_proposal(&self, block: Block) -> Proposal {
+        let txs = block
+            .transactions
+            .iter()
+            .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
+            .map(|tx| tx.verify().unwrap())
+            .collect();
+
+        Proposal::from_parts(block, txs)
+    }
+
+    pub fn handle_request_from_height(
+        &mut self,
+        from: PeerId,
+        request: RequestBlock,
+    ) -> Result<ExternalMessage> {
+        // ...
+        tracing::debug!(
+            "blockstore::RequestFromHeight : received a block request from {}",
+            from
+        );
+
+        // TODO: Check if we should service this request.
+        // Validators shall not respond to this request.
+
+        let Some(alpha) = self.db.get_block_by_hash(&request.from_hash)? else {
+            // We do not have the starting block
+            tracing::warn!(
+                "blockstore::RequestFromHeight : missing starting block {}",
+                request.from_hash
+            );
+            let message: ExternalMessage =
+                ExternalMessage::ResponseFromHeight(ResponseBlock { proposals: vec![] });
+            return Ok(message);
+        };
+
+        // TODO: Replace this with a single SQL query
+        let mut proposals = Vec::new();
+        let batch_size = self.max_blocks_in_flight.min(request.batch_size) as u64;
+        for num in alpha.number().saturating_add(1)..=alpha.number().saturating_add(batch_size) {
+            let Some(block) = self.db.get_canonical_block_by_number(num)? else {
+                // that's all we have!
+                break;
+            };
+            proposals.push(self.block_to_proposal(block));
+        }
+
+        let message = ExternalMessage::ResponseFromHeight(ResponseBlock { proposals });
+        tracing::trace!(
+            ?message,
+            "blockstore::RequestFromHeight : responding to block request from height"
+        );
+        Ok(message)
+    }
+
     pub fn handle_response_from_height(
         &mut self,
         from: PeerId,
@@ -116,17 +172,30 @@ impl BlockStore {
 
         // TODO: Inject proposals
         tracing::debug!(
-            "blockstore::ResponseFromHeight : injecting proposals {:?}",
-            response.proposals
+            "blockstore::ResponseFromHeight : injecting {} proposals",
+            response.proposals.len()
         );
+
+        // Sort proposals by number
+        let proposals = response
+            .proposals
+            .into_iter()
+            .sorted_by_key(|p| p.number())
+            .collect_vec();
 
         // Just pump the Proposals back to ourselves, and it will be picked up and processed as if it were received.
         // Only issue is the timestamp skew. We should probably fix that.
-        for p in response.proposals {
-            tracing::trace!("Received proposal from height: {:?}", p);
-            self.message_sender
-                .send_external_message(self.peer_id, ExternalMessage::Proposal(p))?;
+        for p in proposals {
+            tracing::trace!(
+                "Received proposal number: {} hash: {}",
+                p.number(),
+                p.hash(),
+            );
+            // replay the proposals
         }
+
+        // We're done with this peer
+        self.peers.push(self.in_flight.take().unwrap());
         // ...
         Ok(())
     }
@@ -177,14 +246,12 @@ impl BlockStore {
         let message = if block_gap > self.max_blocks_in_flight as u64 / 2 {
             // we're far from latest block
             ExternalMessage::RequestFromHeight(RequestBlock {
-                from_number: alpha_block.header.number,
                 from_hash: alpha_block.header.hash,
                 batch_size: self.max_blocks_in_flight,
             })
         } else {
             // we're close to latest block
             ExternalMessage::RequestFromHash(RequestBlock {
-                from_number: omega_block.header.number,
                 from_hash: omega_block.header.hash,
                 batch_size: self.max_blocks_in_flight,
             })
