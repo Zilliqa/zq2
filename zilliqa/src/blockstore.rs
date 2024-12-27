@@ -12,7 +12,7 @@ use libp2p::PeerId;
 use crate::{
     cfg::NodeConfig,
     db::Db,
-    message::{Block, ExternalMessage, Proposal, RequestBlock},
+    message::{Block, ExternalMessage, Proposal, RequestBlock, ResponseBlock},
     node::MessageSender,
 };
 
@@ -61,7 +61,7 @@ impl BlockStore {
             })
             .collect();
         let peer_id = message_sender.our_peer_id;
-        
+
         Ok(Self {
             db,
             message_sender,
@@ -71,20 +71,6 @@ impl BlockStore {
             max_blocks_in_flight: config.max_blocks_in_flight.max(31) as usize, // between 30 seconds and 3 days of blocks.
             peer_id,
         })
-    }
-
-    /// Route each proposal as if it were received.
-    pub fn handle_response_from_height(&mut self, proposals: Vec<Proposal>) -> Result<()> {
-        // Just pump the Proposals back to ourselves, and it will be picked up and processed as if it were received.
-        // Only issue is the timestamp skew. We should probably fix that.
-        for p in proposals {
-            tracing::trace!("Received proposal from height: {:?}", p);
-            self.message_sender.send_external_message(
-                self.message_sender.our_peer_id,
-                ExternalMessage::Proposal(p),
-            )?;
-        }
-        Ok(())
     }
 
     pub fn handle_from_hash(&mut self, _: Vec<Proposal>) -> Result<()> {
@@ -111,6 +97,38 @@ impl BlockStore {
 
     pub fn buffer_proposal(&self, _block: Block) {
         // ...
+    }
+
+    pub fn handle_response_from_height(
+        &mut self,
+        from: PeerId,
+        response: ResponseBlock,
+    ) -> Result<()> {
+        // Check that we have enough to complete the process, otherwise ignore
+        if response.proposals.is_empty() {
+            // Empty response, downgrade peer
+            tracing::warn!("blockstore::ResponseFromHeight : empty blocks {from}",);
+        }
+        if response.proposals.len() < self.max_blocks_in_flight {
+            // Partial response, downgrade peer
+            tracing::warn!("blockstore::ResponseFromHeight : partial blocks {from}",);
+        }
+
+        // TODO: Inject proposals
+        tracing::debug!(
+            "blockstore::ResponseFromHeight : injecting proposals {:?}",
+            response.proposals
+        );
+
+        // Just pump the Proposals back to ourselves, and it will be picked up and processed as if it were received.
+        // Only issue is the timestamp skew. We should probably fix that.
+        for p in response.proposals {
+            tracing::trace!("Received proposal from height: {:?}", p);
+            self.message_sender
+                .send_external_message(self.peer_id, ExternalMessage::Proposal(p))?;
+        }
+        // ...
+        Ok(())
     }
 
     /// Request blocks between the current height and the given block.
