@@ -323,22 +323,7 @@ impl Node {
                 self.request_responses.send((response_channel, message))?;
             }
             ExternalMessage::ResponseFromHeight(response) => {
-                // Check that we have enough to complete the process, otherwise ignore
-                if response.proposals.is_empty() {
-                    // Empty response, downgrade peer
-                    warn!("blockstore::ResponseFromHeight : empty blocks in flight {from}",);
-                }
-                if response.proposals.len() < self.config.max_blocks_in_flight {
-                    // Partial response, downgrade peer
-                    warn!("blockstore::ResponseFromHeight : insufficient blocks in flight {from}",);
-                }
-
-                // TODO: Inject proposals
-                debug!(
-                    "blockstore::ResponseFromHeight : injecting proposals {:?}",
-                    response
-                );
-
+                self.consensus.blockstore.handle_response_from_height(from, response)?;
                 // Acknowledge this block response. This does nothing because the `BlockResponse` request was sent by
                 // us, but we keep it here for symmetry with the other handlers.
                 self.request_responses
