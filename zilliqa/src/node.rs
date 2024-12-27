@@ -270,31 +270,40 @@ impl Node {
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
             ExternalMessage::RequestFromHeight(request) => {
+                tracing::debug!(
+                    "blockstore::RequestFromHeight : received a block request from {}",
+                    from
+                );
+
                 if from == self.peer_id {
-                    warn!("block_store::RequestFromHeight : ignoring blocks request to self");
+                    warn!("blockstore::RequestFromHeight : ignoring blocks from self");
                     return Ok(());
                 }
 
                 // TODO: Check if we should service this request.
                 // Validators shall not respond to this request.
 
-                trace!(
-                    "block_store::RequestFromHeight : received a block request - {}",
-                    self.peer_id
-                );
-
-                // TODO: Replace this entire block with a single SQL query
                 let Some(alpha) = self.db.get_block_by_hash(&request.from_hash)? else {
                     // We do not have the starting block
+                    tracing::warn!(
+                        "blockstore::RequestFromHeight : missing starting block {}",
+                        request.from_hash
+                    );
                     self.request_responses.send((
                         response_channel,
                         ExternalMessage::ResponseFromHash(ResponseBlock { proposals: vec![] }),
                     ))?;
                     return Ok(());
                 };
+
+                // TODO: Replace this with a single SQL query
                 let mut proposals = Vec::new();
-                for num in alpha.number().saturating_add(1)
-                    ..=alpha.number().saturating_add(request.batch_size as u64)
+                let batch_size = self
+                    .config
+                    .max_blocks_in_flight
+                    .min(request.batch_size as u64);
+                for num in
+                    alpha.number().saturating_add(1)..=alpha.number().saturating_add(batch_size)
                 {
                     let Some(block) = self.db.get_canonical_block_by_number(num)? else {
                         // that's all we have!
@@ -303,10 +312,12 @@ impl Node {
                     proposals.push(self.block_to_proposal(block));
                 }
 
-                self.request_responses.send((
-                    response_channel,
-                    ExternalMessage::ResponseFromHash(ResponseBlock { proposals }),
-                ))?;
+                let message = ExternalMessage::ResponseFromHash(ResponseBlock { proposals });
+                tracing::trace!(
+                    ?message,
+                    "blockstore::RequestFromHeight : responding to block request from height"
+                );
+                self.request_responses.send((response_channel, message))?;
             }
             ExternalMessage::ResponseFromHeight(response) => {
                 // Check that we have enough to complete the process, otherwise ignore
@@ -331,21 +342,25 @@ impl Node {
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
             ExternalMessage::RequestFromHash(request) => {
+                debug!(
+                    "blockstore::RequestFromHash : received a block request from {}",
+                    from
+                );
+
                 if from == self.peer_id {
-                    warn!("block_store::RequestFromHash : ignoring blocks request to self");
+                    warn!("blockstore::RequestFromHash : ignoring request from self");
                     return Ok(());
                 }
-
-                trace!(
-                    "block_store::RequestFromHash : received a block request - {}",
-                    self.peer_id
-                );
 
                 // TODO: Check if we should service this request
                 // Validators could respond to this request if there is nothing else to do.
 
                 let Some(omega_block) = self.db.get_block_by_hash(&request.from_hash)? else {
                     // We do not have the starting block
+                    tracing::warn!(
+                        "blockstore::RequestFromHash : missing starting block {}",
+                        request.from_hash
+                    );
                     self.request_responses.send((
                         response_channel,
                         ExternalMessage::ResponseFromHash(ResponseBlock { proposals: vec![] }),
@@ -356,7 +371,10 @@ impl Node {
                 let mut proposals = Vec::new();
                 let mut hash = omega_block.parent_hash();
                 // grab up to batch_size blocks
-                while proposals.len() < request.batch_size {
+                let batch_size = request
+                    .batch_size
+                    .min(self.config.max_blocks_in_flight as usize);
+                while proposals.len() < batch_size {
                     // grab the parent
                     let Some(block) = self.db.get_block_by_hash(&hash)? else {
                         // that's all we have!
@@ -366,10 +384,12 @@ impl Node {
                     proposals.push(self.block_to_proposal(block));
                 }
 
-                self.request_responses.send((
-                    response_channel,
-                    ExternalMessage::ResponseFromHash(ResponseBlock { proposals }),
-                ))?;
+                let message = ExternalMessage::ResponseFromHash(ResponseBlock { proposals });
+                tracing::trace!(
+                    ?message,
+                    "blockstore::RequestFromHash : responding to block request from height"
+                );
+                self.request_responses.send((response_channel, message))?;
             }
             ExternalMessage::ResponseFromHash(response) => {
                 // Check that we have enough to complete the process, otherwise ignore
@@ -394,43 +414,55 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
+
+            // Respond negatively to old BlockRequests.
             ExternalMessage::BlockRequest(request) => {
-                if from == self.peer_id {
-                    debug!("block_store::BlockRequest : ignoring blocks request to self");
-                    return Ok(());
-                }
-
-                trace!(
-                    "block_store::BlockRequest : received a block request - {}",
-                    self.peer_id
-                );
-                // Note that it is very important that we limit this by number of blocks
-                // returned, _not_ by max view range returned. If we don't, then any
-                // view gap larger than block_request_limit will never be filliable
-                // because no node will ever be prepared to return the block after it.
-                let proposals: Vec<Proposal> = (request.from_view..=request.to_view)
-                    .take(self.config.block_request_limit)
-                    .filter_map(|view| {
-                        self.consensus
-                            .get_block_by_view(view)
-                            .transpose()
-                            .map(|block| Ok(self.block_to_proposal(block?)))
-                    })
-                    .collect::<Result<_>>()?;
-
-                let availability = self.consensus.block_store.availability()?;
-                trace!("block_store::BlockRequest - responding to new blocks request {id:?} from {from:?} of {request:?} with props {0:?} availability {availability:?}",
-                       proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
-
-                // Send the response to this block request.
                 self.request_responses.send((
                     response_channel,
                     ExternalMessage::BlockResponse(BlockResponse {
-                        proposals,
+                        proposals: vec![],
                         from_view: request.from_view,
-                        availability,
+                        availability: None,
                     }),
                 ))?;
+                return Ok(());
+
+                // if from == self.peer_id {
+                //     debug!("block_store::BlockRequest : ignoring blocks request to self");
+                //     return Ok(());
+                // }
+
+                // trace!(
+                //     "block_store::BlockRequest : received a block request - {}",
+                //     self.peer_id
+                // );
+                // // Note that it is very important that we limit this by number of blocks
+                // // returned, _not_ by max view range returned. If we don't, then any
+                // // view gap larger than block_request_limit will never be filliable
+                // // because no node will ever be prepared to return the block after it.
+                // let proposals: Vec<Proposal> = (request.from_view..=request.to_view)
+                //     .take(self.config.block_request_limit)
+                //     .filter_map(|view| {
+                //         self.consensus
+                //             .get_block_by_view(view)
+                //             .transpose()
+                //             .map(|block| Ok(self.block_to_proposal(block?)))
+                //     })
+                //     .collect::<Result<_>>()?;
+
+                // let availability = self.consensus.block_store.availability()?;
+                // trace!("block_store::BlockRequest - responding to new blocks request {id:?} from {from:?} of {request:?} with props {0:?} availability {availability:?}",
+                //        proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
+
+                // // Send the response to this block request.
+                // self.request_responses.send((
+                //     response_channel,
+                //     ExternalMessage::BlockResponse(BlockResponse {
+                //         proposals,
+                //         from_view: request.from_view,
+                //         availability,
+                //     }),
+                // ))?;
             }
             // We don't usually expect a [BlockResponse] to be received as a request, however this can occur when our
             // [BlockStore] has re-sent a previously unusable block because we didn't (yet) have the block's parent.
