@@ -24,7 +24,7 @@ Commands:
   restore                Restore a node data dir from a backup in the persistence bucket
   reset                  Reset a network stopping all the nodes and cleaning the /data folder
   restart                Restart a network stopping all the nodes and starting the service again
-  block-number           Show the network nodes block number
+  monitor                Show the network nodes specified metrics
   api                    Perform operation over the network API nodes
   generate-private-keys  Generate the node private keys. --force to replace if already existing
   generate-genesis-key   Generate the genesis key. --force to replace if already existing
@@ -635,4 +635,40 @@ Configuration file: zq2-prototestnet.yaml
 
 ```bash
 z2 deployer api -o attach zq2-prototestnet.yaml
+```
+
+## Monitor the network nodes specified metrics
+
+```bash
+z2 deployer monitor --help
+```
+
+```bash
+Monitor the network nodes specified metrics
+
+Usage: z2 deployer monitor [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+      --metric <METRIC>  The metric to display. Default: block-number [possible values: block-number, consensus-info]
+      --select           Enable nodes selection
+      --follow           After showing the metrics, watch for changes
+  -v, --verbose...       Increase logging verbosity
+  -q, --quiet...         Decrease logging verbosity
+  -h, --help             Print help
+```
+
+### Usage example
+
+#### Monitor the nodes blocknumber
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer monitor --metric block-number --follow zq2-prototestnet.yaml
 ```

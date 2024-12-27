@@ -314,6 +314,82 @@ impl Machine {
 
         Ok(u64::from_str_radix(block_number, 16)?)
     }
+
+    pub async fn get_consensus_info(&self, timeout: usize) -> Result<Value> {
+        let response: Value = serde_json::from_str(
+            &self
+                .get_rpc_response("admin_consensusInfo", &None, timeout, NodePort::Admin)
+                .await?,
+        )?;
+
+        let response = response
+            .get("result")
+            .ok_or_else(|| anyhow!("response has no result"))?;
+
+        Ok(response.to_owned())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ConsensusInfo {
+    view: String,
+    high_qc: HighQc,
+    milliseconds_since_last_view_change: u64,
+    milliseconds_until_next_view_change: u64,
+}
+
+impl Default for ConsensusInfo {
+    fn default() -> Self {
+        Self {
+            view: "---".to_string(),
+            high_qc: HighQc::default(),
+            milliseconds_since_last_view_change: u64::MIN,
+            milliseconds_until_next_view_change: u64::MIN,
+        }
+    }
+}
+
+impl fmt::Display for ConsensusInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "view: {}\ttime_since_last_view_change: {}ms\ttime_until_next_view_change: {}ms\n{} {}",
+            self.view,
+            self.milliseconds_since_last_view_change,
+            self.milliseconds_until_next_view_change,
+            "high_qc:".bold(),
+            self.high_qc
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct HighQc {
+    signature: String,
+    cosigned: String,
+    view: String,
+    block_hash: String,
+}
+
+impl Default for HighQc {
+    fn default() -> Self {
+        Self {
+            signature: "---".to_string(),
+            cosigned: "---".to_string(),
+            view: "---".to_string(),
+            block_hash: "---".to_string(),
+        }
+    }
+}
+
+impl fmt::Display for HighQc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "view: {}\tblock_hash: {}\tcosigned: {}\nsign: {}",
+            self.view, self.block_hash, self.cosigned, self.signature
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1016,7 +1092,7 @@ impl ChainNode {
         Ok(())
     }
 
-    pub async fn get_block(
+    pub async fn get_block_number(
         &self,
         multi_progress: &indicatif::MultiProgress,
         follow: bool,
@@ -1089,6 +1165,70 @@ impl ChainNode {
                     current_block,
                     self.name()
                 );
+                progress_bar.set_message(message);
+                progress_bar.set_position(0);
+            }
+        }
+
+        progress_bar.finish_with_message(message);
+
+        Ok(())
+    }
+
+    pub async fn get_consensus_info(
+        &self,
+        multi_progress: &indicatif::MultiProgress,
+        follow: bool,
+    ) -> Result<()> {
+        const BAR_SIZE: u64 = 40;
+        const INTERVAL_IN_SEC: u64 = 5;
+        const BAR_BLOCK_PER_TIME: u64 = 8;
+        const BAR_REFRESH_IN_MILLIS: u64 = INTERVAL_IN_SEC * 1000 / BAR_SIZE * BAR_BLOCK_PER_TIME;
+
+        let progress_bar = multi_progress.add(indicatif::ProgressBar::new(BAR_SIZE));
+        progress_bar.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template(&format!(
+                    "--------------------------------------------------------\n{{spinner:.green}} {} {{bar:{}.cyan/blue}} {{msg}}",
+                    self.name().yellow(),
+                    BAR_SIZE
+                ))
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+
+        let response = self
+            .machine
+            .get_consensus_info(INTERVAL_IN_SEC as usize)
+            .await
+            .ok();
+
+        let consensus_info = response.map_or(ConsensusInfo::default(), |ci| {
+            serde_json::from_value(ci).expect("Failed to parse JSON")
+        });
+
+        let mut message = format!("{}", consensus_info);
+        progress_bar.set_message(message.clone());
+
+        if follow {
+            loop {
+                for i in 1..=(BAR_SIZE / BAR_BLOCK_PER_TIME) {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(BAR_REFRESH_IN_MILLIS))
+                        .await;
+                    progress_bar.set_position(i * BAR_BLOCK_PER_TIME);
+                }
+
+                let response = self
+                    .machine
+                    .get_consensus_info(INTERVAL_IN_SEC as usize)
+                    .await
+                    .ok();
+
+                let consensus_info = response.map_or(ConsensusInfo::default(), |ci| {
+                    serde_json::from_value(ci).expect("Failed to parse JSON")
+                });
+
+                message = format!("{}", consensus_info);
                 progress_bar.set_message(message);
                 progress_bar.set_position(0);
             }

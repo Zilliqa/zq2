@@ -12,7 +12,7 @@ use libp2p::PeerId;
 use z2lib::{
     chain::{self, node::NodePort},
     components::Component,
-    deployer::ApiOperation,
+    deployer::{ApiOperation, Metrics},
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
@@ -102,8 +102,8 @@ enum DeployerCommands {
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
-    /// Show the network nodes block number
-    BlockNumber(DeployerBlockNumberArgs),
+    /// Monitor the network nodes specified metrics
+    Monitor(DeployerMonitorArgs),
     /// Perform operation over the network API nodes
     Api(DeployerApiArgs),
     /// Generate the node private keys. --force to replace if already existing
@@ -174,15 +174,18 @@ pub struct DeployerActionsArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct DeployerBlockNumberArgs {
-    /// The network deployer config file
-    config_file: Option<String>,
+pub struct DeployerMonitorArgs {
+    /// The metric to display. Default: block-number
+    #[clap(long)]
+    metric: Option<Metrics>,
     /// Enable nodes selection
     #[clap(long)]
     select: bool,
-    /// After showing the block numbers, watch for changes
+    /// After showing the metrics, watch for changes
     #[clap(long)]
     follow: bool,
+    /// The network deployer config file
+    config_file: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -929,17 +932,22 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::BlockNumber(ref arg) => {
+            DeployerCommands::Monitor(ref arg) => {
                 let config_file: String = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_block_number(&config_file, arg.select, arg.follow)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer block-number command: {}", err)
-                    })?;
+                plumbing::run_deployer_monitor(
+                    &config_file,
+                    arg.metric.clone().unwrap_or_default(),
+                    arg.select,
+                    arg.follow,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer monitor command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::GenerateGenesisKey(ref arg) => {
