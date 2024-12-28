@@ -35,6 +35,7 @@ enum DownGrade {
 
 // TODO: What if we receive a fork
 // TODO: How to start syncing at the start
+// TODO: Do speculative fetches
 
 #[derive(Debug)]
 pub struct BlockStore {
@@ -281,26 +282,26 @@ impl BlockStore {
         // TODO: Any additional checks we should do here?
 
         // Inject received proposals
-        let next_hash = response.proposals.last().unwrap().hash();
+        // let next_hash = response.proposals.last().unwrap().hash();
         self.inject_proposals(response.proposals)?;
 
         // Speculatively request more blocks, as there might be more
-        self.in_flight = self.get_next_peer();
-        if let Some(peer) = self.in_flight.as_ref() {
-            let message = ExternalMessage::RequestFromHeight(RequestBlock {
-                batch_size: self.max_blocks_in_flight,
-                from_hash: next_hash,
-            });
+        // self.in_flight = self.get_next_peer();
+        // if let Some(peer) = self.in_flight.as_ref() {
+        //     let message = ExternalMessage::RequestFromHeight(RequestBlock {
+        //         batch_size: self.max_blocks_in_flight,
+        //         from_hash: next_hash,
+        //     });
 
-            tracing::info!(
-                "Requesting {} missing blocks from {}",
-                self.max_blocks_in_flight,
-                peer.peer_id,
-            );
+        //     tracing::info!(
+        //         "Requesting {} missing blocks from {}",
+        //         self.max_blocks_in_flight,
+        //         peer.peer_id,
+        //     );
 
-            self.message_sender
-                .send_external_message(peer.peer_id, message)?;
-        }
+        //     self.message_sender
+        //         .send_external_message(peer.peer_id, message)?;
+        // }
 
         Ok(())
     }
