@@ -20,13 +20,11 @@ use crate::{
 enum DownGrade {
     None,
     Partial,
-    Empty,
     Timeout,
+    Empty,
 }
 
-/// Stores and manages the node's list of blocks. Also responsible for making requests for new blocks.
-///
-/// # Syncing Algorithm
+/// Syncing Algorithm
 ///
 /// We rely on [crate::consensus::Consensus] informing us of newly received block proposals via:
 /// * [BlockStore::process_block] for blocks that can be part of our chain, because we already have their parent.
@@ -34,6 +32,9 @@ enum DownGrade {
 ///
 /// Both these code paths also call [BlockStore::request_missing_blocks]. This finds the greatest view of any proposal
 /// we've seen (whether its part of our chain or not).
+
+// TODO: What if we receive a fork
+// TODO: How to start syncing at the start
 
 #[derive(Debug)]
 pub struct BlockStore {
@@ -81,11 +82,8 @@ impl BlockStore {
         })
     }
 
-    pub fn handle_from_hash(&mut self, _: Vec<Proposal>) -> Result<()> {
-        // ...
-        Ok(())
-    }
-
+    /// Process a block proposal.
+    /// Checks if the parent block exists, and if not, triggers a sync.
     pub fn process_proposal(&mut self, block: Block) -> Result<()> {
         // ...
         // check if block parent exists
@@ -97,7 +95,7 @@ impl BlockStore {
                 "blockstore::ProcessProposal : Parent block {} not found",
                 block.parent_hash()
             );
-            self.request_missing_blocks(block)?;
+            self.request_missing_blocks(Some(block))?;
             return Ok(());
         }
         Ok(())
@@ -107,15 +105,63 @@ impl BlockStore {
         // ...
     }
 
+    /// Convenience function to convert a block to a proposal (add full txs)
+    /// NOTE: Includes intershard transactions. Should only be used for syncing history,
+    /// not for consensus messages regarding new blocks.
     fn block_to_proposal(&self, block: Block) -> Proposal {
+        // since block must be valid, unwrap(s) are safe
         let txs = block
             .transactions
             .iter()
             .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
             .map(|tx| tx.verify().unwrap())
-            .collect();
+            .collect_vec();
 
         Proposal::from_parts(block, txs)
+    }
+
+    pub fn handle_request_from_hash(
+        &mut self,
+        from: PeerId,
+        request: RequestBlock,
+    ) -> Result<ExternalMessage> {
+        tracing::debug!(
+            "blockstore::RequestFromHash : received a block request from {}",
+            from
+        );
+
+        // TODO: Check if we should service this request
+        // Validators could respond to this request if there is nothing else to do.
+
+        let Some(omega_block) = self.db.get_block_by_hash(&request.from_hash)? else {
+            // We do not have the starting block
+            tracing::warn!(
+                "blockstore::RequestFromHash : missing starting block {}",
+                request.from_hash
+            );
+            let message = ExternalMessage::ResponseFromHash(ResponseBlock { proposals: vec![] });
+            return Ok(message);
+        };
+
+        let batch_size = self.max_blocks_in_flight.min(request.batch_size); // mitigate DOS attacks by limiting the number of blocks we send
+        let mut proposals: Vec<Proposal> = Vec::new();
+        let mut hash = omega_block.parent_hash();
+        while proposals.len() < batch_size {
+            // grab the parent
+            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+                // that's all we have!
+                break;
+            };
+            hash = block.parent_hash();
+            proposals.push(self.block_to_proposal(block));
+        }
+
+        let message = ExternalMessage::ResponseFromHash(ResponseBlock { proposals });
+        tracing::trace!(
+            ?message,
+            "blockstore::RequestFromHash : responding to block request from height"
+        );
+        Ok(message)
     }
 
     pub fn handle_request_from_height(
@@ -144,8 +190,8 @@ impl BlockStore {
         };
 
         // TODO: Replace this with a single SQL query
+        let batch_size = self.max_blocks_in_flight.min(request.batch_size) as u64; // mitigate DOS attacks by limiting the number of blocks we send
         let mut proposals = Vec::new();
-        let batch_size = self.max_blocks_in_flight.min(request.batch_size) as u64;
         for num in alpha.number().saturating_add(1)..=alpha.number().saturating_add(batch_size) {
             let Some(block) = self.db.get_canonical_block_by_number(num)? else {
                 // that's all we have!
@@ -162,22 +208,21 @@ impl BlockStore {
         Ok(message)
     }
 
-    fn inject_proposals(&mut self, proposals: Vec<Proposal>) -> Result<Option<Proposal>> {
+    /// Pump the proposals into the chain.
+    fn inject_proposals(&mut self, proposals: Vec<Proposal>) -> Result<()> {
         tracing::info!(
             "blockstore::InjectProposals : injecting {} proposals",
             proposals.len()
         );
 
         if proposals.is_empty() {
-            return Ok(None);
+            return Ok(());
         }
         // Sort proposals by number
         let proposals = proposals
             .into_iter()
             .sorted_by_key(|p| p.number())
             .collect_vec();
-
-        let last_proposal = proposals.last().cloned();
 
         // Just pump the Proposals back to ourselves.
         for p in proposals {
@@ -196,9 +241,10 @@ impl BlockStore {
             )?;
         }
         // return last proposal
-        Ok(last_proposal)
+        Ok(())
     }
 
+    /// Downgrade a peer based on the response received.
     fn done_with_peer(&mut self, downgrade: DownGrade) {
         // ...
         if let Some(mut peer) = self.in_flight.take() {
@@ -212,7 +258,7 @@ impl BlockStore {
         from: PeerId,
         response: ResponseBlock,
     ) -> Result<()> {
-        // Check that we have enough to complete the process, otherwise ignore
+        // Process whatever we have received.
         if response.proposals.is_empty() {
             // Empty response, downgrade peer
             tracing::warn!("blockstore::ResponseFromHeight : empty blocks {from}",);
@@ -233,9 +279,29 @@ impl BlockStore {
         );
 
         // TODO: Any additional checks we should do here?
+
+        // Inject received proposals
+        let next_hash = response.proposals.last().unwrap().hash();
         self.inject_proposals(response.proposals)?;
 
-        // Speculatively request more blocks
+        // Speculatively request more blocks, as there might be more
+        self.in_flight = self.get_next_peer();
+        if let Some(peer) = self.in_flight.as_ref() {
+            let message = ExternalMessage::RequestFromHeight(RequestBlock {
+                batch_size: self.max_blocks_in_flight,
+                from_hash: next_hash,
+            });
+
+            tracing::info!(
+                "Requesting {} missing blocks from {}",
+                self.max_blocks_in_flight,
+                peer.peer_id,
+            );
+
+            self.message_sender
+                .send_external_message(peer.peer_id, message)?;
+        }
+
         Ok(())
     }
 
@@ -244,13 +310,15 @@ impl BlockStore {
         from: PeerId,
         response: ResponseBlock,
     ) -> Result<()> {
+        // Check that we have enough to complete the process, otherwise ignore
         if response.proposals.is_empty() {
-            // Empty response, downgrade peer
+            // Empty response, downgrade peer, skip
             tracing::warn!("blockstore::ResponseFromHash : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
         } else if response.proposals.len() <= self.max_blocks_in_flight / 2 {
             // Partial response, downgrade peer
+            // Skip processing because we want to ensure that we have ALL the needed blocks to sync up.
             tracing::warn!("blockstore::ResponseFromHash : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
             return Ok(());
@@ -267,19 +335,18 @@ impl BlockStore {
 
         // TODO: Any additional checks we should do here?
 
+        // Inject the proposals
         self.inject_proposals(response.proposals)?;
-
-        // ...
         Ok(())
     }
 
     /// Request blocks between the current height and the given block.
     ///
     /// The approach is to request blocks in batches of `max_blocks_in_flight` blocks.
+    /// If None block is provided, we request blocks from the last known canonical block forwards.
     /// If the block gap is large, we request blocks from the last known canonical block forwards.
     /// If the block gap is small, we request blocks from the latest block backwards.
-    ///
-    pub fn request_missing_blocks(&mut self, omega_block: Block) -> Result<()> {
+    pub fn request_missing_blocks(&mut self, omega_block: Option<Block>) -> Result<()> {
         // Early exit if there's a request in-flight; and if it has not expired.
         if let Some(peer) = self.in_flight.as_ref() {
             if peer.last_used.elapsed() > self.request_timeout {
@@ -288,14 +355,14 @@ impl BlockStore {
                     peer.peer_id
                 );
                 self.done_with_peer(DownGrade::Timeout);
-                self.in_flight = self.get_next_peer(None);
+                self.in_flight = self.get_next_peer();
             } else {
                 return Ok(());
             }
         } else {
-            self.in_flight = self.get_next_peer(None);
+            self.in_flight = self.get_next_peer();
             if self.in_flight.is_none() {
-                tracing::error!("No peers available to request missing blocks");
+                tracing::warn!("Insufficient peers available to request missing blocks");
                 return Ok(());
             }
         }
@@ -309,10 +376,15 @@ impl BlockStore {
         let alpha_block = self.db.get_canonical_block_by_number(height)?.unwrap();
 
         // Compute the block gap.
-        let block_gap = omega_block
-            .header
-            .number
-            .saturating_sub(alpha_block.header.number);
+        let block_gap = if let Some(omega_block) = omega_block.as_ref() {
+            omega_block
+                .header
+                .number
+                .saturating_sub(alpha_block.header.number)
+        } else {
+            // Trigger a RequestFromHeight if the source block is None
+            self.max_blocks_in_flight as u64
+        };
 
         // TODO: Double-check hysteresis logic - may not even be necessary to do RequestFromHash
         let message = if block_gap > self.max_blocks_in_flight as u64 / 2 {
@@ -324,7 +396,7 @@ impl BlockStore {
         } else {
             // we're close to latest block
             ExternalMessage::RequestFromHash(RequestBlock {
-                from_hash: omega_block.header.hash,
+                from_hash: omega_block.unwrap().header.hash,
                 batch_size: self.max_blocks_in_flight,
             })
         };
@@ -345,7 +417,6 @@ impl BlockStore {
     /// Add a peer to the list of peers.
     pub fn add_peer(&mut self, peer: PeerId) {
         // new peers should be tried last, which gives them time to sync first.
-        // peers do not need to be unique.
         let new_peer = PeerInfo {
             score: self.peers.iter().map(|p| p.score).max().unwrap_or_default(),
             peer_id: peer,
@@ -359,18 +430,14 @@ impl BlockStore {
         self.peers.retain(|p| p.peer_id != peer);
     }
 
-    fn get_next_peer(&mut self, prev_peer: Option<PeerInfo>) -> Option<PeerInfo> {
-        // Push the current peer into the heap, risks spamming the same peer.
+    fn get_next_peer(&mut self) -> Option<PeerInfo> {
         // TODO: implement a better strategy for this.
-        if let Some(peer) = prev_peer {
-            self.peers.push(peer);
+        if self.peers.len() < 2 {
+            return None;
         }
 
         let mut peer = self.peers.pop()?;
-
-        // used to determine stale in-flight requests.
-        peer.last_used = std::time::Instant::now();
-
+        peer.last_used = std::time::Instant::now(); // used to determine stale in-flight requests.
         Some(peer)
     }
 }
