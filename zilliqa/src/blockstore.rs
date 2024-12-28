@@ -34,8 +34,8 @@ enum DownGrade {
 /// we've seen (whether its part of our chain or not).
 
 // TODO: What if we receive a fork
-// TODO: How to start syncing at the start
-// TODO: Do speculative fetches
+// TODO: How to start syncing validators
+// TODO: How to handle restarting new blocks, while injected blocks are still in-queue.
 
 #[derive(Debug)]
 pub struct BlockStore {
@@ -51,8 +51,12 @@ pub struct BlockStore {
     request_timeout: Duration,
     // how many blocks to request at once
     max_blocks_in_flight: usize,
+    // how many blocks to inject into the queue
+    max_blocks_injected: usize,
     // our peer id
     peer_id: PeerId,
+    // how many injected proposals
+    injected: usize,
 }
 
 impl BlockStore {
@@ -71,16 +75,25 @@ impl BlockStore {
             })
             .collect();
         let peer_id = message_sender.our_peer_id;
+        let max_blocks = config.max_blocks_in_flight.max(31) as usize; // between 30 seconds and 3 days of blocks.
 
         Ok(Self {
             db,
             message_sender,
             peers,
-            in_flight: None,
-            request_timeout: config.consensus.consensus_timeout,
-            max_blocks_in_flight: config.max_blocks_in_flight.max(31) as usize, // between 30 seconds and 3 days of blocks.
             peer_id,
+            request_timeout: config.consensus.consensus_timeout,
+            max_blocks_in_flight: max_blocks,
+            max_blocks_injected: max_blocks * 10, // fire 10 speculative requests
+            in_flight: None,
+            injected: 0,
         })
+    }
+
+    /// Handle an injected proposal
+    ///
+    pub fn handle_injected_proposal(&mut self, proposal: Proposal) -> Result<()> {
+        Ok(())
     }
 
     /// Process a block proposal.
@@ -102,10 +115,6 @@ impl BlockStore {
         Ok(())
     }
 
-    pub fn buffer_proposal(&self, _block: Block) {
-        // ...
-    }
-
     /// Convenience function to convert a block to a proposal (add full txs)
     /// NOTE: Includes intershard transactions. Should only be used for syncing history,
     /// not for consensus messages regarding new blocks.
@@ -121,6 +130,9 @@ impl BlockStore {
         Proposal::from_parts(block, txs)
     }
 
+    /// Request blocks from a hash, backwards.
+    ///
+    /// It will collect N blocks by following the block.parent_hash() of the requested block.
     pub fn handle_request_from_hash(
         &mut self,
         from: PeerId,
@@ -165,6 +177,7 @@ impl BlockStore {
         Ok(message)
     }
 
+    /// Request for blocks from a height, forwards.
     pub fn handle_request_from_height(
         &mut self,
         from: PeerId,
@@ -225,6 +238,9 @@ impl BlockStore {
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
+        // Increment propoals injected
+        self.injected += proposals.len();
+
         // Just pump the Proposals back to ourselves.
         for p in proposals {
             tracing::trace!(
@@ -282,27 +298,28 @@ impl BlockStore {
         // TODO: Any additional checks we should do here?
 
         // Inject received proposals
-        // let next_hash = response.proposals.last().unwrap().hash();
+        let next_hash = response.proposals.last().unwrap().hash();
         self.inject_proposals(response.proposals)?;
 
         // Speculatively request more blocks, as there might be more
-        // self.in_flight = self.get_next_peer();
-        // if let Some(peer) = self.in_flight.as_ref() {
-        //     let message = ExternalMessage::RequestFromHeight(RequestBlock {
-        //         batch_size: self.max_blocks_in_flight,
-        //         from_hash: next_hash,
-        //     });
+        if self.injected < self.max_blocks_injected {
+            self.in_flight = self.get_next_peer();
+            if let Some(peer) = self.in_flight.as_ref() {
+                let message = ExternalMessage::RequestFromHeight(RequestBlock {
+                    batch_size: self.max_blocks_in_flight,
+                    from_hash: next_hash,
+                });
 
-        //     tracing::info!(
-        //         "Requesting {} missing blocks from {}",
-        //         self.max_blocks_in_flight,
-        //         peer.peer_id,
-        //     );
+                tracing::info!(
+                    "Requesting {} future blocks from {}",
+                    self.max_blocks_in_flight,
+                    peer.peer_id,
+                );
 
-        //     self.message_sender
-        //         .send_external_message(peer.peer_id, message)?;
-        // }
-
+                self.message_sender
+                    .send_external_message(peer.peer_id, message)?;
+            }
+        }
         Ok(())
     }
 
@@ -432,7 +449,7 @@ impl BlockStore {
     }
 
     fn get_next_peer(&mut self) -> Option<PeerInfo> {
-        // TODO: implement a better strategy for this.
+        // Minimum of 2 peers to avoid single source of truth.
         if self.peers.len() < 2 {
             return None;
         }
