@@ -84,9 +84,7 @@ impl MessageSender {
     }
 
     pub fn next_request_id(&mut self) -> RequestId {
-        let request_id = self.request_id;
-        self.request_id.0 = self.request_id.0.wrapping_add(1);
-        request_id
+        RequestId(rand::random()) // TODO: make this more secure, non-predictable
     }
 
     /// Send a message to a remote node of the same shard.
