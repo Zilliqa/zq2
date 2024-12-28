@@ -34,7 +34,7 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
-        ProcessProposal, Proposal, ResponseBlock,
+        ProcessProposal, Proposal,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -281,51 +281,10 @@ impl Node {
                 self.request_responses.send((response_channel, message))?;
             }
             ExternalMessage::RequestFromHash(request) => {
-                debug!(
-                    "blockstore::RequestFromHash : received a block request from {}",
-                    from
-                );
-
-                if from == self.peer_id {
-                    warn!("blockstore::RequestFromHash : ignoring request from self");
-                    return Ok(());
-                }
-
-                // TODO: Check if we should service this request
-                // Validators could respond to this request if there is nothing else to do.
-
-                let Some(omega_block) = self.db.get_block_by_hash(&request.from_hash)? else {
-                    // We do not have the starting block
-                    tracing::warn!(
-                        "blockstore::RequestFromHash : missing starting block {}",
-                        request.from_hash
-                    );
-                    self.request_responses.send((
-                        response_channel,
-                        ExternalMessage::ResponseFromHash(ResponseBlock { proposals: vec![] }),
-                    ))?;
-                    return Ok(());
-                };
-
-                let mut proposals = Vec::new();
-                let mut hash = omega_block.parent_hash();
-                // grab up to batch_size blocks
-                let batch_size = request.batch_size.min(self.config.max_blocks_in_flight);
-                while proposals.len() < batch_size {
-                    // grab the parent
-                    let Some(block) = self.db.get_block_by_hash(&hash)? else {
-                        // that's all we have!
-                        break;
-                    };
-                    hash = block.parent_hash();
-                    proposals.push(self.block_to_proposal(block));
-                }
-
-                let message = ExternalMessage::ResponseFromHash(ResponseBlock { proposals });
-                tracing::trace!(
-                    ?message,
-                    "blockstore::RequestFromHash : responding to block request from height"
-                );
+                let message = self
+                    .consensus
+                    .blockstore
+                    .handle_request_from_hash(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             ExternalMessage::ResponseFromHash(response) => {
@@ -1006,24 +965,6 @@ impl Node {
 
     pub fn get_peer_num(&self) -> usize {
         self.peer_num.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Convenience function to convert a block to a proposal (add full txs)
-    /// NOTE: Includes intershard transactions. Should only be used for syncing history,
-    /// not for consensus messages regarding new blocks.
-    fn block_to_proposal(&self, block: Block) -> Proposal {
-        let txs: Vec<_> = block
-            .transactions
-            .iter()
-            .map(|tx_hash| {
-                self.consensus
-                    .get_transaction_by_hash(*tx_hash)
-                    .unwrap()
-                    .unwrap()
-            })
-            .collect();
-
-        Proposal::from_parts(block, txs)
     }
 
     fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
