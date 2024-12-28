@@ -455,8 +455,9 @@ def go(role):
     install_docker()
     install_ops_agent()
     install_gcloud()
+    login_registry()
     match role:
-        case "bootstrap" | "checkpoint":
+        case "bootstrap" | "checkpoint" | "persistence":
             log("Configuring a validator node")
             configure_logrotate()
             pull_zq2_image()
@@ -555,6 +556,8 @@ def install_gcloud():
     run_or_die(sudo_noninteractive_apt_env(["apt", "update"]))
     run_or_die(sudo_noninteractive_apt_env(["sudo","apt", "install", "-y", "google-cloud-cli" ]))
 
+def login_registry():
+    run_or_die(["sudo", "bash", "-c", "gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://asia-docker.pkg.dev" ])
 
 def create_zq2_start_script():
     with open("/tmp/zq2.sh", "w") as f:

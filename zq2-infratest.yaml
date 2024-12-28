@@ -6,6 +6,7 @@ roles:
 - api
 - apps
 - checkpoint
+- persistence
 versions:
   zq2: 30a24610
   otterscan: develop
