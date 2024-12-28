@@ -17,6 +17,13 @@ use crate::{
     node::MessageSender,
 };
 
+enum DownGrade {
+    None,
+    Partial,
+    Empty,
+    Timeout,
+}
+
 /// Stores and manages the node's list of blocks. Also responsible for making requests for new blocks.
 ///
 /// # Syncing Algorithm
@@ -155,33 +162,22 @@ impl BlockStore {
         Ok(message)
     }
 
-    pub fn handle_response_from_height(
-        &mut self,
-        from: PeerId,
-        response: ResponseBlock,
-    ) -> Result<()> {
-        // Check that we have enough to complete the process, otherwise ignore
-        if response.proposals.is_empty() {
-            // Empty response, downgrade peer
-            tracing::warn!("blockstore::ResponseFromHeight : empty blocks {from}",);
-        }
-        if response.proposals.len() < self.max_blocks_in_flight {
-            // Partial response, downgrade peer
-            tracing::warn!("blockstore::ResponseFromHeight : partial blocks {from}",);
-        }
-
-        // TODO: Any additional checks we should do here?
+    fn inject_proposals(&mut self, proposals: Vec<Proposal>) -> Result<Option<Proposal>> {
         tracing::info!(
-            "blockstore::ResponseFromHeight : injecting {} proposals from {from}",
-            response.proposals.len()
+            "blockstore::InjectProposals : injecting {} proposals",
+            proposals.len()
         );
 
+        if proposals.is_empty() {
+            return Ok(None);
+        }
         // Sort proposals by number
-        let proposals = response
-            .proposals
+        let proposals = proposals
             .into_iter()
             .sorted_by_key(|p| p.number())
             .collect_vec();
+
+        let last_proposal = proposals.last().cloned();
 
         // Just pump the Proposals back to ourselves.
         for p in proposals {
@@ -199,9 +195,80 @@ impl BlockStore {
                 }),
             )?;
         }
+        // return last proposal
+        Ok(last_proposal)
+    }
 
-        // We're done with this peer
-        self.peers.push(self.in_flight.take().unwrap());
+    fn done_with_peer(&mut self, downgrade: DownGrade) {
+        // ...
+        if let Some(mut peer) = self.in_flight.take() {
+            peer.score += downgrade as u32;
+            self.peers.push(peer);
+        }
+    }
+
+    pub fn handle_response_from_height(
+        &mut self,
+        from: PeerId,
+        response: ResponseBlock,
+    ) -> Result<()> {
+        // Check that we have enough to complete the process, otherwise ignore
+        if response.proposals.is_empty() {
+            // Empty response, downgrade peer
+            tracing::warn!("blockstore::ResponseFromHeight : empty blocks {from}",);
+            self.done_with_peer(DownGrade::Empty);
+            return Ok(());
+        } else if response.proposals.len() < self.max_blocks_in_flight {
+            // Partial response, downgrade peer
+            tracing::warn!("blockstore::ResponseFromHeight : partial blocks {from}",);
+            self.done_with_peer(DownGrade::Partial);
+        } else {
+            self.done_with_peer(DownGrade::None);
+        }
+
+        tracing::info!(
+            "blockstore::ResponseFromHeight : received {} blocks from {}",
+            response.proposals.len(),
+            from
+        );
+
+        // TODO: Any additional checks we should do here?
+        self.inject_proposals(response.proposals)?;
+
+        // Speculatively request more blocks
+        Ok(())
+    }
+
+    pub fn handle_response_from_hash(
+        &mut self,
+        from: PeerId,
+        response: ResponseBlock,
+    ) -> Result<()> {
+        if response.proposals.is_empty() {
+            // Empty response, downgrade peer
+            tracing::warn!("blockstore::ResponseFromHash : empty blocks {from}",);
+            self.done_with_peer(DownGrade::Empty);
+            return Ok(());
+        } else if response.proposals.len() <= self.max_blocks_in_flight / 2 {
+            // Partial response, downgrade peer
+            tracing::warn!("blockstore::ResponseFromHash : partial blocks {from}",);
+            self.done_with_peer(DownGrade::Partial);
+            return Ok(());
+        } else {
+            // only process full responses
+            self.done_with_peer(DownGrade::None);
+        }
+
+        tracing::info!(
+            "blockstore::ResponseFromHash : received {} blocks from {}",
+            response.proposals.len(),
+            from
+        );
+
+        // TODO: Any additional checks we should do here?
+
+        self.inject_proposals(response.proposals)?;
+
         // ...
         Ok(())
     }
@@ -220,9 +287,8 @@ impl BlockStore {
                     "In-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
-                let mut peer = self.in_flight.take().unwrap();
-                peer.score += 1; // TODO: Downgrade score if we keep timing out.
-                self.in_flight = self.get_next_peer(Some(peer));
+                self.done_with_peer(DownGrade::Timeout);
+                self.in_flight = self.get_next_peer(None);
             } else {
                 return Ok(());
             }
@@ -265,7 +331,11 @@ impl BlockStore {
 
         let peer = self.in_flight.as_ref().unwrap();
 
-        tracing::info!(?message, "Requesting missing blocks from {}", peer.peer_id);
+        tracing::info!(
+            "Requesting {} missing blocks from {}",
+            self.max_blocks_in_flight,
+            peer.peer_id,
+        );
 
         self.message_sender
             .send_external_message(peer.peer_id, message)?;
@@ -277,7 +347,7 @@ impl BlockStore {
         // new peers should be tried last, which gives them time to sync first.
         // peers do not need to be unique.
         let new_peer = PeerInfo {
-            score: self.peers.iter().map(|p| p.score).max().unwrap_or(0),
+            score: self.peers.iter().map(|p| p.score).max().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
         };

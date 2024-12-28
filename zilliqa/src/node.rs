@@ -455,6 +455,11 @@ impl Node {
                     .blockstore
                     .handle_response_from_height(from, response)?;
             }
+            ExternalMessage::ResponseFromHash(response) => {
+                self.consensus
+                    .blockstore
+                    .handle_response_from_hash(from, response)?;
+            }
             ExternalMessage::BlockResponse(m) => self.handle_block_response(from, m)?,
             ExternalMessage::Acknowledgement => {}
             _ => {
