@@ -344,28 +344,25 @@ impl BlockStore {
         self.inject_proposals(corroborated_proposals)?;
 
         // Fire speculative request
-        if self.latest_block.is_some() {
-            if self.injected < self.max_blocks_in_flight {
-                if let Some(peer) = self.get_next_peer() {
-                    // we're far from latest block
-                    let message = RequestBlock {
-                        from_number: self.latest_block.as_ref().unwrap().number(),
-                        from_hash: self.latest_block.as_ref().unwrap().hash(),
-                        batch_size: self.max_batch_size,
-                    };
-                    tracing::info!(
-                        "blockstore::RequestMissingBlocks : speculative requesting {} blocks at {} from {}",
-                        message.batch_size,
-                        message.from_number,
-                        peer.peer_id,
-                    );
-                    self.message_sender.send_external_message(
-                        peer.peer_id,
-                        ExternalMessage::RequestFromNumber(message),
-                    )?;
-
-                    self.in_flight = Some(peer);
-                }
+        if self.latest_block.is_some() && self.injected < self.max_blocks_in_flight {
+            if let Some(peer) = self.get_next_peer() {
+                // we're far from latest block
+                let message = RequestBlock {
+                    from_number: self.latest_block.as_ref().unwrap().number(),
+                    from_hash: self.latest_block.as_ref().unwrap().hash(),
+                    batch_size: self.max_batch_size,
+                };
+                tracing::info!(
+                    "blockstore::RequestMissingBlocks : speculative fetch {} blocks at {} from {}",
+                    message.batch_size,
+                    message.from_number,
+                    peer.peer_id,
+                );
+                self.message_sender.send_external_message(
+                    peer.peer_id,
+                    ExternalMessage::RequestFromNumber(message),
+                )?;
+                self.in_flight = Some(peer);
             }
         }
 
@@ -424,7 +421,7 @@ impl BlockStore {
         if let Some(peer) = self.in_flight.as_ref() {
             if peer.last_used.elapsed() > self.request_timeout {
                 tracing::warn!(
-                    "In-flight request {} timed out, requesting from new peer",
+                    "blockstore::RequestMissingBlocks : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
                 self.done_with_peer(DownGrade::Timeout);
@@ -435,7 +432,7 @@ impl BlockStore {
         } else {
             self.in_flight = self.get_next_peer();
             if self.in_flight.is_none() {
-                tracing::warn!("Insufficient peers available to request missing blocks");
+                tracing::warn!("blockstore::RequestMissingBlocks : insufficient peers to request missing blocks");
                 return Ok(());
             }
         }
@@ -485,7 +482,7 @@ impl BlockStore {
             let message = RequestBlock {
                 from_hash: omega_block.hash(),
                 from_number: omega_block.number(),
-                batch_size: GAP_THRESHOLD * 2,
+                batch_size: GAP_THRESHOLD + 1,
             };
             tracing::info!(
                 "blockstore::RequestMissingBlocks : requesting {} blocks at {} from {}",
