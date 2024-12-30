@@ -6,7 +6,6 @@ use std::{
 };
 
 use anyhow::Result;
-
 use itertools::Itertools;
 use libp2p::PeerId;
 
