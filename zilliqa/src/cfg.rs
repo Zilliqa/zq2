@@ -104,7 +104,7 @@ pub struct NodeConfig {
     pub max_blocks_in_flight: usize,
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
-    pub block_request_batch_size: u64,
+    pub block_request_batch_size: usize,
     /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC. Defaults to no limit.
     #[serde(default = "state_rpc_limit_default")]
     pub state_rpc_limit: usize,
@@ -208,7 +208,7 @@ pub fn max_blocks_in_flight_default() -> usize {
     1000
 }
 
-pub fn block_request_batch_size_default() -> u64 {
+pub fn block_request_batch_size_default() -> usize {
     100
 }
 
