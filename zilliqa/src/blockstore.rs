@@ -64,7 +64,7 @@ pub struct BlockStore {
     // how many injected proposals
     injected: usize,
     // cache
-    cache: HashMap<u64, (PeerId, Proposal)>,
+    cache: HashMap<u64, Proposal>,
     latest_block: Option<Block>,
 }
 
@@ -108,7 +108,7 @@ impl BlockStore {
                 prop.from
             );
         }
-        if let Some((_, p)) = self.cache.remove(&prop.block.number()) {
+        if let Some(p) = self.cache.remove(&prop.block.number()) {
             tracing::warn!(
                 "blockstore::MarkReceivedProposal : removing stale cache proposal {}",
                 p.number()
@@ -320,24 +320,24 @@ impl BlockStore {
 
         // Collect corroborated proposals
         for p in props.by_ref() {
-            if let Some((peer, proposal)) = self.cache.remove(&p.number()) {
+            if let Some(proposal) = self.cache.remove(&p.number()) {
                 // If the proposal already exists
-                if peer != from && proposal.hash() == p.hash() {
+                if proposal.hash() == p.hash() {
                     // is corroborated proposal
                     corroborated_proposals.push(proposal);
                 } else {
                     // insert the different one and;
-                    self.cache.insert(p.number(), (from, p));
+                    self.cache.insert(p.number(), p);
                     break; // replace the rest in the next loop
                 }
             } else {
-                self.cache.insert(p.number(), (from, p));
+                self.cache.insert(p.number(), p);
             }
         }
 
         // Replace/insert the rest of the proposals in the cache
         for p in props {
-            self.cache.insert(p.number(), (from, p));
+            self.cache.insert(p.number(), p);
         }
 
         // Inject matched proposals
