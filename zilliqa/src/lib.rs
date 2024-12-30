@@ -1,6 +1,7 @@
 pub mod api;
 pub mod block_store;
 mod blockhooks;
+pub mod blockstore;
 pub mod cfg;
 pub mod consensus;
 pub mod constants;
@@ -27,4 +28,3 @@ pub mod test_util;
 pub mod time;
 pub mod transaction;
 pub mod zq1_proto;
-pub mod blockstore;

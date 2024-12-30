@@ -287,30 +287,6 @@ impl Node {
                     .handle_request_from_hash(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
-            ExternalMessage::ResponseFromHash(response) => {
-                // Check that we have enough to complete the process, otherwise ignore
-                if response.proposals.is_empty() {
-                    // Empty response, downgrade peer
-                    warn!("block_store::ResponseFromHeight : empty blocks in flight {from}",);
-                }
-                // Check that we have enough to complete the process, otherwise ignore
-                if response.proposals.len() * 2 < self.config.max_blocks_in_flight as usize {
-                    warn!("block_store::ResponseFromHash : insufficient blocks in flight {from}",);
-                    return Ok(());
-                }
-
-                // TODO: Inject proposals
-                debug!(
-                    "block_store::ResponseFromHash : injecting proposals {:?}",
-                    response
-                );
-
-                // Acknowledge this block response. This does nothing because the `BlockResponse` request was sent by
-                // us, but we keep it here for symmetry with the other handlers.
-                self.request_responses
-                    .send((response_channel, ExternalMessage::Acknowledgement))?;
-            }
-
             // Respond negatively to old BlockRequests.
             ExternalMessage::BlockRequest(request) => {
                 self.request_responses.send((
