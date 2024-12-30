@@ -220,6 +220,7 @@ pub struct BlockResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestBlock {
+    pub from_number: u64,
     pub from_hash: Hash,
     pub batch_size: usize,
 }
@@ -271,9 +272,9 @@ pub enum ExternalMessage {
     Acknowledgement,
     AddPeer,
     RemovePeer,
-    RequestFromHeight(RequestBlock),
+    RequestFromNumber(RequestBlock),
     RequestFromHash(RequestBlock),
-    ResponseFromHeight(ResponseBlock),
+    ResponseFromNumber(ResponseBlock),
     ResponseFromHash(ResponseBlock),
     InjectedProposal(InjectedProposal),
 }
@@ -296,16 +297,16 @@ impl Display for ExternalMessage {
             }
             ExternalMessage::AddPeer => write!(f, "AddPeer"),
             ExternalMessage::RemovePeer => write!(f, "RemovePeer"),
-            ExternalMessage::ResponseFromHeight(r) => {
-                write!(f, "ResponseFromHeight({})", r.proposals.len())
+            ExternalMessage::ResponseFromNumber(r) => {
+                write!(f, "ResponseFromNumber({})", r.proposals.len())
             }
             ExternalMessage::ResponseFromHash(r) => {
                 write!(f, "ResponseFromHash({})", r.proposals.len())
             }
-            ExternalMessage::RequestFromHeight(r) => {
+            ExternalMessage::RequestFromNumber(r) => {
                 write!(
                     f,
-                    "RequestFromHeight({}, num={})",
+                    "RequestFromNumber({}, num={})",
                     r.from_hash, r.batch_size
                 )
             }

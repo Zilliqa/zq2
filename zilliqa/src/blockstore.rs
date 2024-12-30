@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::BinaryHeap,
+    collections::{BinaryHeap, HashMap},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -25,14 +25,17 @@ enum DownGrade {
 
 /// Syncing Algorithm
 ///
-/// We rely on [crate::consensus::Consensus] informing us of newly received block proposals via:
-/// * [BlockStore::process_block] for blocks that can be part of our chain, because we already have their parent.
-/// * [BlockStore::buffer_proposal] for blocks that can't (yet) be part of our chain.
+/// When a Proposal is received by Consensus, we check if the parent exists in our DB.
+/// If not, then it triggers a syncing algorithm.
 ///
-/// Both these code paths also call [BlockStore::request_missing_blocks]. This finds the greatest view of any proposal
-/// we've seen (whether its part of our chain or not).
+/// 1. We check if the gap between our last canonical block and the latest Proposal.
+///     a. If it is a small gap, we request for history, going backwards from Proposal.
+///     b. If it is a big gap, we request for history, going forwards from Canonical.
+/// 2. When we receive a response, we inject the Proposals into our processing pipeline.
+///
 
 // TODO: What if we receive a fork
+// TODO: How to handle adverserial history
 
 #[derive(Debug)]
 pub struct BlockStore {
@@ -54,6 +57,9 @@ pub struct BlockStore {
     peer_id: PeerId,
     // how many injected proposals
     injected: usize,
+    // cache
+    cache: HashMap<u64, (PeerId, Proposal)>,
+    latest_block: Option<Block>,
 }
 
 impl BlockStore {
@@ -83,13 +89,24 @@ impl BlockStore {
             max_blocks_injected: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
             in_flight: None,
             injected: 0,
+            cache: HashMap::new(),
+            latest_block: None,
         })
     }
 
     /// Match a received proposal
     pub fn mark_received_proposal(&mut self, prop: &InjectedProposal) -> Result<()> {
         if prop.from != self.peer_id {
-            tracing::warn!("Received a foreign InjectedProposal from {}", prop.from);
+            tracing::error!(
+                "blockstore::MarkReceivedProposal : foreign InjectedProposal from {}",
+                prop.from
+            );
+        }
+        if let Some((_, p)) = self.cache.remove(&prop.block.number()) {
+            tracing::warn!(
+                "blockstore::MarkReceivedProposal : removing stale cache proposal {}",
+                p.number()
+            );
         }
         self.injected = self.injected.saturating_sub(1);
         Ok(())
@@ -177,28 +194,28 @@ impl BlockStore {
     }
 
     /// Request for blocks from a height, forwards.
-    pub fn handle_request_from_height(
+    pub fn handle_request_from_number(
         &mut self,
         from: PeerId,
         request: RequestBlock,
     ) -> Result<ExternalMessage> {
         // ...
         tracing::debug!(
-            "blockstore::RequestFromHeight : received a block request from {}",
+            "blockstore::RequestFromNumber : received a block request from {}",
             from
         );
 
         // TODO: Check if we should service this request.
         // Validators shall not respond to this request.
 
-        let Some(alpha) = self.db.get_block_by_hash(&request.from_hash)? else {
+        let Some(alpha) = self.db.get_canonical_block_by_number(request.from_number)? else {
             // We do not have the starting block
             tracing::warn!(
-                "blockstore::RequestFromHeight : missing starting block {}",
-                request.from_hash
+                "blockstore::RequestFromNumber : missing starting block {}",
+                request.from_number
             );
             let message: ExternalMessage =
-                ExternalMessage::ResponseFromHeight(ResponseBlock { proposals: vec![] });
+                ExternalMessage::ResponseFromNumber(ResponseBlock { proposals: vec![] });
             return Ok(message);
         };
 
@@ -213,15 +230,19 @@ impl BlockStore {
             proposals.push(self.block_to_proposal(block));
         }
 
-        let message = ExternalMessage::ResponseFromHeight(ResponseBlock { proposals });
+        let message = ExternalMessage::ResponseFromNumber(ResponseBlock { proposals });
         tracing::trace!(
             ?message,
-            "blockstore::RequestFromHeight : responding to block request from height"
+            "blockstore::RequestFromNumber : responding to block request from height"
         );
         Ok(message)
     }
 
-    /// Pump the proposals into the chain.
+    /// Inject the proposals into the chain.
+    ///
+    /// Besides pumping the set of Proposals into the processing pipeline, it also records the
+    /// last known Proposal in the pipeline. This is used for speculative fetches, and also for
+    /// knowing where to continue fetching from.
     fn inject_proposals(&mut self, proposals: Vec<Proposal>) -> Result<()> {
         tracing::info!(
             "blockstore::InjectProposals : injecting {} proposals",
@@ -231,11 +252,10 @@ impl BlockStore {
         if proposals.is_empty() {
             return Ok(());
         }
-        // Sort proposals by number
-        let proposals = proposals
-            .into_iter()
-            .sorted_by_key(|p| p.number())
-            .collect_vec();
+
+        // Store the tip
+        let (last_block, _) = proposals.last().unwrap().clone().into_parts();
+        self.latest_block = Some(last_block);
 
         // Increment proposals injected
         self.injected = self.injected.saturating_add(proposals.len());
@@ -271,7 +291,7 @@ impl BlockStore {
         }
     }
 
-    pub fn handle_response_from_height(
+    pub fn handle_response_from_number(
         &mut self,
         from: PeerId,
         response: ResponseBlock,
@@ -279,50 +299,54 @@ impl BlockStore {
         // Process whatever we have received.
         if response.proposals.is_empty() {
             // Empty response, downgrade peer
-            tracing::warn!("blockstore::ResponseFromHeight : empty blocks {from}",);
+            tracing::warn!("blockstore::ResponseFromNumber : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
         } else if response.proposals.len() < self.max_blocks_in_flight {
             // Partial response, downgrade peer
-            tracing::warn!("blockstore::ResponseFromHeight : partial blocks {from}",);
+            tracing::warn!("blockstore::ResponseFromNumber : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
         } else {
             self.done_with_peer(DownGrade::None);
         }
 
         tracing::info!(
-            "blockstore::ResponseFromHeight : received {} blocks from {}",
+            "blockstore::ResponseFromNumber : received {} blocks from {}",
             response.proposals.len(),
             from
         );
 
         // TODO: Any additional checks we should do here?
 
-        // Last known proposal
-        let next_hash = response.proposals.last().unwrap().hash();
+        // Sort proposals by number
+        let proposals = response
+            .proposals
+            .into_iter()
+            .sorted_by_key(|p| p.number())
+            .collect_vec();
 
-        // Inject received proposals
-        self.inject_proposals(response.proposals)?;
-
-        // Speculatively request more blocks, as there might be more
-        if self.injected < self.max_blocks_injected {
-            self.in_flight = self.get_next_peer();
-            if let Some(peer) = self.in_flight.as_ref() {
-                let message = ExternalMessage::RequestFromHeight(RequestBlock {
-                    batch_size: self.max_blocks_in_flight,
-                    from_hash: next_hash,
-                });
-
-                tracing::info!(
-                    "Requesting {} future blocks from {}",
-                    self.max_blocks_in_flight,
-                    peer.peer_id,
-                );
-
-                self.message_sender
-                    .send_external_message(peer.peer_id, message)?;
+        // Insert into the cache.
+        // If current proposal matches another one in cache, from a different peer, inject the proposal.
+        // Else, replace the cached values with the new ones.
+        let mut injections = Vec::new();
+        for p in proposals {
+            // If the proposal already exists
+            if let Some((peer, proposal)) = self.cache.remove(&p.number()) {
+                if peer != from && proposal.hash() == p.hash() {
+                    injections.push(proposal);
+                } else {
+                    // insert the new one and;
+                    self.cache.insert(p.number(), (from, p));
+                    break; // TODO: Replace the rest
+                }
+            } else {
+                self.cache.insert(p.number(), (from, p));
             }
         }
+
+        // Inject matched proposals
+        self.inject_proposals(injections)?;
+
         Ok(())
     }
 
@@ -391,13 +415,18 @@ impl BlockStore {
             }
         }
 
-        // highest canonical block we have
-        // TODO: Replace this with a single SQL query.
-        let height = self
-            .db
-            .get_highest_canonical_block_number()?
-            .unwrap_or_default();
-        let alpha_block = self.db.get_canonical_block_by_number(height)?.unwrap();
+        // highest canonical block we know
+        let alpha_block = if self.latest_block.is_some() {
+            self.latest_block.as_ref().unwrap().clone()
+        } else {
+            // TODO: Replace this with a single SQL query.
+            let height = self
+                .db
+                .get_highest_canonical_block_number()?
+                .unwrap_or_default();
+            let alpha_block = self.db.get_canonical_block_by_number(height)?.unwrap();
+            alpha_block
+        };
 
         // Compute the block gap.
         let block_gap = if let Some(omega_block) = omega_block.as_ref() {
@@ -406,23 +435,32 @@ impl BlockStore {
                 .number
                 .saturating_sub(alpha_block.header.number)
         } else {
-            // Trigger a RequestFromHeight if the source block is None
+            // Trigger a RequestFromNumber if the source block is None
             self.max_blocks_in_flight as u64
         };
 
         // TODO: Double-check hysteresis logic - may not even be necessary to do RequestFromHash
-        let message = if block_gap > self.max_blocks_in_flight as u64 / 2 {
+        let (message, hash) = if block_gap > self.max_blocks_in_flight as u64 / 2 {
             // we're far from latest block
-            ExternalMessage::RequestFromHeight(RequestBlock {
-                from_hash: alpha_block.header.hash,
-                batch_size: self.max_blocks_in_flight,
-            })
+            (
+                ExternalMessage::RequestFromNumber(RequestBlock {
+                    from_number: alpha_block.number(),
+                    from_hash: alpha_block.hash(),
+                    batch_size: self.max_blocks_in_flight,
+                }),
+                alpha_block.hash(),
+            )
         } else {
             // we're close to latest block
-            ExternalMessage::RequestFromHash(RequestBlock {
-                from_hash: omega_block.unwrap().header.hash,
-                batch_size: self.max_blocks_in_flight,
-            })
+            let omega_block = omega_block.unwrap();
+            (
+                ExternalMessage::RequestFromHash(RequestBlock {
+                    from_hash: omega_block.hash(),
+                    from_number: omega_block.number(),
+                    batch_size: self.max_blocks_in_flight,
+                }),
+                omega_block.hash(),
+            )
         };
 
         let peer = self.in_flight.as_ref().unwrap();
@@ -430,7 +468,7 @@ impl BlockStore {
         tracing::info!(
             "Requesting {} missing blocks from {}",
             self.max_blocks_in_flight,
-            peer.peer_id,
+            hash,
         );
 
         self.message_sender
