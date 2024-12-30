@@ -273,11 +273,11 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
-            ExternalMessage::RequestFromHeight(request) => {
+            ExternalMessage::RequestFromNumber(request) => {
                 let message = self
                     .consensus
                     .blockstore
-                    .handle_request_from_height(from, request)?;
+                    .handle_request_from_number(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             ExternalMessage::RequestFromHash(request) => {
@@ -383,10 +383,10 @@ impl Node {
     pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
         match message {
-            ExternalMessage::ResponseFromHeight(response) => {
+            ExternalMessage::ResponseFromNumber(response) => {
                 self.consensus
                     .blockstore
-                    .handle_response_from_height(from, response)?;
+                    .handle_response_from_number(from, response)?;
             }
             ExternalMessage::ResponseFromHash(response) => {
                 self.consensus
