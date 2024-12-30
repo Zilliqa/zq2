@@ -33,8 +33,8 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
-        ProcessProposal, Proposal,
+        Block, BlockHeader, BlockResponse, ExternalMessage, InjectedProposal, InternalMessage,
+        IntershardCall, Proposal,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -373,8 +373,8 @@ impl Node {
             }
             // This just breaks down group block messages into individual messages to stop them blocking threads
             // for long periods.
-            ExternalMessage::ProcessProposal(m) => {
-                self.handle_process_proposal(from, m)?;
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
             }
             // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
             // a Request by the underlying layer, with a faux request-id. This is to mitigate issues when there are
@@ -1001,12 +1001,13 @@ impl Node {
         Ok(())
     }
 
-    fn handle_process_proposal(&mut self, from: PeerId, req: ProcessProposal) -> Result<()> {
+    fn handle_injected_proposal(&mut self, from: PeerId, req: InjectedProposal) -> Result<()> {
         if from != self.consensus.peer_id() {
-            warn!("Someone ({from}) sent me a ProcessProposal; illegal- ignoring");
+            warn!("Someone ({from}) sent me a InjectedProposal; illegal- ignoring");
             return Ok(());
         }
         trace!("Handling proposal for view {0}", req.block.header.view);
+        self.consensus.blockstore.mark_received_proposal(&req)?;
         let proposal = self.consensus.receive_block(from, req.block)?;
         if let Some(proposal) = proposal {
             trace!(

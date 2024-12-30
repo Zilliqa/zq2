@@ -13,7 +13,7 @@ use libp2p::PeerId;
 use crate::{
     cfg::NodeConfig,
     db::Db,
-    message::{Block, ExternalMessage, ProcessProposal, Proposal, RequestBlock, ResponseBlock},
+    message::{Block, ExternalMessage, InjectedProposal, Proposal, RequestBlock, ResponseBlock},
     node::MessageSender,
 };
 
@@ -34,8 +34,6 @@ enum DownGrade {
 /// we've seen (whether its part of our chain or not).
 
 // TODO: What if we receive a fork
-// TODO: How to start syncing validators
-// TODO: How to handle restarting new blocks, while injected blocks are still in-queue.
 
 #[derive(Debug)]
 pub struct BlockStore {
@@ -75,7 +73,6 @@ impl BlockStore {
             })
             .collect();
         let peer_id = message_sender.our_peer_id;
-        let max_blocks = config.max_blocks_in_flight.max(31) as usize; // between 30 seconds and 3 days of blocks.
 
         Ok(Self {
             db,
@@ -83,16 +80,19 @@ impl BlockStore {
             peers,
             peer_id,
             request_timeout: config.consensus.consensus_timeout,
-            max_blocks_in_flight: max_blocks,
-            max_blocks_injected: max_blocks * 10, // fire 10 speculative requests
+            max_blocks_in_flight: config.block_request_batch_size.max(31), // between 30 seconds and 3 days of blocks.
+            max_blocks_injected: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
             in_flight: None,
             injected: 0,
         })
     }
 
-    /// Handle an injected proposal
-    ///
-    pub fn handle_injected_proposal(&mut self, proposal: Proposal) -> Result<()> {
+    /// Match a received proposal
+    pub fn mark_received_proposal(&mut self, prop: &InjectedProposal) -> Result<()> {
+        if prop.from != self.peer_id {
+            tracing::warn!("Received a foreign InjectedProposal from {}", prop.from);
+        }
+        self.injected = self.injected.saturating_sub(1);
         Ok(())
     }
 
@@ -238,8 +238,8 @@ impl BlockStore {
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
-        // Increment propoals injected
-        self.injected += proposals.len();
+        // Increment proposals injected
+        self.injected = self.injected.saturating_add(proposals.len());
 
         // Just pump the Proposals back to ourselves.
         for p in proposals {
@@ -251,8 +251,8 @@ impl BlockStore {
 
             self.message_sender.send_external_message(
                 self.peer_id,
-                ExternalMessage::ProcessProposal(ProcessProposal {
-                    from: self.peer_id.to_bytes(), // FIXME: change this to PeerId instead of Vec<u8>
+                ExternalMessage::InjectedProposal(InjectedProposal {
+                    from: self.peer_id,
                     block: p,
                 }),
             )?;
@@ -297,8 +297,10 @@ impl BlockStore {
 
         // TODO: Any additional checks we should do here?
 
-        // Inject received proposals
+        // Last known proposal
         let next_hash = response.proposals.last().unwrap().hash();
+
+        // Inject received proposals
         self.inject_proposals(response.proposals)?;
 
         // Speculatively request more blocks, as there might be more
@@ -378,6 +380,9 @@ impl BlockStore {
                 return Ok(());
             }
         } else {
+            if self.injected > 0 {
+                return Ok(());
+            }
             self.in_flight = self.get_next_peer();
             if self.in_flight.is_none() {
                 tracing::warn!("Insufficient peers available to request missing blocks");

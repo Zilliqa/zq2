@@ -240,6 +240,14 @@ pub struct ResponseBlock {
 
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InjectedProposal {
+    // An encoded PeerId
+    pub from: PeerId,
+    pub block: Proposal,
+}
+
+/// Used to convey proposal processing internally, to avoid blocking threads for too long.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessProposal {
     // An encoded PeerId
     pub from: Vec<u8>,
@@ -276,6 +284,7 @@ pub enum ExternalMessage {
     RequestFromHash(RequestBlock),
     ResponseFromHeight(ResponseBlock),
     ResponseFromHash(ResponseBlock),
+    InjectedProposal(InjectedProposal),
 }
 
 impl ExternalMessage {
@@ -291,6 +300,9 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::InjectedProposal(p) => {
+                write!(f, "InjectedProposal {}", p.block.number())
+            }
             ExternalMessage::AddPeer => write!(f, "AddPeer"),
             ExternalMessage::RemovePeer => write!(f, "RemovePeer"),
             ExternalMessage::ResponseFromHeight(r) => {
