@@ -133,7 +133,8 @@ impl P2pNode {
                     // So, the nodes are unable to see each other directly and remain isolated, defeating kademlia and autonat.
                     identify: identify::Behaviour::new(
                         identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
-                            .with_hide_listen_addrs(!cfg!(debug_assertions)),
+                            .with_hide_listen_addrs(false)
+                            .with_push_listen_addr_updates(true),
                     ),
                 })
             })?
