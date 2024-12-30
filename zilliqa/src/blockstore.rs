@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashMap},
+    ops::Sub,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -36,6 +37,8 @@ enum DownGrade {
 
 // TODO: What if we receive a fork
 // TODO: How to handle adverserial history
+
+const GAP_THRESHOLD: usize = 5; // How big is big/small gap.
 
 #[derive(Debug)]
 pub struct BlockStore {
@@ -162,19 +165,9 @@ impl BlockStore {
         // TODO: Check if we should service this request
         // Validators could respond to this request if there is nothing else to do.
 
-        let Some(omega_block) = self.db.get_block_by_hash(&request.from_hash)? else {
-            // We do not have the starting block
-            tracing::warn!(
-                "blockstore::RequestFromHash : missing starting block {}",
-                request.from_hash
-            );
-            let message = ExternalMessage::ResponseFromHash(ResponseBlock { proposals: vec![] });
-            return Ok(message);
-        };
-
         let batch_size = self.max_blocks_in_flight.min(request.batch_size); // mitigate DOS attacks by limiting the number of blocks we send
         let mut proposals: Vec<Proposal> = Vec::new();
-        let mut hash = omega_block.parent_hash();
+        let mut hash = request.from_hash;
         while proposals.len() < batch_size {
             // grab the parent
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
@@ -361,7 +354,7 @@ impl BlockStore {
             tracing::warn!("blockstore::ResponseFromHash : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
-        } else if response.proposals.len() <= self.max_blocks_in_flight / 2 {
+        } else if response.proposals.len() < GAP_THRESHOLD {
             // Partial response, downgrade peer
             // Skip processing because we want to ensure that we have ALL the needed blocks to sync up.
             tracing::warn!("blockstore::ResponseFromHash : partial blocks {from}",);
@@ -379,9 +372,15 @@ impl BlockStore {
         );
 
         // TODO: Any additional checks we should do here?
+        // Sort proposals by number
+        let proposals = response
+            .proposals
+            .into_iter()
+            .sorted_by_key(|p| p.number())
+            .collect_vec();
 
         // Inject the proposals
-        self.inject_proposals(response.proposals)?;
+        self.inject_proposals(proposals)?;
         Ok(())
     }
 
@@ -439,37 +438,38 @@ impl BlockStore {
             self.max_blocks_in_flight as u64
         };
 
-        // TODO: Double-check hysteresis logic - may not even be necessary to do RequestFromHash
-        let (message, hash) = if block_gap > self.max_blocks_in_flight as u64 / 2 {
+        let peer = self.in_flight.as_ref().unwrap();
+
+        let message = if block_gap > self.max_blocks_in_flight.sub(GAP_THRESHOLD) as u64 {
             // we're far from latest block
-            (
-                ExternalMessage::RequestFromNumber(RequestBlock {
-                    from_number: alpha_block.number(),
-                    from_hash: alpha_block.hash(),
-                    batch_size: self.max_blocks_in_flight,
-                }),
-                alpha_block.hash(),
-            )
+            let message = RequestBlock {
+                from_number: alpha_block.number(),
+                from_hash: alpha_block.hash(),
+                batch_size: self.max_blocks_in_flight,
+            };
+            tracing::info!(
+                "blockstore::RequestMissingBlocks : requesting {} blocks at {} from {}",
+                message.batch_size,
+                message.from_number,
+                peer.peer_id,
+            );
+            ExternalMessage::RequestFromNumber(message)
         } else {
             // we're close to latest block
             let omega_block = omega_block.unwrap();
-            (
-                ExternalMessage::RequestFromHash(RequestBlock {
-                    from_hash: omega_block.hash(),
-                    from_number: omega_block.number(),
-                    batch_size: self.max_blocks_in_flight,
-                }),
-                omega_block.hash(),
-            )
+            let message = RequestBlock {
+                from_hash: omega_block.hash(),
+                from_number: omega_block.number(),
+                batch_size: GAP_THRESHOLD * 2,
+            };
+            tracing::info!(
+                "blockstore::RequestMissingBlocks : requesting {} blocks at {} from {}",
+                message.batch_size,
+                message.from_hash,
+                peer.peer_id,
+            );
+            ExternalMessage::RequestFromHash(message)
         };
-
-        let peer = self.in_flight.as_ref().unwrap();
-
-        tracing::info!(
-            "Requesting {} missing blocks from {}",
-            self.max_blocks_in_flight,
-            hash,
-        );
 
         self.message_sender
             .send_external_message(peer.peer_id, message)?;
