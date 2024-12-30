@@ -1,7 +1,6 @@
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashMap},
-    ops::Sub,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -30,9 +29,15 @@ enum DownGrade {
 /// If not, then it triggers a syncing algorithm.
 ///
 /// 1. We check if the gap between our last canonical block and the latest Proposal.
-///     a. If it is a small gap, we request for history, going backwards from Proposal.
-///     b. If it is a big gap, we request for history, going forwards from Canonical.
-/// 2. When we receive a response, we inject the Proposals into our processing pipeline.
+///     a. If it is a small gap, we request for blocks, going backwards from Proposal.
+///     b. If it is a big gap, we request for blocks, going forwards from Canonical.
+/// 2. When we receive a forwards history response, we check for matches against the cache.
+///    This means that for a proposal to be injected, it must be corroborated by 2 sources.
+///     a. If it matches the cached Proposal, we inject the proposal into the pipeline.
+///     b. If it does not exist in the cache, we cache the new value.
+///     c. If it does not match the cached Proposal, something is up and we stop there and request for more.
+/// 3. When we receive a backwards history response, we inject it into the pipeline.
+///     a. If it does not link up with the existing Canonical, then it will be dropped.
 ///
 
 // TODO: What if we receive a fork
@@ -165,8 +170,8 @@ impl BlockStore {
         // TODO: Check if we should service this request
         // Validators could respond to this request if there is nothing else to do.
 
-        let batch_size = self.max_blocks_in_flight.min(request.batch_size); // mitigate DOS attacks by limiting the number of blocks we send
-        let mut proposals: Vec<Proposal> = Vec::new();
+        let batch_size = self.max_blocks_in_flight.min(request.batch_size); // mitigate DOS by limiting the number of blocks we return
+        let mut proposals = Vec::with_capacity(batch_size);
         let mut hash = request.from_hash;
         while proposals.len() < batch_size {
             // grab the parent
@@ -201,21 +206,12 @@ impl BlockStore {
         // TODO: Check if we should service this request.
         // Validators shall not respond to this request.
 
-        let Some(alpha) = self.db.get_canonical_block_by_number(request.from_number)? else {
-            // We do not have the starting block
-            tracing::warn!(
-                "blockstore::RequestFromNumber : missing starting block {}",
-                request.from_number
-            );
-            let message: ExternalMessage =
-                ExternalMessage::ResponseFromNumber(ResponseBlock { proposals: vec![] });
-            return Ok(message);
-        };
-
         // TODO: Replace this with a single SQL query
-        let batch_size = self.max_blocks_in_flight.min(request.batch_size) as u64; // mitigate DOS attacks by limiting the number of blocks we send
-        let mut proposals = Vec::new();
-        for num in alpha.number().saturating_add(1)..=alpha.number().saturating_add(batch_size) {
+        let batch_size = self.max_blocks_in_flight.min(request.batch_size); // mitigate DOS attacks by limiting the number of blocks we send
+        let mut proposals = Vec::with_capacity(batch_size);
+        for num in request.from_number.saturating_add(1)
+            ..=request.from_number.saturating_add(batch_size as u64)
+        {
             let Some(block) = self.db.get_canonical_block_by_number(num)? else {
                 // that's all we have!
                 break;
@@ -321,7 +317,7 @@ impl BlockStore {
         // Insert into the cache.
         // If current proposal matches another one in cache, from a different peer, inject the proposal.
         // Else, replace the cached values with the new ones.
-        let mut injections = Vec::new();
+        let mut injections = Vec::with_capacity(proposals.len());
         for p in proposals {
             // If the proposal already exists
             if let Some((peer, proposal)) = self.cache.remove(&p.number()) {
@@ -404,9 +400,6 @@ impl BlockStore {
                 return Ok(());
             }
         } else {
-            if self.injected > 0 {
-                return Ok(());
-            }
             self.in_flight = self.get_next_peer();
             if self.in_flight.is_none() {
                 tracing::warn!("Insufficient peers available to request missing blocks");
@@ -440,7 +433,7 @@ impl BlockStore {
 
         let peer = self.in_flight.as_ref().unwrap();
 
-        let message = if block_gap > self.max_blocks_in_flight.sub(GAP_THRESHOLD) as u64 {
+        let message = if block_gap > GAP_THRESHOLD as u64 {
             // we're far from latest block
             let message = RequestBlock {
                 from_number: alpha_block.number(),
