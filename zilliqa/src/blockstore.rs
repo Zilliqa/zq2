@@ -23,23 +23,22 @@ enum DownGrade {
     Empty,
 }
 
-/// Syncing Algorithm
-///
-/// When a Proposal is received by Consensus, we check if the parent exists in our DB.
-/// If not, then it triggers a syncing algorithm.
-///
-/// 1. We check if the gap between our last canonical block and the latest Proposal.
-///     a. If it is a small gap, we request for blocks, going backwards from Proposal.
-///     b. If it is a big gap, we request for blocks, going forwards from Canonical.
-/// 2. When we receive a forwards history response, we check for matches against the cache.
-///    This means that for a proposal to be injected, it must be corroborated by 2 sources.
-///     a. If it matches the cached value, we inject the proposal into the pipeline.
-///     b. If it does not match, we replace the cached value and request for more.
-///     b. If it does not exist in the cache, we cache the proposal.
-/// 3. When we receive a backwards history response, we inject it into the pipeline.
-///     a. If it does not line up with the existing Canonical, then it will be dropped.
-///
-
+// Syncing Algorithm
+//
+// When a Proposal is received by Consensus, we check if the parent exists in our DB.
+// If not, then it triggers a syncing algorithm.
+//
+// 1. We check if the gap between our last canonical block and the latest Proposal.
+//     a. If it is a small gap, we request for blocks, going backwards from Proposal.
+//     b. If it is a big gap, we request for blocks, going forwards from Canonical.
+// 2. When we receive a forwards history response, we check for matches against the cache.
+//    This means that for a proposal to be injected, it must be corroborated by 2 sources.
+//     a. If it matches the cached value, we inject the proposal into the pipeline.
+//     b. If it does not match, we replace the cached value and request for more.
+//     b. If it does not exist in the cache, we cache the proposal.
+// 3. When we receive a backwards history response, we inject it into the pipeline.
+//     a. If it does not line up with the existing Canonical, then it will be dropped.
+//
 // TODO: Speculative fetch, to speed things up.
 
 const GAP_THRESHOLD: usize = 5; // How big is big/small gap.
@@ -59,7 +58,7 @@ pub struct BlockStore {
     // how many blocks to request at once
     max_batch_size: usize,
     // how many blocks to inject into the queue
-    max_blocks_in_flight: usize,
+    _max_blocks_in_flight: usize,
     // our peer id
     peer_id: PeerId,
     // how many injected proposals
@@ -93,7 +92,7 @@ impl BlockStore {
             peer_id,
             request_timeout: config.consensus.consensus_timeout,
             max_batch_size: config.block_request_batch_size.max(31), // between 30 seconds and 3 days of blocks.
-            max_blocks_in_flight: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
+            _max_blocks_in_flight: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
             in_flight: None,
             injected: 0,
             cache: HashMap::new(),
@@ -424,8 +423,7 @@ impl BlockStore {
                 .db
                 .get_highest_canonical_block_number()?
                 .unwrap_or_default();
-            let alpha_block = self.db.get_canonical_block_by_number(height)?.unwrap();
-            alpha_block
+            self.db.get_canonical_block_by_number(height)?.unwrap()
         };
 
         // Compute the block gap.
