@@ -262,9 +262,11 @@ impl BlockStore {
 
     /// Downgrade a peer based on the response received.
     fn done_with_peer(&mut self, downgrade: DownGrade) {
-        // ...
         if let Some(mut peer) = self.in_flight.take() {
-            peer.score += downgrade as u32;
+            // Downgrade peer, if necessary
+            peer.score = peer.score.saturating_add(downgrade as u32);
+            // Ensure that the next peer is equal or better, to avoid a single source of truth.
+            peer.score = peer.score.max(self.peers.peek().unwrap().score);
             self.peers.push(peer);
         }
     }
