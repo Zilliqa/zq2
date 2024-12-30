@@ -33,15 +33,14 @@ enum DownGrade {
 ///     b. If it is a big gap, we request for blocks, going forwards from Canonical.
 /// 2. When we receive a forwards history response, we check for matches against the cache.
 ///    This means that for a proposal to be injected, it must be corroborated by 2 sources.
-///     a. If it matches the cached Proposal, we inject the proposal into the pipeline.
-///     b. If it does not exist in the cache, we cache the new value.
-///     c. If it does not match the cached Proposal, something is up and we stop there and request for more.
+///     a. If it matches the cached value, we inject the proposal into the pipeline.
+///     b. If it does not match, we replace the cached value and request for more.
+///     b. If it does not exist in the cache, we cache the proposal.
 /// 3. When we receive a backwards history response, we inject it into the pipeline.
-///     a. If it does not link up with the existing Canonical, then it will be dropped.
+///     a. If it does not line up with the existing Canonical, then it will be dropped.
 ///
 
-// TODO: What if we receive a fork
-// TODO: How to handle adverserial history
+// TODO: Speculative fetch, to speed things up.
 
 const GAP_THRESHOLD: usize = 5; // How big is big/small gap.
 
@@ -58,9 +57,9 @@ pub struct BlockStore {
     // in-flight timeout
     request_timeout: Duration,
     // how many blocks to request at once
-    max_blocks_in_flight: usize,
+    max_batch_size: usize,
     // how many blocks to inject into the queue
-    max_blocks_injected: usize,
+    max_blocks_in_flight: usize,
     // our peer id
     peer_id: PeerId,
     // how many injected proposals
@@ -93,8 +92,8 @@ impl BlockStore {
             peers,
             peer_id,
             request_timeout: config.consensus.consensus_timeout,
-            max_blocks_in_flight: config.block_request_batch_size.max(31), // between 30 seconds and 3 days of blocks.
-            max_blocks_injected: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
+            max_batch_size: config.block_request_batch_size.max(31), // between 30 seconds and 3 days of blocks.
+            max_blocks_in_flight: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
             in_flight: None,
             injected: 0,
             cache: HashMap::new(),
@@ -170,7 +169,7 @@ impl BlockStore {
         // TODO: Check if we should service this request
         // Validators could respond to this request if there is nothing else to do.
 
-        let batch_size = self.max_blocks_in_flight.min(request.batch_size); // mitigate DOS by limiting the number of blocks we return
+        let batch_size = self.max_batch_size.min(request.batch_size); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
         let mut hash = request.from_hash;
         while proposals.len() < batch_size {
@@ -207,7 +206,7 @@ impl BlockStore {
         // Validators shall not respond to this request.
 
         // TODO: Replace this with a single SQL query
-        let batch_size = self.max_blocks_in_flight.min(request.batch_size); // mitigate DOS attacks by limiting the number of blocks we send
+        let batch_size = self.max_batch_size.min(request.batch_size); // mitigate DOS attacks by limiting the number of blocks we send
         let mut proposals = Vec::with_capacity(batch_size);
         for num in request.from_number.saturating_add(1)
             ..=request.from_number.saturating_add(batch_size as u64)
@@ -291,7 +290,7 @@ impl BlockStore {
             tracing::warn!("blockstore::ResponseFromNumber : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
-        } else if response.proposals.len() < self.max_blocks_in_flight {
+        } else if response.proposals.len() < self.max_batch_size {
             // Partial response, downgrade peer
             tracing::warn!("blockstore::ResponseFromNumber : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
@@ -316,25 +315,34 @@ impl BlockStore {
 
         // Insert into the cache.
         // If current proposal matches another one in cache, from a different peer, inject the proposal.
-        // Else, replace the cached values with the new ones.
-        let mut injections = Vec::with_capacity(proposals.len());
-        for p in proposals {
-            // If the proposal already exists
+        // Else, replace the cached Proposal with the new one.
+        let mut corroborated_proposals = Vec::with_capacity(proposals.len());
+        let mut props = proposals.into_iter();
+
+        // Collect corroborated proposals
+        for p in props.by_ref() {
             if let Some((peer, proposal)) = self.cache.remove(&p.number()) {
+                // If the proposal already exists
                 if peer != from && proposal.hash() == p.hash() {
-                    injections.push(proposal);
+                    // is corroborated proposal
+                    corroborated_proposals.push(proposal);
                 } else {
-                    // insert the new one and;
+                    // insert the different one and;
                     self.cache.insert(p.number(), (from, p));
-                    break; // TODO: Replace the rest
+                    break; // replace the rest in the next loop
                 }
             } else {
                 self.cache.insert(p.number(), (from, p));
             }
         }
 
+        // Replace/insert the rest of the proposals in the cache
+        for p in props {
+            self.cache.insert(p.number(), (from, p));
+        }
+
         // Inject matched proposals
-        self.inject_proposals(injections)?;
+        self.inject_proposals(corroborated_proposals)?;
 
         Ok(())
     }
@@ -382,7 +390,7 @@ impl BlockStore {
 
     /// Request blocks between the current height and the given block.
     ///
-    /// The approach is to request blocks in batches of `max_blocks_in_flight` blocks.
+    /// The approach is to request blocks in batches of `max_batch_size` blocks.
     /// If None block is provided, we request blocks from the last known canonical block forwards.
     /// If the block gap is large, we request blocks from the last known canonical block forwards.
     /// If the block gap is small, we request blocks from the latest block backwards.
@@ -428,7 +436,7 @@ impl BlockStore {
                 .saturating_sub(alpha_block.header.number)
         } else {
             // Trigger a RequestFromNumber if the source block is None
-            self.max_blocks_in_flight as u64
+            self.max_batch_size as u64
         };
 
         let peer = self.in_flight.as_ref().unwrap();
@@ -438,7 +446,7 @@ impl BlockStore {
             let message = RequestBlock {
                 from_number: alpha_block.number(),
                 from_hash: alpha_block.hash(),
-                batch_size: self.max_blocks_in_flight,
+                batch_size: self.max_batch_size,
             };
             tracing::info!(
                 "blockstore::RequestMissingBlocks : requesting {} blocks at {} from {}",
