@@ -39,7 +39,7 @@ enum DownGrade {
 // 3. When we receive a backwards history response, we inject it into the pipeline.
 //     a. If it does not line up with the existing Canonical, then it will be dropped.
 //
-// TODO: Speculative fetch, to speed things up.
+// TODO: How to handle case where only single source of truth i.e. bootstrap node?
 
 const GAP_THRESHOLD: usize = 5; // How big is big/small gap.
 
@@ -58,7 +58,7 @@ pub struct BlockStore {
     // how many blocks to request at once
     max_batch_size: usize,
     // how many blocks to inject into the queue
-    _max_blocks_in_flight: usize,
+    max_blocks_in_flight: usize,
     // our peer id
     peer_id: PeerId,
     // how many injected proposals
@@ -92,7 +92,7 @@ impl BlockStore {
             peer_id,
             request_timeout: config.consensus.consensus_timeout,
             max_batch_size: config.block_request_batch_size.max(31), // between 30 seconds and 3 days of blocks.
-            _max_blocks_in_flight: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
+            max_blocks_in_flight: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
             in_flight: None,
             injected: 0,
             cache: HashMap::new(),
@@ -342,6 +342,32 @@ impl BlockStore {
 
         // Inject matched proposals
         self.inject_proposals(corroborated_proposals)?;
+
+        // Fire speculative request
+        if self.latest_block.is_some() {
+            if self.injected < self.max_blocks_in_flight {
+                if let Some(peer) = self.get_next_peer() {
+                    // we're far from latest block
+                    let message = RequestBlock {
+                        from_number: self.latest_block.as_ref().unwrap().number(),
+                        from_hash: self.latest_block.as_ref().unwrap().hash(),
+                        batch_size: self.max_batch_size,
+                    };
+                    tracing::info!(
+                        "blockstore::RequestMissingBlocks : speculative requesting {} blocks at {} from {}",
+                        message.batch_size,
+                        message.from_number,
+                        peer.peer_id,
+                    );
+                    self.message_sender.send_external_message(
+                        peer.peer_id,
+                        ExternalMessage::RequestFromNumber(message),
+                    )?;
+
+                    self.in_flight = Some(peer);
+                }
+            }
+        }
 
         Ok(())
     }
