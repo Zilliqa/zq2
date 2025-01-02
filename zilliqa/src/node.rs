@@ -273,6 +273,13 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
+            ExternalMessage::MetaDataRequest(request) => {
+                let message = self
+                    .consensus
+                    .blockstore
+                    .handle_metadata_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
+            }
             ExternalMessage::RequestFromNumber(request) => {
                 let message = self
                     .consensus
@@ -383,6 +390,11 @@ impl Node {
     pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
         match message {
+            ExternalMessage::MetaDataResponse(response) => {
+                self.consensus
+                    .blockstore
+                    .handle_metadata_response(from, response)?;
+            }
             ExternalMessage::ResponseFromNumber(response) => {
                 self.consensus
                     .blockstore
