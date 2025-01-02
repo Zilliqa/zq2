@@ -1,8 +1,6 @@
-import {getAddressFromPrivateKey} from "@zilliqa-js/crypto";
-import {BN, Zilliqa, bytes, toChecksumAddress} from "@zilliqa-js/zilliqa";
+import {BN, Zilliqa, bytes, getAddressFromPrivateKey, toChecksumAddress, Long} from "@zilliqa-js/zilliqa";
 import clc from "cli-color";
 import {ethers} from "ethers";
-import Long from "long";
 import hre from "hardhat";
 
 // Refer to README.md, section `Testing a newly deployed testnet/devent` for more info.

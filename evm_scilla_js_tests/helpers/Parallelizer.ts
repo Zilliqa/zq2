@@ -1,14 +1,6 @@
-import {getAddressFromPrivateKey} from "@zilliqa-js/crypto";
-import BN from "bn.js";
-import hre, {ethers as hh_ethers, web3} from "hardhat";
+import hre from "hardhat";
 import {initZilliqa, ScillaContract, Setup, UserDefinedLibrary} from "hardhat-scilla-plugin";
 import {} from "hardhat-scilla-plugin/dist/src/index";
-
-export type DeployOptions = {
-  gasPrice?: string;
-  gasLimit?: number;
-  value?: BN;
-};
 
 export class Parallelizer {
   constructor() {
@@ -22,7 +14,7 @@ export class Parallelizer {
   }
 
   async deployScillaLibrary(libraryName: string): Promise<ScillaContract> {
-    return hre.deployScillaLibrary(libraryName);
+    return hre.deployScillaLibrary(libraryName, false);
   }
 
   async deployScillaContractWithLibrary(

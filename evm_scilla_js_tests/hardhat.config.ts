@@ -1,5 +1,4 @@
 import "@nomicfoundation/hardhat-toolbox";
-import "@nomiclabs/hardhat-web3";
 import {HardhatUserConfig} from "hardhat/types";
 import "dotenv/config";
 import {ENV_VARS} from "./helpers/EnvVarParser";
@@ -52,7 +51,6 @@ const config: HardhatUserConfig = {
       protocolVersion: 0x41,
       miningState: false
     },
-
     prototestnet: {
       url: "https://api.zq2-prototestnet.zilliqa.com",
       websocketUrl: "ws://api.zq2-prototestnet.zilliqa.com",
