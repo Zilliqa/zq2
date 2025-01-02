@@ -247,6 +247,16 @@ pub struct InjectedProposal {
     pub block: Proposal,
 }
 
+/// Used to hold metadata about the chain
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainMetaData {
+    // An encoded PeerId
+    pub block_hash: Hash,
+    pub parent_hash: Hash,
+    pub block_number: u64,
+    pub block_timestamp: SystemTime,
+}
+
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessProposal {
@@ -286,6 +296,10 @@ pub enum ExternalMessage {
     ResponseFromNumber(ResponseBlock),
     ResponseFromHash(ResponseBlock),
     InjectedProposal(InjectedProposal),
+    MetaDataRequest(RequestBlock),
+    MetaDataResponse(Vec<ChainMetaData>),
+    MultiBlockRequest(Vec<Hash>),
+    MultiBlockResponse(Vec<Proposal>),
 }
 
 impl ExternalMessage {
@@ -301,6 +315,18 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::MultiBlockRequest(r) => {
+                write!(f, "MultiBlockRequest({})", r.len())
+            }
+            ExternalMessage::MultiBlockResponse(r) => {
+                write!(f, "MultiBlockResponse({})", r.len())
+            }
+            ExternalMessage::MetaDataResponse(r) => {
+                write!(f, "MetaDataResponse({})", r.len())
+            }
+            ExternalMessage::MetaDataRequest(r) => {
+                write!(f, "MetaDataRequest({}, num={})", r.from_hash, r.batch_size)
+            }
             ExternalMessage::InjectedProposal(p) => {
                 write!(f, "InjectedProposal {}", p.block.number())
             }
