@@ -46,6 +46,7 @@ enum DownGrade {
 // TODO: How to handle case where only single source of truth i.e. bootstrap node?
 
 const GAP_THRESHOLD: usize = 5; // How big is big/small gap.
+const DO_SPECULATIVE: bool = false; // Speeds up syncing by speculatively fetching blocks, allowing it to catch up.
 
 #[derive(Debug)]
 pub struct BlockStore {
@@ -73,8 +74,9 @@ pub struct BlockStore {
 
     // Chain metadata
     chain_metadata: BTreeMap<Hash, ChainMetaData>,
-    last_metadata: Option<ChainMetaData>,
-    landmark_metadata: Vec<Hash>,
+    p1_metadata: Option<ChainMetaData>,
+    p2_metadata: Option<ChainMetaData>,
+    landmarks: Vec<Hash>,
 }
 
 impl BlockStore {
@@ -107,8 +109,9 @@ impl BlockStore {
             cache: HashMap::new(),
             latest_block: None,
             chain_metadata: BTreeMap::new(),
-            last_metadata: None,
-            landmark_metadata: Vec::new(),
+            p1_metadata: None,
+            landmarks: Vec::new(),
+            p2_metadata: None,
         })
     }
 
@@ -145,7 +148,18 @@ impl BlockStore {
                 "blockstore::ProcessProposal : Parent block {} not found",
                 block.parent_hash()
             );
-            self.request_missing_chain(Some(block))?;
+            if self.p2_metadata.is_some() {
+                // Continue phase 2
+                self.request_missing_blocks()?;
+            } else {
+                if self.p1_metadata.is_none() {
+                    // Start phase 1
+                    self.request_missing_chain(Some(block))?;
+                } else {
+                    // Continue phase 1
+                    self.request_missing_chain(None)?;
+                }
+            }
             return Ok(());
         }
         Ok(())
@@ -197,7 +211,7 @@ impl BlockStore {
             // Empty response, downgrade peer
             tracing::warn!("blockstore::MultiBlockResponse : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
-        } else if response.len() < self.max_blocks_in_flight {
+        } else if response.len() < self.max_batch_size {
             // Partial response, downgrade peer
             tracing::warn!("blockstore::MultiBlockResponse : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
@@ -210,6 +224,19 @@ impl BlockStore {
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
+        if let Some(landmark) = self.landmarks.pop() {
+            // remove the last landmark, should match proposals.last()
+            let hash = proposals.last().as_ref().unwrap().hash();
+            if hash != landmark {
+                tracing::warn!(
+                    "blockstore::MultiBlockResponse : mismatched landmark {} != {}",
+                    landmark,
+                    hash,
+                );
+                self.landmarks.push(landmark); // put it back
+            }
+        }
+
         // Remove the blocks from the chain metadata, if they exist
         for p in &proposals {
             self.chain_metadata.remove(&p.hash());
@@ -217,8 +244,12 @@ impl BlockStore {
 
         self.inject_proposals(proposals)?;
 
-        // Request for next bunch
-        if !self.landmark_metadata.is_empty() {
+        // Done with phase 2, allow phase 1 to restart.
+        if self.landmarks.is_empty() {
+            self.p1_metadata = None;
+            self.chain_metadata.clear();
+        } else if DO_SPECULATIVE {
+            // Speculatively request more blocks
             self.request_missing_blocks()?;
         }
 
@@ -256,33 +287,60 @@ impl BlockStore {
     /// These hashes are then sent to a Peer for retrieval.
     /// This is Part 2 of the syncing algorithm.
     fn request_missing_blocks(&mut self) -> Result<()> {
-        // ...
-        tracing::info!("blockstore::RequestMissingBlocks : requesting missing blocks");
-
-        // If we have no landmarks, we have nothing to do
-        if let Some(mut hash) = self.landmark_metadata.pop() {
-            let mut request_hashes = Vec::with_capacity(self.max_batch_size);
-            while let Some(meta) = self.chain_metadata.remove(&hash) {
-                request_hashes.push(meta.block_hash);
-                hash = meta.parent_hash;
-                // re-insert the metadata so as not to lose it
-                // self.chain_metadata.insert(hash, meta);
+        // Early exit if there's a request in-flight; and if it has not expired.
+        if let Some(peer) = self.in_flight.as_ref() {
+            if peer.last_used.elapsed() > self.request_timeout {
+                tracing::warn!(
+                    "blockstore::RequestMissingBlocks : in-flight request {} timed out, requesting from new peer",
+                    peer.peer_id
+                );
+                self.done_with_peer(DownGrade::Timeout);
+            } else {
+                return Ok(());
             }
-            // Fire request
-            if let Some(peer) = self.get_next_peer() {
+        } else {
+            if self.p2_metadata.is_none() {
+                tracing::warn!(
+                    "blockstore::RequestMissingBlocks : no metadata to request missing blocks"
+                );
+                return Ok(());
+            }
+        }
+
+        if let Some(peer) = self.get_next_peer() {
+            // If we have no landmarks, we have nothing to do
+            self.p2_metadata = None;
+            if let Some(mut hash) = self.landmarks.pop() {
+                self.landmarks.push(hash); // we actually need to peek() at the last element
+                let mut request_hashes = Vec::with_capacity(self.max_batch_size);
+                while let Some(meta) = self.chain_metadata.remove(&hash) {
+                    request_hashes.push(meta.block_hash);
+                    hash = meta.parent_hash;
+                    // re-insert the metadata so as not to lose it
+                    // self.chain_metadata.insert(hash, meta);
+                    self.p2_metadata = Some(meta);
+                }
+
+                // Fire request
                 tracing::debug!(
-                    "blockstore::RequestMissingBlocks : requesting {} blocks of {}",
+                    "blockstore::RequestMissingBlocks : requesting {} blocks of set #{}",
                     request_hashes.len(),
-                    self.landmark_metadata.len(),
+                    self.landmarks.len(),
                 );
                 self.message_sender.send_external_message(
                     peer.peer_id,
                     ExternalMessage::MultiBlockRequest(request_hashes),
                 )?;
                 self.in_flight = Some(peer);
+            } else {
+                // No more landmarks, we're done
+                self.peers.push(peer);
             }
+        } else {
+            tracing::warn!(
+                "blockstore::RequestMissingBlocks : insufficient peers to request missing blocks"
+            );
         }
-
         Ok(())
     }
 
@@ -321,7 +379,12 @@ impl BlockStore {
             .sorted_by(|a, b| b.block_number.cmp(&a.block_number))
             .collect_vec();
 
-        self.last_metadata = Some(metadata.last().unwrap().clone());
+        let p1_metadata = metadata.last().unwrap().clone();
+        let last_hash = p1_metadata.block_hash;
+        self.p1_metadata = Some(p1_metadata);
+
+        self.landmarks
+            .push(metadata.first().as_ref().unwrap().block_hash);
 
         // Store the metadata
         for meta in metadata {
@@ -330,14 +393,11 @@ impl BlockStore {
         }
 
         // If the last block does not exist in our canonical history, fire the next request
-        if let Some(meta) = self.last_metadata.as_ref() {
-            if self.db.get_block_by_hash(&meta.block_hash)?.is_none() {
-                // TODO: store the peer that provided this metadata
-                self.request_missing_chain(None)?;
-            } else {
-                // Hit our internal history. Begin replicating chain.
-                self.request_missing_blocks()?;
-            }
+        if self.db.get_block_by_hash(&last_hash)?.is_some() {
+            // Hit our internal history. Start phase 2.
+            self.p2_metadata = self.p1_metadata.clone();
+        } else if DO_SPECULATIVE {
+            self.request_missing_chain(None)?;
         }
 
         Ok(())
@@ -379,6 +439,69 @@ impl BlockStore {
             "blockstore::MetadataFromHash : responding to block request"
         );
         Ok(message)
+    }
+
+    /// Request missing chain from a peer.
+    ///
+    /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
+    /// If phase 1 is in progress, it continues requesting blocks from the last known phase 1 block.
+    /// Otherwise, it requests blocks from the given omega_block.
+    pub fn request_missing_chain(&mut self, omega_block: Option<Block>) -> Result<()> {
+        // Early exit if there's a request in-flight; and if it has not expired.
+        if let Some(peer) = self.in_flight.as_ref() {
+            if peer.last_used.elapsed() > self.request_timeout {
+                tracing::warn!(
+                    "blockstore::RequestMissingChain : in-flight request {} timed out, requesting from new peer",
+                    peer.peer_id
+                );
+                self.done_with_peer(DownGrade::Timeout);
+            } else {
+                return Ok(());
+            }
+        } else {
+            if self.injected > 0 {
+                tracing::warn!(
+                    "blockstore::RequestMissingChain : too many {} blocks in flight",
+                    self.injected
+                );
+                return Ok(());
+            }
+        }
+
+        if let Some(peer) = self.get_next_peer() {
+            let message = if let Some(meta) = self.p1_metadata.as_ref() {
+                ExternalMessage::MetaDataRequest(RequestBlock {
+                    from_number: 0,
+                    from_hash: meta.parent_hash,
+                    batch_size: self.max_batch_size,
+                })
+            } else if let Some(omega_block) = omega_block {
+                let num = omega_block.number();
+                let hash = omega_block.hash();
+                ExternalMessage::MetaDataRequest(RequestBlock {
+                    from_number: num,
+                    from_hash: hash,
+                    batch_size: self.max_batch_size,
+                })
+            } else {
+                todo!("blockstore::RequestMissingChain : no metadata to request missing blocks");
+            };
+
+            tracing::info!(
+                ?message,
+                "blockstore::RequestMissingChain : requesting missing chain from {}",
+                peer.peer_id
+            );
+            self.message_sender
+                .send_external_message(peer.peer_id, message)?;
+
+            self.in_flight = Some(peer);
+        } else {
+            tracing::warn!(
+                "blockstore::RequestMissingChain : insufficient peers to request missing blocks"
+            );
+        }
+        Ok(())
     }
 
     /// Request blocks from a hash, backwards.
@@ -638,69 +761,6 @@ impl BlockStore {
 
         // Inject the proposals
         self.inject_proposals(proposals)?;
-        Ok(())
-    }
-
-    /// Request blocks between the current height and the given block.
-    ///
-    /// The approach is to request blocks in batches of `max_batch_size` blocks.
-    /// If None block is provided, we request blocks from the last known canonical block forwards.
-    /// If the block gap is large, we request blocks from the last known canonical block forwards.
-    /// If the block gap is small, we request blocks from the latest block backwards.
-    pub fn request_missing_chain(&mut self, omega_block: Option<Block>) -> Result<()> {
-        // Early exit if there's a request in-flight; and if it has not expired.
-        if let Some(peer) = self.in_flight.as_ref() {
-            if peer.last_used.elapsed() > self.request_timeout {
-                tracing::warn!(
-                    "blockstore::RequestMissingChain : in-flight request {} timed out, requesting from new peer",
-                    peer.peer_id
-                );
-                self.done_with_peer(DownGrade::Timeout);
-                self.in_flight = self.get_next_peer();
-            } else {
-                return Ok(());
-            }
-        } else {
-            if self.injected > 0 {
-                tracing::warn!(
-                    "blockstore::RequestMissingChain : too many {} blocks in flight",
-                    self.injected
-                );
-                return Ok(());
-            }
-            self.in_flight = self.get_next_peer();
-            if self.in_flight.is_none() {
-                tracing::warn!("blockstore::RequestMissingChain : insufficient peers to request missing blocks");
-                return Ok(());
-            }
-        }
-
-        let message = if let Some(omega_block) = omega_block {
-            let num = omega_block.number();
-            let hash = omega_block.hash();
-            self.landmark_metadata.push(hash);
-            ExternalMessage::MetaDataRequest(RequestBlock {
-                from_number: num,
-                from_hash: hash,
-                batch_size: self.max_batch_size,
-            })
-        } else {
-            let hash = self.last_metadata.as_ref().unwrap().parent_hash;
-            self.landmark_metadata.push(hash);
-            ExternalMessage::MetaDataRequest(RequestBlock {
-                from_number: 0,
-                from_hash: hash,
-                batch_size: self.max_batch_size,
-            })
-        };
-        let peer = self.in_flight.as_ref().unwrap();
-        tracing::info!(
-            ?message,
-            "blockstore::RequestMissingChain : requesting missing chain from {}",
-            peer.peer_id
-        );
-        self.message_sender
-            .send_external_message(peer.peer_id, message)?;
         Ok(())
     }
 
