@@ -45,14 +45,15 @@ resource "google_storage_bucket" "persistence" {
   }
 }
 
-resource "google_storage_bucket_iam_binding" "persistence_bucket_viewers" {
+resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {
   bucket = google_storage_bucket.persistence.name
-  role   = "roles/storage.objectViewer"
+  role   = "roles/storage.objectAdmin"
   members = [
     "serviceAccount:${module.bootstraps.service_account.email}",
     "serviceAccount:${module.validators.service_account.email}",
     "serviceAccount:${module.apis.service_account.email}",
-    "serviceAccount:${module.checkpoints.service_account.email}"
+    "serviceAccount:${module.checkpoints.service_account.email}",
+    "serviceAccount:${module.persistences.service_account.email}"
   ]
 }
 
@@ -65,7 +66,7 @@ resource "google_compute_firewall" "allow_ingress_from_iap" {
   network = local.network_name
 
   direction     = "INGRESS"
-  source_ranges = ["35.235.240.0/20"]
+  source_ranges = [local.iap_ip_range]
 
   target_tags = [var.chain_name]
 
@@ -226,7 +227,7 @@ resource "google_compute_firewall" "allow_api_external_http" {
   network = local.network_name
 
   direction     = "INGRESS"
-  source_ranges = local.google_load_balancer_ip_ranges
+  source_ranges = concat(local.google_load_balancer_ip_ranges, [local.monitoring_ip_range])
 
   target_tags = [format("%s-%s", var.chain_name, "api")]
 

@@ -102,6 +102,14 @@ pub mod deposit_v3 {
         Lazy::new(|| CONTRACT.abi.function("getStake").unwrap().clone());
     pub static GET_REWARD_ADDRESS: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getRewardAddress").unwrap().clone());
+    pub static GET_SIGNING_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getSigningAddress").unwrap().clone());
+    pub static GET_CONTROL_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("getControlAddress").unwrap().clone());
+    pub static SET_SIGNING_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setSigningAddress").unwrap().clone());
+    pub static SET_CONTROL_ADDRESS: Lazy<Function> =
+        Lazy::new(|| CONTRACT.abi.function("setControlAddress").unwrap().clone());
     pub static GET_PEER_ID: Lazy<Function> =
         Lazy::new(|| CONTRACT.abi.function("getPeerId").unwrap().clone());
     pub static GET_STAKERS: Lazy<Function> =

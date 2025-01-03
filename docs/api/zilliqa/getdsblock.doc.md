@@ -6,10 +6,15 @@ GetDSBlock
 
 DS,block,get
 
+# Status
+
+Deprecated
+
 # Description
 
+This API is deprecated in ZQ2. It now returns a placeholder value for backwards compatibility.
+
 Returns the details of a specified Directory Service block.
-Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 

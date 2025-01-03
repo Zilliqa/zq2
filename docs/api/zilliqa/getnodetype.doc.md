@@ -8,7 +8,7 @@ node,type,get
 
 # Status
 
-NotDocumented
+Deprecated
 
 # Description
 

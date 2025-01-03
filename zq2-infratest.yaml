@@ -6,7 +6,8 @@ roles:
 - api
 - apps
 - checkpoint
+- persistence
 versions:
-  zq2: v0.4.1
+  zq2: 30a24610
   otterscan: develop
   spout: main

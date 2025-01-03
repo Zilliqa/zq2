@@ -25,11 +25,11 @@ pub enum HashOrTransaction {
     Transaction(Transaction),
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct QuorumCertificate {
     #[serde(serialize_with = "hex")]
     pub signature: Vec<u8>,
-    #[serde(serialize_with = "ser_display")]
+    #[serde(serialize_with = "hex")]
     pub cosigned: BitArray,
     #[serde(serialize_with = "hex")]
     pub view: u64,
