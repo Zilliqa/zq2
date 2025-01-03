@@ -5,13 +5,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::crypto::Hash;
 use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
 
 use crate::{
     cfg::NodeConfig,
+    crypto::Hash,
     db::Db,
     message::{
         Block, ChainMetaData, ExternalMessage, InjectedProposal, Proposal, RequestBlock,
@@ -32,18 +32,22 @@ enum DownGrade {
 // When a Proposal is received by Consensus, we check if the parent exists in our DB.
 // If not, then it triggers a syncing algorithm.
 //
-// 1. We check if the gap between our last canonical block and the latest Proposal.
-//     a. If it is a small gap, we request for blocks, going backwards from Proposal.
-//     b. If it is a big gap, we request for blocks, going forwards from Canonical.
-// 2. When we receive a forwards history response, we check for matches against the cache.
-//    This means that for a proposal to be injected, it must be corroborated by 2 sources.
-//     a. If it matches the cached value, we inject the proposal into the pipeline.
-//     b. If it does not match, we replace the cached value and request for more.
-//     b. If it does not exist in the cache, we cache the proposal.
-// 3. When we receive a backwards history response, we inject it into the pipeline.
-//     a. If it does not line up with the existing Canonical, then it will be dropped.
+// Phase 1: Request missing chain metadata.
+// The entire chain metadata is stored in-memory, and is used to construct a chain of metadata.
+// 1. We start with the latest Proposal and request the chain of metadata from a peer.
+// 2. We construct the chain of metadata, based on the response received.
+// 3. If the last block does not exist in our canonical history, we repeat from 1.
+// 4. If the last block exists, we have hit our canonical history, we move to Phase 2.
 //
-// TODO: How to handle case where only single source of truth i.e. bootstrap node?
+// Phase 2: Request missing blocks.
+// 1. We construct a set of hashes, from the in-memory chain metadata.
+// 2. We send these block hashes to a Peer for retrieval.
+// 3. We inject the Proposals into the pipeline, when the response is received.
+// 4. If there are still missing blocks, we repeat from 1.
+// 5. If there are no more missing blocks, we are done.
+//
+// Subsequent missing Proposals are treated as a new sync algorithm.
+// Eventually, we get up to 99.9% of the chain.
 
 const GAP_THRESHOLD: usize = 5; // How big is big/small gap.
 const DO_SPECULATIVE: bool = false; // Speeds up syncing by speculatively fetching blocks, allowing it to catch up.
@@ -151,14 +155,12 @@ impl BlockStore {
             if self.p2_metadata.is_some() {
                 // Continue phase 2
                 self.request_missing_blocks()?;
+            } else if self.p1_metadata.is_none() {
+                // Start phase 1
+                self.request_missing_chain(Some(block))?;
             } else {
-                if self.p1_metadata.is_none() {
-                    // Start phase 1
-                    self.request_missing_chain(Some(block))?;
-                } else {
-                    // Continue phase 1
-                    self.request_missing_chain(None)?;
-                }
+                // Continue phase 1
+                self.request_missing_chain(None)?;
             }
             return Ok(());
         }
@@ -298,20 +300,18 @@ impl BlockStore {
             } else {
                 return Ok(());
             }
-        } else {
-            if self.p2_metadata.is_none() {
-                tracing::warn!(
-                    "blockstore::RequestMissingBlocks : no metadata to request missing blocks"
-                );
-                return Ok(());
-            }
+        } else if self.p2_metadata.is_none() {
+            tracing::warn!(
+                "blockstore::RequestMissingBlocks : no metadata to request missing blocks"
+            );
+            return Ok(());
         }
 
         if let Some(peer) = self.get_next_peer() {
             // If we have no landmarks, we have nothing to do
             self.p2_metadata = None;
-            if let Some(mut hash) = self.landmarks.pop() {
-                self.landmarks.push(hash); // we actually need to peek() at the last element
+            if let Some(hash) = self.landmarks.last() {
+                let mut hash = *hash; // peek at the last value
                 let mut request_hashes = Vec::with_capacity(self.max_batch_size);
                 while let Some(meta) = self.chain_metadata.remove(&hash) {
                     request_hashes.push(meta.block_hash);
@@ -353,12 +353,6 @@ impl BlockStore {
         from: PeerId,
         response: Vec<ChainMetaData>,
     ) -> Result<()> {
-        tracing::info!(
-            "blockstore::MetadataResponse : received {} metadata from {}",
-            response.len(),
-            from
-        );
-
         // Process whatever we have received.
         if response.is_empty() {
             // Empty response, downgrade peer
@@ -385,6 +379,13 @@ impl BlockStore {
 
         self.landmarks
             .push(metadata.first().as_ref().unwrap().block_hash);
+
+        tracing::info!(
+            "blockstore::MetadataResponse : received {} metadata set #{} from {}",
+            metadata.len(),
+            self.landmarks.len(),
+            from
+        );
 
         // Store the metadata
         for meta in metadata {
@@ -458,14 +459,12 @@ impl BlockStore {
             } else {
                 return Ok(());
             }
-        } else {
-            if self.injected > 0 {
-                tracing::warn!(
-                    "blockstore::RequestMissingChain : too many {} blocks in flight",
-                    self.injected
-                );
-                return Ok(());
-            }
+        } else if self.injected > 0 {
+            tracing::warn!(
+                "blockstore::RequestMissingChain : too many {} blocks in flight",
+                self.injected
+            );
+            return Ok(());
         }
 
         if let Some(peer) = self.get_next_peer() {
