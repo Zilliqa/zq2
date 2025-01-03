@@ -396,7 +396,40 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     Ok(block)
 }
 
+pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u8; 256]> {
+    let mut logs_bloom = [0; 256];
+    for txn_receipt in node.get_transaction_receipts_in_block(block.hash())?.iter() {
+        // Ideally we'd implement a full blown bloom filter type but this'll do for now
+        txn_receipt
+            .logs
+            .clone()
+            .into_iter()
+            .map(|log| match log {
+                Log::Evm(log) => log,
+                Log::Scilla(log) => log.into_evm(),
+            })
+            .enumerate()
+            .map(|(log_index, log)| {
+                let log = eth::Log::new(
+                    log,
+                    log_index,
+                    txn_receipt.index as usize,
+                    txn_receipt.tx_hash,
+                    block.number(),
+                    block.hash(),
+                );
+
+                log.bloom(&mut logs_bloom);
+
+                log
+            })
+            .collect_vec();
+    }
+    Ok(logs_bloom)
+}
+
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
+    let logs_bloom = get_block_logs_bloom(node, block)?;
     if !full {
         let miner = node.get_proposer_reward_address(block.header)?;
         let block_gas_limit = block.gas_limit();
@@ -404,6 +437,7 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             block,
             miner.unwrap_or_default(),
             block_gas_limit,
+            logs_bloom,
         ))
     } else {
         let transactions = block
@@ -417,7 +451,12 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             .collect::<Result<_>>()?;
         let miner = node.get_proposer_reward_address(block.header)?;
         let block_gas_limit = block.gas_limit();
-        let block = eth::Block::from_block(block, miner.unwrap_or_default(), block_gas_limit);
+        let block = eth::Block::from_block(
+            block,
+            miner.unwrap_or_default(),
+            block_gas_limit,
+            logs_bloom,
+        );
         Ok(eth::Block {
             transactions,
             ..block

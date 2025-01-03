@@ -101,10 +101,17 @@ pub struct Block {
     pub quorum_certificate: QuorumCertificate,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate_quorum_certificate: Option<AggregateQc>,
+    #[serde(serialize_with = "hex")]
+    pub logs_bloom: [u8; 256],
 }
 
 impl Block {
-    pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
+    pub fn from_block(
+        block: &message::Block,
+        miner: Address,
+        block_gas_limit: EvmGas,
+        logs_bloom: [u8; 256],
+    ) -> Self {
         Block {
             header: Header::from_header(block.header, miner, block_gas_limit),
             size: block.size() as u64,
@@ -113,9 +120,10 @@ impl Block {
                 .iter()
                 .map(|h| HashOrTransaction::Hash((*h).into()))
                 .collect(),
-            uncles: vec![],
+            uncles: vec![], // Uncles do not exist in ZQ2
             quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
+            logs_bloom,
         }
     }
 }
@@ -134,9 +142,7 @@ pub struct Header {
     #[serde(serialize_with = "hex")]
     pub nonce: [u8; 8],
     #[serde(serialize_with = "hex")]
-    pub sha_3_uncles: B256,
-    #[serde(serialize_with = "hex")]
-    pub logs_bloom: [u8; 256],
+    pub sha_3_uncles: B256, // Uncles do not exist in ZQ2
     #[serde(serialize_with = "hex")]
     pub transactions_root: B256,
     #[serde(serialize_with = "hex")]
@@ -146,9 +152,9 @@ pub struct Header {
     #[serde(serialize_with = "hex")]
     pub miner: Address,
     #[serde(serialize_with = "hex")]
-    pub difficulty: u64,
+    pub difficulty: u64, // Difficulty does not exist in ZQ2
     #[serde(serialize_with = "hex")]
-    pub total_difficulty: u64,
+    pub total_difficulty: u64, // Difficulty does not exist in ZQ2
     #[serde(serialize_with = "hex")]
     pub extra_data: Vec<u8>,
     #[serde(serialize_with = "hex")]
@@ -175,14 +181,13 @@ impl Header {
             parent_hash: header.qc.block_hash.into(),
             mix_hash: B256::ZERO,
             nonce: [0; 8],
-            sha_3_uncles: B256::ZERO,
-            logs_bloom: [0; 256],
+            sha_3_uncles: B256::ZERO, // Uncles do not exist in ZQ2
             transactions_root: header.transactions_root_hash.into(),
             state_root: header.state_root_hash.into(),
             receipts_root: header.receipts_root_hash.into(),
             miner,
-            difficulty: 0,
-            total_difficulty: 0,
+            difficulty: 0,       // Difficulty does not exist in ZQ2
+            total_difficulty: 0, // Difficulty does not exist in ZQ2
             extra_data: vec![],
             gas_limit: block_gas_limit,
             gas_used: header.gas_used,

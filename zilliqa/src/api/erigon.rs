@@ -63,16 +63,17 @@ fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
         return Ok(None);
     };
 
-    let miner = node
-        .lock()
-        .unwrap()
-        .get_proposer_reward_address(block.header)?;
+    let node = node.lock().unwrap();
+    let logs_bloom = super::eth::get_block_logs_bloom(&node, block)?;
 
-    let block_gas_limit = node.lock().unwrap().config.consensus.eth_block_gas_limit;
+    let miner = node.get_proposer_reward_address(block.header)?;
+
+    let block_gas_limit = node.config.consensus.eth_block_gas_limit;
     Ok(Some(eth::Block::from_block(
         block,
         miner.unwrap_or_default(),
         block_gas_limit,
+        logs_bloom,
     )))
 }
 
