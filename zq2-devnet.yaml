@@ -8,6 +8,6 @@ roles:
 - checkpoint
 - persistence
 versions:
-  zq2: v0.4.0
+  zq2: v0.5.1
   otterscan: develop
   spout: main

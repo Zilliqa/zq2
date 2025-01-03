@@ -68,3 +68,7 @@ pub const EXAMINE_BLOCKS_PER_FORK_COUNT: usize = 16;
 pub const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
 pub const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
 pub const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);
+
+// Consensus
+// Roughly how long to allow between finish propocessing of a Proposal and it being received by peers
+pub const TIME_TO_ALLOW_PROPOSAL_BROADCAST: Duration = Duration::from_millis(10);
