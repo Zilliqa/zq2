@@ -74,6 +74,7 @@ pub struct BlockStore {
     // Chain metadata
     chain_metadata: BTreeMap<Hash, ChainMetaData>,
     last_metadata: Option<ChainMetaData>,
+    landmark_metadata: Vec<Hash>,
 }
 
 impl BlockStore {
@@ -107,6 +108,7 @@ impl BlockStore {
             latest_block: None,
             chain_metadata: BTreeMap::new(),
             last_metadata: None,
+            landmark_metadata: Vec::new(),
         })
     }
 
@@ -174,6 +176,46 @@ impl BlockStore {
         }
     }
 
+    /// Request missing blocks from the chain.
+    ///
+    /// It constructs a set of hashes, which constitute the series of blocks that are missing.
+    /// These hashes are then sent to a Peer for retrieval.
+    fn request_missing_blocks(&mut self) -> Result<()> {
+        // ...
+        tracing::info!("blockstore::RequestMissingBlocks : requesting missing blocks");
+
+        // If we have no landmarks, we have nothing to do
+        if let Some(mut hash) = self.landmark_metadata.pop() {
+            let mut request_hashes = Vec::with_capacity(self.max_batch_size);
+            request_hashes.push(hash);
+            while let Some(meta) = self.chain_metadata.remove(&hash) {
+                request_hashes.push(meta.block_hash);
+                hash = meta.parent_hash;
+                // re-insert the metadata so as not to lose it
+                // self.chain_metadata.insert(hash, meta);
+            }
+            // Fire request
+            if let Some(peer) = self.get_next_peer() {
+                tracing::debug!(
+                    "blockstore::RequestMissingBlocks : requesting {} blocks from {}",
+                    request_hashes.len(),
+                    peer.peer_id
+                );
+                self.message_sender.send_external_message(
+                    peer.peer_id,
+                    ExternalMessage::MultiBlockRequest(request_hashes),
+                )?;
+                self.in_flight = Some(peer);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle a response to a metadata request.
+    /// 
+    /// This is the first step in the syncing algorithm, where we receive a set of metadata and use it to
+    /// construct a chain history. We then request the missing blocks from the chain.
     pub fn handle_metadata_response(
         &mut self,
         from: PeerId,
@@ -201,13 +243,10 @@ impl BlockStore {
         }
 
         // Sort metadata by number, reversed
-        let mut metadata = response
+        let metadata = response
             .into_iter()
-            .sorted_by_key(|f| f.block_number)
+            .sorted_by(|a, b| b.block_number.cmp(&a.block_number))
             .collect_vec();
-        metadata.reverse();
-        // mark the block
-        metadata.last_mut().unwrap().parent_hash = metadata.first().unwrap().block_hash;
 
         // Store the metadata
         for meta in metadata {
@@ -218,27 +257,14 @@ impl BlockStore {
         }
 
         // If the last block does not exist in our canonical history, fire the next request
-        if self.last_metadata.is_some()
-            && self
-                .db
-                .get_block_by_hash(&self.last_metadata.as_ref().unwrap().block_hash)?
-                .is_none()
-        {
-            self.request_missing_chain(None)?;
-        } else {
-            // Hit our internal history. Begin replicating chain.
-            self.request_missing_blocks()?;
+        if let Some(meta) = self.last_metadata.as_ref() {
+            if self.db.get_block_by_hash(&meta.block_hash)?.is_none() {
+                self.request_missing_chain(None)?;
+            } else {
+                // Hit our internal history. Begin replicating chain.
+                self.request_missing_blocks()?;
+            }
         }
-
-        Ok(())
-    }
-
-    fn request_missing_blocks(&mut self) -> Result<()> {
-        // ...
-        tracing::info!(
-            "blockstore::RequestMissingBlocks : requesting missing blocks {:?}",
-            self.last_metadata
-        );
 
         Ok(())
     }
@@ -283,7 +309,7 @@ impl BlockStore {
 
     /// Request blocks from a hash, backwards.
     ///
-    /// It will collect N blocks by following the block.parent_hash() of the requested block.
+    /// It will collect N blocks by following the block.parent_hash() of each requested block.
     pub fn handle_request_from_hash(
         &mut self,
         from: PeerId,
@@ -567,15 +593,18 @@ impl BlockStore {
         }
 
         let message = if let Some(omega_block) = omega_block {
+            self.landmark_metadata.push(omega_block.hash());
             ExternalMessage::MetaDataRequest(RequestBlock {
                 from_number: omega_block.number(),
                 from_hash: omega_block.hash(),
                 batch_size: self.max_blocks_in_flight,
             })
         } else {
+            let hash = self.last_metadata.as_ref().unwrap().parent_hash;
+            self.landmark_metadata.push(hash);
             ExternalMessage::MetaDataRequest(RequestBlock {
                 from_number: self.last_metadata.as_ref().unwrap().block_number,
-                from_hash: self.last_metadata.as_ref().unwrap().block_hash,
+                from_hash: hash,
                 batch_size: self.max_blocks_in_flight,
             })
         };
