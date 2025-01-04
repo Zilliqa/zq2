@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BinaryHeap, HashMap},
+    collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -40,16 +40,21 @@ enum DownGrade {
 // 4. If the last block exists, we have hit our canonical history, we move to Phase 2.
 //
 // Phase 2: Request missing blocks.
+// Once the chain metadata is constructed, we request the missing blocks to replay the history.
 // 1. We construct a set of hashes, from the in-memory chain metadata.
 // 2. We send these block hashes to a Peer for retrieval.
 // 3. We inject the Proposals into the pipeline, when the response is received.
 // 4. If there are still missing blocks, we repeat from 1.
-// 5. If there are no more missing blocks, we are done.
+// 5. If there are no more missing blocks, we are done, ready for Phase 3.
 //
-// Subsequent missing Proposals are treated as a new sync algorithm.
-// Eventually, we get up to 99.9% of the chain.
+// Phase 3: Zip it up.
+// Phase 1 & 2 brings up to 99% of the chain. This step closes the last gap.
+// 1. We queue all newly received Proposals, while Phase 1 & 2 were in progress.
+// 2. We check the head of the queue if it's parent exists in our canonical history.
+// 3. If it does not, we trigger Phase 1.
+// 4. If it does, we inject the entire queue into the pipeline. We are done.
 
-const GAP_THRESHOLD: usize = 5; // How big is big/small gap.
+const GAP_THRESHOLD: usize = 10; // How big is big/small gap.
 const DO_SPECULATIVE: bool = false; // Speeds up syncing by speculatively fetching blocks, allowing it to catch up.
 
 #[derive(Debug)]
@@ -81,6 +86,7 @@ pub struct BlockStore {
     p1_metadata: Option<ChainMetaData>,
     p2_metadata: Option<ChainMetaData>,
     landmarks: Vec<Hash>,
+    zip_queue: VecDeque<Proposal>,
 }
 
 impl BlockStore {
@@ -116,6 +122,7 @@ impl BlockStore {
             p1_metadata: None,
             landmarks: Vec::new(),
             p2_metadata: None,
+            zip_queue: VecDeque::with_capacity(GAP_THRESHOLD),
         })
     }
 
@@ -139,30 +146,55 @@ impl BlockStore {
         Ok(())
     }
 
-    /// Process a block proposal.
-    /// Checks if the parent block exists, and if not, triggers a sync.
-    pub fn process_proposal(&mut self, block: Block) -> Result<()> {
-        // ...
-        // check if block parent exists
-        let parent_block = self.db.get_block_by_hash(&block.parent_hash())?;
+    /// Sync a block proposal.
+    ///
+    /// This is the main entry point for syncing a block proposal.
+    /// We start by enqueuing all proposals, and then check if the parent block exists in history.
+    /// If the parent block exists, we do nothing. Ttherwise, we check the oldest one in the queue.
+    /// If we find its parent in history, we inject the entire queue.
+    ///
+    /// We do not perform checks on the Proposal here. This is done in the consensus layer.
+    pub fn sync_proposal(&mut self, proposal: Proposal) -> Result<()> {
+        // just stuff the latest proposal into the fixed-size queue.
+        while self.zip_queue.len() >= GAP_THRESHOLD {
+            self.zip_queue.pop_front();
+        }
+        self.zip_queue.push_back(proposal);
 
-        // no parent block, trigger sync
-        if parent_block.is_none() {
-            tracing::warn!(
-                "blockstore::ProcessProposal : Parent block {} not found",
-                block.parent_hash()
-            );
-            if self.p2_metadata.is_some() {
-                // Continue phase 2
-                self.request_missing_blocks()?;
-            } else if self.p1_metadata.is_none() {
-                // Start phase 1
-                self.request_missing_chain(Some(block))?;
+        // TODO: Replace with single SQL query
+        // Check if block parent exist in history
+        let parent_hash = self.zip_queue.back().unwrap().header.qc.block_hash;
+        if self.db.get_block_by_hash(&parent_hash)?.is_none() {
+            // Check if oldes block exists in the history. If it does, we have synced up 99% of the chain.
+            let ancestor_hash = self.zip_queue.front().unwrap().header.qc.block_hash;
+            if self.zip_queue.len() == 1 || self.db.get_block_by_hash(&ancestor_hash)?.is_none() {
+                // No ancestor block, trigger sync
+                tracing::warn!(
+                    "blockstore::SyncProposal : parent block {} not found",
+                    parent_hash
+                );
+                if self.p2_metadata.is_some() {
+                    // Continue phase 2
+                    self.request_missing_blocks()?;
+                } else if self.p1_metadata.is_some() {
+                    // Continue phase 1
+                    self.request_missing_chain(None)?;
+                } else {
+                    // Start phase 1
+                    self.request_missing_chain(Some(parent_hash))?;
+                }
             } else {
-                // Continue phase 1
-                self.request_missing_chain(None)?;
+                // 99% synced, zip it up!
+                tracing::info!(
+                    "blockstore::SyncProposal : zip up {} blocks from {}",
+                    self.zip_queue.len(),
+                    ancestor_hash
+                );
+                // parent block exists, inject the proposal
+                let proposals = self.zip_queue.drain(..).collect_vec();
+                self.inject_proposals(proposals)?;
+                // we're done
             }
-            return Ok(());
         }
         Ok(())
     }
@@ -201,13 +233,6 @@ impl BlockStore {
         from: PeerId,
         response: Vec<Proposal>,
     ) -> Result<()> {
-        // ...
-        tracing::info!(
-            "blockstore::MultiBlockResponse : received {} blocks from {}",
-            response.len(),
-            from
-        );
-
         // Process whatever we received
         if response.is_empty() {
             // Empty response, downgrade peer
@@ -221,10 +246,18 @@ impl BlockStore {
             self.done_with_peer(DownGrade::None);
         }
 
+        // Sort proposals by number, ascending
         let proposals = response
             .into_iter()
             .sorted_by_key(|p| p.number())
             .collect_vec();
+
+        tracing::info!(
+            "blockstore::MultiBlockResponse : received {} blocks for set #{} from {}",
+            proposals.len(),
+            self.landmarks.len(),
+            from
+        );
 
         if let Some(landmark) = self.landmarks.pop() {
             // remove the last landmark, should match proposals.last()
@@ -447,7 +480,7 @@ impl BlockStore {
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If phase 1 is in progress, it continues requesting blocks from the last known phase 1 block.
     /// Otherwise, it requests blocks from the given omega_block.
-    pub fn request_missing_chain(&mut self, omega_block: Option<Block>) -> Result<()> {
+    pub fn request_missing_chain(&mut self, parent_hash: Option<Hash>) -> Result<()> {
         // Early exit if there's a request in-flight; and if it has not expired.
         if let Some(peer) = self.in_flight.as_ref() {
             if peer.last_used.elapsed() > self.request_timeout {
@@ -474,11 +507,9 @@ impl BlockStore {
                     from_hash: meta.parent_hash,
                     batch_size: self.max_batch_size,
                 })
-            } else if let Some(omega_block) = omega_block {
-                let num = omega_block.number();
-                let hash = omega_block.hash();
+            } else if let Some(hash) = parent_hash {
                 ExternalMessage::MetaDataRequest(RequestBlock {
-                    from_number: num,
+                    from_number: 0,
                     from_hash: hash,
                     batch_size: self.max_batch_size,
                 })

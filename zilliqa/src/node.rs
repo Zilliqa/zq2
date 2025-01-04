@@ -376,8 +376,8 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
-            _ => {
-                warn!("unexpected message type");
+            msg => {
+                warn!(%msg, "unexpected message type");
             }
         }
 
@@ -968,7 +968,7 @@ impl Node {
     }
 
     fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
-        if let Some((to, message)) = self.consensus.proposal(from, proposal, false)? {
+        if let Some((to, message)) = self.consensus.proposal(from, proposal.clone(), false)? {
             self.reset_timeout
                 .send(self.config.consensus.consensus_timeout)?;
             if let Some(to) = to {
@@ -976,6 +976,8 @@ impl Node {
             } else {
                 self.message_sender.broadcast_proposal(message)?;
             }
+        } else {
+            self.consensus.blockstore.sync_proposal(proposal)?; // proposal is already verified
         }
 
         Ok(())
