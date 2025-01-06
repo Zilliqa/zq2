@@ -24,7 +24,7 @@ export NVM_DIR="$HOME/.nvm"
 echo "Installing nvm"
 nvm install 18.20
 
-echo "Using nvm 16"
+echo "Using nvm 18"
 nvm use 18.20
 node --version
 npm install pnpm

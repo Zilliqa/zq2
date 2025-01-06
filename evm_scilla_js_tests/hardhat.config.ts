@@ -51,7 +51,6 @@ const config: HardhatUserConfig = {
       protocolVersion: 0x41,
       miningState: false
     },
-
     prototestnet: {
       url: "https://api.zq2-prototestnet.zilliqa.com",
       websocketUrl: "ws://api.zq2-prototestnet.zilliqa.com",
