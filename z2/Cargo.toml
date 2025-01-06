@@ -42,7 +42,7 @@ git2 = "0.18.3"
 hex = "0.4.3"
 home = "0.5.9"
 indicatif = "0.17.9"
-itertools = "0.13.0"
+itertools = "0.14.0"
 jsonrpsee = {version = "0.24.7", features = ["client"]}
 k256 = "0.13.4"
 lazy_static = "1.5.0"
