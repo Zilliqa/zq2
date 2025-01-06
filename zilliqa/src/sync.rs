@@ -282,20 +282,22 @@ impl Sync {
                 sum.with(p.hash().as_bytes())
             })
             .finalize();
-        if self.p2_metadata.unwrap_or_else(|| Hash::ZERO) != checksum {
+        if self.p2_metadata.unwrap_or(Hash::ZERO) != checksum {
             tracing::error!("sync::MultiBlockResponse : mismatch request checksum {checksum}");
             return Ok(());
         }
 
-        // Sort proposals by number, ascending
+        // Response seems sane.
         let proposals = response
             .into_iter()
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
-        // Remove the blocks from the chain metadata, if they exist
+        // Remove the blocks from the chain metadata
         for p in &proposals {
-            self.chain_metadata.remove(&p.hash());
+            if self.chain_metadata.remove(&p.hash()).is_none() {
+                anyhow::bail!("missing chain data for proposal"); // this should never happen!
+            }
         }
 
         self.landmarks.pop();
@@ -362,6 +364,10 @@ impl Sync {
                 return Ok(());
             }
         } else if self.injected > self.max_blocks_in_flight {
+            tracing::warn!(
+                "sync::RequestMissingBlocks : too many {} blocks in flight",
+                self.injected
+            );
             return Ok(());
         } else if self.p2_metadata.is_none() {
             tracing::warn!("sync::RequestMissingBlocks : no metadata to request missing blocks");
@@ -373,13 +379,12 @@ impl Sync {
             self.p2_metadata = None;
             // If we have no landmarks, we have nothing to do
             if let Some((hash, peer_id)) = self.landmarks.last() {
-                let mut hash = *hash; // peek at the last value
                 let mut request_hashes = Vec::with_capacity(self.max_batch_size);
-                while let Some(meta) = self.chain_metadata.remove(&hash) {
+                let mut key = *hash; // start from this block
+                while let Some(meta) = self.chain_metadata.remove(&key) {
                     request_hashes.push(meta.block_hash);
-                    hash = meta.parent_hash;
-                    // TODO: Implement retry mechanism
-                    // self.chain_metadata.insert(hash, meta); // reinsert, for retries
+                    key = meta.parent_hash;
+                    self.chain_metadata.insert(meta.block_hash, meta); // reinsert, for retries
                 }
 
                 // Checksum of the request hashes
