@@ -226,10 +226,10 @@ impl Node {
                 }
             }
             ExternalMessage::AddPeer => {
-                self.consensus.blockstore.add_peer(from);
+                self.consensus.sync.add_peer(from);
             }
             ExternalMessage::RemovePeer => {
-                self.consensus.blockstore.remove_peer(from);
+                self.consensus.sync.remove_peer(from);
             }
             // `Proposals` are re-routed to `handle_request()`
             _ => {
@@ -276,90 +276,13 @@ impl Node {
             ExternalMessage::MultiBlockRequest(request) => {
                 let message = self
                     .consensus
-                    .blockstore
+                    .sync
                     .handle_multiblock_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             ExternalMessage::MetaDataRequest(request) => {
-                let message = self
-                    .consensus
-                    .blockstore
-                    .handle_metadata_request(from, request)?;
+                let message = self.consensus.sync.handle_metadata_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
-            }
-            ExternalMessage::RequestFromNumber(request) => {
-                let message = self
-                    .consensus
-                    .blockstore
-                    .handle_request_from_number(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            ExternalMessage::RequestFromHash(request) => {
-                let message = self
-                    .consensus
-                    .blockstore
-                    .handle_request_from_hash(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            // Respond negatively to old BlockRequests.
-            ExternalMessage::BlockRequest(request) => {
-                self.request_responses.send((
-                    response_channel,
-                    ExternalMessage::BlockResponse(BlockResponse {
-                        proposals: vec![],
-                        from_view: request.from_view,
-                        availability: None,
-                    }),
-                ))?;
-                return Ok(());
-
-                // if from == self.peer_id {
-                //     debug!("block_store::BlockRequest : ignoring blocks request to self");
-                //     return Ok(());
-                // }
-
-                // trace!(
-                //     "block_store::BlockRequest : received a block request - {}",
-                //     self.peer_id
-                // );
-                // // Note that it is very important that we limit this by number of blocks
-                // // returned, _not_ by max view range returned. If we don't, then any
-                // // view gap larger than block_request_limit will never be filliable
-                // // because no node will ever be prepared to return the block after it.
-                // let proposals: Vec<Proposal> = (request.from_view..=request.to_view)
-                //     .take(self.config.block_request_limit)
-                //     .filter_map(|view| {
-                //         self.consensus
-                //             .get_block_by_view(view)
-                //             .transpose()
-                //             .map(|block| Ok(self.block_to_proposal(block?)))
-                //     })
-                //     .collect::<Result<_>>()?;
-
-                // let availability = self.consensus.block_store.availability()?;
-                // trace!("block_store::BlockRequest - responding to new blocks request {id:?} from {from:?} of {request:?} with props {0:?} availability {availability:?}",
-                //        proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
-
-                // // Send the response to this block request.
-                // self.request_responses.send((
-                //     response_channel,
-                //     ExternalMessage::BlockResponse(BlockResponse {
-                //         proposals,
-                //         from_view: request.from_view,
-                //         availability,
-                //     }),
-                // ))?;
-            }
-            // We don't usually expect a [BlockResponse] to be received as a request, however this can occur when our
-            // [BlockStore] has re-sent a previously unusable block because we didn't (yet) have the block's parent.
-            // Having knowledge of this here breaks our abstraction boundaries slightly, but it also keeps things
-            // simple.
-            ExternalMessage::BlockResponse(m) => {
-                self.handle_block_response(from, m)?;
-                // Acknowledge this block response. This does nothing because the `BlockResponse` request was sent by
-                // us, but we keep it here for symmetry with the other handlers.
-                self.request_responses
-                    .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
             // This just breaks down group block messages into individual messages to stop them blocking threads
             // for long periods.
@@ -397,30 +320,18 @@ impl Node {
     pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
         match message {
-            ExternalMessage::MultiBlockResponse(response) => {
-                self.consensus
-                    .blockstore
-                    .handle_multiblock_response(from, response)?;
-            }
-            ExternalMessage::MetaDataResponse(response) => {
-                self.consensus
-                    .blockstore
-                    .handle_metadata_response(from, response)?;
-            }
-            ExternalMessage::ResponseFromNumber(response) => {
-                self.consensus
-                    .blockstore
-                    .handle_response_from_number(from, response)?;
-            }
-            ExternalMessage::ResponseFromHash(response) => {
-                self.consensus
-                    .blockstore
-                    .handle_response_from_hash(from, response)?;
-            }
-            ExternalMessage::BlockResponse(m) => self.handle_block_response(from, m)?,
+            ExternalMessage::MultiBlockResponse(response) => self
+                .consensus
+                .sync
+                .handle_multiblock_response(from, response)?,
+
+            ExternalMessage::MetaDataResponse(response) => self
+                .consensus
+                .sync
+                .handle_metadata_response(from, response)?,
             ExternalMessage::Acknowledgement => {}
-            _ => {
-                warn!("unexpected message type");
+            msg => {
+                warn!(%msg, "unexpected message type");
             }
         }
 
@@ -977,13 +888,13 @@ impl Node {
                 self.message_sender.broadcast_proposal(message)?;
             }
         } else {
-            self.consensus.blockstore.sync_proposal(proposal)?; // proposal is already verified
+            self.consensus.sync.sync_proposal(proposal)?; // proposal is already verified
         }
 
         Ok(())
     }
 
-    fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
+    fn _handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
         trace!(
             "block_store::handle_block_response - received blocks response of length {}",
             response.proposals.len()
@@ -1009,7 +920,7 @@ impl Node {
             return Ok(());
         }
         trace!("Handling proposal for view {0}", req.block.header.view);
-        self.consensus.blockstore.mark_received_proposal(&req)?;
+        self.consensus.sync.mark_received_proposal(&req)?;
         let proposal = self.consensus.receive_block(from, req.block)?;
         if let Some(proposal) = proposal {
             trace!(

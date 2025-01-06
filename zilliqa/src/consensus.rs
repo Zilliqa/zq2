@@ -22,7 +22,6 @@ use tracing::*;
 use crate::{
     block_store::BlockStore,
     blockhooks,
-    blockstore::BlockStore as BlockStore2,
     cfg::{ConsensusConfig, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     contracts,
@@ -39,6 +38,7 @@ use crate::{
     pool::{TransactionPool, TxAddResult, TxPoolContent},
     range_map::RangeMap,
     state::State,
+    sync::Sync,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -152,7 +152,7 @@ pub struct Consensus {
     config: NodeConfig,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
-    pub blockstore: BlockStore2,
+    pub sync: Sync,
     pub block_store: BlockStore,
     latest_leader_cache: RefCell<Option<CachedLeader>>,
     votes: BTreeMap<Hash, BlockVotes>,
@@ -208,7 +208,7 @@ impl Consensus {
             )?;
         }
 
-        let blockstore = BlockStore2::new(&config, db.clone(), message_sender.clone(), Vec::new())?;
+        let sync = Sync::new(&config, db.clone(), message_sender.clone(), Vec::new())?;
 
         // It is important to create the `BlockStore` after the checkpoint has been loaded into the DB. The
         // `BlockStore` pre-loads and caches information about the currently stored blocks.
@@ -328,7 +328,7 @@ impl Consensus {
         let mut consensus = Consensus {
             secret_key,
             config,
-            blockstore,
+            sync,
             block_store,
             latest_leader_cache: RefCell::new(None),
             message_sender,

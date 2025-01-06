@@ -58,7 +58,7 @@ const GAP_THRESHOLD: usize = 10; // How big is big/small gap.
 const DO_SPECULATIVE: bool = false; // Speeds up syncing by speculatively fetching blocks, allowing it to catch up.
 
 #[derive(Debug)]
-pub struct BlockStore {
+pub struct Sync {
     // database
     db: Arc<Db>,
     // message bus
@@ -89,7 +89,7 @@ pub struct BlockStore {
     zip_queue: VecDeque<Proposal>,
 }
 
-impl BlockStore {
+impl Sync {
     pub fn new(
         config: &NodeConfig,
         db: Arc<Db>,
