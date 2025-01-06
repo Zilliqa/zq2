@@ -1,5 +1,5 @@
 import {expect} from "chai";
-import {Contract} from "ethers";
+import {Contract, Wallet} from "ethers";
 import hre from "hardhat";
 import {ScillaContract} from "hardhat-scilla-plugin";
 import {parallelizer} from "../helpers";
@@ -8,8 +8,8 @@ import {SignerWithAddress} from "@nomiclabs/hardhat-ethers/signers";
 xdescribe("ERC20 Interop", function () {
   let zrc2_contract: ScillaContract;
   let bridge_contract: Contract;
-  let contractOwner: SignerWithAddress;
-  let alice: SignerWithAddress;
+  let contractOwner: Wallet;
+  let alice: Wallet;
 
   before(async function () {
     if (!hre.isZilliqaNetworkSelected() || !hre.isScillaTestingEnabled()) {
@@ -26,7 +26,8 @@ xdescribe("ERC20 Interop", function () {
       "ZRC2Interop Token",
       "SDT",
       2,
-      1_000,{gasLimit: 2000000}
+      1_000,
+      {gasLimit: 2000000}
     );
 
     console.log("Deploying ERC20Interop done...");
