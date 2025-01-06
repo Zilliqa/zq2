@@ -28,7 +28,7 @@ if ! sudo systemctl stop zilliqa.service; then
 fi
 
 # Create persistence export folder name with timestamp
-persistence_export_name="{{ eth_chain_id }}-persistence-$(date +%Y%m%d)-$(date +%H%M%S)"
+persistence_export_name="{{ eth_chain_id }}-persistence-$(date +%Y%m%d)-$(date +%H%M)"
 log_message "Creating persistence export: $persistence_export_name"
 
 # Upload to GCS

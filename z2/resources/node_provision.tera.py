@@ -69,11 +69,23 @@ latest_block_number_obtained_at = 0
 def health():
     global latest_block_number
     global latest_block_number_obtained_at
-    response = requests.post(
-        "http://localhost:4201",
-        json={"jsonrpc":"2.0", "id": 1, "method": "eth_blockNumber"},
-    ).json()
-    block_number = int(response["result"], 16)
+
+    try:
+        response = requests.post(
+            "http://localhost:4201",
+            json={"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber"},
+            timeout=5  # Add a timeout to avoid hanging indefinitely
+        )
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        response_json = response.json()
+    except requests.exceptions.RequestException as e:
+        # Handle connection errors, timeouts, and HTTP errors
+        return (f"Failed to fetch block number: {e}", 500)
+    except ValueError as e:
+        # Handle JSON decoding errors
+        return (f"Invalid JSON response: {e}", 500)
+
+    block_number = int(response_json["result"], 16)
     current_time = int(time())
     print (f"block {block_number} latest {latest_block_number}")
 
@@ -84,7 +96,7 @@ def health():
     
     if latest_block_number_obtained_at + 60 < current_time:
         # no blocks for 60 seconds
-        return ("no blocks for more than 60 seconds", 500)
+        return ("no blocks for more than 60 seconds", 400)
     else:
         return (f"block {latest_block_number} since {latest_block_number_obtained_at}", 200)
 
