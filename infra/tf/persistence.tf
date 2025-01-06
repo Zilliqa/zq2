@@ -34,3 +34,18 @@ resource "google_compute_instance_group" "persistence" {
     port = "4201"
   }
 }
+
+resource "google_compute_firewall" "allow_persistence_external_http" {
+  name    = "${var.chain_name}-persistence-allow-external-http"
+  network = local.network_name
+
+  direction     = "INGRESS"
+  source_ranges = [local.monitoring_ip_range]
+
+  target_tags = [format("%s-%s", var.chain_name, "persistence")]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["8080"]
+  }
+}
