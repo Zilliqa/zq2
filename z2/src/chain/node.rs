@@ -448,23 +448,95 @@ impl ChainNode {
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
 
-        // TODO implement a more effective check
         // Check the node is making progress
-        // if self.role != NodeRole::Apps {
-        //     let first_block_number = self.machine.get_local_block_number().await?;
-        //     loop {
-        //         let next_block_number = self.machine.get_local_block_number().await?;
-        //         println!(
-        //             "Polled block number at {next_block_number}, waiting for {} more blocks",
-        //             (first_block_number + 10).saturating_sub(next_block_number)
-        //         );
-        //         if next_block_number >= first_block_number + 10 {
-        //             break;
-        //         }
-        //     }
-        // }
+        if self.role != NodeRole::Apps {
+            self.wait_for_block_number().await?;
+        }
 
         Ok(())
+    }
+
+    pub async fn wait_for_block_number(&self) -> Result<u64> {
+        let max_wait_in_mins = 15; // 15 minutes
+        let retry_interval = std::time::Duration::from_secs(10); // Retry every 10 seconds
+        let max_wait_duration = std::time::Duration::from_secs(max_wait_in_mins * 60);
+
+        let start_time = tokio::time::Instant::now();
+        let mut last_block_number = None;
+        let mut last_check_time = tokio::time::Instant::now();
+        let mut block_progress_count = 0;
+        const EXPECTED_AVERAGE_RATE: f64 = 0.8;
+
+        loop {
+            // Check if we've exceeded the maximum wait time
+            if tokio::time::Instant::now().duration_since(start_time) > max_wait_duration {
+                return Err(anyhow!(
+                    "Timeout: Block number did not progress within {} minutes.",
+                    max_wait_in_mins
+                ));
+            }
+
+            match self.machine.get_local_block_number().await {
+                // endpoint responding with the block number
+                std::result::Result::Ok(block_number) => {
+                    if let Some(last) = last_block_number {
+                        if block_number > last {
+                            // Calculate time difference since the last successful check
+                            let elapsed_time = tokio::time::Instant::now()
+                                .duration_since(last_check_time)
+                                .as_secs_f64();
+
+                            // Update the progress tracking
+                            block_progress_count += block_number - last;
+                            last_check_time = tokio::time::Instant::now();
+
+                            // Check if the average progress rate meets the threshold
+                            let average_rate = block_progress_count as f64 / elapsed_time;
+                            if average_rate >= EXPECTED_AVERAGE_RATE {
+                                log::info!(
+                                    "{}: Block number is progressing at an average rate of {:.2} blocks/sec.",
+                                    self.name(),
+                                    average_rate
+                                );
+                                return Ok(block_number);
+                            } else {
+                                log::warn!(
+                                    "{}: Block progression rate is too slow ({:.2} blocks/sec). Retrying...",
+                                    self.name(),
+                                    average_rate
+                                );
+                            }
+                        } else {
+                            log::warn!(
+                                "{}: Block number stagnated at {}. Retrying...",
+                                self.name(),
+                                block_number
+                            );
+                        }
+                    } else {
+                        // First successful retrieval; store the block number and time
+                        last_block_number = Some(block_number);
+                        last_check_time = tokio::time::Instant::now();
+                        log::warn!(
+                            "{}: Block number is {}. Checking if progressing...",
+                            self.name(),
+                            block_number
+                        );
+                    }
+                }
+                // endpoint not responding (yet)
+                Err(err) => {
+                    // Log the error
+                    log::warn!(
+                        "{}: Error retrieving block number: {err:?}. Retrying...",
+                        self.name()
+                    );
+                }
+            }
+
+            // Wait for the retry interval before trying again
+            tokio::time::sleep(retry_interval).await;
+        }
     }
 
     pub async fn get_private_key(&self) -> Result<String> {
