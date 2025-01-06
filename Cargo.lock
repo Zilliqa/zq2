@@ -3138,7 +3138,7 @@ dependencies = [
  "solar-parse",
  "svm-rs 0.5.7",
  "svm-rs-builds",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tracing",
  "winnow",
  "yansi 1.0.1",
@@ -3170,7 +3170,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tracing",
  "walkdir",
  "yansi 1.0.1",
@@ -3206,7 +3206,7 @@ dependencies = [
  "serde",
  "serde_json",
  "svm-rs 0.5.7",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tokio",
  "walkdir",
 ]
@@ -4908,7 +4908,7 @@ dependencies = [
  "multiaddr",
  "pin-project",
  "rw-stream-sink",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
@@ -4941,7 +4941,7 @@ dependencies = [
  "quick-protobuf-codec",
  "rand",
  "rand_core",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tracing",
  "web-time",
 ]
@@ -4977,7 +4977,7 @@ dependencies = [
  "rw-stream-sink",
  "serde",
  "smallvec",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tracing",
  "unsigned-varint",
  "web-time",
@@ -5046,7 +5046,7 @@ dependencies = [
  "quick-protobuf",
  "quick-protobuf-codec",
  "smallvec",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tracing",
 ]
 
@@ -5091,7 +5091,7 @@ dependencies = [
  "serde",
  "sha2",
  "smallvec",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tracing",
  "uint",
  "web-time",
@@ -5152,7 +5152,7 @@ dependencies = [
  "sha2",
  "snow",
  "static_assertions",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tracing",
  "x25519-dalek",
  "zeroize",
@@ -5176,7 +5176,7 @@ dependencies = [
  "ring 0.17.8",
  "rustls 0.23.19",
  "socket2",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -5263,7 +5263,7 @@ dependencies = [
  "ring 0.17.8",
  "rustls 0.23.19",
  "rustls-webpki 0.101.7",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "x509-parser",
  "yasna",
 ]
@@ -5290,7 +5290,7 @@ dependencies = [
  "either",
  "futures",
  "libp2p-core",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tracing",
  "yamux 0.12.1",
  "yamux 0.13.4",
@@ -6278,7 +6278,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b7cafe60d6cf8e62e1b9b2ea516a089c008945bb5a275416789e7db0bc199dc"
 dependencies = [
  "memchr",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "ucd-trie",
 ]
 
@@ -6778,7 +6778,7 @@ dependencies = [
  "asynchronous-codec",
  "bytes",
  "quick-protobuf",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "unsigned-varint",
 ]
 
@@ -6805,7 +6805,7 @@ dependencies = [
  "rustc-hash 2.1.0",
  "rustls 0.23.19",
  "socket2",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tokio",
  "tracing",
 ]
@@ -6824,7 +6824,7 @@ dependencies = [
  "rustls 0.23.19",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tinyvec",
  "tracing",
  "web-time",
@@ -8725,11 +8725,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.7"
+version = "2.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93605438cbd668185516ab499d589afb7ee1859ea3d5fc8f6b0755e1c7443767"
+checksum = "f072643fd0190df67a8bab670c20ef5d8737177d6ac6b2e9a236cb096206b2cc"
 dependencies = [
- "thiserror-impl 2.0.7",
+ "thiserror-impl 2.0.9",
 ]
 
 [[package]]
@@ -8745,9 +8745,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.7"
+version = "2.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1d8749b4531af2117677a5fcd12b1348a3fe2b81e36e61ffeac5c4aa3273e36"
+checksum = "7b50fa271071aae2e6ee85f842e2e28ba8cd2c5fb67f11fcb1fd70b276f9e7d4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10214,7 +10214,7 @@ dependencies = [
  "strum_macros",
  "tempfile",
  "tera",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tokio",
  "tokio-stream",
  "toml",
@@ -10373,7 +10373,7 @@ dependencies = [
  "sha3",
  "sled",
  "tempfile",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "time",
  "tokio",
  "tokio-stream",
@@ -10461,7 +10461,7 @@ dependencies = [
  "flate2",
  "indexmap 2.7.0",
  "memchr",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "zopfli",
 ]
 
