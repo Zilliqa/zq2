@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
+    collections::{BTreeMap, BinaryHeap, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -13,10 +13,7 @@ use crate::{
     cfg::NodeConfig,
     crypto::Hash,
     db::Db,
-    message::{
-        Block, ChainMetaData, ExternalMessage, InjectedProposal, Proposal, RequestBlock,
-        ResponseBlock,
-    },
+    message::{Block, ChainMetaData, ExternalMessage, InjectedProposal, Proposal, RequestBlock},
     node::MessageSender,
 };
 
@@ -32,30 +29,33 @@ enum DownGrade {
 // When a Proposal is received by Consensus, we check if the parent exists in our DB.
 // If not, then it triggers a syncing algorithm.
 //
-// Phase 1: Request missing chain metadata.
+// PHASE 1: Request missing chain metadata.
 // The entire chain metadata is stored in-memory, and is used to construct a chain of metadata.
 // 1. We start with the latest Proposal and request the chain of metadata from a peer.
 // 2. We construct the chain of metadata, based on the response received.
-// 3. If the last block does not exist in our canonical history, we repeat from 1.
-// 4. If the last block exists, we have hit our canonical history, we move to Phase 2.
+// 3. If the last block does not exist in our canonical history, we request for additional metadata.
+// 4. If the last block exists, we have hit our canonical history.
+// 5. Move to Phase 2.
 //
-// Phase 2: Request missing blocks.
+// PHASE 2: Request missing blocks.
 // Once the chain metadata is constructed, we request the missing blocks to replay the history.
 // 1. We construct a set of hashes, from the in-memory chain metadata.
-// 2. We send these block hashes to a Peer for retrieval.
+// 2. We send these block hashes to the same Peer (that sent the metadata) for retrieval.
 // 3. We inject the Proposals into the pipeline, when the response is received.
-// 4. If there are still missing blocks, we repeat from 1.
-// 5. If there are no more missing blocks, we are done, ready for Phase 3.
+// 4. If there are still missing blocks, we ask for more, from 1.
+// 5. If there are no more missing blocks, we have filled up all blocks from the chain metadata.
+// 6. Ready for Phase 3.
 //
-// Phase 3: Zip it up.
-// Phase 1 & 2 brings up to 99% of the chain. This step closes the last gap.
+// PHASE 3: Zip it up.
+// Phase 1&2 may run several times that brings up 99% of the chain. This closes the final gap.
 // 1. We queue all newly received Proposals, while Phase 1 & 2 were in progress.
-// 2. We check the head of the queue if it's parent exists in our canonical history.
-// 3. If it does not, we trigger Phase 1.
-// 4. If it does, we inject the entire queue into the pipeline. We are done.
+// 2. We check the head of the queue if its parent exists in our canonical history.
+// 3. If it does not, we trigger Phase 1&2.
+// 4. If it does, we inject the entire queue into the pipeline.
+// 5. We are caught up.
 
-const GAP_THRESHOLD: usize = 10; // How big is big/small gap.
-const DO_SPECULATIVE: bool = false; // Speeds up syncing by speculatively fetching blocks, allowing it to catch up.
+const GAP_THRESHOLD: usize = 20; // Size of internal Proposal cache.
+const DO_SPECULATIVE: bool = false; // Speeds up syncing by speculatively fetching blocks.
 
 #[derive(Debug)]
 pub struct Sync {
@@ -77,9 +77,6 @@ pub struct Sync {
     peer_id: PeerId,
     // how many injected proposals
     injected: usize,
-    // cache
-    cache: HashMap<u64, Proposal>,
-    latest_block: Option<Block>,
 
     // Chain metadata
     chain_metadata: BTreeMap<Hash, ChainMetaData>,
@@ -116,8 +113,6 @@ impl Sync {
             max_blocks_in_flight: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
             in_flight: None,
             injected: 0,
-            cache: HashMap::new(),
-            latest_block: None,
             chain_metadata: BTreeMap::new(),
             p1_metadata: None,
             landmarks: Vec::new(),
@@ -132,14 +127,14 @@ impl Sync {
     pub fn mark_received_proposal(&mut self, prop: &InjectedProposal) -> Result<()> {
         if prop.from != self.peer_id {
             tracing::error!(
-                "blockstore::MarkReceivedProposal : foreign InjectedProposal from {}",
+                "sync::MarkReceivedProposal : foreign InjectedProposal from {}",
                 prop.from
             );
         }
-        if let Some(p) = self.cache.remove(&prop.block.number()) {
+        if let Some(p) = self.chain_metadata.remove(&prop.block.hash()) {
             tracing::warn!(
-                "blockstore::MarkReceivedProposal : removing stale cache proposal {}",
-                p.number()
+                "sync::MarkReceivedProposal : removing stale metadata {}",
+                p.block_hash
             );
         }
         self.injected = self.injected.saturating_sub(1);
@@ -170,7 +165,7 @@ impl Sync {
             if self.zip_queue.len() == 1 || self.db.get_block_by_hash(&ancestor_hash)?.is_none() {
                 // No ancestor block, trigger sync
                 tracing::warn!(
-                    "blockstore::SyncProposal : parent block {} not found",
+                    "sync::SyncProposal : parent block {} not found",
                     parent_hash
                 );
                 if self.p2_metadata.is_some() {
@@ -186,7 +181,7 @@ impl Sync {
             } else {
                 // 99% synced, zip it up!
                 tracing::info!(
-                    "blockstore::SyncProposal : zip up {} blocks from {}",
+                    "sync::SyncProposal : zip up {} blocks from {}",
                     self.zip_queue.len(),
                     ancestor_hash
                 );
@@ -236,11 +231,12 @@ impl Sync {
         // Process whatever we received
         if response.is_empty() {
             // Empty response, downgrade peer
-            tracing::warn!("blockstore::MultiBlockResponse : empty blocks {from}",);
+            tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
         } else if response.len() < self.max_batch_size {
             // Partial response, downgrade peer
-            tracing::warn!("blockstore::MultiBlockResponse : partial blocks {from}",);
+            // TODO: Match against request numbers
+            tracing::warn!("sync::MultiBlockResponse : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
         } else {
             self.done_with_peer(DownGrade::None);
@@ -253,7 +249,7 @@ impl Sync {
             .collect_vec();
 
         tracing::info!(
-            "blockstore::MultiBlockResponse : received {} blocks for set #{} from {}",
+            "sync::MultiBlockResponse : received {} blocks for set #{} from {}",
             proposals.len(),
             self.landmarks.len(),
             from
@@ -264,7 +260,7 @@ impl Sync {
             let hash = proposals.last().as_ref().unwrap().hash();
             if hash != landmark {
                 tracing::warn!(
-                    "blockstore::MultiBlockResponse : mismatched landmark {} != {}",
+                    "sync::MultiBlockResponse : mismatched landmark {} != {}",
                     landmark,
                     hash,
                 );
@@ -283,7 +279,7 @@ impl Sync {
         if self.landmarks.is_empty() {
             self.p1_metadata = None;
             self.chain_metadata.clear();
-        } else if DO_SPECULATIVE {
+        } else if DO_SPECULATIVE && self.injected < self.max_blocks_in_flight {
             // Speculatively request more blocks
             self.request_missing_blocks()?;
         }
@@ -298,7 +294,7 @@ impl Sync {
     ) -> Result<ExternalMessage> {
         // ...
         tracing::info!(
-            "blockstore::MultiBlockRequest : received a {} multiblock request from {}",
+            "sync::MultiBlockRequest : received a {} multiblock request from {}",
             request.len(),
             from
         );
@@ -326,7 +322,7 @@ impl Sync {
         if let Some(peer) = self.in_flight.as_ref() {
             if peer.last_used.elapsed() > self.request_timeout {
                 tracing::warn!(
-                    "blockstore::RequestMissingBlocks : in-flight request {} timed out, requesting from new peer",
+                    "sync::RequestMissingBlocks : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
                 self.done_with_peer(DownGrade::Timeout);
@@ -335,11 +331,12 @@ impl Sync {
             }
         } else if self.p2_metadata.is_none() {
             tracing::warn!(
-                "blockstore::RequestMissingBlocks : no metadata to request missing blocks"
+                "sync::RequestMissingBlocks : no metadata to request missing blocks"
             );
             return Ok(());
         }
 
+        // TODO: Use original peer, which would have the set of blocks
         if let Some(peer) = self.get_next_peer() {
             // If we have no landmarks, we have nothing to do
             self.p2_metadata = None;
@@ -356,7 +353,7 @@ impl Sync {
 
                 // Fire request
                 tracing::debug!(
-                    "blockstore::RequestMissingBlocks : requesting {} blocks of set #{}",
+                    "sync::RequestMissingBlocks : requesting {} blocks of set #{}",
                     request_hashes.len(),
                     self.landmarks.len(),
                 );
@@ -371,7 +368,7 @@ impl Sync {
             }
         } else {
             tracing::warn!(
-                "blockstore::RequestMissingBlocks : insufficient peers to request missing blocks"
+                "sync::RequestMissingBlocks : insufficient peers to request missing blocks"
             );
         }
         Ok(())
@@ -389,16 +386,18 @@ impl Sync {
         // Process whatever we have received.
         if response.is_empty() {
             // Empty response, downgrade peer
-            tracing::warn!("blockstore::MetadataResponse : empty blocks {from}",);
+            tracing::warn!("sync::MetadataResponse : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
         } else if response.len() < self.max_batch_size {
             // Partial response, downgrade peer
-            tracing::warn!("blockstore::MetadataResponse : partial blocks {from}",);
+            tracing::warn!("sync::MetadataResponse : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
         } else {
             self.done_with_peer(DownGrade::None);
         }
+
+        // TODO: Check the linkage of the returned chain
 
         // Sort metadata by number, reversed
         let metadata = response
@@ -410,11 +409,13 @@ impl Sync {
         let last_hash = p1_metadata.block_hash;
         self.p1_metadata = Some(p1_metadata);
 
+        // TODO: Store peer id.
+        // TODO: Insert intermediate landmarks
         self.landmarks
             .push(metadata.first().as_ref().unwrap().block_hash);
 
         tracing::info!(
-            "blockstore::MetadataResponse : received {} metadata set #{} from {}",
+            "sync::MetadataResponse : received {} metadata set #{} from {}",
             metadata.len(),
             self.landmarks.len(),
             from
@@ -422,7 +423,6 @@ impl Sync {
 
         // Store the metadata
         for meta in metadata {
-            // TODO: Check the linkage of the returned chain
             self.chain_metadata.insert(meta.block_hash, meta);
         }
 
@@ -448,7 +448,7 @@ impl Sync {
         request: RequestBlock,
     ) -> Result<ExternalMessage> {
         tracing::info!(
-            "blockstore::MetadataRequest : received a metadata request from {}",
+            "sync::MetadataRequest : received a metadata request from {}",
             from
         );
 
@@ -470,7 +470,7 @@ impl Sync {
         let message = ExternalMessage::MetaDataResponse(metas);
         tracing::trace!(
             ?message,
-            "blockstore::MetadataFromHash : responding to block request"
+            "sync::MetadataFromHash : responding to block request"
         );
         Ok(message)
     }
@@ -485,7 +485,7 @@ impl Sync {
         if let Some(peer) = self.in_flight.as_ref() {
             if peer.last_used.elapsed() > self.request_timeout {
                 tracing::warn!(
-                    "blockstore::RequestMissingChain : in-flight request {} timed out, requesting from new peer",
+                    "sync::RequestMissingChain : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
                 self.done_with_peer(DownGrade::Timeout);
@@ -494,7 +494,7 @@ impl Sync {
             }
         } else if self.injected > 0 {
             tracing::warn!(
-                "blockstore::RequestMissingChain : too many {} blocks in flight",
+                "sync::RequestMissingChain : too many {} blocks in flight",
                 self.injected
             );
             return Ok(());
@@ -514,12 +514,12 @@ impl Sync {
                     batch_size: self.max_batch_size,
                 })
             } else {
-                todo!("blockstore::RequestMissingChain : no metadata to request missing blocks");
+                todo!("sync::RequestMissingChain : no metadata to request missing blocks");
             };
 
             tracing::info!(
                 ?message,
-                "blockstore::RequestMissingChain : requesting missing chain from {}",
+                "sync::RequestMissingChain : requesting missing chain from {}",
                 peer.peer_id
             );
             self.message_sender
@@ -528,83 +528,10 @@ impl Sync {
             self.in_flight = Some(peer);
         } else {
             tracing::warn!(
-                "blockstore::RequestMissingChain : insufficient peers to request missing blocks"
+                "sync::RequestMissingChain : insufficient peers to request missing blocks"
             );
         }
         Ok(())
-    }
-
-    /// Request blocks from a hash, backwards.
-    ///
-    /// It will collect N blocks by following the block.parent_hash() of each requested block.
-    pub fn handle_request_from_hash(
-        &mut self,
-        from: PeerId,
-        request: RequestBlock,
-    ) -> Result<ExternalMessage> {
-        tracing::debug!(
-            "blockstore::RequestFromHash : received a block request from {}",
-            from
-        );
-
-        // TODO: Check if we should service this request
-        // Validators could respond to this request if there is nothing else to do.
-
-        let batch_size = self.max_batch_size.min(request.batch_size); // mitigate DOS by limiting the number of blocks we return
-        let mut proposals = Vec::with_capacity(batch_size);
-        let mut hash = request.from_hash;
-        while proposals.len() < batch_size {
-            // grab the parent
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
-                // that's all we have!
-                break;
-            };
-            hash = block.parent_hash();
-            proposals.push(self.block_to_proposal(block));
-        }
-
-        let message = ExternalMessage::ResponseFromHash(ResponseBlock { proposals });
-        tracing::trace!(
-            ?message,
-            "blockstore::RequestFromHash : responding to block request from height"
-        );
-        Ok(message)
-    }
-
-    /// Request for blocks from a height, forwards.
-    pub fn handle_request_from_number(
-        &mut self,
-        from: PeerId,
-        request: RequestBlock,
-    ) -> Result<ExternalMessage> {
-        // ...
-        tracing::debug!(
-            "blockstore::RequestFromNumber : received a block request from {}",
-            from
-        );
-
-        // TODO: Check if we should service this request.
-        // Validators shall not respond to this request.
-
-        // TODO: Replace this with a single SQL query
-        let batch_size = self.max_batch_size.min(request.batch_size); // mitigate DOS attacks by limiting the number of blocks we send
-        let mut proposals = Vec::with_capacity(batch_size);
-        for num in request.from_number.saturating_add(1)
-            ..=request.from_number.saturating_add(batch_size as u64)
-        {
-            let Some(block) = self.db.get_canonical_block_by_number(num)? else {
-                // that's all we have!
-                break;
-            };
-            proposals.push(self.block_to_proposal(block));
-        }
-
-        let message = ExternalMessage::ResponseFromNumber(ResponseBlock { proposals });
-        tracing::trace!(
-            ?message,
-            "blockstore::RequestFromNumber : responding to block request from height"
-        );
-        Ok(message)
     }
 
     /// Inject the proposals into the chain.
@@ -616,10 +543,6 @@ impl Sync {
         if proposals.is_empty() {
             return Ok(());
         }
-
-        // Store the tip
-        let (last_block, _) = proposals.last().unwrap().clone().into_parts();
-        self.latest_block = Some(last_block);
 
         // Increment proposals injected
         self.injected = self.injected.saturating_add(proposals.len());
@@ -643,7 +566,7 @@ impl Sync {
         }
 
         tracing::info!(
-            "blockstore::InjectProposals : injected {}/{} proposals",
+            "sync::InjectProposals : injected {}/{} proposals",
             len,
             self.injected
         );
@@ -660,138 +583,6 @@ impl Sync {
             peer.score = peer.score.max(self.peers.peek().unwrap().score);
             self.peers.push(peer);
         }
-    }
-
-    pub fn handle_response_from_number(
-        &mut self,
-        from: PeerId,
-        response: ResponseBlock,
-    ) -> Result<()> {
-        // Process whatever we have received.
-        if response.proposals.is_empty() {
-            // Empty response, downgrade peer
-            tracing::warn!("blockstore::ResponseFromNumber : empty blocks {from}",);
-            self.done_with_peer(DownGrade::Empty);
-            return Ok(());
-        } else if response.proposals.len() < self.max_batch_size {
-            // Partial response, downgrade peer
-            tracing::warn!("blockstore::ResponseFromNumber : partial blocks {from}",);
-            self.done_with_peer(DownGrade::Partial);
-        } else {
-            self.done_with_peer(DownGrade::None);
-        }
-
-        tracing::info!(
-            "blockstore::ResponseFromNumber : received {} blocks from {}",
-            response.proposals.len(),
-            from
-        );
-
-        // TODO: Any additional checks we should do here?
-
-        // Sort proposals by number
-        let proposals = response
-            .proposals
-            .into_iter()
-            .sorted_by_key(|p| p.number())
-            .collect_vec();
-
-        // Insert into the cache.
-        // If current proposal matches another one in cache, from a different peer, inject the proposal.
-        // Else, replace the cached Proposal with the new one.
-        let mut corroborated_proposals = Vec::with_capacity(proposals.len());
-        let mut props = proposals.into_iter();
-
-        // Collect corroborated proposals
-        for p in props.by_ref() {
-            if let Some(proposal) = self.cache.remove(&p.number()) {
-                // If the proposal already exists
-                if proposal.hash() == p.hash() {
-                    // is corroborated proposal
-                    corroborated_proposals.push(proposal);
-                } else {
-                    // insert the different one and;
-                    self.cache.insert(p.number(), p);
-                    break; // replace the rest in the next loop
-                }
-            } else {
-                self.cache.insert(p.number(), p);
-            }
-        }
-
-        // Replace/insert the rest of the proposals in the cache
-        for p in props {
-            self.cache.insert(p.number(), p);
-        }
-
-        // Inject matched proposals
-        self.inject_proposals(corroborated_proposals)?;
-
-        // Fire speculative request
-        if self.latest_block.is_some() && self.injected < self.max_blocks_in_flight {
-            if let Some(peer) = self.get_next_peer() {
-                // we're far from latest block
-                let message = RequestBlock {
-                    from_number: self.latest_block.as_ref().unwrap().number(),
-                    from_hash: self.latest_block.as_ref().unwrap().hash(),
-                    batch_size: self.max_batch_size,
-                };
-                tracing::info!(
-                    "blockstore::RequestMissingBlocks : speculative fetch {} blocks at {} from {}",
-                    message.batch_size,
-                    message.from_number,
-                    peer.peer_id,
-                );
-                self.message_sender.send_external_message(
-                    peer.peer_id,
-                    ExternalMessage::RequestFromNumber(message),
-                )?;
-                self.in_flight = Some(peer);
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn handle_response_from_hash(
-        &mut self,
-        from: PeerId,
-        response: ResponseBlock,
-    ) -> Result<()> {
-        // Check that we have enough to complete the process, otherwise ignore
-        if response.proposals.is_empty() {
-            // Empty response, downgrade peer, skip
-            tracing::warn!("blockstore::ResponseFromHash : empty blocks {from}",);
-            self.done_with_peer(DownGrade::Empty);
-            return Ok(());
-        } else if response.proposals.len() < GAP_THRESHOLD {
-            // Partial response, downgrade peer
-            // Skip processing because we want to ensure that we have ALL the needed blocks to sync up.
-            tracing::warn!("blockstore::ResponseFromHash : partial blocks {from}",);
-            self.done_with_peer(DownGrade::Partial);
-            return Ok(());
-        } else {
-            // only process full responses
-            self.done_with_peer(DownGrade::None);
-        }
-
-        tracing::info!(
-            "blockstore::ResponseFromHash : received {} blocks from {}",
-            response.proposals.len(),
-            from
-        );
-
-        // TODO: Any additional checks we should do here?
-        // Sort proposals by number
-        let proposals = response
-            .proposals
-            .into_iter()
-            .sorted_by_key(|p| p.number())
-            .collect_vec();
-
-        // Inject the proposals
-        self.inject_proposals(proposals)?;
-        Ok(())
     }
 
     /// Add a peer to the list of peers.
