@@ -234,11 +234,6 @@ pub struct RequestBlock {
     pub batch_size: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseBlock {
-    pub proposals: Vec<Proposal>,
-}
-
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InjectedProposal {
@@ -291,10 +286,6 @@ pub enum ExternalMessage {
     Acknowledgement,
     AddPeer,
     RemovePeer,
-    RequestFromNumber(RequestBlock),
-    RequestFromHash(RequestBlock),
-    ResponseFromNumber(ResponseBlock),
-    ResponseFromHash(ResponseBlock),
     InjectedProposal(InjectedProposal),
     MetaDataRequest(RequestBlock),
     MetaDataResponse(Vec<ChainMetaData>),
@@ -332,22 +323,6 @@ impl Display for ExternalMessage {
             }
             ExternalMessage::AddPeer => write!(f, "AddPeer"),
             ExternalMessage::RemovePeer => write!(f, "RemovePeer"),
-            ExternalMessage::ResponseFromNumber(r) => {
-                write!(f, "ResponseFromNumber({})", r.proposals.len())
-            }
-            ExternalMessage::ResponseFromHash(r) => {
-                write!(f, "ResponseFromHash({})", r.proposals.len())
-            }
-            ExternalMessage::RequestFromNumber(r) => {
-                write!(
-                    f,
-                    "RequestFromNumber({}, num={})",
-                    r.from_hash, r.batch_size
-                )
-            }
-            ExternalMessage::RequestFromHash(r) => {
-                write!(f, "RequestFromHash({}, num={})", r.from_hash, r.batch_size)
-            }
             ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
             ExternalMessage::Vote(v) => write!(f, "Vote({})", v.view),
             ExternalMessage::NewView(n) => write!(f, "NewView({})", n.view),
