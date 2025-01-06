@@ -22,10 +22,10 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
 echo "Installing nvm"
-nvm install 18.20
+nvm install 22.12
 
-echo "Using nvm 18"
-nvm use 18.20
+echo "Using node version 22.12"
+nvm use 22.12
 node --version
 npm install pnpm
 
