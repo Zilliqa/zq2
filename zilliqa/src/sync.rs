@@ -64,7 +64,7 @@ pub struct Sync {
     db: Arc<Db>,
     // message bus
     message_sender: MessageSender,
-    // internal peers
+    // internal list of peers, maintained with add_peer/remove_peer.
     peers: BinaryHeap<PeerInfo>,
     // in-flight
     in_flight: Option<PeerInfo>,
@@ -83,7 +83,7 @@ pub struct Sync {
     // phase 1 cursor
     p1_metadata: Option<ChainMetaData>,
     // phase 2 cursor
-    p2_metadata: Option<ChainMetaData>,
+    p2_metadata: Option<Hash>,
     // stack of chain landmarks
     landmarks: Vec<(Hash, PeerId)>,
     // fixed-size queue of latest proposals
@@ -240,11 +240,51 @@ impl Sync {
             self.done_with_peer(DownGrade::Empty);
         } else if response.len() < self.max_batch_size {
             // Partial response, downgrade peer
-            // TODO: Match against request numbers
             tracing::warn!("sync::MultiBlockResponse : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
         } else {
             self.done_with_peer(DownGrade::None);
+        }
+
+        tracing::info!(
+            "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
+            response.len(),
+            self.landmarks.len(),
+            from
+        );
+
+        let Some((hash, peer_id)) = self.landmarks.last() else {
+            tracing::error!("sync::MultiBlockResponse: no more landmarks!");
+            return Ok(());
+        };
+
+        // Check that this segment is from the requested peer.
+        if *peer_id != from {
+            tracing::error!("sync::MultiBlockResponse: response received from unknown peer {from}");
+            return Ok(());
+        }
+
+        // Check that this segment starts at the expected landmark
+        let prop_hash = response.first().as_ref().unwrap().hash();
+        if *hash != prop_hash {
+            tracing::warn!(
+                "sync::MultiBlockResponse : mismatched landmark {} != {}",
+                hash,
+                prop_hash,
+            );
+            return Ok(());
+        }
+
+        // Check it matches request hashes
+        let checksum = response
+            .iter()
+            .fold(Hash::builder().with(Hash::ZERO.as_bytes()), |sum, p| {
+                sum.with(p.hash().as_bytes())
+            })
+            .finalize();
+        if self.p2_metadata.unwrap_or_else(|| Hash::ZERO) != checksum {
+            tracing::error!("sync::MultiBlockResponse : mismatch request checksum {checksum}");
+            return Ok(());
         }
 
         // Sort proposals by number, ascending
@@ -253,32 +293,12 @@ impl Sync {
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
-        tracing::info!(
-            "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
-            proposals.len(),
-            self.landmarks.len(),
-            from
-        );
-
-        // Check that this segment is for the expected landmark
-        if let Some((hash, peer_id)) = self.landmarks.pop() {
-            // remove the last landmark, should match proposals.last()
-            let prop_hash = proposals.last().as_ref().unwrap().hash();
-            if hash != prop_hash {
-                tracing::warn!(
-                    "sync::MultiBlockResponse : mismatched landmark {} != {}",
-                    hash,
-                    prop_hash,
-                );
-                self.landmarks.push((hash, peer_id)); // put it back
-            }
-        }
-
         // Remove the blocks from the chain metadata, if they exist
         for p in &proposals {
             self.chain_metadata.remove(&p.hash());
         }
 
+        self.landmarks.pop();
         self.inject_proposals(proposals)?;
 
         // Done with phase 2, allow phase 1 to restart.
@@ -358,10 +378,18 @@ impl Sync {
                 while let Some(meta) = self.chain_metadata.remove(&hash) {
                     request_hashes.push(meta.block_hash);
                     hash = meta.parent_hash;
-                    // TODO: Allow retry of multi-block request
-                    // self.chain_metadata.insert(hash, meta);
-                    self.p2_metadata = Some(meta);
+                    // TODO: Implement retry mechanism
+                    // self.chain_metadata.insert(hash, meta); // reinsert, for retries
                 }
+
+                // Checksum of the request hashes
+                let checksum = request_hashes
+                    .iter()
+                    .fold(Hash::builder().with(Hash::ZERO.as_bytes()), |sum, h| {
+                        sum.with(h.as_bytes())
+                    })
+                    .finalize();
+                self.p2_metadata = Some(checksum);
 
                 // Fire request, to the original peer that sent the segment metadata
                 tracing::info!(
@@ -479,7 +507,7 @@ impl Sync {
             .is_some()
         {
             // Hit our internal history. Start phase 2.
-            self.p2_metadata = self.p1_metadata.clone();
+            self.p2_metadata = Some(self.p1_metadata.as_ref().unwrap().block_hash);
         } else if DO_SPECULATIVE {
             self.request_missing_chain(None)?;
         }
