@@ -457,7 +457,7 @@ def go(role):
     install_gcloud()
     login_registry()
     match role:
-        case "bootstrap" | "checkpoint" | "persistence":
+        case "bootstrap" | "checkpoint":
             log("Configuring a validator node")
             configure_logrotate()
             pull_zq2_image()
@@ -474,17 +474,17 @@ def go(role):
             download_persistence()
             download_checkpoint()
             start_zq2()
-        case "api":
+        case "api" | "persistence":
             log("Configuring an API node")
-            stop_api_checkpoint()
-            install_api_checkpoint()
+            stop_api_healthcheck()
+            install_api_healthcheck()
             configure_logrotate()
             pull_zq2_image()
             stop_zq2()
             install_zilliqa()
             download_persistence()
             start_zq2()
-            start_api_checkpoint()
+            start_api_healthcheck()
         case "apps":
             log("Configuring the blockchain app node")
             stop_apps()
@@ -664,7 +664,7 @@ def stop_zq2():
         run_or_die(["sudo", "systemctl", "stop", "zilliqa"])
     pass
 
-def install_api_checkpoint():
+def install_api_healthcheck():
     run_or_die(["sudo", "pip3", "install", "flask", "requests"])
     with open("/api_healthcheck.py", "w") as f:
         f.write(API_HEALTHCHECK_SCRIPT)
@@ -677,10 +677,10 @@ def install_api_checkpoint():
     run_or_die(["sudo", "systemctl", "enable", "api_healthcheck.service"])
 
 
-def start_api_checkpoint():
+def start_api_healthcheck():
     run_or_die(["sudo", "systemctl", "start", "api_healthcheck.service"])
 
-def stop_api_checkpoint():
+def stop_api_healthcheck():
     if os.path.exists("/etc/systemd/system/api_healthcheck.service"):
         run_or_die(["sudo", "systemctl", "stop", "api_healthcheck"])
     pass
