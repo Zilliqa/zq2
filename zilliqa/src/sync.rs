@@ -82,7 +82,7 @@ pub struct Sync {
     chain_metadata: BTreeMap<Hash, ChainMetaData>,
     p1_metadata: Option<ChainMetaData>,
     p2_metadata: Option<ChainMetaData>,
-    landmarks: Vec<Hash>,
+    landmarks: Vec<(Hash, PeerId)>,
     zip_queue: VecDeque<Proposal>,
 }
 
@@ -255,16 +255,16 @@ impl Sync {
             from
         );
 
-        if let Some(landmark) = self.landmarks.pop() {
+        if let Some((hash, peer_id)) = self.landmarks.pop() {
             // remove the last landmark, should match proposals.last()
-            let hash = proposals.last().as_ref().unwrap().hash();
-            if hash != landmark {
+            let prop_hash = proposals.last().as_ref().unwrap().hash();
+            if hash != prop_hash {
                 tracing::warn!(
                     "sync::MultiBlockResponse : mismatched landmark {} != {}",
-                    landmark,
                     hash,
+                    prop_hash,
                 );
-                self.landmarks.push(landmark); // put it back
+                self.landmarks.push((hash, peer_id)); // put it back
             }
         }
 
@@ -329,18 +329,18 @@ impl Sync {
             } else {
                 return Ok(());
             }
+        } else if self.injected > self.max_blocks_in_flight {
+            return Ok(());
         } else if self.p2_metadata.is_none() {
-            tracing::warn!(
-                "sync::RequestMissingBlocks : no metadata to request missing blocks"
-            );
+            tracing::warn!("sync::RequestMissingBlocks : no metadata to request missing blocks");
             return Ok(());
         }
 
-        // TODO: Use original peer, which would have the set of blocks
+        // Use original peer, which should have the blocks in the metadata
         if let Some(peer) = self.get_next_peer() {
-            // If we have no landmarks, we have nothing to do
             self.p2_metadata = None;
-            if let Some(hash) = self.landmarks.last() {
+            // If we have no landmarks, we have nothing to do
+            if let Some((hash, peer_id)) = self.landmarks.last() {
                 let mut hash = *hash; // peek at the last value
                 let mut request_hashes = Vec::with_capacity(self.max_batch_size);
                 while let Some(meta) = self.chain_metadata.remove(&hash) {
@@ -358,10 +358,15 @@ impl Sync {
                     self.landmarks.len(),
                 );
                 self.message_sender.send_external_message(
-                    peer.peer_id,
+                    *peer_id,
                     ExternalMessage::MultiBlockRequest(request_hashes),
                 )?;
-                self.in_flight = Some(peer);
+                self.peers.push(peer); // reinsert peer, as we will be using a faux peer below
+                self.in_flight = Some(PeerInfo {
+                    peer_id: *peer_id,
+                    last_used: std::time::Instant::now(),
+                    score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
+                });
             } else {
                 // No more landmarks, we're done
                 self.peers.push(peer);
@@ -412,7 +417,7 @@ impl Sync {
         // TODO: Store peer id.
         // TODO: Insert intermediate landmarks
         self.landmarks
-            .push(metadata.first().as_ref().unwrap().block_hash);
+            .push((metadata.first().as_ref().unwrap().block_hash, from));
 
         tracing::info!(
             "sync::MetadataResponse : received {} metadata set #{} from {}",
@@ -581,7 +586,10 @@ impl Sync {
             peer.score = peer.score.saturating_add(downgrade as u32);
             // Ensure that the next peer is equal or better, to avoid a single source of truth.
             peer.score = peer.score.max(self.peers.peek().unwrap().score);
-            self.peers.push(peer);
+            // Reinsert peers that are good
+            if peer.score < u32::MAX {
+                self.peers.push(peer);
+            }
         }
     }
 
