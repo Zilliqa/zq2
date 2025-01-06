@@ -604,12 +604,17 @@ impl Consensus {
         let milliseconds_since_last_view_change = SystemTime::now()
             .duration_since(self.view_updated_at)
             .unwrap_or_default();
-        let milliseconds_remaining_of_block_time = self
+        let mut milliseconds_remaining_of_block_time = self
             .config
             .consensus
             .block_time
-            .saturating_sub(TIME_TO_ALLOW_PROPOSAL_BROADCAST)
             .saturating_sub(milliseconds_since_last_view_change);
+
+        // In order to maintain close to 1 second block times we broadcast 1-TIME_TO_ALLOW_PROPOSAL_BROADCAST seconds after the previous block to allow for network messages and block processing
+        if self.config.consensus.block_time > TIME_TO_ALLOW_PROPOSAL_BROADCAST {
+            milliseconds_remaining_of_block_time = milliseconds_remaining_of_block_time
+                .saturating_sub(TIME_TO_ALLOW_PROPOSAL_BROADCAST);
+        }
 
         Ok((
             milliseconds_since_last_view_change.as_millis() as u64,
