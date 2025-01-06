@@ -23,7 +23,7 @@ test = false
 [dependencies]
 alloy = { version = "0.6.4", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local"] }
 anyhow = "1.0.95"
-async-trait = "0.1.83"
+async-trait = "0.1.84"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
