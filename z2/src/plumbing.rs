@@ -12,8 +12,11 @@ use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;
 
 use crate::{
-    chain::{self, node::NodeRole},
-    deployer::ApiOperation,
+    chain::{
+        self,
+        node::{NodePort, NodeRole},
+    },
+    deployer::{ApiOperation, Metrics},
     kpi,
     node_spec::{Composition, NodeSpec},
     utils,
@@ -228,12 +231,13 @@ pub async fn run_deployer_deposit(config_file: &str, node_selection: bool) -> Re
     Ok(())
 }
 
-pub async fn run_rpc_call(
+pub async fn run_deployer_rpc(
     method: &str,
     params: &Option<String>,
     config_file: &str,
     timeout: &Option<usize>,
     node_selection: bool,
+    port: NodePort,
 ) -> Result<()> {
     println!("🦆 Running RPC call for {config_file}' .. ");
     deployer::run_rpc_call(
@@ -242,24 +246,36 @@ pub async fn run_rpc_call(
         config_file,
         timeout.unwrap_or(30),
         node_selection,
+        port,
     )
     .await?;
     Ok(())
 }
 
-pub async fn run_deployer_backup(config_file: &str, filename: &str) -> Result<()> {
+pub async fn run_deployer_ssh(
+    command: Vec<String>,
+    config_file: &str,
+    node_selection: bool,
+) -> Result<()> {
+    println!("🦆 Running SSH command for {config_file}' .. ");
+    deployer::run_ssh_command(command, config_file, node_selection).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_backup(config_file: &str, name: Option<String>, zip: bool) -> Result<()> {
     println!("🦆 Backup process for {config_file} .. ");
-    deployer::run_backup(config_file, filename).await?;
+    deployer::run_backup(config_file, name, zip).await?;
     Ok(())
 }
 
 pub async fn run_deployer_restore(
     config_file: &str,
-    filename: &str,
     max_parallel: Option<usize>,
+    name: Option<String>,
+    zip: bool,
 ) -> Result<()> {
     println!("🦆 Restoring process for {config_file} .. ");
-    deployer::run_restore(config_file, filename, max_parallel.unwrap_or(50)).await?;
+    deployer::run_restore(config_file, max_parallel.unwrap_or(50), name, zip).await?;
     Ok(())
 }
 
@@ -272,6 +288,17 @@ pub async fn run_deployer_reset(config_file: &str, node_selection: bool) -> Resu
 pub async fn run_deployer_restart(config_file: &str, node_selection: bool) -> Result<()> {
     println!("🦆 Running restart for {config_file} .. ");
     deployer::run_restart(config_file, node_selection).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_monitor(
+    config_file: &str,
+    metric: Metrics,
+    node_selection: bool,
+    follow: bool,
+) -> Result<()> {
+    println!("🦆 Running monitor for {config_file} .. ");
+    deployer::run_monitor(config_file, metric, node_selection, follow).await?;
     Ok(())
 }
 

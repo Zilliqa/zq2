@@ -1,8 +1,8 @@
 use std::{
     collections::BTreeMap,
     fmt::Debug,
-    fs::{self, File},
-    io::{BufReader, BufWriter, Read, Write},
+    fs::{self, File, OpenOptions},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use crate::{
-    crypto::{Hash, NodeSignature},
+    crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     state::Account,
@@ -77,7 +77,7 @@ macro_rules! make_wrapper {
 
 sqlify_with_bincode!(AggregateQc);
 sqlify_with_bincode!(QuorumCertificate);
-sqlify_with_bincode!(NodeSignature);
+sqlify_with_bincode!(BlsSignature);
 sqlify_with_bincode!(SignedTransaction);
 
 make_wrapper!(Vec<ScillaException>, VecScillaExceptionSqlable);
@@ -179,6 +179,11 @@ enum BlockFilter {
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
 
+/// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
+/// backwards incompatible change to our database format. This should be done rarely, since it forces all node
+/// operators to re-sync.
+const CURRENT_DB_VERSION: &str = "1";
+
 #[derive(Debug)]
 pub struct Db {
     db: Arc<Mutex<Connection>>,
@@ -195,6 +200,23 @@ impl Db {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
                 fs::create_dir_all(&path).context(format!("Unable to create {path:?}"))?;
+
+                let mut version_file = OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(path.join("version"))?;
+                let mut version = String::new();
+                version_file.read_to_string(&mut version)?;
+
+                if !version.is_empty() && version != CURRENT_DB_VERSION {
+                    return Err(anyhow!("data is incompatible with this version - please delete the data and re-sync"));
+                }
+
+                version_file.seek(SeekFrom::Start(0))?;
+                version_file.write_all(CURRENT_DB_VERSION.as_bytes())?;
+
                 let db_path = path.join("db.sqlite3");
                 (
                     Connection::open(&db_path)

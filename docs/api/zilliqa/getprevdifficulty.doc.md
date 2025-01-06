@@ -8,7 +8,7 @@ get,difficulty
 
 # Status
 
-NeverImplemented
+Deprecated
 
 # Description
 

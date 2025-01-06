@@ -17,11 +17,12 @@ variable "region" {
 variable "apps" {
   description = "(Optional) The configuration of the apps nodes"
   type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    detach_load_balancer = optional(bool, false)
+    disk_size                  = optional(number, 256)
+    instance_type              = optional(string, "e2-standard-2")
+    provisioning_model         = optional(string, "STANDARD")
+    generate_external_ip       = optional(bool, false)
+    detach_load_balancer       = optional(bool, false)
+    faucet_max_hourly_requests = optional(number, 1000000)
     nodes = list(object({
       count  = number
       region = optional(string)
@@ -197,6 +198,43 @@ variable "checkpoint" {
   validation {
     condition = alltrue([
       for node in var.checkpoint.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+    ])
+    error_message = "You need to specify either 'region' or 'zone' for a node."
+  }
+}
+
+variable "persistence" {
+  description = "(Optional) The configuration of the persistence nodes"
+  type = object({
+    disk_size            = optional(number, 256)
+    instance_type        = optional(string, "e2-standard-2")
+    provisioning_model   = optional(string, "STANDARD")
+    generate_external_ip = optional(bool, false)
+    nodes = list(object({
+      count  = number
+      region = optional(string)
+      zone   = optional(string)
+    }))
+  })
+  default = {
+    nodes : [
+      {
+        count  = 1
+        region = "asia-southeast1"
+      }
+    ]
+  }
+
+  # Validation for provisioning_model
+  validation {
+    condition     = contains(["STANDARD", "SPOT"], var.persistence.provisioning_model)
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+  }
+
+  # Validation to check that both 'region' and 'zone' are not specified together
+  validation {
+    condition = alltrue([
+      for node in var.persistence.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
     ])
     error_message = "You need to specify either 'region' or 'zone' for a node."
   }

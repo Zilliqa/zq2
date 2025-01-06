@@ -6,10 +6,15 @@ GetCurrentDSComm
 
 DS,committee,get,current
 
+# Status
+
+Deprecated
+
 # Description
 
+This API is deprecated in ZQ2. It now returns a placeholder value for backwards compatibility.
+
 Gives information on the public keys of DS committee members. Also, returns a parameter indicating the number of dsguards in the network.
-Deprecated in ZQ2; now returns a constant placeholder value.
 
 # Curl
 

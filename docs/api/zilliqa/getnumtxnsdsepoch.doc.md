@@ -6,7 +6,13 @@ GetNumTxnsDSEpoch
 
 get,count,transactions,ds,epoch
 
+# Status
+
+Deprecated
+
 # Description
+
+This API is deprecated in ZQ2. It now returns a placeholder value for backwards compatibility.
 
 Returns the number of validated transactions included in this DS epoch. This is represented as a `String`.
 

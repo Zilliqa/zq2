@@ -1,6 +1,9 @@
 use alloy::primitives::{Address, B128, B256, B512, U128, U256, U512};
 
-use crate::transaction::{EvmGas, ScillaGas};
+use crate::{
+    message::BitArray,
+    transaction::{EvmGas, ScillaGas},
+};
 
 /// A version of [hex::ToHex] which is also implemented for integer types. This version also prefixes the produced
 /// string with `"0x"` and omits leading zeroes for quantities (types with fixed lengths).
@@ -84,6 +87,12 @@ impl ToHex for EvmGas {
 impl ToHex for ScillaGas {
     fn to_hex_inner(&self, prefix: bool) -> String {
         self.0.to_hex_inner(prefix)
+    }
+}
+
+impl ToHex for BitArray {
+    fn to_hex_inner(&self, prefix: bool) -> String {
+        self.as_raw_slice().to_hex_inner(prefix)
     }
 }
 

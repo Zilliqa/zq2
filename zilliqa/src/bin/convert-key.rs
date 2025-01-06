@@ -1,5 +1,6 @@
 use std::io;
 
+use alloy::primitives::Address;
 use anyhow::Result;
 use crypto_bigint::generic_array::GenericArray;
 use serde::Deserialize;
@@ -9,6 +10,8 @@ use zilliqa::crypto::{SecretKey, TransactionPublicKey};
 #[derive(Deserialize)]
 struct Input {
     secret_key: String,
+    chain_id: u64,
+    control_address: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -25,12 +28,18 @@ fn main() -> Result<()> {
 
     let tx_pubkey = TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
 
+    // default to address derived from pub key
+    let address = match input.control_address {
+        None => tx_pubkey.into_addr(),
+        Some(addr) => addr.parse::<Address>().unwrap(),
+    };
+
     let output = json!({
         "bls_public_key": secret_key.node_public_key(),
         "peer_id": secret_key.to_libp2p_keypair().public().to_peer_id(),
         "tx_pubkey": tx_pubkey,
-        "address": tx_pubkey.into_addr(),
-        "bls_pop_signature": secret_key.pop_prove(),
+        "control_address": address,
+        "deposit_auth_signature": secret_key.deposit_auth_signature(input.chain_id, address).to_string(),
     });
 
     println!("{output}");

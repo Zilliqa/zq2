@@ -116,7 +116,7 @@ ZQ2_IMAGE="{{ docker_image }}"
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker container prune -f
-    docker run -td -p 3333:3333/udp -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
+    docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
     --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
     -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
@@ -455,10 +455,12 @@ def go(role):
     install_docker()
     install_ops_agent()
     install_gcloud()
+    login_registry()
     match role:
-        case "bootstrap" | "checkpoint":
+        case "bootstrap" | "checkpoint" | "persistence":
             log("Configuring a validator node")
             configure_logrotate()
+            pull_zq2_image()
             stop_zq2()
             install_zilliqa()
             download_persistence()
@@ -466,6 +468,7 @@ def go(role):
         case "validator":
             log("Configuring a validator node")
             configure_logrotate()
+            pull_zq2_image()
             stop_zq2()
             install_zilliqa()
             download_persistence()
@@ -476,6 +479,7 @@ def go(role):
             stop_api_checkpoint()
             install_api_checkpoint()
             configure_logrotate()
+            pull_zq2_image()
             stop_zq2()
             install_zilliqa()
             download_persistence()
@@ -552,6 +556,8 @@ def install_gcloud():
     run_or_die(sudo_noninteractive_apt_env(["apt", "update"]))
     run_or_die(sudo_noninteractive_apt_env(["sudo","apt", "install", "-y", "google-cloud-cli" ]))
 
+def login_registry():
+    run_or_die(["sudo", "bash", "-c", "gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://asia-docker.pkg.dev" ])
 
 def create_zq2_start_script():
     with open("/tmp/zq2.sh", "w") as f:
@@ -613,7 +619,7 @@ def configure_logrotate():
     with open("/etc/logrotate.d/zilliqa.conf", "w") as f:
         f.write(LOGROTATE_CONFIG)
 
-def download_persistence():
+def download_persistence_file():
     if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
         PERSISTENCE_DIR="/data"
         run_or_die(["rm", "-rf", f"{PERSISTENCE_DIR}"])
@@ -625,6 +631,20 @@ def download_persistence():
             run_or_die(["tar", "xf", f"{PERSISTENCE_FILENAME}"])
             run_or_die(["rm", "-f", f"{PERSISTENCE_FILENAME}"])
 
+def download_persistence_folder():
+    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
+        PERSISTENCE_DIR="/data"
+        run_or_die(["sudo", "rm", "-rf", f"{PERSISTENCE_DIR}"])
+        os.makedirs(PERSISTENCE_DIR, exist_ok=True)
+        run_or_die(["sudo", "gsutil", "-m", "cp", "-r", f"{PERSISTENCE_URL}/*", f"{PERSISTENCE_DIR}"])
+
+def download_persistence():
+    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
+        if PERSISTENCE_URL.endswith(".tar.gz"):
+            download_persistence_file()
+        else:
+            download_persistence_folder()
+
 def download_checkpoint():
     if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
         PERSISTENCE_DIR="/data"
@@ -635,6 +655,9 @@ def download_checkpoint():
 
 def start_zq2():
     run_or_die(["sudo", "systemctl", "start", "zilliqa"])
+
+def pull_zq2_image():
+    run_or_die(["sudo", "docker", "pull", f"{ZQ2_IMAGE}"])
 
 def stop_zq2():
     if os.path.exists("/etc/systemd/system/zilliqa.service"):
