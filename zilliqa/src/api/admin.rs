@@ -38,7 +38,7 @@ fn consensus_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<ConsensusInfo> {
 
     let view = node.consensus.get_view()?;
     let high_qc = QuorumCertificate::from_qc(&node.consensus.high_qc);
-    let (milliseconds_since_last_view_change, exponential_backoff_timeout, _) =
+    let (milliseconds_since_last_view_change, _, exponential_backoff_timeout) =
         node.consensus.get_consensus_timeout_params()?;
     let milliseconds_until_next_view_change =
         exponential_backoff_timeout.saturating_sub(milliseconds_since_last_view_change);

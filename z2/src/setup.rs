@@ -24,12 +24,11 @@ use zilliqa::{
 use zilliqa::{
     cfg::{
         self, allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default, empty_block_timeout_default,
+        block_request_limit_default, block_time_default, consensus_timeout_default,
         eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
-        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
-        state_rpc_limit_default, total_native_token_supply_default, Amount, ConsensusConfig,
-        ContractUpgradesBlockHeights, Forks, GenesisDeposit,
+        max_blocks_in_flight_default, scilla_address_default, scilla_ext_libs_path_default,
+        scilla_stdlib_dir_default, state_rpc_limit_default, total_native_token_supply_default,
+        Amount, ConsensusConfig, ContractUpgradesBlockHeights, Forks, GenesisDeposit,
     },
     transaction::EvmGas,
 };
@@ -521,7 +520,6 @@ impl Setup {
                     scilla_address: scilla_address_default(),
                     scilla_stdlib_dir: scilla_stdlib_dir_default(),
                     scilla_ext_libs_path: scilla_ext_libs_path_default(),
-                    minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                     main_shard_id: None,
                     local_address: local_address_default(),
                     consensus_timeout: consensus_timeout_default(),
@@ -529,7 +527,7 @@ impl Setup {
                     eth_block_gas_limit: EvmGas(84000000),
                     gas_price: 4_761_904_800_000u128.into(),
                     minimum_stake: 10_000_000_000_000_000_000_000_000u128.into(),
-                    empty_block_timeout: empty_block_timeout_default(),
+                    block_time: block_time_default(),
                     genesis_accounts: Vec::new(),
                     is_main: true,
                     blocks_per_hour: 3600,
