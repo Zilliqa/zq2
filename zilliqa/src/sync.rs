@@ -150,49 +150,44 @@ impl Sync {
         }
         self.recent_proposals.push_back(proposal);
 
-        // TODO: Replace with single SQL query
-        // Check if block parent exist in history
-        let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
-        if self.db.get_block_by_hash(&parent_hash)?.is_none() {
-            // Check if oldes block exists in the history. If it does, we have synced up 99% of the chain.
-            let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
-            if self.recent_proposals.len() == 1
-                || self.db.get_block_by_hash(&ancestor_hash)?.is_none()
-            {
-                // No ancestor block, trigger sync
-                tracing::warn!(
-                    "sync::SyncProposal : parent block {} not found",
-                    parent_hash
-                );
-                // TODO: Move this up
-                match self.state {
-                    SyncState::Phase0 => {
-                        // Start phase 1
-                        let block_number = self.recent_proposals.back().unwrap().number();
-                        self.request_missing_metadata(Some((parent_hash, block_number)))?;
-                    }
-                    SyncState::Phase1(_, _) => {
-                        // Continue phase 1
-                        self.request_missing_metadata(None)?;
-                    }
-                    SyncState::Phase2(_) => {
-                        // Continue phase 2
-                        self.request_missing_blocks()?;
-                    }
-                    SyncState::Phase3 => {}
+        match self.state {
+            // Check if we are out of sync
+            SyncState::Phase0 if self.injected == 0 => {
+                let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
+                if self.db.get_block_by_hash(&parent_hash)?.is_none() {
+                    // No parent block, trigger sync
+                    tracing::warn!("sync::SyncProposal : syncing from {parent_hash}",);
+                    let block_number = self.recent_proposals.back().unwrap().number();
+                    self.request_missing_metadata(Some((parent_hash, block_number)))?;
                 }
-            } else {
-                // 99% synced, zip it up!
-                tracing::info!(
-                    "sync::SyncProposal : finishing up {} blocks for segment #0 from {ancestor_hash}",
-                    self.recent_proposals.len()
-                );
-                // parent block exists, inject the proposal
-                let proposals = self.recent_proposals.drain(..).collect_vec();
-                self.inject_proposals(proposals)?;
-                // we're done
+            }
+            // Continue phase 1, until we hit history/genesis.
+            SyncState::Phase1(_, _) if self.injected < self.max_batch_size => {
+                self.request_missing_metadata(None)?;
+            }
+            // Continue phase 2, until we have all segments.
+            SyncState::Phase2(_) if self.injected < self.max_blocks_in_flight => {
+                self.request_missing_blocks()?;
+            }
+            // Wait till 99% synced, zip it up!
+            SyncState::Phase3 if self.injected == 0 => {
+                let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
+                if self.db.get_block_by_hash(&ancestor_hash)?.is_some() {
+                    tracing::info!(
+                        "sync::SyncProposal : finishing up {} blocks for segment #0 from {ancestor_hash}",
+                        self.recent_proposals.len()
+                    );
+                    // inject the proposals
+                    let proposals = self.recent_proposals.drain(..).collect_vec();
+                    self.inject_proposals(proposals)?;
+                }
+                self.state = SyncState::Phase0;
+            }
+            _ => {
+                tracing::debug!("sync::SyncProposal : syncing {} blocks", self.injected);
             }
         }
+
         Ok(())
     }
 
@@ -328,7 +323,7 @@ impl Sync {
         self.chain_segments.pop();
         self.inject_proposals(proposals)?;
 
-        // Done with phase 2, allow phase 1 to restart.
+        // Done with phase 2
         if self.chain_segments.is_empty() {
             self.state = SyncState::Phase3;
         } else if DO_SPECULATIVE && self.injected < self.max_blocks_in_flight {
@@ -376,6 +371,9 @@ impl Sync {
     /// These hashes are then sent to a Peer for retrieval.
     /// This is Part 2 of the syncing algorithm.
     fn request_missing_blocks(&mut self) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase2(_)) {
+            anyhow::bail!("sync::RequestMissingBlocks : invalid state");
+        }
         // Early exit if there's a request in-flight; and if it has not expired.
         if let Some(peer) = self.in_flight.as_ref() {
             if peer.last_used.elapsed() > self.request_timeout {
@@ -389,16 +387,11 @@ impl Sync {
             }
         } else if self.injected > self.max_blocks_in_flight {
             tracing::warn!(
-                "sync::RequestMissingBlocks : too many {} blocks in flight",
+                "sync::RequestMissingBlocks : syncing {} blocks in flight",
                 self.injected
             );
             return Ok(());
-        };
-
-        let SyncState::Phase2(_) = self.state else {
-            tracing::warn!("sync::RequestMissingBlocks : no metadata to request missing blocks");
-            return Ok(());
-        };
+        }
 
         // will be re-inserted below
         if let Some(peer) = self.get_next_peer() {
@@ -589,6 +582,9 @@ impl Sync {
     /// If phase 1 is in progress, it continues requesting blocks from the last known phase 1 block.
     /// Otherwise, it requests blocks from the given omega_block.
     pub fn request_missing_metadata(&mut self, block: Option<(Hash, u64)>) -> Result<()> {
+        if matches!(self.state, SyncState::Phase2(_)) || matches!(self.state, SyncState::Phase3) {
+            anyhow::bail!("sync::RequestMissingMetadata : invalid state");
+        }
         // Early exit if there's a request in-flight; and if it has not expired.
         if let Some(peer) = self.in_flight.as_ref() {
             if peer.last_used.elapsed() > self.request_timeout {
@@ -600,8 +596,12 @@ impl Sync {
             } else {
                 return Ok(());
             }
-        } else if let SyncState::Phase2(_) = self.state {
-            tracing::warn!("sync::RequestMissingMetadata : phase 2 in progress");
+        } else if self.injected > self.max_batch_size {
+            // anything more than this and we cannot check whether the segment hits history
+            tracing::warn!(
+                "sync::RequestMissingMetadata : syncing {} blocks in flight",
+                self.injected
+            );
             return Ok(());
         }
 
@@ -626,7 +626,7 @@ impl Sync {
 
             tracing::info!(
                 ?message,
-                "sync::RequestMissingMetadata : requesting {} missing chain from {}",
+                "sync::RequestMissingMetadata : requesting missing chain from {}",
                 peer.peer_id
             );
             self.message_sender
