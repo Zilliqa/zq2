@@ -685,7 +685,7 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
         return Err(anyhow!("Address does not exist"));
     };
 
-    Ok(init_data.clone())
+    Ok(init_data.to_vec())
 }
 
 // GetTransactionsForTxBlock
