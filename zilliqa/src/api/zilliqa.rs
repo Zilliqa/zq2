@@ -586,8 +586,7 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
         unreachable!()
     };
 
-    let is_scilla = account.code.clone().scilla_code_and_init_data().is_some();
-    if is_scilla {
+    if account.code.is_scilla() {
         let limit = node.config.state_rpc_limit;
 
         let trie = state.get_account_trie(address)?;
@@ -610,10 +609,8 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
                 var = next.entry(key.clone());
             }
 
-            let code = &account.code;
-
-            let field_defs = match code {
-                Code::Scilla { types, .. } => types.clone(),
+            let field_defs = match &account.code {
+                Code::Scilla { types, .. } => types,
                 _ => unreachable!(),
             };
             let (_, depth) = field_defs.get(&var_name).unwrap();
@@ -688,7 +685,7 @@ fn get_smart_contract_init(params: Params, node: &Arc<Mutex<Node>>) -> Result<Ve
         return Err(anyhow!("Address does not exist"));
     };
 
-    Ok(init_data)
+    Ok(init_data.clone())
 }
 
 // GetTransactionsForTxBlock
