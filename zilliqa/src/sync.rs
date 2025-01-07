@@ -67,8 +67,8 @@ pub struct Sync {
     max_batch_size: usize,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
-    // count of injected proposals pending processing
-    injected: usize,
+    // count of proposals pending in the pipeline
+    in_pipeline: usize,
     // our peer id
     peer_id: PeerId,
     // internal sync state
@@ -107,32 +107,12 @@ impl Sync {
             max_batch_size: config.block_request_batch_size.max(31), // between 30 seconds and 3 days of blocks.
             max_blocks_in_flight: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
             in_flight: None,
-            injected: 0,
+            in_pipeline: usize::MIN,
             chain_metadata: BTreeMap::new(),
             chain_segments: Vec::new(),
             state: SyncState::Phase0,
             recent_proposals: VecDeque::with_capacity(GAP_THRESHOLD),
         })
-    }
-
-    /// Mark a received proposal
-    ///
-    /// Mark a proposal as received, and remove it from the cache.
-    pub fn mark_received_proposal(&mut self, prop: &InjectedProposal) -> Result<()> {
-        if prop.from != self.peer_id {
-            tracing::error!(
-                "sync::MarkReceivedProposal : foreign InjectedProposal from {}",
-                prop.from
-            );
-        }
-        if let Some(p) = self.chain_metadata.remove(&prop.block.hash()) {
-            tracing::warn!(
-                "sync::MarkReceivedProposal : removing stale metadata {}",
-                p.block_hash
-            );
-        }
-        self.injected = self.injected.saturating_sub(1);
-        Ok(())
     }
 
     /// Sync a block proposal.
@@ -152,7 +132,7 @@ impl Sync {
 
         match self.state {
             // Check if we are out of sync
-            SyncState::Phase0 if self.injected == 0 => {
+            SyncState::Phase0 if self.in_pipeline == 0 => {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
                 if self.db.get_block_by_hash(&parent_hash)?.is_none() {
                     // No parent block, trigger sync
@@ -162,15 +142,15 @@ impl Sync {
                 }
             }
             // Continue phase 1, until we hit history/genesis.
-            SyncState::Phase1(_, _) if self.injected < self.max_batch_size => {
+            SyncState::Phase1(_, _) if self.in_pipeline < self.max_batch_size => {
                 self.request_missing_metadata(None)?;
             }
             // Continue phase 2, until we have all segments.
-            SyncState::Phase2(_) if self.injected < self.max_blocks_in_flight => {
+            SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
                 self.request_missing_blocks()?;
             }
             // Wait till 99% synced, zip it up!
-            SyncState::Phase3 if self.injected == 0 => {
+            SyncState::Phase3 if self.in_pipeline == 0 => {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
                 if self.db.get_block_by_hash(&ancestor_hash)?.is_some() {
                     tracing::info!(
@@ -184,7 +164,10 @@ impl Sync {
                 self.state = SyncState::Phase0;
             }
             _ => {
-                tracing::debug!("sync::SyncProposal : syncing {} blocks", self.injected);
+                tracing::debug!(
+                    "sync::SyncProposal : syncing {} blocks in pipeline",
+                    self.in_pipeline
+                );
             }
         }
 
@@ -326,7 +309,7 @@ impl Sync {
         // Done with phase 2
         if self.chain_segments.is_empty() {
             self.state = SyncState::Phase3;
-        } else if DO_SPECULATIVE && self.injected < self.max_blocks_in_flight {
+        } else if DO_SPECULATIVE {
             // Speculatively request more blocks
             self.request_missing_blocks()?;
         }
@@ -385,10 +368,10 @@ impl Sync {
             } else {
                 return Ok(());
             }
-        } else if self.injected > self.max_blocks_in_flight {
+        } else if self.in_pipeline > self.max_blocks_in_flight {
             tracing::warn!(
-                "sync::RequestMissingBlocks : syncing {} blocks in flight",
-                self.injected
+                "sync::RequestMissingBlocks : syncing {} blocks in pipeline",
+                self.in_pipeline
             );
             return Ok(());
         }
@@ -459,7 +442,7 @@ impl Sync {
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
         } else if response.len() < self.max_batch_size {
-            // Partial response, downgrade peer but accept the response.
+            // Partial response, downgrade peer but process the response.
             tracing::warn!("sync::MetadataResponse : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
         } else {
@@ -596,11 +579,11 @@ impl Sync {
             } else {
                 return Ok(());
             }
-        } else if self.injected > self.max_batch_size {
+        } else if self.in_pipeline > self.max_batch_size {
             // anything more than this and we cannot check whether the segment hits history
             tracing::warn!(
-                "sync::RequestMissingMetadata : syncing {} blocks in flight",
-                self.injected
+                "sync::RequestMissingMetadata :  syncing {} blocks in pipeline",
+                self.in_pipeline
             );
             return Ok(());
         }
@@ -652,7 +635,7 @@ impl Sync {
         }
 
         // Increment proposals injected
-        self.injected = self.injected.saturating_add(proposals.len());
+        self.in_pipeline = self.in_pipeline.saturating_add(proposals.len());
         let len = proposals.len();
 
         // Just pump the Proposals back to ourselves.
@@ -675,9 +658,29 @@ impl Sync {
         tracing::debug!(
             "sync::InjectProposals : injected {}/{} proposals",
             len,
-            self.injected
+            self.in_pipeline
         );
         // return last proposal
+        Ok(())
+    }
+
+    /// Mark a received proposal
+    ///
+    /// Mark a proposal as received, and remove it from the cache.
+    pub fn mark_received_proposal(&mut self, prop: &InjectedProposal) -> Result<()> {
+        if prop.from != self.peer_id {
+            tracing::error!(
+                "sync::MarkReceivedProposal : foreign InjectedProposal from {}",
+                prop.from
+            );
+        }
+        if let Some(p) = self.chain_metadata.remove(&prop.block.hash()) {
+            tracing::warn!(
+                "sync::MarkReceivedProposal : removing stale metadata {}",
+                p.block_hash
+            );
+        }
+        self.in_pipeline = self.in_pipeline.saturating_sub(1);
         Ok(())
     }
 
