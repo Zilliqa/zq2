@@ -66,28 +66,28 @@ pub struct Sync {
     message_sender: MessageSender,
     // internal list of peers, maintained with add_peer/remove_peer.
     peers: BinaryHeap<PeerInfo>,
-    // in-flight
+    // peer handling an in-flight request
     in_flight: Option<PeerInfo>,
-    // in-flight timeout
+    // in-flight request timeout, before retry
     request_timeout: Duration,
     // how many blocks to request at once
     max_batch_size: usize,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
+    // count of injected proposals pending processing
+    injected: usize,
     // our peer id
     peer_id: PeerId,
-    // how many injected proposals
-    injected: usize,
-    // complete chain metadata
+    // complete chain metadata, in-memory
     chain_metadata: BTreeMap<Hash, ChainMetaData>,
-    // phase 1 cursor
-    p1_metadata: Option<ChainMetaData>,
-    // phase 2 cursor
-    p2_metadata: Option<Hash>,
-    // stack of chain landmarks
-    landmarks: Vec<(Hash, PeerId)>,
-    // fixed-size queue of latest proposals
-    zip_queue: VecDeque<Proposal>,
+    // markers to segments in the chain, and the source peer for that segment.
+    chain_segments: Vec<(PeerId, Hash, u64)>,
+    // phase 1 cursor containing parent hash, and block number.
+    p1_cursor: Option<(Hash, u64)>,
+    // phase 2 cursor containing a hash of a set of hashes.
+    p2_cursor: Option<Hash>,
+    // fixed-size queue of the most recent proposals
+    recent_proposals: VecDeque<Proposal>,
 }
 
 impl Sync {
@@ -118,10 +118,10 @@ impl Sync {
             in_flight: None,
             injected: 0,
             chain_metadata: BTreeMap::new(),
-            p1_metadata: None,
-            landmarks: Vec::new(),
-            p2_metadata: None,
-            zip_queue: VecDeque::with_capacity(GAP_THRESHOLD),
+            p1_cursor: None,
+            chain_segments: Vec::new(),
+            p2_cursor: None,
+            recent_proposals: VecDeque::with_capacity(GAP_THRESHOLD),
         })
     }
 
@@ -155,43 +155,44 @@ impl Sync {
     /// We do not perform checks on the Proposal here. This is done in the consensus layer.
     pub fn sync_proposal(&mut self, proposal: Proposal) -> Result<()> {
         // just stuff the latest proposal into the fixed-size queue.
-        while self.zip_queue.len() >= GAP_THRESHOLD {
-            self.zip_queue.pop_front();
+        while self.recent_proposals.len() >= GAP_THRESHOLD {
+            self.recent_proposals.pop_front();
         }
-        self.zip_queue.push_back(proposal);
+        self.recent_proposals.push_back(proposal);
 
         // TODO: Replace with single SQL query
         // Check if block parent exist in history
-        let parent_hash = self.zip_queue.back().unwrap().header.qc.block_hash;
+        let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
         if self.db.get_block_by_hash(&parent_hash)?.is_none() {
             // Check if oldes block exists in the history. If it does, we have synced up 99% of the chain.
-            let ancestor_hash = self.zip_queue.front().unwrap().header.qc.block_hash;
-            if self.zip_queue.len() == 1 || self.db.get_block_by_hash(&ancestor_hash)?.is_none() {
+            let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
+            if self.recent_proposals.len() == 1
+                || self.db.get_block_by_hash(&ancestor_hash)?.is_none()
+            {
                 // No ancestor block, trigger sync
                 tracing::warn!(
                     "sync::SyncProposal : parent block {} not found",
                     parent_hash
                 );
-                if self.p2_metadata.is_some() {
+                if self.p2_cursor.is_some() {
                     // Continue phase 2
                     self.request_missing_blocks()?;
-                } else if self.p1_metadata.is_some() {
+                } else if self.p1_cursor.is_some() {
                     // Continue phase 1
-                    self.request_missing_chain(None)?;
+                    self.request_missing_metadata(None)?;
                 } else {
                     // Start phase 1
-                    let block_number = self.zip_queue.back().unwrap().number();
-                    self.request_missing_chain(Some((parent_hash, block_number)))?;
+                    let block_number = self.recent_proposals.back().unwrap().number();
+                    self.request_missing_metadata(Some((parent_hash, block_number)))?;
                 }
             } else {
                 // 99% synced, zip it up!
                 tracing::info!(
-                    "sync::SyncProposal : zip up {} blocks from {}",
-                    self.zip_queue.len(),
-                    ancestor_hash
+                    "sync::SyncProposal : finishing up {} blocks for segment #0 from {ancestor_hash}",
+                    self.recent_proposals.len()
                 );
                 // parent block exists, inject the proposal
-                let proposals = self.zip_queue.drain(..).collect_vec();
+                let proposals = self.recent_proposals.drain(..).collect_vec();
                 self.inject_proposals(proposals)?;
                 // we're done
             }
@@ -220,26 +221,53 @@ impl Sync {
             block_number: block.number(),
             block_hash: block.hash(),
             parent_hash: block.parent_hash(),
-            block_timestamp: block.timestamp(),
         }
+    }
+
+    /// Retry phase 1
+    ///
+    /// If something went wrong, phase 1 may need to be retried for the most recent segment.
+    /// Pop the segment from the landmark, and continue phase 1.
+    fn retry_phase1(&mut self) -> Result<()> {
+        if self.chain_segments.is_empty() {
+            tracing::error!("sync::RetryPhase1 : cannot retry phase 1 without chain_segments!");
+            return Ok(());
+        }
+
+        // remove the last segment from the chain metadata
+        let (peer, hash, num) = self.chain_segments.pop().unwrap();
+        let mut key = hash;
+        while let Some(p) = self.chain_metadata.remove(&key) {
+            key = p.parent_hash;
+        }
+
+        // set the p1/p2 cursor value, to allow retry from p1
+        self.p1_cursor = Some((hash, num));
+        self.p2_cursor = None;
+        tracing::info!("sync::RetryPhase1 : retrying block {hash} from {peer}");
+        if DO_SPECULATIVE {
+            self.request_missing_metadata(None)?;
+        }
+        Ok(())
     }
 
     /// Handle a multi-block response.
     ///
-    /// This is the final step in the syncing algorithm, where we receive a set of blocks and inject them into
-    /// the pipeline. We also remove the blocks from the chain metadata, because they are now in the pipeline.
+    /// This is phase 2 in the syncing algorithm, where we receive a set of blocks and inject them into the pipeline.
+    /// We also remove the blocks from the chain metadata, because they are now in the pipeline.
     pub fn handle_multiblock_response(
         &mut self,
         from: PeerId,
         response: Vec<Proposal>,
     ) -> Result<()> {
-        // Process whatever we received
+        // Process only a full response
         if response.is_empty() {
-            // Empty response, downgrade peer
+            // Empty response, downgrade peer and retry phase 1.
             tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
+            return self.retry_phase1();
         } else if response.len() < self.max_batch_size {
-            // Partial response, downgrade peer
+            // Partial response, downgrade peer but process the block.
             tracing::warn!("sync::MultiBlockResponse : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
         } else {
@@ -249,42 +277,38 @@ impl Sync {
         tracing::info!(
             "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
             response.len(),
-            self.landmarks.len(),
+            self.chain_segments.len(),
             from
         );
 
-        let Some((hash, peer_id)) = self.landmarks.last() else {
-            tracing::error!("sync::MultiBlockResponse: no more landmarks!");
-            return Ok(());
+        // Spurious response
+        let Some((peer_id, hash, _)) = self.chain_segments.last() else {
+            anyhow::bail!("sync::MultiBlockResponse: no more chain_segments!");
         };
 
-        // Check that this segment is from the requested peer.
+        // If the response is not from the expected peer, retry phase 2.
         if *peer_id != from {
-            tracing::error!("sync::MultiBlockResponse: response received from unknown peer {from}");
+            tracing::warn!("sync::MultiBlockResponse: unknown peer {from}, will retry");
             return Ok(());
         }
 
-        // Check that this segment starts at the expected landmark
+        // Segment history does not match, retry phase 1.
         let prop_hash = response.first().as_ref().unwrap().hash();
         if *hash != prop_hash {
-            tracing::warn!(
-                "sync::MultiBlockResponse : mismatched landmark {} != {}",
-                hash,
-                prop_hash,
-            );
-            return Ok(());
+            tracing::error!("sync::MultiBlockResponse : mismatched landmark {hash} != {prop_hash}");
+            return self.retry_phase1();
         }
 
-        // Check it matches request hashes
+        // If the checksum does not match, retry phase 1. Maybe the node has pruned the segment.
         let checksum = response
             .iter()
             .fold(Hash::builder().with(Hash::ZERO.as_bytes()), |sum, p| {
                 sum.with(p.hash().as_bytes())
             })
             .finalize();
-        if self.p2_metadata.unwrap_or(Hash::ZERO) != checksum {
-            tracing::error!("sync::MultiBlockResponse : mismatch request checksum {checksum}");
-            return Ok(());
+        if self.p2_cursor.unwrap_or(Hash::ZERO) != checksum {
+            tracing::error!("sync::MultiBlockResponse : mismatch history {checksum}");
+            return self.retry_phase1();
         }
 
         // Response seems sane.
@@ -300,12 +324,13 @@ impl Sync {
             }
         }
 
-        self.landmarks.pop();
+        // Done with this segment
+        self.chain_segments.pop();
         self.inject_proposals(proposals)?;
 
         // Done with phase 2, allow phase 1 to restart.
-        if self.landmarks.is_empty() {
-            self.p1_metadata = None;
+        if self.chain_segments.is_empty() {
+            self.p1_cursor = None;
             self.chain_metadata.clear();
         } else if DO_SPECULATIVE && self.injected < self.max_blocks_in_flight {
             // Speculatively request more blocks
@@ -369,16 +394,16 @@ impl Sync {
                 self.injected
             );
             return Ok(());
-        } else if self.p2_metadata.is_none() {
+        } else if self.p2_cursor.is_none() {
             tracing::warn!("sync::RequestMissingBlocks : no metadata to request missing blocks");
             return Ok(());
         }
 
         // will be re-inserted below
         if let Some(peer) = self.get_next_peer() {
-            self.p2_metadata = None;
-            // If we have no landmarks, we have nothing to do
-            if let Some((hash, peer_id)) = self.landmarks.last() {
+            self.p2_cursor = None;
+            // If we have no chain_segments, we have nothing to do
+            if let Some((peer_id, hash, _)) = self.chain_segments.last() {
                 let mut request_hashes = Vec::with_capacity(self.max_batch_size);
                 let mut key = *hash; // start from this block
                 while let Some(meta) = self.chain_metadata.remove(&key) {
@@ -394,13 +419,13 @@ impl Sync {
                         sum.with(h.as_bytes())
                     })
                     .finalize();
-                self.p2_metadata = Some(checksum);
+                self.p2_cursor = Some(checksum);
 
                 // Fire request, to the original peer that sent the segment metadata
                 tracing::info!(
                     "sync::RequestMissingBlocks : requesting {} blocks of segment #{} from {}",
                     request_hashes.len(),
-                    self.landmarks.len(),
+                    self.chain_segments.len(),
                     peer_id,
                 );
                 self.message_sender.send_external_message(
@@ -414,7 +439,7 @@ impl Sync {
                     score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
                 });
             } else {
-                // No more landmarks, we're done
+                // No more chain_segments, we're done
                 self.peers.push(peer);
             }
         } else {
@@ -428,7 +453,7 @@ impl Sync {
     /// Handle a response to a metadata request.
     ///
     /// This is the first step in the syncing algorithm, where we receive a set of metadata and use it to
-    /// construct a chain history. We then request the missing blocks from the chain.
+    /// construct a chain history.
     pub fn handle_metadata_response(
         &mut self,
         from: PeerId,
@@ -436,12 +461,12 @@ impl Sync {
     ) -> Result<()> {
         // Process whatever we have received.
         if response.is_empty() {
-            // Empty response, downgrade peer
+            // Empty response, downgrade peer and retry with a new peer.
             tracing::warn!("sync::MetadataResponse : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
         } else if response.len() < self.max_batch_size {
-            // Partial response, downgrade peer
+            // Partial response, downgrade peer but accept the response.
             tracing::warn!("sync::MetadataResponse : partial blocks {from}",);
             self.done_with_peer(DownGrade::Partial);
         } else {
@@ -449,29 +474,28 @@ impl Sync {
         }
 
         // Check the linkage of the returned chain
-        let Some(p1) = self.p1_metadata.as_ref() else {
+        let Some((p1_hash, p1_num)) = self.p1_cursor.as_ref() else {
             tracing::error!(
-                "no way to check chain linkage from {}",
+                "synce::MetadataResponse : no way to check chain history from {}",
                 response.first().unwrap().block_hash
             );
             return Ok(());
         };
-        let mut parent_hash = p1.parent_hash;
-        let mut parent_num = p1.block_number;
+        let mut block_hash = *p1_hash;
+        let mut block_num = *p1_num;
         for meta in response.iter() {
             // check that the block hash and number is as expected.
             if meta.block_hash != Hash::ZERO
-                && meta.block_hash == parent_hash
-                && parent_num == meta.block_number + 1
+                && block_hash == meta.block_hash
+                && block_num == meta.block_number + 1
             {
-                parent_hash = meta.parent_hash;
-                parent_num = meta.block_number;
+                block_hash = meta.parent_hash;
+                block_num = meta.block_number;
             } else {
-                // if something does not match, we will retry the request with the next peer.
                 // TODO: possibly, discard and rebuild entire chain
+                // if something does not match, do nothing and retry the request with the next peer.
                 tracing::error!(
-                    "sync::MetadataResponse : retry metadata history for {}",
-                    parent_hash
+                    "sync::MetadataResponse : retry metadata history for {block_hash}/{block_num}"
                 );
                 return Ok(());
             }
@@ -483,22 +507,24 @@ impl Sync {
         // Chain segment is sane
         let segment = response;
 
-        // Record the oldest block in the chain
-        self.p1_metadata = Some(segment.last().unwrap().clone());
-
-        // TODO: Insert intermediate landmarks
         // Record landmark, including peer that has this set of blocks
-        self.landmarks
-            .push((segment.first().as_ref().unwrap().block_hash, from));
+        self.chain_segments.push((from, *p1_hash, *p1_num));
+
+        // Record the oldest block in the chain's parent
+        self.p1_cursor = Some((
+            segment.last().unwrap().parent_hash,
+            segment.last().unwrap().block_number,
+        ));
 
         tracing::info!(
             "sync::MetadataResponse : received {} metadata segment #{} from {}",
             segment.len(),
-            self.landmarks.len(),
+            self.chain_segments.len(),
             from
         );
 
         // Record the actual chain metadata
+        let last_block_hash = segment.last().as_ref().unwrap().block_hash;
         for meta in segment {
             if self.chain_metadata.insert(meta.block_hash, meta).is_some() {
                 anyhow::bail!("loop in chain!"); // there is a possible loop in the chain
@@ -506,15 +532,11 @@ impl Sync {
         }
 
         // If the segment does not link to our canonical history, fire the next request
-        if self
-            .db
-            .get_block_by_hash(&self.p1_metadata.as_ref().unwrap().block_hash)?
-            .is_some()
-        {
-            // Hit our internal history. Start phase 2.
-            self.p2_metadata = Some(self.p1_metadata.as_ref().unwrap().block_hash);
+        if self.db.get_block_by_hash(&last_block_hash)?.is_some() {
+            // Hit our internal history. Next, phase 2.
+            self.p2_cursor = Some(Hash::ZERO);
         } else if DO_SPECULATIVE {
-            self.request_missing_chain(None)?;
+            self.request_missing_metadata(None)?;
         }
 
         Ok(())
@@ -534,6 +556,12 @@ impl Sync {
             "sync::MetadataRequest : received a metadata request from {}",
             from
         );
+
+        // Do not respond to stale requests
+        if request.request_at.elapsed()? > self.request_timeout {
+            tracing::warn!("sync::MetadataRequest : stale request");
+            return Ok(ExternalMessage::Acknowledgement);
+        }
 
         // TODO: Check if we should service this request
         // Validators could respond to this request if there is nothing else to do.
@@ -563,53 +591,51 @@ impl Sync {
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If phase 1 is in progress, it continues requesting blocks from the last known phase 1 block.
     /// Otherwise, it requests blocks from the given omega_block.
-    pub fn request_missing_chain(&mut self, block: Option<(Hash, u64)>) -> Result<()> {
+    pub fn request_missing_metadata(&mut self, block: Option<(Hash, u64)>) -> Result<()> {
         // Early exit if there's a request in-flight; and if it has not expired.
         if let Some(peer) = self.in_flight.as_ref() {
             if peer.last_used.elapsed() > self.request_timeout {
                 tracing::warn!(
-                    "sync::RequestMissingChain : in-flight request {} timed out, requesting from new peer",
+                    "sync::RequestMissingMetadata : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
                 self.done_with_peer(DownGrade::Timeout);
             } else {
                 return Ok(());
             }
-        } else if self.injected > 0 {
-            tracing::warn!(
-                "sync::RequestMissingChain : too many {} blocks in flight",
-                self.injected
-            );
+        } else if self.p2_cursor.is_some() {
+            tracing::warn!("sync::RequestMissingMetadata : phase 2 in progress");
             return Ok(());
+            // } else if self.injected > 0 {
+            //     tracing::warn!(
+            //         "sync::RequestMissingMetadata : too many {} blocks in flight",
+            //         self.injected
+            //     );
+            //     return Ok(());
         }
 
         if let Some(peer) = self.get_next_peer() {
-            let message = if let Some(meta) = self.p1_metadata.as_ref() {
+            let message = if let Some((hash, _)) = self.p1_cursor.as_ref() {
                 ExternalMessage::MetaDataRequest(RequestBlock {
-                    from_number: 0,
-                    from_hash: meta.parent_hash,
+                    request_at: SystemTime::now(),
+                    from_hash: *hash,
                     batch_size: self.max_batch_size,
                 })
             } else if let Some((hash, number)) = block {
                 // insert the starting point for phase 1
-                self.p1_metadata = Some(ChainMetaData {
-                    block_hash: Hash::ZERO, // invalid block hash
-                    block_number: number,
-                    parent_hash: hash,
-                    block_timestamp: SystemTime::UNIX_EPOCH,
-                });
+                self.p1_cursor = Some((hash, number));
                 ExternalMessage::MetaDataRequest(RequestBlock {
-                    from_number: 0,
+                    request_at: SystemTime::now(),
                     from_hash: hash,
                     batch_size: self.max_batch_size,
                 })
             } else {
-                todo!("sync::RequestMissingChain : no metadata to request missing blocks");
+                todo!("sync::RequestMissingMetadata : no metadata to request missing blocks");
             };
 
             tracing::info!(
                 ?message,
-                "sync::RequestMissingChain : requesting missing chain from {}",
+                "sync::RequestMissingMetadata : requesting missing chain from {}",
                 peer.peer_id
             );
             self.message_sender
@@ -618,7 +644,7 @@ impl Sync {
             self.in_flight = Some(peer);
         } else {
             tracing::warn!(
-                "sync::RequestMissingChain : insufficient peers to request missing blocks"
+                "sync::RequestMissingMetadata : insufficient peers to request missing blocks"
             );
         }
         Ok(())

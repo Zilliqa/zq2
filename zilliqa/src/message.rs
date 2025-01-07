@@ -229,7 +229,7 @@ impl fmt::Debug for BlockResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestBlock {
-    pub from_number: u64,
+    pub request_at: SystemTime,
     pub from_hash: Hash,
     pub batch_size: usize,
 }
@@ -249,7 +249,6 @@ pub struct ChainMetaData {
     pub block_hash: Hash,
     pub parent_hash: Hash,
     pub block_number: u64,
-    pub block_timestamp: SystemTime,
 }
 
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
