@@ -854,7 +854,6 @@ impl BlockStore {
         let expected = self.buffered.expectant_block_ranges();
         trace!("block_store::request_blocks() : in our input queue {expected:?}");
         (_, remain) = remain.diff_inter(&expected);
-        trace!("block_store::request_blocks() : .. after input queue removal {remain:?}");
 
         // If it's already buffered, don't request it again - wait for us to reject it and
         // then we can re-request.
@@ -867,10 +866,7 @@ impl BlockStore {
         );
 
         (_, remain) = remain.diff_inter(&extant);
-        trace!("block_store::request_blocks() : .. after cache removal {remain:?}");
-        trace!("known gaps {:?}", self.buffered.empty_view_ranges);
         (_, remain) = remain.diff_inter(&self.buffered.empty_view_ranges);
-        trace!("block_store::request_blocks() : .. after removal of empty view ranges {remain:?}");
 
         // If it's in flight, don't request it again.
         let mut in_flight = RangeMap::new();
@@ -887,10 +883,6 @@ impl BlockStore {
 
         let now = SystemTime::now();
         let failed_request_sleep_duration = self.failed_request_sleep_duration;
-        debug!(
-            "block_store::request_blocks() : after removing in flight requests {:?}",
-            remain
-        );
 
         // If everything we have is in flight, we'll skip trying to request them (or update availability)
         if remain.is_empty() {
@@ -945,9 +937,7 @@ impl BlockStore {
                     let left = constants::MAX_PENDING_BLOCK_REQUESTS_PER_PEER
                         - peer_info.pending_requests.len();
                     let ranges = peer_info.get_ranges(to);
-                    debug!("block_store::request_blocks() : I want {remain:?} ({remain}) peer has ranges {ranges:?} ({ranges})");
                     let (req, rem) = remain.diff_inter_limited(&ranges, Some(left));
-                    debug!("block_store::request_blocks() : req {req:?} rem {rem:?} left {left}");
                     // If we are not about to make a request, and we do not have recent availability then
                     // make a synthetic request to get that availability.
                     let query_availability = req.is_empty()
@@ -972,10 +962,9 @@ impl BlockStore {
                 for request in requests.ranges.iter() {
                     if !request.is_empty() {
                         trace!(
-                            "block_store::request_blocks() : peer = {:?} request = {:?} remains = {:?}: sending block request",
+                            "block_store::request_blocks() : peer = {:?} request = {:?}: sending block request",
                             peer,
                             request,
-                            requests
                         );
                         // Yay!
                         let message = ExternalMessage::BlockRequest(BlockRequest {
