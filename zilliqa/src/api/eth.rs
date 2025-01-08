@@ -35,7 +35,10 @@ use super::{
     },
 };
 use crate::{
-    api::zilliqa::ZilAddress,
+    api::{
+        types::eth::{Proof, StorageProof},
+        zilliqa::ZilAddress,
+    },
     cfg::EnabledApi,
     crypto::Hash,
     error::ensure_success,
@@ -46,7 +49,6 @@ use crate::{
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction},
 };
-use crate::api::types::eth::{Proof, StorageProof};
 
 pub fn rpc_module(
     node: Arc<Mutex<Node>>,
@@ -910,26 +912,39 @@ fn get_proof(params: Params, node: &Arc<Mutex<Node>>) -> Result<Proof> {
 
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    let state = node.consensus.state().at_root(block.state_root_hash().into());
-
+    let mut state = node
+        .consensus
+        .state()
+        .at_root(block.state_root_hash().into());
+    // recover from db root node using given root hash
+    let _ = state.root_hash()?;
     let computed_proof = state.get_proof(address, &storage_keys)?;
 
-    let acc_code = Bytecode::new_raw(computed_proof.account.code.evm_code().unwrap_or_default().into());
-
-    info!("Block state root is: {:?}", block.state_root_hash());
+    let acc_code = Bytecode::new_raw(
+        computed_proof
+            .account
+            .code
+            .evm_code()
+            .unwrap_or_default()
+            .into(),
+    );
 
     Ok(Proof {
         address,
         account_proof: computed_proof.account_proof,
-        storage_proof: computed_proof.storage_proofs.into_iter().map(|single_item| StorageProof {
-            proof: single_item.proof,
-            key: single_item.key,
-            value: single_item.value
-        }).collect(),
+        storage_proof: computed_proof
+            .storage_proofs
+            .into_iter()
+            .map(|single_item| StorageProof {
+                proof: single_item.proof,
+                key: single_item.key,
+                value: single_item.value,
+            })
+            .collect(),
         nonce: computed_proof.account.nonce,
         balance: computed_proof.account.balance,
         storage_hash: computed_proof.account.storage_root,
-        code_hash: acc_code.hash_slow()
+        code_hash: acc_code.hash_slow(),
     })
 }
 

@@ -14,7 +14,6 @@ use ethabi::Token;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use tracing::info;
 use tracing::debug;
 
 use crate::{
@@ -404,18 +403,15 @@ impl State {
 
         // get_proof() requires &mut so clone state and don't mutate the origin
         let mut state = self.clone();
-
-        let _root = state.root_hash()?;
-        info!("Enforced root is: {:?}", _root);
-
+        state.root_hash()?;
         let account = state.get_account(address)?;
 
-        let account_proof = state.accounts.get_proof(Self::account_key(address).as_slice())?;
+        let account_proof = state
+            .accounts
+            .get_proof(Self::account_key(address).as_slice())?;
 
-        let mut storage_trie = state.get_account_trie(address.into())?;
-        let _root = storage_trie.root_hash()?;
-
-        info!("Trie root is: {:?}, account storage root is: {:?}", storage_trie.root_hash()?, account.storage_root);
+        let mut storage_trie = state.get_account_trie(address)?;
+        storage_trie.root_hash()?;
 
         let storage_proofs = {
             let mut storage_proofs = Vec::new();

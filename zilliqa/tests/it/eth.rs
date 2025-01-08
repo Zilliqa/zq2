@@ -1,14 +1,12 @@
-use tracing::info;
-use std::{fmt::Debug, ops::DerefMut};
-use std::io::Read;
-use std::str::FromStr;
-use std::sync::Arc;
-use alloy::consensus::EMPTY_ROOT_HASH;
-use alloy::primitives::{hex, Address};
+use std::{fmt::Debug, ops::DerefMut, sync::Arc};
+
+use alloy::primitives::{hex, Address, B256};
+use eth_trie::{EthTrie, MemoryDB, Trie};
 use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
     core::types::{Bytes, Signature},
+    prelude::contract,
     providers::{Middleware, MiddlewareError, Provider},
     types::{
         transaction::{
@@ -22,11 +20,12 @@ use ethers::{
 };
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
-use alloy::primitives::B256;
-use ethers::prelude::contract;
 use serde::{Deserialize, Serialize};
-use eth_trie::{EthTrie, MemoryDB, Trie};
-use zilliqa::state::{Account, State};
+use zilliqa::{
+    scilla::storage_key,
+    state::{Account, State},
+};
+
 use crate::{deploy_contract, node, LocalRpcClient, Network, Wallet};
 
 #[zilliqa_macros::test]
@@ -1492,50 +1491,100 @@ async fn test_eth_get_proof(mut network: Network) {
         &wallet,
         &mut network,
     )
-        .await;
+    .await;
 
-    let sender_address = wallet.address();
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
 
-    let latest_block = wallet.get_block_number().await.unwrap();
+    let deployed_at_block = receipt.block_number.unwrap().as_u64();
+    let deployed_at_block = wallet.get_block(deployed_at_block).await.unwrap().unwrap();
 
-    let latest_block = wallet.get_block(latest_block).await.unwrap().unwrap();
-    info!("In test latest bloock root hash is: {:?}", latest_block.state_root);
-
-
-    let storage_keys: Vec<H256> = {
+    let contract_account = {
         let node = network.nodes[0].inner.lock().unwrap();
-        let contract_account = node.consensus.state().get_account(Address::from(contract_address.0)).unwrap();
-        let db = node.db.clone().state_trie().unwrap();
-        let storage_trie = EthTrie::new(Arc::new(db));
-        let storage_trie = storage_trie.at_root(contract_account.storage_root.into());
-        storage_trie.iter().map(|(key, _)| H256::from_slice(&key)).collect::<Vec<_>>()
+        node.consensus
+            .state()
+            .get_account(Address::from(contract_address.0))
+            .unwrap()
     };
 
-    let mut bytes = [0u8; 32];
-    bytes[31] = 0;
-    let storage_keys = vec![H256::from(bytes)];
-    //let storage_keys = vec![];
-    //let storage_keys = storage_trie.
+    // A single storage item with slot = 0
+    let storage_key = H256::from([0u8; 32]);
+    let storage_keys = vec![storage_key];
+    let proof = wallet
+        .get_proof(
+            contract_address,
+            storage_keys,
+            Some(BlockNumber::from(deployed_at_block.number.unwrap()).into()),
+        )
+        .await
+        .unwrap();
 
-    let proof = wallet.get_proof(contract_address, storage_keys, None).await.unwrap();
+    let storage_value = {
+        let node = network.nodes[0].inner.lock().unwrap();
+        node.consensus
+            .state()
+            .get_account_storage(
+                Address::from(contract_address.0),
+                B256::from_slice(storage_key.as_bytes()),
+            )
+            .unwrap()
+    };
 
-    let memdb = Arc::new(MemoryDB::new(true));
-    let mut trie = EthTrie::new(Arc::clone(&memdb));
+    // Verify account
+    {
+        let memdb = Arc::new(MemoryDB::new(true));
+        let trie = EthTrie::new(Arc::clone(&memdb));
 
-    let account_proof = proof.account_proof.iter().map(|elem| elem.to_vec()).collect::<Vec<_>>();
+        let account_proof = proof
+            .account_proof
+            .iter()
+            .map(|elem| elem.to_vec())
+            .collect::<Vec<_>>();
 
-    let _verif_result = trie.verify_proof(B256::from_slice(latest_block.state_root.as_bytes()), State::account_key(Address::from(contract_address.0)).as_slice(), account_proof).unwrap().unwrap();
+        let verify_result = trie
+            .verify_proof(
+                B256::from_slice(deployed_at_block.state_root.as_bytes()),
+                State::account_key(Address::from(contract_address.0)).as_slice(),
+                account_proof,
+            )
+            .unwrap()
+            .unwrap();
 
-    let recovered_account = bincode::deserialize::<Account>(&_verif_result).unwrap();
-    assert_eq!(recovered_account.balance, 0);
+        let recovered_account = bincode::deserialize::<Account>(&verify_result).unwrap();
+        assert_eq!(recovered_account.balance, 0);
+        assert_eq!(
+            recovered_account.storage_root,
+            contract_account.storage_root
+        );
+    }
 
-    let node = &network.nodes[0];
-    let _second = node.inner.lock().unwrap().consensus.state().get_proof(Address::from(contract_address.0), &*vec![]);
+    // Verify storage key
+    {
+        let memdb = Arc::new(MemoryDB::new(true));
+        let trie = EthTrie::new(Arc::clone(&memdb));
 
-    let _value = trie.get(contract_address.as_bytes()).unwrap();
+        let mut storage_proof = vec![];
 
+        for single_proof in proof.storage_proof {
+            let bytes = &single_proof.proof;
+            for byte in bytes {
+                storage_proof.push(byte.to_vec());
+            }
+        }
 
-    assert_eq!(proof.address.0, contract_address.0);
+        let verify_result = trie
+            .verify_proof(
+                B256::from_slice(contract_account.storage_root.as_slice()),
+                State::account_storage_key(
+                    Address::from(contract_address.0),
+                    B256::from_slice(storage_key.as_bytes()),
+                )
+                .as_slice(),
+                storage_proof,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(verify_result.as_slice(), storage_value.as_slice());
+    }
 }
