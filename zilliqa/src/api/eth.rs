@@ -82,7 +82,6 @@ pub fn rpc_module(
             ("eth_getFilterChanges", get_filter_changes),
             ("eth_getFilterLogs", get_filter_logs),
             ("eth_getLogs", get_logs),
-            ("eth_getProof", get_proof),
             ("eth_getStorageAt", get_storage_at),
             (
                 "eth_getTransactionByBlockHashAndIndex",
@@ -1086,12 +1085,6 @@ fn get_filter_changes(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
 fn get_filter_logs(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
-
-/// eth_getProof
-/// Returns the account and storage values of the specified account including the Merkle-proof.
-fn get_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 

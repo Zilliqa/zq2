@@ -413,15 +413,19 @@ impl State {
         let account_proof = state.accounts.get_proof(Self::account_key(address).as_slice())?;
 
         let mut storage_trie = state.get_account_trie(address.into())?;
+        let _root = storage_trie.root_hash()?;
+
+        info!("Trie root is: {:?}, account storage root is: {:?}", storage_trie.root_hash()?, account.storage_root);
 
         let storage_proofs = {
             let mut storage_proofs = Vec::new();
             for key in storage_keys {
+                let key = Self::account_storage_key(address, *key);
                 let Some(value) = storage_trie.get(key.as_slice())? else {
                     continue;
                 };
                 let proof = storage_trie.get_proof(key.as_slice())?;
-                storage_proofs.push(StorageProof { proof, key: *key, value });
+                storage_proofs.push(StorageProof { proof, key, value });
             }
             storage_proofs
         };

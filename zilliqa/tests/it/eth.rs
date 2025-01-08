@@ -1,6 +1,9 @@
 use tracing::info;
 use std::{fmt::Debug, ops::DerefMut};
+use std::io::Read;
+use std::str::FromStr;
 use std::sync::Arc;
+use alloy::consensus::EMPTY_ROOT_HASH;
 use alloy::primitives::{hex, Address};
 use ethabi::{ethereum_types::U64, Token};
 use ethers::{
@@ -20,6 +23,7 @@ use ethers::{
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use alloy::primitives::B256;
+use ethers::prelude::contract;
 use serde::{Deserialize, Serialize};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use zilliqa::state::{Account, State};
@@ -1499,7 +1503,23 @@ async fn test_eth_get_proof(mut network: Network) {
     let latest_block = wallet.get_block(latest_block).await.unwrap().unwrap();
     info!("In test latest bloock root hash is: {:?}", latest_block.state_root);
 
-    let proof = wallet.get_proof(contract_address, vec![], None).await.unwrap();
+
+    let storage_keys: Vec<H256> = {
+        let node = network.nodes[0].inner.lock().unwrap();
+        let contract_account = node.consensus.state().get_account(Address::from(contract_address.0)).unwrap();
+        let db = node.db.clone().state_trie().unwrap();
+        let storage_trie = EthTrie::new(Arc::new(db));
+        let storage_trie = storage_trie.at_root(contract_account.storage_root.into());
+        storage_trie.iter().map(|(key, _)| H256::from_slice(&key)).collect::<Vec<_>>()
+    };
+
+    let mut bytes = [0u8; 32];
+    bytes[31] = 0;
+    let storage_keys = vec![H256::from(bytes)];
+    //let storage_keys = vec![];
+    //let storage_keys = storage_trie.
+
+    let proof = wallet.get_proof(contract_address, storage_keys, None).await.unwrap();
 
     let memdb = Arc::new(MemoryDB::new(true));
     let mut trie = EthTrie::new(Arc::clone(&memdb));
@@ -1517,5 +1537,5 @@ async fn test_eth_get_proof(mut network: Network) {
     let _value = trie.get(contract_address.as_bytes()).unwrap();
 
 
-    assert_eq!(proof.address, contract_address);
+    assert_eq!(proof.address.0, contract_address.0);
 }
