@@ -1330,7 +1330,7 @@ impl ChainNode {
 
         progress_bar.start(format!("{}: Starting the service", self.name()));
         machine
-            .run("sudo systemctl start api_healthcheck.service", false)
+            .run("sudo systemctl start healthcheck.service", false)
             .await?;
         progress_bar.inc(1);
 
@@ -1345,7 +1345,7 @@ impl ChainNode {
 
         progress_bar.start(format!("{}: Stopping the service", self.name()));
         machine
-            .run("sudo systemctl stop api_healthcheck.service", false)
+            .run("sudo systemctl stop healthcheck.service", false)
             .await?;
         progress_bar.inc(1);
 
