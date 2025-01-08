@@ -13,6 +13,7 @@ use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use libp2p::PeerId;
+use once_cell::sync::Lazy;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -22,7 +23,9 @@ use crate::{
     block_store::BlockStore,
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
-    crypto::{verify_messages, Hash, NodePublicKey, NodeSignature, SecretKey},
+    constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+    contracts,
+    crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
@@ -41,7 +44,7 @@ use crate::{
 
 #[derive(Debug)]
 struct NewViewVote {
-    signatures: Vec<NodeSignature>,
+    signatures: Vec<BlsSignature>,
     cosigned: BitArray,
     cosigned_weight: u128,
     qcs: BTreeMap<usize, QuorumCertificate>,
@@ -96,7 +99,7 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-type BlockVotes = (Vec<NodeSignature>, BitArray, u128, bool);
+type BlockVotes = (Vec<BlsSignature>, BitArray, u128, bool);
 
 #[derive(Debug)]
 struct CachedLeader {
@@ -155,6 +158,7 @@ pub struct Consensus {
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,
+    new_view_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
     state: State,
@@ -167,7 +171,7 @@ pub struct Consensus {
     transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
     early_proposal: Option<EarlyProposal>,
-    /// Flag indicating that block creation should be postponed at least until empty_block_timeout is reached
+    /// Flag indicating that block broadcasting should be postponed at least until block_time is reached
     create_next_block_on_timeout: bool,
     /// Timestamp of most recent view change
     view_updated_at: SystemTime,
@@ -327,6 +331,7 @@ impl Consensus {
             votes: BTreeMap::new(),
             buffered_votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
+            new_view_message_cache: None,
             high_qc,
             state,
             db,
@@ -433,15 +438,18 @@ impl Consensus {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
         let leader = self.leader_at_block(&block, view);
-        Ok((
-            leader.map(|leader| leader.peer_id),
+        let new_view_message = (
+            leader.map(|leader: Validator| leader.peer_id),
             ExternalMessage::NewView(Box::new(NewView::new(
                 self.secret_key,
                 self.high_qc,
                 view,
                 self.secret_key.node_public_key(),
             ))),
-        ))
+        );
+
+        self.new_view_message_cache = Some(new_view_message.clone());
+        Ok(new_view_message)
     }
 
     pub fn public_key(&self) -> NodePublicKey {
@@ -494,28 +502,21 @@ impl Consensus {
         }
 
         let (
-            time_since_last_view_change,
+            milliseconds_since_last_view_change,
+            milliseconds_remaining_of_block_time,
             exponential_backoff_timeout,
-            minimum_time_left_for_empty_block,
         ) = self.get_consensus_timeout_params()?;
-
         trace!(
+            milliseconds_since_last_view_change,
+            exponential_backoff_timeout,
+            milliseconds_remaining_of_block_time,
             "timeout reached create_next_block_on_timeout: {}",
             self.create_next_block_on_timeout
         );
+
         if self.create_next_block_on_timeout {
-            let empty_block_timeout_ms =
-                self.config.consensus.empty_block_timeout.as_millis() as u64;
-
-            let has_txns_for_next_block = self.transaction_pool.has_txn_ready();
-
-            // Check if enough time elapsed or there's something in mempool or we don't have enough
-            // time but let's try at least until new view can happen
-            if time_since_last_view_change > empty_block_timeout_ms
-                || has_txns_for_next_block
-                || (time_since_last_view_change + minimum_time_left_for_empty_block
-                    >= exponential_backoff_timeout)
-            {
+            // Check if enough time elapsed to propose block
+            if milliseconds_remaining_of_block_time == 0 {
                 if let Ok(Some((block, transactions))) = self.propose_new_block() {
                     self.create_next_block_on_timeout = false;
                     return Ok(Some((
@@ -524,41 +525,46 @@ impl Consensus {
                     )));
                 };
             } else {
-                self.reset_timeout.send(
-                    self.config
-                        .consensus
-                        .empty_block_timeout
-                        .saturating_sub(Duration::from_millis(time_since_last_view_change)),
-                )?;
+                self.reset_timeout
+                    .send(Duration::from_millis(milliseconds_remaining_of_block_time))?;
                 return Ok(None);
             }
         }
 
-        // Now consider whether we want to timeout - the timeout duration doubles every time, so it
+        // If we are not leader then consider whether we want to timeout - the timeout duration doubles every time, so it
         // Should eventually have all nodes on the same view
-
-        if time_since_last_view_change < exponential_backoff_timeout {
+        if milliseconds_since_last_view_change < exponential_backoff_timeout {
             trace!(
                 "Not proceeding with view change. Current view: {} - time since last: {}, timeout requires: {}",
                 view,
-                time_since_last_view_change,
+                milliseconds_since_last_view_change,
                 exponential_backoff_timeout
             );
 
             // Resend NewView message for this view if timeout period is a multiple of consensus_timeout
-            if (time_since_last_view_change
+            if (milliseconds_since_last_view_change
                 > self.config.consensus.consensus_timeout.as_millis() as u64)
-                && (Duration::from_millis(time_since_last_view_change).as_secs()
+                && (Duration::from_millis(milliseconds_since_last_view_change).as_secs()
                     % self.config.consensus.consensus_timeout.as_secs())
                     == 0
             {
-                return Ok(Some(self.build_new_view()?));
+                if let Some((_, ExternalMessage::NewView(new_view))) =
+                    self.new_view_message_cache.as_ref()
+                {
+                    if new_view.view == self.get_view()? {
+                        // When re-sending new view messages we broadcast them, rather than only sending them to the
+                        // view leader. This speeds up network recovery when many nodes have different high QCs.
+                        return Ok(Some((None, ExternalMessage::NewView(new_view.clone()))));
+                    }
+                    // If new_view message is not for this view then it must be outdated
+                    self.new_view_message_cache = None;
+                }
             }
 
             return Ok(None);
         }
 
-        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", view, time_since_last_view_change, exponential_backoff_timeout, self.high_qc.view, self.head_block().hash());
+        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", view, milliseconds_since_last_view_change, exponential_backoff_timeout, self.high_qc.view, self.head_block().hash());
 
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
@@ -593,29 +599,27 @@ impl Consensus {
         Ok(Some(new_view))
     }
 
-    fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
-        let time_since_last_view_change = SystemTime::now()
+    /// All values returned in milliseconds
+    pub fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
+        let milliseconds_since_last_view_change = SystemTime::now()
             .duration_since(self.view_updated_at)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let exponential_backoff_timeout = self.exponential_backoff_timeout(self.get_view()?);
-
-        let minimum_time_left_for_empty_block = self
+            .unwrap_or_default();
+        let mut milliseconds_remaining_of_block_time = self
             .config
             .consensus
-            .minimum_time_left_for_empty_block
-            .as_millis() as u64;
+            .block_time
+            .saturating_sub(milliseconds_since_last_view_change);
 
-        trace!(
-            time_since_last_view_change,
-            exponential_backoff_timeout,
-            minimum_time_left_for_empty_block,
-        );
+        // In order to maintain close to 1 second block times we broadcast 1-TIME_TO_ALLOW_PROPOSAL_BROADCAST seconds after the previous block to allow for network messages and block processing
+        if self.config.consensus.block_time > TIME_TO_ALLOW_PROPOSAL_BROADCAST {
+            milliseconds_remaining_of_block_time = milliseconds_remaining_of_block_time
+                .saturating_sub(TIME_TO_ALLOW_PROPOSAL_BROADCAST);
+        }
 
         Ok((
-            time_since_last_view_change,
-            exponential_backoff_timeout,
-            minimum_time_left_for_empty_block,
+            milliseconds_since_last_view_change.as_millis() as u64,
+            milliseconds_remaining_of_block_time.as_millis() as u64,
+            self.exponential_backoff_timeout(self.get_view()?),
         ))
     }
 
@@ -810,9 +814,16 @@ impl Consensus {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
 
-                if self.create_next_block_on_timeout || self.early_proposal.is_some() {
-                    warn!("Early proposal exists but we are not leader. Clearing proposal");
+                if self.create_next_block_on_timeout {
+                    warn!("Create block on timeout set. Clearing");
                     self.create_next_block_on_timeout = false;
+                }
+                if self.early_proposal.is_some() {
+                    let (_, txns, _, _) = self.early_proposal.take().unwrap();
+                    for txn in txns.into_iter().rev() {
+                        self.transaction_pool.insert_ready_transaction(txn)?;
+                    }
+                    warn!("Early proposal exists but we are not leader. Clearing proposal");
                     self.early_proposal = None;
                 }
 
@@ -928,26 +939,23 @@ impl Consensus {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
     ) -> Result<Option<TransactionApplyResult>> {
-        let db = self.db.clone();
         let state = &mut self.state;
-        Self::apply_transaction_at(state, db, txn, current_block, inspector)
+        Self::apply_transaction_at(state, txn, current_block, inspector, enable_inspector)
     }
 
     pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
         state: &mut State,
-        db: Arc<Db>,
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
     ) -> Result<Option<TransactionApplyResult>> {
         let hash = txn.hash;
 
-        if !db.contains_transaction(&txn.hash)? {
-            db.insert_transaction(&txn.hash, &txn.tx)?;
-        }
-
-        let result = state.apply_transaction(txn.clone(), current_block, inspector);
+        let result =
+            state.apply_transaction(txn.clone(), current_block, inspector, enable_inspector);
         let result = match result {
             Ok(r) => r,
             Err(error) => {
@@ -963,43 +971,8 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn get_txns_to_execute(&mut self) -> Vec<VerifiedTransaction> {
-        let mut gas_left = self.config.consensus.eth_block_gas_limit;
-        std::iter::from_fn(|| self.transaction_pool.best_transaction())
-            .filter(|txn| {
-                let account_nonce = self.state.must_get_account(txn.signer).nonce;
-                // Ignore this transaction if it is no longer valid.
-                // Transactions are (or will be) valid iff their nonce is greater than the account
-                // nonce OR if they have no nonce
-                txn.tx
-                    .nonce()
-                    .map(|tx_nonce| tx_nonce >= account_nonce)
-                    .unwrap_or(true)
-            })
-            .take_while(|txn| {
-                if let Some(g) = gas_left.checked_sub(txn.tx.gas_limit()) {
-                    gas_left = g;
-                    true
-                } else {
-                    false
-                }
-            })
-            .collect()
-    }
-
-    pub fn txpool_content(&self) -> TxPoolContent {
-        let mut content = self.transaction_pool.preview_content();
-        // Ignore txns having too low nonces
-        content.pending.retain(|txn| {
-            let account_nonce = self.state.must_get_account(txn.signer).nonce;
-            txn.tx.nonce().unwrap() >= account_nonce
-        });
-
-        content.queued.retain(|txn| {
-            let account_nonce = self.state.must_get_account(txn.signer).nonce;
-            txn.tx.nonce().unwrap() >= account_nonce
-        });
-        content
+    pub fn txpool_content(&self) -> Result<TxPoolContent> {
+        self.transaction_pool.preview_content(&self.state)
     }
 
     pub fn pending_transaction_count(&self, account: Address) -> u64 {
@@ -1010,6 +983,10 @@ impl Consensus {
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
+        if !self.config.enable_ots_indices {
+            return Err(anyhow!("Otterscan indices are disabled"));
+        }
+
         self.db.get_touched_transactions(address)
     }
 
@@ -1251,6 +1228,11 @@ impl Consensus {
             Ok(())
         })?;
 
+        if self.block_is_first_in_epoch(proposal.header.number) {
+            // Update state with any contract upgrades for this block
+            self.contract_upgrade_apply_state_change(&mut state, proposal.header)?;
+        }
+
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
             self.secret_key,
@@ -1276,6 +1258,27 @@ impl Consensus {
 
         // Return the final proposal
         Ok(Some(proposal))
+    }
+
+    /// If there are any contract updates to be done then apply them to the state passed in
+    fn contract_upgrade_apply_state_change(
+        &mut self,
+        state: &mut State,
+        block_header: BlockHeader,
+    ) -> Result<()> {
+        if let Some(deposit_v3_deploy_height) = self
+            .config
+            .consensus
+            .contract_upgrade_block_heights
+            .deposit_v3
+        {
+            if deposit_v3_deploy_height == block_header.number {
+                let deposit_v3_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+                state.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
+            }
+        }
+        Ok(())
     }
 
     /// Assembles the Proposal block early.
@@ -1343,8 +1346,7 @@ impl Consensus {
 
         // Internal states
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie: EthTrie<MemoryDB> =
-            eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie: EthTrie<MemoryDB> = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let applied_txs = Vec::<VerifiedTransaction>::new();
 
         // Generate the early proposal
@@ -1388,32 +1390,25 @@ impl Consensus {
         // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
         // Internal states
-        let mut updated_root_hash: Hash = state.root_hash()?;
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = self.transaction_pool.best_transaction() {
+        while let Some(tx) = self.transaction_pool.best_transaction(&state)? {
             // First - check if we have time left to process txns and give enough time for block propagation
-            let (
-                time_since_last_view_change,
-                exponential_backoff_timeout,
-                minimum_time_left_for_empty_block,
-            ) = self.get_consensus_timeout_params()?;
+            let (_, milliseconds_remaining_of_block_time, _) =
+                self.get_consensus_timeout_params()?;
 
-            if time_since_last_view_change + minimum_time_left_for_empty_block
-                >= exponential_backoff_timeout
-            {
+            if milliseconds_remaining_of_block_time == 0 {
                 debug!(
-                    time_since_last_view_change,
-                    exponential_backoff_timeout,
-                    minimum_time_left_for_empty_block,
-                    "timeout proposal {} for view {}",
+                    "stopped adding txs to block {} because block time is reached",
                     proposal.header.number,
-                    proposal.header.view,
                 );
-                // don't have time, reinsert txn.
-                self.transaction_pool.insert_ready_transaction(tx);
+                break;
+            }
+
+            if gas_left < tx.tx.gas_limit() {
+                debug!(?gas_left, gas_limit = ?tx.tx.gas_limit(), "block out of space");
                 break;
             }
 
@@ -1421,36 +1416,26 @@ impl Consensus {
             let mut inspector = TouchedAddressInspector::default();
             let result = Self::apply_transaction_at(
                 &mut state,
-                self.db.clone(),
                 tx.clone(),
                 proposal.header,
                 &mut inspector,
+                self.config.enable_ots_indices,
             )?;
 
             // Skip transactions whose execution resulted in an error and drop them.
             let Some(result) = result else {
                 warn!("Dropping failed transaction: {:?}", tx.hash);
+                self.transaction_pool.mark_executed(&tx.clone());
                 continue;
             };
 
-            // Decrement gas price and break loop if limit is exceeded
-            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
-                g
-            } else {
-                debug!(
-                    time_since_last_view_change,
-                    exponential_backoff_timeout,
-                    minimum_time_left_for_empty_block,
-                    "gasout proposal {} for view {}",
-                    proposal.header.number,
-                    proposal.header.view,
-                );
-                // out of gas, undo last transaction
-                self.transaction_pool.insert_ready_transaction(tx);
-                state.set_to_root(updated_root_hash.into());
-                break;
-            };
+            // Reduce remaining gas in this block
+            gas_left = gas_left
+                .checked_sub(result.gas_used())
+                .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
+            // Clone itself before invalidating the reference
+            let tx = tx.clone();
             // Do necessary work to assemble the transaction
             self.transaction_pool.mark_executed(&tx);
 
@@ -1477,10 +1462,17 @@ impl Consensus {
                 self.receipts_cache.insert(tx.hash, (receipt, addresses));
 
                 tx_index_in_block += 1;
-                updated_root_hash = state.root_hash()?;
                 applied_txs.push(tx);
             }
         }
+        let (_, applied_txs, _, _) = self.early_proposal.as_ref().unwrap();
+        self.db.with_sqlite_tx(|sqlite_tx| {
+            for tx in applied_txs {
+                self.db
+                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
+            }
+            Ok(())
+        })?;
 
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
@@ -1514,26 +1506,21 @@ impl Consensus {
     /// Either propose now or set timeout to allow for txs to come in.
     fn ready_for_block_proposal(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
-        let (
-            time_since_last_view_change,
-            exponential_backoff_timeout,
-            minimum_time_left_for_empty_block,
-        ) = self.get_consensus_timeout_params()?;
+        let (milliseconds_since_last_view_change, milliseconds_remaining_of_block_time, _) =
+            self.get_consensus_timeout_params()?;
 
-        if time_since_last_view_change + minimum_time_left_for_empty_block
-            >= exponential_backoff_timeout
-        {
+        if milliseconds_remaining_of_block_time == 0 {
             return self.propose_new_block();
         }
 
-        // Reset the timeout and wake up again once it has been at least `empty_block_timeout` since
+        // Reset the timeout and wake up again once it has been at least `block_time` since
         // the last view change. At this point we should be ready to produce a new block.
         self.create_next_block_on_timeout = true;
         self.reset_timeout.send(
             self.config
                 .consensus
-                .empty_block_timeout
-                .saturating_sub(Duration::from_millis(time_since_last_view_change)),
+                .block_time
+                .saturating_sub(Duration::from_millis(milliseconds_since_last_view_change)),
         )?;
         trace!(
             "will propose new proposal on timeout for view {}",
@@ -1572,9 +1559,8 @@ impl Consensus {
 
         // Internal states
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
-        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut updated_root_hash = state.root_hash()?;
+        let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut tx_index_in_block = 0;
         let mut applied_transaction_hashes = Vec::<Hash>::new();
 
@@ -1589,48 +1575,41 @@ impl Consensus {
         };
 
         // Retrieve a list of pending transactions
-        let pending = self.transaction_pool.pending_hashes();
+        let pending = self.transaction_pool.pending_transactions(state)?;
 
-        for hash in pending.into_iter() {
+        for txn in pending.into_iter() {
             // First - check for time
-            let (
-                time_since_last_view_change,
-                exponential_backoff_timeout,
-                minimum_time_left_for_empty_block,
-            ) = self.get_consensus_timeout_params()?;
+            let (_, milliseconds_remaining_of_block_time, _) =
+                self.get_consensus_timeout_params()?;
 
-            if time_since_last_view_change + minimum_time_left_for_empty_block
-                >= exponential_backoff_timeout
-            {
+            if milliseconds_remaining_of_block_time == 0 {
                 break;
             }
 
-            // Retrieve txn from the pool
-            let Some(txn) = self.transaction_pool.get_transaction(hash) else {
-                continue;
-            };
+            if gas_left < txn.tx.gas_limit() {
+                debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), "block out of space");
+                break;
+            }
 
             // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
-                self.db.clone(),
                 txn.clone(),
                 executed_block_header,
                 inspector::noop(),
+                false,
             )?;
+            self.db.insert_transaction(&txn.hash, &txn.tx)?;
 
             // Skip transactions whose execution resulted in an error
             let Some(result) = result else {
                 continue;
             };
 
-            // Second - check for gas
-            gas_left = if let Some(g) = gas_left.checked_sub(result.gas_used()) {
-                g
-            } else {
-                state.set_to_root(updated_root_hash.into());
-                break;
-            };
+            // Reduce remaining gas in this block
+            gas_left = gas_left
+                .checked_sub(result.gas_used())
+                .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
             // Do necessary work to assemble the transaction
             transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
@@ -1645,7 +1624,6 @@ impl Consensus {
             receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
             tx_index_in_block += 1;
-            updated_root_hash = state.root_hash()?;
             applied_transaction_hashes.push(txn.hash);
         }
 
@@ -1695,12 +1673,12 @@ impl Consensus {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
             while let Some(txn) = broadcasted_transactions.pop() {
-                self.transaction_pool.insert_ready_transaction(txn);
+                self.transaction_pool.insert_ready_transaction(txn)?;
             }
             return Ok(None);
         };
 
-        trace!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, "######### proposing block");
+        info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
         Ok(Some((final_block, broadcasted_transactions)))
     }
@@ -1784,20 +1762,6 @@ impl Consensus {
         new_view: NewView,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         trace!("Received new view for height: {:?}", new_view.view);
-        let mut current_view = self.get_view()?;
-
-        // The leader for this view should be chosen according to the parent of the highest QC
-        // What happens when there are multiple QCs with different parents?
-        // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            trace!(new_view.view, "skipping new view, not the leader");
-            return Ok(None);
-        }
-        // if the vote is too old and does not count anymore
-        if new_view.view < current_view {
-            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
-            return Ok(None);
-        }
 
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
@@ -1813,9 +1777,23 @@ impl Consensus {
 
         new_view.verify(*public_key)?;
 
-        // check if the sender's qc is higher than our high_qc or even higher than our view
+        // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
-        current_view = self.get_view()?;
+
+        // The leader for this view should be chosen according to the parent of the highest QC
+        // What happens when there are multiple QCs with different parents?
+        // if we are not the leader of the round in which the vote counts
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
+            trace!(new_view.view, "skipping new view, not the leader");
+            return Ok(None);
+        }
+
+        let mut current_view = self.get_view()?;
+        // if the vote is too old and does not count anymore
+        if new_view.view < current_view {
+            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
+            return Ok(None);
+        }
 
         let NewViewVote {
             mut signatures,
@@ -2011,7 +1989,7 @@ impl Consensus {
             return Ok(());
         };
 
-        let new_high_qc_block_view = new_high_qc_block.view();
+        let new_high_qc_view = new_high_qc_block.view();
 
         if self.high_qc.block_hash == Hash::ZERO {
             trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
@@ -2025,17 +2003,17 @@ impl Consensus {
                 })?
                 .view();
             // If `from_agg` then we always release the lock because the supermajority has a different high_qc.
-            if from_agg || new_high_qc_block_view > current_high_qc_view {
+            if from_agg || new_high_qc_view > current_high_qc_view {
                 trace!(
-                    "updating view from {} to {}, high QC view is {}",
-                    view,
-                    new_high_qc_block_view + 1,
+                    new_high_qc_view,
                     current_high_qc_view,
+                    current_view = view,
+                    "updating high qc"
                 );
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
-                if new_high_qc_block_view >= view {
-                    self.set_view(new_high_qc_block_view + 1)?;
+                if new_high_qc_view >= view {
+                    self.set_view(new_high_qc_view + 1)?;
                 }
             }
         }
@@ -2047,13 +2025,13 @@ impl Consensus {
         &self,
         view: u64,
         qcs: BTreeMap<usize, QuorumCertificate>,
-        signatures: &[NodeSignature],
+        signatures: &[BlsSignature],
         cosigned: BitArray,
     ) -> Result<AggregateQc> {
         assert_eq!(qcs.len(), signatures.len());
 
         Ok(AggregateQc {
-            signature: NodeSignature::aggregate(signatures)?,
+            signature: BlsSignature::aggregate(signatures)?,
             cosigned,
             view,
             // Because qcs is a map from index to qc, this will
@@ -2068,7 +2046,7 @@ impl Consensus {
     fn qc_from_bits(
         &self,
         block_hash: Hash,
-        signatures: &[NodeSignature],
+        signatures: &[BlsSignature],
         cosigned: BitArray,
         view: u64,
     ) -> QuorumCertificate {
@@ -2598,12 +2576,12 @@ impl Consensus {
 
     /// Calculate how long we should wait before timing out for this view
     pub fn exponential_backoff_timeout(&self, view: u64) -> u64 {
-        let view_difference = view.saturating_sub(self.high_qc.view);
+        let view_difference = view.saturating_sub(self.high_qc.view) as u32;
         // in view N our highQC is the one we obtained in view N-1 (or before) and its view is N-2 (or lower)
         // in other words, the current view is always at least 2 views ahead of the highQC's view
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
-        let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as u64;
-        consensus_timeout * 2u64.pow((view_difference as u32).saturating_sub(2))
+        let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as f32;
+        (consensus_timeout * (1.5f32).powi(view_difference.saturating_sub(2) as i32)).floor() as u64
     }
 
     /// Find minimum number of views which could have passed by in the given time difference.
@@ -2613,11 +2591,11 @@ impl Consensus {
         consensus_timeout: Duration,
     ) -> u64 {
         let normalised_time_difference =
-            (time_difference.as_millis() / consensus_timeout.as_millis()) as u64;
+            (time_difference.as_millis() / consensus_timeout.as_millis()) as f32;
         let mut views = 0;
-        let mut total = 0;
+        let mut total = 0.0;
         loop {
-            total += 2u64.pow(views);
+            total += (1.5f32).powi(views);
             if total > normalised_time_difference {
                 break;
             }
@@ -2628,6 +2606,10 @@ impl Consensus {
 
     pub fn state(&self) -> &State {
         &self.state
+    }
+
+    pub fn state_mut(&mut self) -> &mut State {
+        &mut self.state
     }
 
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
@@ -2900,7 +2882,7 @@ impl Consensus {
 
             // block transactions need to be removed from self.transactions and re-injected
             for tx_hash in &head_block.transactions {
-                let orig_tx = self.get_transaction_by_hash(*tx_hash).unwrap().unwrap();
+                let orig_tx = self.get_transaction_by_hash(*tx_hash)?.unwrap();
 
                 // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
@@ -3016,8 +2998,8 @@ impl Consensus {
         // message or locally, the proposal cannot be applied
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
             // Prefer to insert verified txn from pool. This is faster.
-            let txn = match self.transaction_pool.pop_transaction(*tx_hash) {
-                Some(txn) => txn,
+            let txn = match self.transaction_pool.get_transaction(*tx_hash) {
+                Some(txn) => txn.clone(),
                 _ => match transactions
                     .get(idx)
                     .map(|sig_tx| sig_tx.clone().verify())
@@ -3036,24 +3018,30 @@ impl Consensus {
 
         let mut block_receipts = Vec::new();
         let mut cumulative_gas_used = EvmGas(0);
-        let mut receipts_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut transactions_trie = eth_trie::EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
 
         let transaction_hashes = verified_txns
             .iter()
             .map(|tx| format!("{:?}", tx.hash))
             .join(",");
 
-        for (tx_index, txn) in verified_txns.into_iter().enumerate() {
+        let mut touched_addresses = vec![];
+        for (tx_index, txn) in verified_txns.iter().enumerate() {
             self.new_transaction(txn.clone())?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
-                .apply_transaction(txn.clone(), block.header, &mut inspector)?
+                .apply_transaction(
+                    txn.clone(),
+                    block.header,
+                    &mut inspector,
+                    self.config.enable_ots_indices,
+                )?
                 .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.transaction_pool.mark_executed(&txn);
+            self.transaction_pool.mark_executed(txn);
             for address in inspector.touched {
-                self.db.add_touched_address(address, tx_hash)?;
+                touched_addresses.push((address, tx_hash));
             }
 
             let gas_used = result.gas_used();
@@ -3069,17 +3057,24 @@ impl Consensus {
             let receipt_hash = receipt.compute_hash();
 
             debug!("During execution in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.get_view()?, tx_hash, receipt, receipt_hash);
-            receipts_trie
-                .insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())
-                .unwrap();
+            receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
-            transactions_trie
-                .insert(tx_hash.as_bytes(), tx_hash.as_bytes())
-                .unwrap();
+            transactions_trie.insert(tx_hash.as_bytes(), tx_hash.as_bytes())?;
 
-            info!(?receipt, "applied transaction {:?}", receipt);
+            debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
+        self.db.with_sqlite_tx(|sqlite_tx| {
+            for txn in &verified_txns {
+                self.db
+                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, &txn.tx)?;
+            }
+            for (addr, txn_hash) in touched_addresses {
+                self.db
+                    .add_touched_address_with_db_tx(sqlite_tx, addr, txn_hash)?;
+            }
+            Ok(())
+        })?;
 
         if cumulative_gas_used != block.gas_used() {
             warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
@@ -3123,6 +3118,13 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
+
+        if self.block_is_first_in_epoch(block.header.number) {
+            // Update state with any contract upgrades for this block
+            let mut state_clone = self.state.clone();
+            self.contract_upgrade_apply_state_change(&mut state_clone, block.header)?;
+            self.state = state_clone;
+        }
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
@@ -3283,47 +3285,43 @@ mod tests {
     use super::*;
     #[test]
     fn test_minimum_views_in_time_difference() {
+        // 2 views ahead - 1.5 ^ 0 = 1
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(4),
-                Duration::from_secs(5)
+                Duration::from_secs(0),
+                Duration::from_secs(1)
             ),
             0
         );
+        // 3 views ahead - 1.5^0 + 1.5^1 = 2.5
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(5),
-                Duration::from_secs(5)
+                Duration::from_secs(2),
+                Duration::from_secs(1)
             ),
             1
         );
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(14),
-                Duration::from_secs(5)
-            ),
-            1
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(15),
-                Duration::from_secs(5)
+                Duration::from_secs(3),
+                Duration::from_secs(1)
             ),
             2
         );
+        // 5 views ahead - 1.5^0 + 1.5^1 + 1.5^2 + 1.5^3 = 8.125
         assert_eq!(
             Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(34),
-                Duration::from_secs(5)
-            ),
-            2
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(35),
-                Duration::from_secs(5)
+                Duration::from_secs(8),
+                Duration::from_secs(1)
             ),
             3
+        );
+        assert_eq!(
+            Consensus::minimum_views_in_time_difference(
+                Duration::from_secs(9),
+                Duration::from_secs(1)
+            ),
+            4
         );
     }
 }

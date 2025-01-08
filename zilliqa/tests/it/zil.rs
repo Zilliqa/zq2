@@ -1098,6 +1098,11 @@ async fn scilla_precompiles(mut network: Network) {
           e = {_eventname : "Inserted"; a : a; b : b};
           event e
         end
+
+        transition LogSender()
+          e = {_eventname : "LogSender"; sender : _sender};
+          event e
+        end
     "#;
 
     let data = r#"[
@@ -1129,6 +1134,7 @@ async fn scilla_precompiles(mut network: Network) {
     )
     .await;
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let evm_contract_address = receipt.contract_address.unwrap();
 
     let read = |fn_name, var_name: &'_ str, keys: &[H160], ty| {
         let abi = &abi;
@@ -1201,7 +1207,7 @@ async fn scilla_precompiles(mut network: Network) {
         Token::Uint(5.into()),
     ];
     let tx = TransactionRequest::new()
-        .to(receipt.contract_address.unwrap())
+        .to(evm_contract_address)
         .data(function.encode_input(input).unwrap())
         .gas(84_000_000);
 
@@ -1262,6 +1268,129 @@ async fn scilla_precompiles(mut network: Network) {
     .into_uint()
     .unwrap();
     assert_eq!(val, 5.into());
+
+    // Construct a transaction which logs the `_sender` from the Scilla call.
+    let function = abi.function("callScillaNoArgs").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("LogSender".to_owned()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(evm_contract_address)
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // Run the transaction.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.logs.len(), 1);
+    let log = &receipt.logs[0];
+    let data = ethabi::decode(&[ParamType::String], &log.data).unwrap()[0]
+        .clone()
+        .into_string()
+        .unwrap();
+    let scilla_log: Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(scilla_log["_eventname"], "LogSender");
+    assert_eq!(scilla_log["params"][0]["vname"], "sender");
+    assert_eq!(
+        scilla_log["params"][0]["value"],
+        format!("{:?}", wallet.address())
+    );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn scilla_call_with_bad_gas(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let code = r#"
+        scilla_version 0
+
+        library HelloWorld
+
+        let one = Uint128 1
+        let two = Uint128 2
+        let big_number = Uint128 1234
+        let addr = 0x0123456789012345678901234567890123456789
+
+        contract Hello
+        ()
+
+        field num : Uint128 = big_number
+        field str : String = "foobar"
+        field addr_to_int : Map ByStr20 Uint128 =
+          let emp = Emp ByStr20 Uint128 in
+          builtin put emp addr one
+        field addr_to_addr_to_int : Map ByStr20 (Map ByStr20 Uint128) =
+          let emp1 = Emp ByStr20 Uint128 in
+          let inner = builtin put emp1 addr one in
+          let emp2 = Emp ByStr20 (Map ByStr20 Uint128) in
+          builtin put emp2 addr inner
+
+        transition InsertIntoMap(a: ByStr20, b: Uint128)
+          addr_to_int[a] := b;
+          e = {_eventname : "Inserted"; a : a; b : b};
+          event e
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    // Bump the genesis wallet's nonce up, so that the next contract we deploy will be exempt from gas charges when
+    // calling the `scilla_call` precompile.
+    let tx_hash = wallet
+        .send_transaction(TransactionRequest::new().to(H160::zero()), None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, tx_hash, 100).await;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    // Construct a transaction which uses the scilla_call precompile.
+    let function = abi.function("callScillaWithBadGas").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("InsertIntoMap".to_owned()),
+        Token::String("addr_to_int".to_owned()),
+        Token::Address(wallet.address()),
+        Token::Uint(5.into()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // Make sure the transaction succeeds.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.status.unwrap().as_u64(), 1);
 }
 
 #[zilliqa_macros::test]
@@ -1285,27 +1414,216 @@ async fn get_tx_block(mut network: Network) {
     // Ensure the response is an object
     assert!(response.is_object(), "Expected response to be an object");
 
-    // Verify the block number
-    let block_num = response["header"]["BlockNum"]
-        .as_str()
-        .expect("Expected BlockNum to be a string")
-        .parse::<u64>()
-        .expect("Failed to parse BlockNum as u64");
+    // Verify header fields
+    let header = &response["header"];
+    assert_eq!(header["BlockNum"].as_str().unwrap(), block_number);
+    assert!(
+        header["DSBlockNum"].as_str().is_some(),
+        "Missing DSBlockNum"
+    );
+    assert!(header["GasLimit"].as_str().is_some(), "Missing GasLimit");
+    assert!(header["GasUsed"].as_str().is_some(), "Missing GasUsed");
+    assert!(
+        header["MbInfoHash"].as_str().is_some(),
+        "Missing MbInfoHash"
+    );
+    assert!(
+        header["NumMicroBlocks"].as_u64().is_some(),
+        "Missing NumMicroBlocks"
+    );
+    assert!(header["NumPages"].as_u64().is_some(), "Missing NumPages");
+    assert!(header["NumTxns"].as_u64().is_some(), "Missing NumTxns");
+    assert!(
+        header["PrevBlockHash"].as_str().is_some(),
+        "Missing PrevBlockHash"
+    );
+    assert!(header["Rewards"].as_str().is_some(), "Missing Rewards");
+    assert!(
+        header["StateDeltaHash"].as_str().is_some(),
+        "Missing StateDeltaHash"
+    );
+    assert!(
+        header["StateRootHash"].as_str().is_some(),
+        "Missing StateRootHash"
+    );
+    assert!(header["Timestamp"].as_str().is_some(), "Missing Timestamp");
+    assert!(header["TxnFees"].as_str().is_some(), "Missing TxnFees");
+    assert!(header["Version"].as_u64().is_some(), "Missing Version");
+
+    // Verify body fields
+    let body = &response["body"];
+    let block_hash = body["BlockHash"].as_str().expect("Missing BlockHash");
+    assert!(!block_hash.is_empty(), "BlockHash should not be empty");
+
+    assert!(body["HeaderSign"].as_str().is_some(), "Missing HeaderSign");
+
+    // Verify MicroBlockInfos
+    let micro_blocks = body["MicroBlockInfos"]
+        .as_array()
+        .expect("Expected MicroBlockInfos to be an array");
+    for micro_block in micro_blocks {
+        assert!(
+            micro_block["MicroBlockHash"].as_str().is_some(),
+            "Missing MicroBlockHash"
+        );
+        assert!(
+            micro_block["MicroBlockShardId"].as_u64().is_some(),
+            "Missing MicroBlockShardId"
+        );
+        assert!(
+            micro_block["MicroBlockTxnRootHash"].as_str().is_some(),
+            "Missing MicroBlockTxnRootHash"
+        );
+    }
+
+    // Additional validation of relationships between fields
+    let num_micro_blocks = header["NumMicroBlocks"].as_u64().unwrap();
     assert_eq!(
-        block_num,
-        block_number.parse::<u64>().unwrap(),
-        "Block number mismatch"
+        micro_blocks.len() as u64,
+        num_micro_blocks,
+        "NumMicroBlocks should match length of MicroBlockInfos array"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn get_tx_block_verbose(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Ensure there is at least one block in the chain
+    network.run_until_block(&wallet, 1.into(), 50).await;
+
+    // Request the first block
+    let block_number = "1";
+
+    let response: Value = wallet
+        .provider()
+        .request("GetTxBlockVerbose", [block_number])
+        .await
+        .expect("Failed to call GetTxBlockVerbose API");
+
+    dbg!(&response);
+
+    // Ensure the response is an object
+    assert!(response.is_object(), "Expected response to be an object");
+
+    // Verify header fields
+    let header = &response["header"];
+    assert_eq!(header["BlockNum"].as_str().unwrap(), block_number);
+    assert!(
+        header["CommitteeHash"].as_str().is_some(),
+        "Missing CommitteeHash"
+    );
+    assert!(
+        header["DSBlockNum"].as_str().is_some(),
+        "Missing DSBlockNum"
+    );
+    assert!(header["GasLimit"].as_str().is_some(), "Missing GasLimit");
+    assert!(header["GasUsed"].as_str().is_some(), "Missing GasUsed");
+    assert!(
+        header["MbInfoHash"].as_str().is_some(),
+        "Missing MbInfoHash"
+    );
+    assert!(
+        header["MinerPubKey"].as_str().is_some(),
+        "Missing MinerPubKey"
+    );
+    assert!(
+        header["NumMicroBlocks"].as_u64().is_some(),
+        "Missing NumMicroBlocks"
+    );
+    assert!(header["NumPages"].as_u64().is_some(), "Missing NumPages");
+    assert!(header["NumTxns"].as_u64().is_some(), "Missing NumTxns");
+    assert!(
+        header["PrevBlockHash"].as_str().is_some(),
+        "Missing PrevBlockHash"
+    );
+    assert!(header["Rewards"].as_str().is_some(), "Missing Rewards");
+    assert!(
+        header["StateDeltaHash"].as_str().is_some(),
+        "Missing StateDeltaHash"
+    );
+    assert!(
+        header["StateRootHash"].as_str().is_some(),
+        "Missing StateRootHash"
+    );
+    assert!(header["Timestamp"].as_str().is_some(), "Missing Timestamp");
+    assert!(header["TxnFees"].as_str().is_some(), "Missing TxnFees");
+    assert!(header["Version"].as_u64().is_some(), "Missing Version");
+
+    // Verify body fields
+    let body = &response["body"];
+
+    // Verify B1 and B2 arrays
+    assert!(body["B1"].as_array().is_some(), "Missing B1 array");
+    assert!(body["B2"].as_array().is_some(), "Missing B2 array");
+
+    // Verify all B1 and B2 elements are booleans
+    for value in body["B1"].as_array().unwrap() {
+        assert!(value.is_boolean(), "B1 array element is not a boolean");
+    }
+    for value in body["B2"].as_array().unwrap() {
+        assert!(value.is_boolean(), "B2 array element is not a boolean");
+    }
+
+    let block_hash = body["BlockHash"].as_str().expect("Missing BlockHash");
+    assert!(!block_hash.is_empty(), "BlockHash should not be empty");
+
+    assert!(body["CS1"].as_str().is_some(), "Missing CS1");
+    assert!(body["HeaderSign"].as_str().is_some(), "Missing HeaderSign");
+
+    // Verify MicroBlockInfos
+    let micro_blocks = body["MicroBlockInfos"]
+        .as_array()
+        .expect("Expected MicroBlockInfos to be an array");
+    for micro_block in micro_blocks {
+        assert!(
+            micro_block["MicroBlockHash"].as_str().is_some(),
+            "Missing MicroBlockHash"
+        );
+        assert!(
+            micro_block["MicroBlockShardId"].as_u64().is_some(),
+            "Missing MicroBlockShardId"
+        );
+        assert!(
+            micro_block["MicroBlockTxnRootHash"].as_str().is_some(),
+            "Missing MicroBlockTxnRootHash"
+        );
+    }
+
+    // Additional validation of relationships between fields
+    let num_micro_blocks = header["NumMicroBlocks"].as_u64().unwrap();
+    assert_eq!(
+        micro_blocks.len() as u64,
+        num_micro_blocks,
+        "NumMicroBlocks should match length of MicroBlockInfos array"
     );
 
-    // Verify the DS block number
-    let _ds_block_num = response["header"]["DSBlockNum"]
-        .as_u64()
-        .expect("Failed to parse DsBlockNum as u64");
+    // Verify hash formats
+    let is_valid_hash = |hash: &str| hash.len() == 64 || hash.starts_with("0x");
+    assert!(
+        is_valid_hash(header["CommitteeHash"].as_str().unwrap()),
+        "Invalid CommitteeHash format"
+    );
+    assert!(
+        is_valid_hash(header["MbInfoHash"].as_str().unwrap()),
+        "Invalid MbInfoHash format"
+    );
+    assert!(
+        is_valid_hash(header["PrevBlockHash"].as_str().unwrap()),
+        "Invalid PrevBlockHash format"
+    );
+    assert!(
+        is_valid_hash(header["StateDeltaHash"].as_str().unwrap()),
+        "Invalid StateDeltaHash format"
+    );
+    assert!(
+        is_valid_hash(header["StateRootHash"].as_str().unwrap()),
+        "Invalid StateRootHash format"
+    );
 
-    let block_hash = response["body"]["BlockHash"]
-        .as_str()
-        .expect("Expected BlockHash to be a string");
-    assert!(!block_hash.is_empty(), "Expected BlockHash to be non-empty");
+    // Verify timestamp is a valid number
+    let timestamp = header["Timestamp"].as_str().unwrap();
+    assert!(timestamp.parse::<u64>().is_ok(), "Invalid Timestamp format");
 }
 
 #[zilliqa_macros::test]
@@ -1779,12 +2097,27 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
         .expect("Failed to call GetTransactionsForTxBlock API");
 
     let txns: Vec<Vec<String>> =
-        serde_json::from_value(response).expect("Failed to deserialize response");
+        serde_json::from_value(response.clone()).expect("Failed to deserialize response");
 
     assert!(
         !txns[0].is_empty(),
         "Expected Transactions length to be greater than or equal to 1"
     );
+
+    // Check it's an array of arrays of transaction hashes
+    assert!(response.is_array());
+    if let Some(shards) = response.as_array() {
+        if !shards.is_empty() {
+            assert!(shards[0].is_array());
+            if let Some(txns) = shards[0].as_array() {
+                if !txns.is_empty() {
+                    // Each hash should be a 32 byte hex string
+                    assert!(txns[0].is_string());
+                    assert_eq!(txns[0].as_str().unwrap().len(), 64);
+                }
+            }
+        }
+    }
 }
 
 #[zilliqa_macros::test]
@@ -1949,6 +2282,8 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
         .await
         .expect("Failed to call GetTxnBodiesForTxBlockEx API");
 
+    let result = response["result"].clone();
+
     let txn_bodies: zilliqa::api::types::zil::TxnBodiesForTxBlockExResponse =
         serde_json::from_value(response).expect("Failed to deserialize response");
 
@@ -1965,6 +2300,19 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
         !txn_bodies.transactions.is_empty(),
         "Expected Transactions length to be greater than or equal to 1"
     );
+
+    // Check transaction array structure
+    if let Some(shards) = result["Transactions"].as_array() {
+        if !shards.is_empty() && !shards[0].is_null() {
+            assert!(shards[0].is_array());
+            if let Some(txns) = shards[0].as_array() {
+                if !txns.is_empty() {
+                    assert!(txns[0].is_string());
+                    assert_eq!(txns[0].as_str().unwrap().len(), 64);
+                }
+            }
+        }
+    }
 }
 
 #[zilliqa_macros::test]
@@ -2731,4 +3079,46 @@ async fn get_transaction_status(mut network: Network) {
         tx_status_2.nonce.parse::<u64>().is_ok(),
         "Invalid nonce format"
     );
+}
+
+#[zilliqa_macros::test]
+async fn get_blockchain_info_structure(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let result: Value = wallet
+        .provider()
+        .request("GetBlockchainInfo", [""])
+        .await
+        .expect("Failed to call GetBlockchainInfo API");
+
+    // Verify all required fields exist and have correct types
+    assert!(result["CurrentDSEpoch"].is_string());
+    assert!(result["CurrentMiniEpoch"].is_string());
+    assert!(result["DSBlockRate"].is_number());
+    assert!(result["NumDSBlocks"].is_string());
+    assert!(result["NumPeers"].is_number());
+    assert!(result["NumTransactions"].is_string());
+    assert!(result["NumTxBlocks"].is_string());
+    assert!(result["NumTxnsDSEpoch"].is_string());
+    assert!(result["NumTxnsTxEpoch"].is_string());
+    assert!(result["TransactionRate"].is_number());
+    assert!(result["TxBlockRate"].is_number());
+
+    // Verify ShardingStructure
+    assert!(result["ShardingStructure"]["NumPeers"].is_array());
+}
+
+#[zilliqa_macros::test]
+async fn get_num_tx_blocks_structure(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    let response: Value = wallet
+        .provider()
+        .request("GetNumTxBlocks", [""])
+        .await
+        .expect("Failed to call GetNumTxBlocks API");
+
+    // Should be a string containing a number
+    assert!(response.is_string());
+    assert!(response.as_str().unwrap().parse::<u64>().is_ok());
 }

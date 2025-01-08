@@ -1,8 +1,8 @@
 use std::{
     collections::BTreeMap,
     fmt::Debug,
-    fs::{self, File},
-    io::{BufReader, BufWriter, Read, Write},
+    fs::{self, File, OpenOptions},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -11,7 +11,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{anyhow, Context, Result};
-use eth_trie::{EthTrie, Trie};
+use eth_trie::{EthTrie, MemoryDB, Trie, DB};
 use itertools::Itertools;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
@@ -21,10 +21,10 @@ use rusqlite::{
     Connection, OptionalExtension, Row, ToSql,
 };
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{
-    crypto::{Hash, NodeSignature},
+    crypto::{BlsSignature, Hash},
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     state::Account,
@@ -36,17 +36,17 @@ macro_rules! sqlify_with_bincode {
     ($type: ty) => {
         impl ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-                Ok(ToSqlOutput::from(
-                    bincode::serialize(self)
-                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?,
-                ))
+                let data = bincode::serialize(self)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
+                Ok(ToSqlOutput::from(data))
             }
         }
         impl FromSql for $type {
             fn column_result(
                 value: rusqlite::types::ValueRef<'_>,
             ) -> rusqlite::types::FromSqlResult<Self> {
-                bincode::deserialize(value.as_blob()?).map_err(|e| FromSqlError::Other(e))
+                let blob = value.as_blob()?;
+                bincode::deserialize(blob).map_err(|e| FromSqlError::Other(e))
             }
         }
     };
@@ -77,7 +77,7 @@ macro_rules! make_wrapper {
 
 sqlify_with_bincode!(AggregateQc);
 sqlify_with_bincode!(QuorumCertificate);
-sqlify_with_bincode!(NodeSignature);
+sqlify_with_bincode!(BlsSignature);
 sqlify_with_bincode!(SignedTransaction);
 
 make_wrapper!(Vec<ScillaException>, VecScillaExceptionSqlable);
@@ -179,6 +179,11 @@ enum BlockFilter {
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
 
+/// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
+/// backwards incompatible change to our database format. This should be done rarely, since it forces all node
+/// operators to re-sync.
+const CURRENT_DB_VERSION: &str = "1";
+
 #[derive(Debug)]
 pub struct Db {
     db: Arc<Mutex<Connection>>,
@@ -195,6 +200,23 @@ impl Db {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
                 fs::create_dir_all(&path).context(format!("Unable to create {path:?}"))?;
+
+                let mut version_file = OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(path.join("version"))?;
+                let mut version = String::new();
+                version_file.read_to_string(&mut version)?;
+
+                if !version.is_empty() && version != CURRENT_DB_VERSION {
+                    return Err(anyhow!("data is incompatible with this version - please delete the data and re-sync"));
+                }
+
+                version_file.seek(SeekFrom::Start(0))?;
+                version_file.write_all(CURRENT_DB_VERSION.as_bytes())?;
+
                 let db_path = path.join("db.sqlite3");
                 (
                     Connection::open(&db_path)
@@ -205,6 +227,44 @@ impl Db {
             None => (Connection::open_in_memory()?, None),
         };
 
+        // SQLite performance tweaks
+
+        // large page_size is more compact/efficient
+        connection.pragma_update(None, "page_size", 1 << 15)?;
+        let page_size: i32 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
+
+        // reduced non-critical fsync() calls
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        let synchronous: i8 = connection.pragma_query_value(None, "synchronous", |r| r.get(0))?;
+
+        // store temporary tables/indices in-memory
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
+        let temp_store: i8 = connection.pragma_query_value(None, "temp_store", |r| r.get(0))?;
+
+        // general read/write performance improvement
+        let journal_mode: String =
+            connection.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
+
+        // retain journal size of 32MB - based on observations
+        let journal_size_limit: i32 =
+            connection
+                .pragma_update_and_check(None, "journal_size_limit", 1 << 25, |r| r.get(0))?;
+
+        // cache 1-days data (256MB) in-memory
+        connection.pragma_update(None, "cache_size", (1 << 28) / page_size)?;
+        let cache_size: i32 = connection.pragma_query_value(None, "cache_size", |r| r.get(0))?;
+
+        tracing::info!(
+            ?journal_mode,
+            ?journal_size_limit,
+            ?synchronous,
+            ?temp_store,
+            ?page_size,
+            ?cache_size,
+            "PRAGMA"
+        );
+
+        // Add tracing - logs all SQL statements
         connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
 
         Self::ensure_schema(&connection)?;
@@ -231,11 +291,11 @@ impl Db {
                 gas_limit INTEGER NOT NULL,
                 qc BLOB NOT NULL,
                 agg BLOB,
-                is_canonical BOOLEAN NOT NULL);
+                is_canonical BOOLEAN NOT NULL) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS idx_blocks_height ON blocks(height);
             CREATE TABLE IF NOT EXISTS transactions (
                 tx_hash BLOB NOT NULL PRIMARY KEY,
-                data BLOB NOT NULL);
+                data BLOB NOT NULL) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS receipts (
                 tx_hash BLOB NOT NULL PRIMARY KEY REFERENCES transactions (tx_hash) ON DELETE CASCADE,
                 block_hash BLOB NOT NULL REFERENCES blocks (block_hash), -- the touched_address_index needs to be updated for all the txs in the block, so delete txs first - thus no cascade here
@@ -253,14 +313,14 @@ impl Db {
             CREATE TABLE IF NOT EXISTS touched_address_index (
                 address BLOB,
                 tx_hash BLOB REFERENCES transactions (tx_hash) ON DELETE CASCADE,
-                PRIMARY KEY (address, tx_hash));
+                PRIMARY KEY (address, tx_hash)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS tip_info (
                 finalized_view INTEGER,
                 view INTEGER,
                 high_qc BLOB,
                 high_qc_updated_at BLOB,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
-            CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
             ",
         )?;
         Ok(())
@@ -297,7 +357,7 @@ impl Db {
         // Read decompressed file
         let input = File::open(&temp_filename)?;
 
-        let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
+        let mut reader = BufReader::with_capacity(128 * 1024 * 1024, input); // 128 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
@@ -376,6 +436,25 @@ impl Db {
             }
         }
 
+        // Helper function used for inserting entries from memory (which backs storage trie) into persistent storage
+        let db_flush = |db: Arc<TrieStorage>, cache: Arc<MemoryDB>| -> Result<()> {
+            let mut cache_storage = cache.storage.write();
+            let (keys, values): (Vec<_>, Vec<_>) = cache_storage.drain().unzip();
+            debug!("Doing write to db with total items {}", keys.len());
+            db.insert_batch(keys, values)?;
+            Ok(())
+        };
+
+        let mut processed_accounts = 0;
+        let mut processed_storage_items = 0;
+        // This is taken directly from batch_write. However, this can be as big as we think it's reasonable to be
+        // (ideally multiples of `32766 / 2` so that batch writes are fully utilized)
+        // TODO: consider putting this const somewhere else as long as we use sql-lite
+        // Also see: https://www.sqlite.org/limits.html#max_variable_number
+        let maximum_sql_parameters = 32766 / 2;
+        const COMPUTE_ROOT_HASH_EVERY_ACCOUNTS: usize = 10000;
+        let mem_storage = Arc::new(MemoryDB::new(true));
+
         // then decode state
         loop {
             // Read account key and the serialised Account
@@ -404,7 +483,7 @@ impl Db {
             reader.read_exact(&mut account_storage)?;
 
             // Pull out each storage key and value
-            let mut account_trie = EthTrie::new(trie_storage.clone());
+            let mut account_trie = EthTrie::new(mem_storage.clone());
             let mut pointer: usize = 0;
             while account_storage_len > pointer {
                 let storage_key_len_buf: &[u8] =
@@ -424,6 +503,8 @@ impl Db {
                 pointer += storage_val_len;
 
                 account_trie.insert(storage_key, storage_val)?;
+
+                processed_storage_items += 1;
             }
 
             let account_trie_root =
@@ -433,8 +514,21 @@ impl Db {
                     "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(account_trie_root)
                 ));
             }
+            if processed_storage_items > maximum_sql_parameters {
+                db_flush(trie_storage.clone(), mem_storage.clone())?;
+                processed_storage_items = 0;
+            }
+
             state_trie.insert(&account_hash, &serialised_account)?;
+
+            processed_accounts += 1;
+            // Occasionally flush the cached state changes to disk to minimise memory usage.
+            if processed_accounts % COMPUTE_ROOT_HASH_EVERY_ACCOUNTS == 0 {
+                let _ = state_trie.root_hash()?;
+            }
         }
+
+        db_flush(trie_storage.clone(), mem_storage.clone())?;
 
         if state_trie.root_hash()? != parent.state_root_hash().0 {
             return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
@@ -505,7 +599,7 @@ impl Db {
     /// Write view and timestamp to table if view is larger than current. Return true if write was successful
     pub fn set_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
         let res = sqlite_tx
-            .execute("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view < ?1",
+            .execute("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view IS NULL OR tip_info.view < ?1",
                     [view])?;
         Ok(res != 0)
     }
@@ -546,7 +640,8 @@ impl Db {
             .lock()
             .unwrap()
             .query_row_and_then(
-                "SELECT height FROM blocks WHERE is_canonical = TRUE ORDER BY height DESC LIMIT 1",
+                // Two queries here are deliberate to ensure the index on `height` column is used
+                "SELECT height from (SELECT height, is_canonical FROM blocks ORDER BY height DESC) WHERE is_canonical = 1 LIMIT 1",
                 (),
                 |row| row.get(0),
             )
@@ -604,12 +699,21 @@ impl Db {
             .map(Into::<SystemTime>::into))
     }
 
-    pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
-        self.db.lock().unwrap().execute(
-            "INSERT INTO touched_address_index (address, tx_hash) VALUES (?1, ?2)",
+    pub fn add_touched_address_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        address: Address,
+        txn_hash: Hash,
+    ) -> Result<()> {
+        sqlite_tx.execute(
+            "INSERT OR IGNORE INTO touched_address_index (address, tx_hash) VALUES (?1, ?2)",
             (AddressSqlable(address), txn_hash),
         )?;
         Ok(())
+    }
+
+    pub fn add_touched_address(&self, address: Address, txn_hash: Hash) -> Result<()> {
+        self.add_touched_address_with_db_tx(&self.db.lock().unwrap(), address, txn_hash)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
@@ -658,7 +762,7 @@ impl Db {
         tx: &SignedTransaction,
     ) -> Result<()> {
         sqlite_tx.execute(
-            "INSERT INTO transactions (tx_hash, data) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO transactions (tx_hash, data) VALUES (?1, ?2)",
             (hash, tx),
         )?;
         Ok(())
@@ -1003,7 +1107,7 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     let output_filename = get_checkpoint_filename(output_dir, block)?;
     let temp_filename = output_filename.with_extension("part");
     let outfile_temp = File::create_new(&temp_filename)?;
-    let mut writer = BufWriter::with_capacity(8192 * 1024, outfile_temp); // 8 MiB chunks
+    let mut writer = BufWriter::with_capacity(128 * 1024 * 1024, outfile_temp); // 128 MiB chunks
 
     // write the header:
     writer.write_all(&CHECKPOINT_HEADER_BYTES)?; // file identifier
@@ -1109,6 +1213,55 @@ pub struct TrieStorage {
     cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
 }
 
+impl TrieStorage {
+    pub fn write_batch(
+        &self,
+        keys: Vec<Vec<u8>>,
+        values: Vec<Vec<u8>>,
+    ) -> Result<(), rusqlite::Error> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        assert_eq!(keys.len(), values.len());
+
+        // https://www.sqlite.org/limits.html#max_variable_number
+        let maximum_sql_parameters = 32766;
+        // Each key-value pair needs two parameters.
+        let chunk_size = maximum_sql_parameters / 2;
+
+        let keys = keys.chunks(chunk_size);
+        let values = values.chunks(chunk_size);
+
+        for (keys, values) in keys.zip(values) {
+            // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
+            // parameters for each key. Note that parameters are one-indexed.
+            #[allow(unstable_name_collisions)]
+            let params_stmt: String = (0..keys.len())
+                .map(|i| format!("(?{}, ?{})", i * 2 + 1, i * 2 + 2))
+                .intersperse(",".to_owned())
+                .collect();
+            let query =
+                format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
+
+            let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
+            self.db
+                .lock()
+                .unwrap()
+                .execute(&query, rusqlite::params_from_iter(params))?;
+            for (key, value) in keys.iter().zip(values) {
+                let _ = self
+                    .cache
+                    .lock()
+                    .unwrap()
+                    .insert(key.to_vec(), value.to_vec());
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl eth_trie::DB for TrieStorage {
     type Error = rusqlite::Error;
 
@@ -1148,45 +1301,7 @@ impl eth_trie::DB for TrieStorage {
     }
 
     fn insert_batch(&self, keys: Vec<Vec<u8>>, values: Vec<Vec<u8>>) -> Result<(), Self::Error> {
-        if keys.is_empty() {
-            return Ok(());
-        }
-
-        assert_eq!(keys.len(), values.len());
-
-        // https://www.sqlite.org/limits.html#max_variable_number
-        let maximum_sql_parameters = 32766;
-        // Each key-value pair needs two parameters.
-        let chunk_size = maximum_sql_parameters / 2;
-
-        let keys = keys.chunks(chunk_size);
-        let values = values.chunks(chunk_size);
-
-        for (keys, values) in keys.zip(values) {
-            // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
-            // parameters for each key. Note that parameters are one-indexed.
-            #[allow(unstable_name_collisions)]
-            let params_stmt: String = (0..keys.len())
-                .map(|i| format!("(?{}, ?{})", i * 2 + 1, i * 2 + 2))
-                .intersperse(",".to_owned())
-                .collect();
-            let query =
-                format!("INSERT OR REPLACE INTO state_trie (key, value) VALUES {params_stmt}");
-            let params = keys.iter().zip(values).flat_map(|(k, v)| [k, v]);
-            self.db
-                .lock()
-                .unwrap()
-                .execute(&query, rusqlite::params_from_iter(params))?;
-            for (key, value) in keys.iter().zip(values) {
-                let _ = self
-                    .cache
-                    .lock()
-                    .unwrap()
-                    .insert(key.to_vec(), value.to_vec());
-            }
-        }
-
-        Ok(())
+        self.write_batch(keys, values)
     }
 
     fn remove(&self, _key: &[u8]) -> Result<(), Self::Error> {

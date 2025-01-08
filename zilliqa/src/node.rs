@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     fmt::Debug,
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
@@ -18,10 +17,7 @@ use alloy::{
 };
 use anyhow::{anyhow, Result};
 use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::{
-    primitives::{map::FxBuildHasher, ExecutionResult},
-    Inspector,
-};
+use revm::{primitives::ExecutionResult, Inspector};
 use revm_inspectors::tracing::{
     js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
     TransactionContext,
@@ -183,6 +179,7 @@ impl Node {
         reset_timeout: UnboundedSender<Duration>,
         peer_num: Arc<AtomicUsize>,
     ) -> Result<Node> {
+        config.validate()?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let message_sender = MessageSender {
             our_shard: config.eth_chain_id,
@@ -212,14 +209,25 @@ impl Node {
 
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
-        // We only expect `Proposal`s and `NewTransaction`s to be broadcast.
         match message {
-            ExternalMessage::Proposal(m) => {
-                self.handle_proposal(from, m)?;
-            }
+            // `NewTransaction`s are always broadcasted.
             ExternalMessage::NewTransaction(t) => {
-                self.consensus.handle_new_transaction(t)?;
+                // Don't process again txn sent by this node (it's already in the mempool)
+                if self.peer_id != from {
+                    self.consensus.handle_new_transaction(t)?;
+                }
             }
+            // Repeated `NewView`s might get broadcast.
+            ExternalMessage::NewView(m) => {
+                if let Some((block, transactions)) = self.consensus.new_view(*m)? {
+                    self.message_sender
+                        .broadcast_proposal(ExternalMessage::Proposal(Proposal::from_parts(
+                            block,
+                            transactions,
+                        )))?;
+                }
+            }
+            // `Proposals` are re-routed to `handle_request()`
             _ => {
                 warn!("unexpected message type");
             }
@@ -315,9 +323,9 @@ impl Node {
             ExternalMessage::ProcessProposal(m) => {
                 self.handle_process_proposal(from, m)?;
             }
-            // Handle requests which just contain a block proposal. This shouldn't actually happen in production, but
-            // annoyingly we have some test cases which trigger this (by rewriting broadcasts to direct messages) and
-            // the easiest fix is just to handle requests with proposals gracefully.
+            // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
+            // a Request by the underlying layer, with a faux request-id. This is to mitigate issues when there are
+            // too many transactions in the broadcast queue.
             ExternalMessage::Proposal(m) => {
                 self.handle_proposal(from, m)?;
 
@@ -403,7 +411,7 @@ impl Node {
                     .send_external_message(leader, response)
                     .unwrap();
             } else {
-                self.message_sender.broadcast_proposal(response)?;
+                self.message_sender.broadcast_external_message(response)?;
             }
             return Ok(true);
         }
@@ -495,7 +503,7 @@ impl Node {
     pub fn trace_evm_transaction(
         &self,
         txn_hash: Hash,
-        trace_types: &HashSet<TraceType, FxBuildHasher>,
+        trace_types: &revm::primitives::HashSet<TraceType>,
     ) -> Result<TraceResults> {
         let txn = self
             .get_transaction_by_hash(txn_hash)?
@@ -520,13 +528,13 @@ impl Node {
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(other_txn, block.header, inspector::noop())?;
+                state.apply_transaction(other_txn, block.header, inspector::noop(), false)?;
             } else {
                 let config = TracingInspectorConfig::from_parity_config(trace_types);
                 let mut inspector = TracingInspector::new(config);
                 let pre_state = state.try_clone()?;
 
-                let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                 let TransactionApplyResult::Evm(result, ..) = result else {
                     return Err(anyhow!("not an EVM transaction"));
@@ -571,9 +579,9 @@ impl Node {
                 let other_txn = self
                     .get_transaction_by_hash(other_txn_hash)?
                     .ok_or_else(|| anyhow!("transaction not found: {other_txn_hash}"))?;
-                state.apply_transaction(other_txn, parent.header, inspector::noop())?;
+                state.apply_transaction(other_txn, parent.header, inspector::noop(), false)?;
             } else {
-                let result = state.apply_transaction(txn, block.header, inspector)?;
+                let result = state.apply_transaction(txn, block.header, inspector, true)?;
 
                 return Ok(result);
             }
@@ -638,7 +646,7 @@ impl Node {
             let inspector_config = TracingInspectorConfig::from_geth_config(&config);
             let mut inspector = TracingInspector::new(inspector_config);
 
-            let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+            let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
             let TransactionApplyResult::Evm(result, ..) = result else {
                 return Ok(None);
@@ -664,7 +672,8 @@ impl Node {
                         TracingInspectorConfig::from_geth_call_config(&call_config),
                     );
 
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -684,7 +693,8 @@ impl Node {
                 }
                 GethDebugBuiltInTracerType::FourByteTracer => {
                     let mut inspector = FourByteInspector::default();
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(_, _) = result else {
                         return Ok(None);
@@ -699,7 +709,8 @@ impl Node {
                     let mux_config = tracer_config.into_mux_config()?;
 
                     let mut inspector = MuxInspector::try_from_config(mux_config)?;
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -721,7 +732,8 @@ impl Node {
                     let mut inspector = TracingInspector::new(
                         TracingInspectorConfig::from_geth_prestate_config(&prestate_config),
                     );
-                    let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                    let result =
+                        state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
@@ -751,7 +763,7 @@ impl Node {
                     JsInspector::with_transaction_context(js_code, config, transaction_context)
                         .map_err(|e| anyhow!("Unable to create js inspector: {e}"))?;
 
-                let result = state.apply_transaction(txn, block.header, &mut inspector)?;
+                let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
                 let TransactionApplyResult::Evm(result, env) = result else {
                     return Ok(None);
@@ -884,7 +896,7 @@ impl Node {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn txpool_content(&self) -> TxPoolContent {
+    pub fn txpool_content(&self) -> Result<TxPoolContent> {
         self.consensus.txpool_content()
     }
 

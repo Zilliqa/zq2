@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use alloy::{
     eips::eip2930::{AccessList, AccessListItem},
     primitives::{Address, B256, B512},
@@ -16,6 +18,7 @@ use sha3::{
     },
     Digest, Keccak256,
 };
+use zilliqa::exec::{ScillaException, ScillaTransition};
 
 use super::proto::{
     proto_account_base, proto_mb_info, proto_transaction_core_info, proto_transaction_receipt,
@@ -325,14 +328,19 @@ impl Transaction {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct TransactionReceipt {
+    #[serde(default)]
+    pub accepted: Option<bool>,
     pub success: bool,
-    //pub accepted: bool,
     #[serde(deserialize_with = "str_to_int")]
     pub cumulative_gas: u64,
     #[serde(default)]
     pub event_logs: Vec<Log>,
-    //#[serde(default)]
-    //pub transitions: Vec<Transition>,
+    #[serde(default)]
+    pub transitions: Vec<Transition>,
+    #[serde(default)]
+    pub exceptions: Vec<ScillaException>,
+    #[serde(default)]
+    pub errors: BTreeMap<String, Vec<u64>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -379,6 +387,11 @@ pub struct EthLog {
     pub data: Vec<u8>,
 }
 
+fn str_to_u128<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
+    let s = String::deserialize(deserializer)?;
+    s.parse().map_err(serde::de::Error::custom)
+}
+
 fn str_to_int<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
     let s = String::deserialize(deserializer)?;
     s.parse().map_err(serde::de::Error::custom)
@@ -394,6 +407,7 @@ fn hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> 
 pub struct Transition {
     #[serde(rename = "addr")]
     address: Address,
+    #[serde(default)]
     depth: u64,
     #[serde(rename = "msg")]
     message: Message,
@@ -402,22 +416,25 @@ pub struct Transition {
 #[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 pub struct Message {
-    #[serde(rename = "_amount", deserialize_with = "str_to_int")]
-    amount: u64,
+    #[serde(rename = "_amount", deserialize_with = "str_to_u128")]
+    amount: u128,
     #[serde(rename = "_recipient")]
     recipient: Address,
     #[serde(rename = "_tag")]
     tag: String,
     #[serde(default)]
-    params: Vec<ScillaParam>,
+    params: Value,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug, Deserialize)]
-pub struct ScillaParam {
-    #[serde(rename = "vname")]
-    name: String,
-    #[serde(rename = "type")]
-    ty: String,
-    value: String,
+impl From<Transition> for ScillaTransition {
+    fn from(x: Transition) -> Self {
+        ScillaTransition {
+            from: x.address,
+            to: x.message.recipient,
+            depth: x.depth,
+            amount: zilliqa::transaction::ZilAmount::from_raw(x.message.amount),
+            tag: x.message.tag,
+            params: serde_json::to_string(&x.message.params).unwrap(),
+        }
+    }
 }

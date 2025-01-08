@@ -2,12 +2,13 @@ variable "node_role_mappings" {
   description = "(Optional) The node role short names"
   type        = map(string)
   default = {
-    apps       = "app",
-    api        = "api",
-    bootstrap  = "boo",
-    validator  = "val",
-    checkpoint = "che",
-    sentry     = "sen",
+    apps        = "app",
+    api         = "api",
+    bootstrap   = "boo",
+    validator   = "val",
+    checkpoint  = "che",
+    persistence = "per",
+    sentry      = "sen",
   }
 }
 
@@ -69,8 +70,8 @@ variable "role" {
   description = "VM role"
   type        = string
   validation {
-    condition     = contains(["bootstrap", "api", "validator", "apps", "checkpoint", "sentry"], var.role)
-    error_message = "The role value must be one of:  'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'sentry'."
+    condition     = contains(["bootstrap", "api", "validator", "apps", "checkpoint", "persistence", "sentry"], var.role)
+    error_message = "The role value must be one of:  'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'sentry'."
   }
 }
 

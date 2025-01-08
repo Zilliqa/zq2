@@ -1,9 +1,11 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
 use alloy::primitives::Address;
+use anyhow::{anyhow, Result};
 use libp2p::{Multiaddr, PeerId};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::json;
 
 use crate::{
     crypto::{Hash, NodePublicKey},
@@ -37,14 +39,43 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnabledApi {
+    EnableAll(String),
+    Enabled {
+        namespace: String,
+        apis: Vec<String>,
+    },
+}
+
+impl EnabledApi {
+    pub fn enabled(&self, api: &str) -> bool {
+        // APIs with no namespace default to the 'zilliqa' namespace.
+        let (ns, method) = api.split_once('_').unwrap_or(("zilliqa", api));
+        match self {
+            EnabledApi::EnableAll(namespace) => namespace == ns,
+            EnabledApi::Enabled { namespace, apis } => {
+                namespace == ns && apis.iter().any(|m| m == method)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiServer {
+    /// The port to listen for JSON-RPC requests on.
+    pub port: u16,
+    /// RPC APIs to enable.
+    pub enabled_apis: Vec<EnabledApi>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
-    /// The port to listen for JSON-RPC requests on. Defaults to 4201.
-    #[serde(default = "json_rpc_port_default")]
-    pub json_rpc_port: u16,
-    /// If true, the JSON-RPC server is not started. Defaults to false.
-    #[serde(default = "disable_rpc_default")]
-    pub disable_rpc: bool,
+    /// RPC API endpoints to expose.
+    #[serde(default)]
+    pub api_servers: Vec<ApiServer>,
     /// Chain identifier. Doubles as shard_id internally.
     #[serde(default = "eth_chain_id_default")]
     pub eth_chain_id: u64,
@@ -81,6 +112,49 @@ pub struct NodeConfig {
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
     pub failed_request_sleep_duration: Duration,
+    /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
+    #[serde(default)]
+    pub enable_ots_indices: bool,
+    /// Maximum allowed RPC response size
+    #[serde(default = "max_rpc_response_size_default")]
+    pub max_rpc_response_size: u32,
+}
+
+impl Default for NodeConfig {
+    fn default() -> Self {
+        NodeConfig {
+            api_servers: vec![],
+            eth_chain_id: eth_chain_id_default(),
+            consensus: ConsensusConfig::default(),
+            allowed_timestamp_skew: allowed_timestamp_skew_default(),
+            data_dir: None,
+            state_cache_size: state_cache_size_default(),
+            load_checkpoint: None,
+            do_checkpoints: false,
+            block_request_limit: block_request_limit_default(),
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
+            state_rpc_limit: state_rpc_limit_default(),
+            failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            enable_ots_indices: false,
+            max_rpc_response_size: max_rpc_response_size_default(),
+        }
+    }
+}
+
+impl NodeConfig {
+    pub fn validate(&self) -> Result<()> {
+        if let serde_json::Value::Object(map) =
+            serde_json::to_value(self.consensus.contract_upgrade_block_heights.clone())?
+        {
+            for (contract, block_height) in map {
+                if block_height.as_u64().unwrap_or(0) % self.consensus.blocks_per_epoch != 0 {
+                    return Err(anyhow!("Contract upgrades must be configured to occur at epoch boundaries. blocks_per_epoch: {}, contract {} configured to be upgraded block: {}", self.consensus.blocks_per_epoch, contract, block_height));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,16 +196,8 @@ pub fn state_cache_size_default() -> usize {
     256 * 1024 * 1024 // 256 MiB
 }
 
-pub fn json_rpc_port_default() -> u16 {
-    4201
-}
-
 pub fn eth_chain_id_default() -> u64 {
     700 + 0x8000
-}
-
-pub fn disable_rpc_default() -> bool {
-    false
 }
 
 pub fn block_request_limit_default() -> usize {
@@ -144,6 +210,10 @@ pub fn max_blocks_in_flight_default() -> u64 {
 
 pub fn block_request_batch_size_default() -> u64 {
     100
+}
+
+pub fn max_rpc_response_size_default() -> u32 {
+    10 * 1024 * 1024 // 10 MB
 }
 
 pub fn state_rpc_limit_default() -> usize {
@@ -244,13 +314,9 @@ pub struct ConsensusConfig {
     /// Accounts that will be pre-funded at genesis.
     #[serde(default)]
     pub genesis_accounts: Vec<(Address, Amount)>,
-    /// Minimum time to wait for consensus to propose new block if there are no transactions. This therefore acts also as the minimum block time.
-    #[serde(default = "empty_block_timeout_default")]
-    pub empty_block_timeout: Duration,
-    /// Minimum remaining time before end of round in which Proposer has the opportunity to broadcast empty block proposal.
-    /// If there is less time than this value left in a round then the view will likely move on before a proposal has time to be finalised.
-    #[serde(default = "minimum_time_left_for_empty_block_default")]
-    pub minimum_time_left_for_empty_block: Duration,
+    /// The expected time between blocks when no views are missed.
+    #[serde(default = "block_time_default")]
+    pub block_time: Duration,
     /// Address of the Scilla server. Defaults to "http://localhost:3000".
     #[serde(default = "scilla_address_default")]
     pub scilla_address: String,
@@ -286,6 +352,122 @@ pub struct ConsensusConfig {
     /// The total supply of native token in the network in Wei. Any funds which are not immediately assigned to an account (via genesis_accounts and genesis_deposits env vars) will be assigned to the zero account (0x0).
     #[serde(default = "total_native_token_supply_default")]
     pub total_native_token_supply: Amount,
+    /// Calls to the `scilla_call` precompile from these addresses cost a different amount of gas. If the provided gas
+    /// limit is not enough, the call will still succeed and we will charge as much gas as we can. This hack exists due
+    /// to important contracts deployed on Zilliqa 1's mainnet that pass the incorrect gas limit to `scilla_call`.
+    /// Zilliqa 1's implementation was broken and accepted these calls and these contracts are now widely used and
+    /// bridged to other chains.
+    #[serde(default)]
+    pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    /// The block heights at which we perform EIP-1967 contract upgrades
+    /// Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
+    #[serde(default)]
+    pub contract_upgrade_block_heights: ContractUpgradesBlockHeights,
+    /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
+    /// difference applies.
+    #[serde(default)]
+    pub forks: Forks,
+}
+
+impl Default for ConsensusConfig {
+    fn default() -> Self {
+        ConsensusConfig {
+            is_main: default_true(),
+            main_shard_id: None,
+            consensus_timeout: consensus_timeout_default(),
+            genesis_deposits: vec![],
+            genesis_accounts: vec![],
+            block_time: block_time_default(),
+            scilla_address: scilla_address_default(),
+            scilla_stdlib_dir: scilla_stdlib_dir_default(),
+            scilla_ext_libs_path: scilla_ext_libs_path_default(),
+            local_address: local_address_default(),
+            rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
+            blocks_per_hour: 3600 * 40,
+            minimum_stake: 32_000_000_000_000_000_000u128.into(),
+            eth_block_gas_limit: EvmGas(84000000),
+            blocks_per_epoch: blocks_per_epoch_default(),
+            epochs_per_checkpoint: epochs_per_checkpoint_default(),
+            gas_price: 4_761_904_800_000u128.into(),
+            total_native_token_supply: total_native_token_supply_default(),
+            scilla_call_gas_exempt_addrs: vec![],
+            contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
+            forks: Default::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(try_from = "Vec<Fork>", into = "Vec<Fork>")]
+pub struct Forks(Vec<Fork>);
+
+impl TryFrom<Vec<Fork>> for Forks {
+    type Error = anyhow::Error;
+
+    fn try_from(mut forks: Vec<Fork>) -> Result<Self, Self::Error> {
+        // Sort forks by height so we can binary search to find the current fork.
+        forks.sort_unstable_by_key(|f| f.at_height);
+
+        // Assert we have a fork that starts at the genesis block.
+        if forks.first().ok_or_else(|| anyhow!("no forks"))?.at_height != 0 {
+            return Err(anyhow!("first fork must start at height 0"));
+        }
+
+        Ok(Forks(forks))
+    }
+}
+
+impl From<Forks> for Vec<Fork> {
+    fn from(forks: Forks) -> Self {
+        forks.0
+    }
+}
+
+impl Default for Forks {
+    /// The default implementation of [Forks] returns a single fork at the genesis block, with the most up-to-date
+    /// execution logic.
+    fn default() -> Self {
+        vec![Fork {
+            at_height: 0,
+            failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+            call_mode_1_sets_caller_to_parent_caller: true,
+        }]
+        .try_into()
+        .unwrap()
+    }
+}
+
+impl Forks {
+    pub fn get(&self, height: u64) -> Fork {
+        // Binary search to find the fork at the specified height. If an entry was not found at exactly the specified
+        // height, the `Err` returned from `binary_search_by_key` will contain the index where an element with this
+        // height could be inserted. By subtracting one from this, we get the maximum entry with a height less than the
+        // searched height.
+        let index = self
+            .0
+            .binary_search_by_key(&height, |f| f.at_height)
+            .unwrap_or_else(|i| i - 1);
+        self.0[index]
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct Fork {
+    pub at_height: u64,
+    /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`
+    /// precompile and the inner Scilla call fails, the entire transaction will revert. If false, the normal EVM
+    /// semantics apply where the caller can decide how to act based on the success of the inner call.
+    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
+    /// If true, if a call is made to the `scilla_call` precompile with `call_mode` / `keep_origin` set to `1`, the
+    /// `_sender` of the inner Scilla call will be set to the caller of the current call-stack. If false, the `_sender`
+    /// will be set to the original transaction signer.
+    ///
+    /// For example:
+    /// A (EOA) -> B (EVM) -> C (EVM) -> D (Scilla)
+    ///
+    /// When this flag is true, `D` will see the `_sender` as `B`. When this flag is false, `D` will see the `_sender`
+    /// as `A`.
+    pub call_mode_1_sets_caller_to_parent_caller: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,12 +484,8 @@ pub fn consensus_timeout_default() -> Duration {
     Duration::from_secs(5)
 }
 
-pub fn empty_block_timeout_default() -> Duration {
+pub fn block_time_default() -> Duration {
     Duration::from_millis(1000)
-}
-
-pub fn minimum_time_left_for_empty_block_default() -> Duration {
-    Duration::from_millis(3000)
 }
 
 pub fn scilla_address_default() -> String {
@@ -344,4 +522,30 @@ fn default_true() -> bool {
 
 pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContractUpgradesBlockHeights {
+    pub deposit_v3: Option<u64>,
+}
+
+impl ContractUpgradesBlockHeights {
+    // toml doesnt like Option types. Map items in struct and remove keys for None values
+    pub fn to_toml(&self) -> toml::Value {
+        toml::Value::Table(
+            json!(self)
+                .as_object()
+                .unwrap()
+                .clone()
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    if v.is_null() {
+                        None // Skip null values
+                    } else {
+                        Some((k, toml::Value::Integer(v.as_u64().unwrap() as i64)))
+                    }
+                })
+                .collect(),
+        )
+    }
 }

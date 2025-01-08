@@ -10,9 +10,8 @@ use std::{
     sync::{Arc, MutexGuard},
 };
 
-use alloy::primitives::{hex, Address, U256};
+use alloy::primitives::{hex, Address, Bytes, U256};
 use anyhow::{anyhow, Context, Result};
-use bytes::Bytes;
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
@@ -20,10 +19,10 @@ use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        map::FxBuildHasher, AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason,
-        HandlerCfg, Output, ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
+        ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
-    Database, DatabaseRef, Evm, Inspector,
+    Database, DatabaseRef, Evm, GetInspector, Inspector,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -31,7 +30,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    cfg::{ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
+    cfg::{Fork, ScillaExtLibsPath, ScillaExtLibsPathInScilla, ScillaExtLibsPathInZq2},
     constants, contracts,
     crypto::{Hash, NodePublicKey},
     db::TrieStorage,
@@ -214,10 +213,32 @@ pub struct ScillaResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScillaError {
-    CallFailed,
-    CreateFailed,
-    OutOfGas,
-    InsufficientBalance,
+    CheckerFailed,
+    RunnerFailed,
+    BalanceTransferFailed,
+    ExecuteCmdFailed,
+    ExecuteCmdTimeout,
+    NoGasRemainingFound,
+    NoAcceptedFound,
+    CallContractFailed,
+    CreateContractFailed,
+    JsonOutputCorrupted,
+    ContractNotExist,
+    StateCorrupted,
+    LogEntryInstallFailed,
+    MessageCorrupted,
+    ReceiptIsNull,
+    MaxEdgesReached,
+    ChainCallDiffShard,
+    PreparationFailed,
+    NoOutput,
+    OutputIllegal,
+    MapDepthMissing,
+    GasNotSufficient,
+    InternalError,
+    LibraryAsRecipient,
+    VersionInconsistent,
+    LibraryExtractionFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +253,40 @@ impl ScillaException {
             .with(self.line.to_be_bytes())
             .with(self.message.as_bytes())
             .finalize()
+    }
+}
+
+impl From<u64> for ScillaError {
+    fn from(val: u64) -> ScillaError {
+        match val {
+            0 => ScillaError::CheckerFailed,
+            1 => ScillaError::RunnerFailed,
+            2 => ScillaError::BalanceTransferFailed,
+            3 => ScillaError::ExecuteCmdFailed,
+            4 => ScillaError::ExecuteCmdTimeout,
+            5 => ScillaError::NoGasRemainingFound,
+            6 => ScillaError::NoAcceptedFound,
+            7 => ScillaError::CallContractFailed,
+            8 => ScillaError::CreateContractFailed,
+            9 => ScillaError::JsonOutputCorrupted,
+            10 => ScillaError::ContractNotExist,
+            11 => ScillaError::StateCorrupted,
+            12 => ScillaError::LogEntryInstallFailed,
+            13 => ScillaError::MessageCorrupted,
+            14 => ScillaError::ReceiptIsNull,
+            15 => ScillaError::MaxEdgesReached,
+            16 => ScillaError::ChainCallDiffShard,
+            17 => ScillaError::PreparationFailed,
+            18 => ScillaError::NoOutput,
+            19 => ScillaError::OutputIllegal,
+            20 => ScillaError::MapDepthMissing,
+            21 => ScillaError::GasNotSufficient,
+            22 => ScillaError::InternalError,
+            23 => ScillaError::LibraryAsRecipient,
+            24 => ScillaError::VersionInconsistent,
+            25 => ScillaError::LibraryExtractionFailed,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -367,6 +422,24 @@ impl DatabaseRef for &State {
     }
 }
 
+/// The external context used by [Evm].
+pub struct ExternalContext<'a, I> {
+    pub inspector: I,
+    pub fork: Fork,
+    pub scilla_call_gas_exempt_addrs: &'a [Address],
+    // This flag is only used for zq1 whitelisted contracts, and it's used to detect if the entire transaction should be marked as failed
+    pub enforce_transaction_failure: bool,
+    /// The caller of each call in the call-stack. This is needed because the `scilla_call` precompile needs to peek
+    /// into the call-stack. This will always be non-empty and the first entry will be the transaction signer.
+    pub callers: Vec<Address>,
+}
+
+impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
+    fn get_inspector(&mut self) -> &mut impl Inspector<PendingState> {
+        &mut self.inspector
+    }
+}
+
 // As per EIP-150
 pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
 
@@ -386,17 +459,19 @@ impl State {
         &mut self,
         creation_bytecode: Vec<u8>,
         override_address: Option<Address>,
+        amount: u128,
     ) -> Result<Address> {
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
             0,
             self.block_gas_limit,
-            0,
+            amount,
             creation_bytecode,
             None,
             BlockHeader::genesis(Hash::ZERO),
             inspector::noop(),
+            false,
             BaseFeeCheck::Ignore,
         )?;
 
@@ -411,7 +486,7 @@ impl State {
                         .remove(&addr)
                         .ok_or_else(|| anyhow!("deployment did not change the contract account"))?;
                     state.insert(override_address, account);
-                    addr
+                    override_address
                 } else {
                     addr
                 };
@@ -437,11 +512,19 @@ impl State {
         nonce: Option<u64>,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
         base_fee_check: BaseFeeCheck,
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
+        let external_context = ExternalContext {
+            inspector,
+            fork: self.forks.get(current_block.number),
+            scilla_call_gas_exempt_addrs: &self.scilla_call_gas_exempt_addrs,
+            enforce_transaction_failure: false,
+            callers: vec![from_addr],
+        };
         let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
             .with_db(pending_state)
@@ -461,10 +544,9 @@ impl State {
                 prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
                 blob_excess_gas_and_price: None,
             })
-            .with_external_context(inspector)
+            .with_external_context(external_context)
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
-            .append_handler_register(inspector_handle_register)
             .modify_cfg_env(|c| {
                 c.chain_id = self.chain_id.eth;
                 c.disable_base_fee = match base_fee_check {
@@ -494,12 +576,40 @@ impl State {
                     precompiles.extend(get_custom_precompiles());
                     precompiles
                 });
-            })
-            .build();
+            });
+        if enable_inspector {
+            evm = evm.append_handler_register(inspector_handle_register);
+        }
+        let mut evm = evm.build();
 
-        let e = evm.transact()?;
-        let (mut state, cfg) = evm.into_db_and_env_with_handler_cfg();
-        Ok((e, state.finalize(), cfg.env))
+        let mut result_and_state = evm.transact()?;
+        let mut ctx_with_handler = evm.into_context_with_handler_cfg();
+
+        // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
+        if ctx_with_handler
+            .context
+            .external
+            .enforce_transaction_failure
+        {
+            result_and_state.state.clear();
+            return Ok((
+                ResultAndState {
+                    result: ExecutionResult::Revert {
+                        gas_used: result_and_state.result.gas_used(),
+                        output: Bytes::default(),
+                    },
+                    state: result_and_state.state,
+                },
+                HashMap::new(),
+                ctx_with_handler.context.evm.inner.env,
+            ));
+        }
+
+        Ok((
+            result_and_state,
+            ctx_with_handler.context.evm.db.finalize(),
+            ctx_with_handler.context.evm.inner.env,
+        ))
     }
 
     // The rules here are somewhat odd, and inherited from ZQ1
@@ -594,6 +704,7 @@ impl State {
         txn: VerifiedTransaction,
         current_block: BlockHeader,
         inspector: I,
+        enable_inspector: bool,
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
@@ -621,6 +732,7 @@ impl State {
                     txn.nonce(),
                     current_block,
                     inspector,
+                    enable_inspector,
                     if blessed {
                         BaseFeeCheck::Ignore
                     } else {
@@ -701,7 +813,7 @@ impl State {
     /// Applies a state delta from an EVM execution to the state.
     pub fn apply_delta_evm(
         &mut self,
-        state: &HashMap<Address, revm::primitives::Account, FxBuildHasher>,
+        state: &revm::primitives::HashMap<Address, revm::primitives::Account>,
     ) -> Result<()> {
         for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
@@ -745,12 +857,26 @@ impl State {
         Ok(())
     }
 
+    pub fn deposit_contract_version(&self, current_block: BlockHeader) -> Result<u128> {
+        let result = self.call_contract(
+            Address::ZERO,
+            Some(contract_addr::DEPOSIT_PROXY),
+            contracts::deposit::VERSION.encode_input(&[]).unwrap(),
+            0,
+            current_block,
+        )?;
+        contracts::deposit::VERSION.decode_output(&ensure_success(result)?)?[0]
+            .clone()
+            .into_uint()
+            .map_or(Ok(0), |v| Ok(v.as_u128()))
+    }
+
     pub fn leader(&self, view: u64, current_block: BlockHeader) -> Result<NodePublicKey> {
         let data = contracts::deposit::LEADER_AT_VIEW.encode_input(&[Token::Uint(view.into())])?;
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -768,11 +894,11 @@ impl State {
     }
 
     pub fn get_stakers(&self, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
-        let data = contracts::deposit::GET_STAKERS.encode_input(&[])?;
+        let data: Vec<u8> = contracts::deposit::GET_STAKERS.encode_input(&[])?;
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -797,7 +923,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             BlockHeader::default(),
@@ -819,7 +945,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             current_block,
@@ -837,7 +963,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
@@ -861,7 +987,7 @@ impl State {
 
         let result = self.call_contract(
             Address::ZERO,
-            Some(contract_addr::DEPOSIT),
+            Some(contract_addr::DEPOSIT_PROXY),
             data,
             0,
             // The current block is not accessed when the native balance is read, so we just pass in some
@@ -927,6 +1053,7 @@ impl State {
                 None,
                 current_block,
                 inspector::noop(),
+                false,
                 BaseFeeCheck::Validate,
             )?;
 
@@ -963,6 +1090,7 @@ impl State {
             None,
             current_block,
             inspector::noop(),
+            false,
             BaseFeeCheck::Validate,
         )?;
 
@@ -991,8 +1119,37 @@ impl State {
             None,
             current_block,
             inspector::noop(),
+            false,
             BaseFeeCheck::Ignore,
         )?;
+
+        Ok(result)
+    }
+
+    /// Call contract and apply changes to state
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_contract_apply(
+        &mut self,
+        from_addr: Address,
+        to_addr: Option<Address>,
+        data: Vec<u8>,
+        amount: u128,
+        current_block: BlockHeader,
+    ) -> Result<ExecutionResult> {
+        let (ResultAndState { result, state }, ..) = self.apply_transaction_evm(
+            from_addr,
+            to_addr,
+            0,
+            self.block_gas_limit,
+            amount,
+            data,
+            None,
+            current_block,
+            inspector::noop(),
+            false,
+            BaseFeeCheck::Ignore,
+        )?;
+        self.apply_delta_evm(&state)?;
 
         Ok(result)
     }
@@ -1261,7 +1418,7 @@ impl PendingState {
                 gas_used,
                 transitions: vec![],
                 accepted: None,
-                errors: [(0, vec![ScillaError::InsufficientBalance])]
+                errors: [(0, vec![ScillaError::BalanceTransferFailed])]
                     .into_iter()
                     .collect(),
                 exceptions: vec![],
@@ -1408,7 +1565,9 @@ fn scilla_create(
                 gas_used: (txn.gas_limit - gas).into(),
                 transitions: vec![],
                 accepted: Some(false),
-                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                errors: [(0, vec![ScillaError::GasNotSufficient])]
+                    .into_iter()
+                    .collect(),
                 exceptions: vec![],
             },
             state,
@@ -1443,7 +1602,9 @@ fn scilla_create(
                         gas_used: (txn.gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                        errors: [(0, vec![ScillaError::CreateContractFailed])]
+                            .into_iter()
+                            .collect(),
                         exceptions: e.errors.into_iter().map(Into::into).collect(),
                     },
                     state,
@@ -1484,7 +1645,9 @@ fn scilla_create(
                 gas_used: (txn.gas_limit - gas).into(),
                 transitions: vec![],
                 accepted: Some(false),
-                errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                errors: [(0, vec![ScillaError::GasNotSufficient])]
+                    .into_iter()
+                    .collect(),
                 exceptions: vec![],
             },
             state,
@@ -1513,7 +1676,9 @@ fn scilla_create(
                     gas_used: (txn.gas_limit - gas).into(),
                     transitions: vec![],
                     accepted: Some(false),
-                    errors: [(0, vec![ScillaError::CreateFailed])].into_iter().collect(),
+                    errors: [(0, vec![ScillaError::CreateContractFailed])]
+                        .into_iter()
+                        .collect(),
                     exceptions: e.errors.into_iter().map(Into::into).collect(),
                 },
                 state,
@@ -1594,7 +1759,7 @@ pub fn scilla_call(
                         gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(depth, vec![ScillaError::CallFailed])]
+                        errors: [(depth, vec![ScillaError::CallContractFailed])]
                             .into_iter()
                             .collect(),
                         exceptions: vec![ScillaException {
@@ -1620,7 +1785,9 @@ pub fn scilla_call(
                         gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(depth, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                        errors: [(depth, vec![ScillaError::GasNotSufficient])]
+                            .into_iter()
+                            .collect(),
                         exceptions: vec![],
                     },
                     current_state,
@@ -1676,7 +1843,9 @@ pub fn scilla_call(
                             gas_used: (gas_limit - gas).into(),
                             transitions: vec![],
                             accepted: Some(false),
-                            errors: [(0, vec![ScillaError::CallFailed])].into_iter().collect(),
+                            errors: [(0, vec![ScillaError::CallContractFailed])]
+                                .into_iter()
+                                .collect(),
                             exceptions: e.errors.into_iter().map(Into::into).collect(),
                         },
                         new_state,
@@ -1752,7 +1921,9 @@ pub fn scilla_call(
                         gas_used: (gas_limit - gas).into(),
                         transitions: vec![],
                         accepted: Some(false),
-                        errors: [(0, vec![ScillaError::OutOfGas])].into_iter().collect(),
+                        errors: [(0, vec![ScillaError::GasNotSufficient])]
+                            .into_iter()
+                            .collect(),
                         exceptions: vec![],
                     },
                     current_state,

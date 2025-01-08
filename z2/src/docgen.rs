@@ -1,41 +1,20 @@
 // Code to generate documentation from .tera.md files.
-#![allow(unused_imports)]
 
 use std::{
     cmp::{Ord, Ordering, PartialOrd},
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     convert::TryFrom,
     fmt,
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 
-use alloy::primitives::{address, Address};
 use anyhow::{anyhow, Context as _, Result};
-use libp2p::PeerId;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tera::Tera;
-use tokio::{
-    fs,
-    sync::{broadcast, mpsc::UnboundedSender},
-};
-use zilliqa::{
-    cfg::{
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, consensus_timeout_default, disable_rpc_default,
-        empty_block_timeout_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        json_rpc_port_default, local_address_default, max_blocks_in_flight_default,
-        minimum_time_left_for_empty_block_default, scilla_address_default,
-        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default,
-        state_rpc_limit_default, total_native_token_supply_default, Amount, ConsensusConfig,
-        NodeConfig,
-    },
-    crypto::SecretKey,
-    node::{MessageSender, Node},
-    transaction::EvmGas,
-};
-use zqutils::utils;
+use tokio::fs;
+use zilliqa::{cfg::NodeConfig, crypto::SecretKey};
 
 const SUPPORTED_APIS_PATH_NAME: &str = "index";
 
@@ -367,42 +346,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
     let mut methods = HashMap::new();
 
     // Construct an empty node so we can check for the existence of RPC methods without constructing a full node.
-    let config = NodeConfig {
-        consensus: ConsensusConfig {
-            genesis_accounts: vec![],
-            rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
-            blocks_per_hour: 3600,
-            is_main: true,
-            empty_block_timeout: empty_block_timeout_default(),
-            minimum_stake: 10_000_000_000_000_000_000_000_000u128.into(),
-            gas_price: 4_761_904_800_000u128.into(),
-            eth_block_gas_limit: EvmGas(84000000),
-            genesis_deposits: vec![],
-            consensus_timeout: consensus_timeout_default(),
-            local_address: local_address_default(),
-            scilla_stdlib_dir: scilla_stdlib_dir_default(),
-            scilla_ext_libs_path: scilla_ext_libs_path_default(),
-            main_shard_id: None,
-            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
-            scilla_address: scilla_address_default(),
-            blocks_per_epoch: 3600,
-            epochs_per_checkpoint: 24,
-            total_native_token_supply: total_native_token_supply_default(),
-        },
-        data_dir: None,
-        state_cache_size: state_cache_size_default(),
-        load_checkpoint: None,
-        do_checkpoints: false,
-        eth_chain_id: eth_chain_id_default(),
-        disable_rpc: disable_rpc_default(),
-        allowed_timestamp_skew: allowed_timestamp_skew_default(),
-        json_rpc_port: json_rpc_port_default(),
-        block_request_limit: block_request_limit_default(),
-        max_blocks_in_flight: max_blocks_in_flight_default(),
-        block_request_batch_size: block_request_batch_size_default(),
-        state_rpc_limit: state_rpc_limit_default(),
-        failed_request_sleep_duration: failed_request_sleep_duration_default(),
-    };
+    let config = NodeConfig::default();
     let secret_key = SecretKey::new()?;
     let (s1, _) = tokio::sync::mpsc::unbounded_channel();
     let (s2, _) = tokio::sync::mpsc::unbounded_channel();
@@ -413,7 +357,7 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
     let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
         config, secret_key, s1, s2, s3, s4, peers,
     )?));
-    let module = zilliqa::api::rpc_module(my_node.clone());
+    let module = zilliqa::api::rpc_module(my_node.clone(), &[]);
     for m in module.method_names() {
         methods.insert(
             ApiMethod::JsonRpc {

@@ -114,6 +114,8 @@ def generate_short_diff_filename(method, params):
     return f"{method}_{unique_suffix}_diff.txt"
     
 def pretty_print_with_jq(file_path):
+    file_path = os.path.join(LOGS_DIR, file_path) if not os.path.isabs(file_path) else file_path
+
     try:
         result = subprocess.run(['jq', '.', file_path], capture_output=True, text=True)
         if result.returncode == 0:
@@ -147,6 +149,9 @@ def paginated_print(text, lines_per_page=20):
                 break
 
 def compare_json_files(file1, file2):
+    # Ensure file paths include the logs directory
+    file1 = os.path.join(LOGS_DIR, file1) if not os.path.isabs(file1) else file1
+    file2 = os.path.join(LOGS_DIR, file2) if not os.path.isabs(file2) else file2
     try:
         with open(file1, 'r') as f1, open(file2, 'r') as f2:
             json1 = json.load(f1)
@@ -282,6 +287,7 @@ def format_params(params):
     elif isinstance(params, list):
         return ', '.join(truncate_param(p) for p in params)
     return truncate_param(params)
+
 def prompt_to_view_difference(mismatched_apis):
     if not mismatched_apis:
         print(Fore.GREEN + "\nAll API calls matched.")
@@ -290,7 +296,8 @@ def prompt_to_view_difference(mismatched_apis):
     while True:
         print("\nThe following APIs have mismatches:")
         for i, api in enumerate(mismatched_apis):
-            print(f"{i + 1}. {api['method']} ({api['params'][0]})")
+            params = format_params(api["params"])
+            print(f"{i + 1}. {api['method']} ({params})")
 
         choice = input("\nEnter the number of the API you'd like to view the difference for (or 0 to go back to method selection): ").strip()
 
@@ -304,14 +311,24 @@ def prompt_to_view_difference(mismatched_apis):
                 diff = compare_json_files(selected_api["local_file"], selected_api["zilliqa_file"])
                 display_key_differences(diff, selected_api["method"], selected_api["params"])
 
-                view_outputs = input(f"\nDo you want to view the outputs for {selected_api['method']} ({selected_api['params'][0]})? (y/n): ").strip().lower()
+                while True:
+                    view_outputs = input(f"\nDo you want to view the outputs for {selected_api['method']} ({selected_api['params'][0]})? (y/n): ").strip().lower()
+                    if view_outputs in {'y', 'n'}:
+                        break
+                    print("Invalid input. Please enter 'y' or 'n'.")
+
                 if view_outputs == 'y':
                     print(f"\n ZQ2 Output ({selected_api['local_file']}):")
                     pretty_print_with_jq(selected_api["local_file"])
                     print(f"\n ZQ1 Output ({selected_api['zilliqa_file']}):")
                     pretty_print_with_jq(selected_api["zilliqa_file"])
 
-                more = input("\nDo you want to view another mismatch? (y/n): ").strip().lower()
+                while True:
+                    more = input("\nDo you want to view another mismatch? (y/n): ").strip().lower()
+                    if more in {'y', 'n'}:
+                        break
+                    print("Invalid input. Please enter 'y' or 'n'.")
+
                 if more != 'y':
                     return
             else:
@@ -327,14 +344,17 @@ def select_method_in_subset(subset):
         print(f"\nAvailable methods in {subset.capitalize()}:")
         for i, method in enumerate(methods, 1):
             print(f"{i}. {method}")
+        print("0. Run all methods in this subset")
         print("-1. Go back to Available API subsets")
 
         method_choice = input(f"Select a method to run in {subset.capitalize()} (1-{len(methods)}) or press 0 to run all: ").strip()
+
         if method_choice == "-1":
-            return None 
-        elif method_choice == "0" or (method_choice.isdigit() and 1 <= int(method_choice) <= len(methods)):
-            method = methods[int(method_choice) - 1] if method_choice != "0" else None
-            return method
+            return None  # User wants to go back to subset selection
+        elif method_choice == "0":
+            return "ALL"  # New option to run all methods in the subset
+        elif method_choice.isdigit() and 1 <= int(method_choice) <= len(methods):
+            return methods[int(method_choice) - 1]  # Return the selected method
         else:
             print(f"Invalid choice. Please enter a valid number (-1, 0-{len(methods)}).")
 
@@ -374,7 +394,9 @@ def main():
                 if method is None: 
                     break
 
-                config, api_calls = load_config(subset=subset, method=method)
+                # Load configuration and API calls
+                config, api_calls = load_config(subset=subset, method=None if method == "ALL" else method)
+
                 headers = config["headers"]
                 results = []
                 mismatched_apis = []
@@ -384,25 +406,31 @@ def main():
                     params = api_call["params"]
                     output_file_prefix = api_call["output_file_prefix"]
 
-                    local_file = f"{output_file_prefix}_ZQ2.json"
-                    print(f"Making {method} API call to ZQ2 API - {config['urls']['ZQ2']} with param {params[0]}")
+                    # Truncate parameters for logging
+                    truncated_params = format_params(params)
 
+                    # Make API calls to ZQ2
+                    local_file = f"{output_file_prefix}_ZQ2.json"
+                    print(f"Making {method} API call to ZQ2 API - {config['urls']['ZQ2']} with param {truncated_params}")
                     local_response_time, _ = make_api_call(
                         config["urls"]["ZQ2"], headers, method, params, f"{output_file_prefix}_ZQ2.txt", local_file
                     )
 
+                    # Make API calls to ZQ1
                     zilliqa_file = f"{output_file_prefix}_ZQ1.json"
-                    print(f"Making {method} API call to ZQ1 API - {config['urls']['ZQ1']} with param {params[0]}")
+                    print(f"Making {method} API call to ZQ1 API - {config['urls']['ZQ1']} with param {truncated_params}")
                     zilliqa_response_time, _ = make_api_call(
                         config["urls"]["ZQ1"], headers, method, params, f"{output_file_prefix}_ZQ1.txt", zilliqa_file
                     )
 
+                    # Compare results
                     diff = compare_json_files(local_file, zilliqa_file)
                     success = not bool(diff)
                     local_time_str, zilliqa_time_str = format_time(local_response_time, zilliqa_response_time)
 
+                    # Append results
                     results.append([
-                        f"{method} ({format_params(params)})",
+                        f"{method} ({truncated_params})",
                         config["urls"]["ZQ2"],
                         config["urls"]["ZQ1"],
                         local_time_str,
@@ -420,9 +448,11 @@ def main():
                             "zilliqa_file": zilliqa_file
                         })
 
+                # Print results in a table
                 print("\nResults:")
                 print(tabulate(results, headers=["API Method", "ZQ2 URL", "ZQ1 URL", "ZQ2 Time", "ZQ1 Time", "Status", "ZQ2 File", "ZQ1 File"]))
                 prompt_to_view_difference(mismatched_apis) 
+
 
 if __name__ == "__main__":
     main()

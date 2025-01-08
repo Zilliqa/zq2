@@ -12,6 +12,7 @@ Simple Terraform template of the Python provisioning script
 for the Zilliqa 2.0 validators running on GCP.
 
 templatefile() vars:
+- checkpoint_url, the ZQ2 checkpoint URL used for recover the validator nodes
 - persistence_url, the ZQ2 persistence URL used for recover the network
 - conifg, the ZQ2 validators configuration file
 - docker_image, the ZQ2 docker image (incl. version)
@@ -34,7 +35,14 @@ SPOUT_IMAGE="{{ spout_image }}"
 SECRET_KEY="{{ secret_key }}"
 GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
+CHECKPOINT_URL="{{ checkpoint_url }}"
 SUBDOMAIN=base64.b64decode(query_metadata_key("subdomain")).decode('utf-8')
+
+def mount_checkpoint_file():
+    if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
+        CHECKPOINT_FILENAME = os.path.basename(urlparse(CHECKPOINT_URL).path)
+        return f"-v /tmp/{CHECKPOINT_FILENAME}:/{CHECKPOINT_FILENAME}"
+    return ""
 
 VERSIONS={
     "zilliqa": ZQ2_IMAGE.split(":")[-1] if ZQ2_IMAGE.split(":")[-1] else "latest",
@@ -48,7 +56,7 @@ def query_metadata_ext_ip() -> str:
         "Metadata-Flavor" : "Google" })
     return r.text
 
-API_HEALTHCHECK_SCRIPT="""from flask import Flask
+HEALTHCHECK_SCRIPT="""from flask import Flask
 import requests
 from time import time
 
@@ -61,11 +69,23 @@ latest_block_number_obtained_at = 0
 def health():
     global latest_block_number
     global latest_block_number_obtained_at
-    response = requests.post(
-        "http://localhost:4201",
-        json={"jsonrpc":"2.0", "id": 1, "method": "eth_blockNumber"},
-    ).json()
-    block_number = int(response["result"], 16)
+
+    try:
+        response = requests.post(
+            "http://localhost:4201",
+            json={"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber"},
+            timeout=5  # Add a timeout to avoid hanging indefinitely
+        )
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        response_json = response.json()
+    except requests.exceptions.RequestException as e:
+        # Handle connection errors, timeouts, and HTTP errors
+        return (f"Failed to fetch block number: {e}", 500)
+    except ValueError as e:
+        # Handle JSON decoding errors
+        return (f"Invalid JSON response: {e}", 500)
+
+    block_number = int(response_json["result"], 16)
     current_time = int(time())
     print (f"block {block_number} latest {latest_block_number}")
 
@@ -76,7 +96,7 @@ def health():
     
     if latest_block_number_obtained_at + 60 < current_time:
         # no blocks for 60 seconds
-        return ("no blocks for more than 60 seconds", 500)
+        return ("no blocks for more than 60 seconds", 400)
     else:
         return (f"block {latest_block_number} since {latest_block_number_obtained_at}", 200)
 
@@ -84,14 +104,14 @@ if __name__ == "__main__":
     app.run(debug=True, port=8080, host="0.0.0.0")
 """
 
-API_HEALTHCHECK_SERVICE_DESC="""
+HEALTHCHECK_SERVICE_DESC="""
 [Unit]
 Description=Zilliqa Node Healthcheck
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'python3 /api_healthcheck.py'
-ExecStop=pkill -f /api_healthcheck.py
+ExecStart=/bin/bash -c 'python3 /healthcheck.py'
+ExecStop=pkill -f /healthcheck.py
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
@@ -107,11 +127,13 @@ ZQ2_IMAGE="{{ docker_image }}"
 
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
-    docker run -td -p 3333:3333/udp -p 4201:4201 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
+    docker container prune -f
+    docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
     --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
     -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
+    --restart=unless-stopped \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
-    ${ZQ2_IMAGE} ${1} --log-json
+    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} ${1} --log-json
 }
 
 stop() {
@@ -446,24 +468,31 @@ def go(role):
     install_docker()
     install_ops_agent()
     install_gcloud()
+    login_registry()
     match role:
-        case "validator" | "bootstrap" | "checkpoint":
+        case "bootstrap" | "checkpoint" | "api" | "persistence":
+            log("Configuring a not validator node")
+            stop_healthcheck()
+            install_healthcheck()
+            configure_logrotate()
+            pull_zq2_image()
+            stop_zq2()
+            install_zilliqa()
+            download_persistence()
+            start_zq2()
+            start_healthcheck()
+        case "validator":
             log("Configuring a validator node")
+            stop_healthcheck()
+            install_healthcheck()
             configure_logrotate()
+            pull_zq2_image()
             stop_zq2()
             install_zilliqa()
             download_persistence()
+            download_checkpoint()
             start_zq2()
-        case "api":
-            log("Configuring an API node")
-            stop_api_checkpoint()
-            install_api_checkpoint()
-            configure_logrotate()
-            stop_zq2()
-            install_zilliqa()
-            download_persistence()
-            start_zq2()
-            start_api_checkpoint()
+            start_healthcheck()
         case "apps":
             log("Configuring the blockchain app node")
             stop_apps()
@@ -535,6 +564,8 @@ def install_gcloud():
     run_or_die(sudo_noninteractive_apt_env(["apt", "update"]))
     run_or_die(sudo_noninteractive_apt_env(["sudo","apt", "install", "-y", "google-cloud-cli" ]))
 
+def login_registry():
+    run_or_die(["sudo", "bash", "-c", "gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://asia-docker.pkg.dev" ])
 
 def create_zq2_start_script():
     with open("/tmp/zq2.sh", "w") as f:
@@ -596,7 +627,7 @@ def configure_logrotate():
     with open("/etc/logrotate.d/zilliqa.conf", "w") as f:
         f.write(LOGROTATE_CONFIG)
 
-def download_persistence():
+def download_persistence_file():
     if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
         PERSISTENCE_DIR="/data"
         run_or_die(["rm", "-rf", f"{PERSISTENCE_DIR}"])
@@ -608,34 +639,58 @@ def download_persistence():
             run_or_die(["tar", "xf", f"{PERSISTENCE_FILENAME}"])
             run_or_die(["rm", "-f", f"{PERSISTENCE_FILENAME}"])
 
+def download_persistence_folder():
+    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
+        PERSISTENCE_DIR="/data"
+        run_or_die(["sudo", "rm", "-rf", f"{PERSISTENCE_DIR}"])
+        os.makedirs(PERSISTENCE_DIR, exist_ok=True)
+        run_or_die(["sudo", "gsutil", "-m", "cp", "-r", f"{PERSISTENCE_URL}/*", f"{PERSISTENCE_DIR}"])
+
+def download_persistence():
+    if PERSISTENCE_URL is not None and PERSISTENCE_URL != "":
+        if PERSISTENCE_URL.endswith(".tar.gz"):
+            download_persistence_file()
+        else:
+            download_persistence_folder()
+
+def download_checkpoint():
+    if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
+        PERSISTENCE_DIR="/data"
+        run_or_die(["rm", "-rf", f"{PERSISTENCE_DIR}"])
+        os.makedirs(PERSISTENCE_DIR, exist_ok=True)
+        CHECKPOINT_FILENAME = os.path.basename(urlparse(CHECKPOINT_URL).path)
+        run_or_die(["gsutil", "-m", "cp", f"{CHECKPOINT_URL}", f"/tmp/{CHECKPOINT_FILENAME}"])
 
 def start_zq2():
     run_or_die(["sudo", "systemctl", "start", "zilliqa"])
+
+def pull_zq2_image():
+    run_or_die(["sudo", "docker", "pull", f"{ZQ2_IMAGE}"])
 
 def stop_zq2():
     if os.path.exists("/etc/systemd/system/zilliqa.service"):
         run_or_die(["sudo", "systemctl", "stop", "zilliqa"])
     pass
 
-def install_api_checkpoint():
+def install_healthcheck():
     run_or_die(["sudo", "pip3", "install", "flask", "requests"])
-    with open("/api_healthcheck.py", "w") as f:
-        f.write(API_HEALTHCHECK_SCRIPT)
+    with open("/healthcheck.py", "w") as f:
+        f.write(HEALTHCHECK_SCRIPT)
 
-    with open("/tmp/api_healthcheck.service", "w") as f:
-        f.write(API_HEALTHCHECK_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/api_healthcheck.service","/etc/systemd/system/api_healthcheck.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/api_healthcheck.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/api_healthcheck.service", "/etc/systemd/system/multi-user.target.wants/api_healthcheck.service"])
-    run_or_die(["sudo", "systemctl", "enable", "api_healthcheck.service"])
+    with open("/tmp/healthcheck.service", "w") as f:
+        f.write(HEALTHCHECK_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/healthcheck.service","/etc/systemd/system/healthcheck.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/healthcheck.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/healthcheck.service", "/etc/systemd/system/multi-user.target.wants/healthcheck.service"])
+    run_or_die(["sudo", "systemctl", "enable", "healthcheck.service"])
 
 
-def start_api_checkpoint():
-    run_or_die(["sudo", "systemctl", "start", "api_healthcheck.service"])
+def start_healthcheck():
+    run_or_die(["sudo", "systemctl", "start", "healthcheck.service"])
 
-def stop_api_checkpoint():
-    if os.path.exists("/etc/systemd/system/api_healthcheck.service"):
-        run_or_die(["sudo", "systemctl", "stop", "api_healthcheck"])
+def stop_healthcheck():
+    if os.path.exists("/etc/systemd/system/healthcheck.service"):
+        run_or_die(["sudo", "systemctl", "stop", "healthcheck"])
     pass
 
 if __name__ == "__main__":

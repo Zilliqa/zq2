@@ -1,17 +1,23 @@
 use std::{
     net::Ipv4Addr,
     sync::{atomic::AtomicUsize, Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use anyhow::{anyhow, Result};
 use http::{header, Method};
-use jsonrpsee::RpcModule;
 use libp2p::{futures::StreamExt, PeerId};
 use node::Node;
+use opentelemetry::KeyValue;
+use opentelemetry_semantic_conventions::{
+    attribute::{
+        ERROR_TYPE, MESSAGING_DESTINATION_NAME, MESSAGING_OPERATION_NAME, MESSAGING_SYSTEM,
+    },
+    metric::MESSAGING_PROCESS_DURATION,
+};
 use tokio::{
     select,
-    sync::{mpsc, mpsc::UnboundedSender},
+    sync::mpsc::{self, UnboundedSender},
     time::{self, Instant},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -31,7 +37,6 @@ use crate::{
 pub struct NodeLauncher {
     pub node: Arc<Mutex<Node>>,
     pub config: NodeConfig,
-    pub rpc_module: RpcModule<Arc<Mutex<Node>>>,
     pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
     pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
     pub request_failures: UnboundedReceiverStream<(PeerId, OutgoingMessageFailure)>,
@@ -116,27 +121,26 @@ impl NodeLauncher {
         )?;
         let node = Arc::new(Mutex::new(node));
 
-        let rpc_module = api::rpc_module(Arc::clone(&node));
-
-        if !config.disable_rpc {
-            trace!("Launching JSON-RPC server");
+        for api_server in &config.api_servers {
+            let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
             // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
             let cors = CorsLayer::new()
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE]);
             let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
-            let port = config.json_rpc_port;
             let server = jsonrpsee::server::ServerBuilder::new()
+                .max_response_body_size(config.max_rpc_response_size)
                 .set_http_middleware(middleware)
                 .set_id_provider(EthIdProvider)
-                .build((Ipv4Addr::UNSPECIFIED, port))
+                .build((Ipv4Addr::UNSPECIFIED, api_server.port))
                 .await;
 
             match server {
                 Ok(server) => {
+                    let port = server.local_addr()?.port();
                     info!("JSON-RPC server listening on port {}", port);
-                    let handle = server.start(rpc_module.clone());
+                    let handle = server.start(rpc_module);
                     tokio::spawn(handle.stopped());
                 }
                 Err(e) => {
@@ -147,7 +151,6 @@ impl NodeLauncher {
 
         let launcher = NodeLauncher {
             node,
-            rpc_module,
             broadcasts: broadcasts_receiver,
             requests: requests_receiver,
             request_failures: request_failures_receiver,
@@ -178,42 +181,107 @@ impl NodeLauncher {
 
         self.node_launched = true;
 
+        let meter = opentelemetry::global::meter("zilliqa");
+        let messaging_process_duration = meter
+            .f64_histogram(MESSAGING_PROCESS_DURATION)
+            .with_unit("s")
+            .build();
+
         loop {
             select! {
                 message = self.broadcasts.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
+                    let mut attributes = vec![
+                        KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
+                        KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
+                        KeyValue::new(MESSAGING_DESTINATION_NAME, "broadcast"),
+                    ];
+
+                    let start = SystemTime::now();
                     if let Err(e) = self.node.lock().unwrap().handle_broadcast(source, message) {
+                        attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process broadcast message: {e}");
                     }
+                    messaging_process_duration.record(
+                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
+                        &attributes,
+                    );
                 }
                 message = self.requests.next() => {
                     let (source, id, message, response_channel) = message.expect("message stream should be infinite");
+                    let mut attributes = vec![
+                        KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
+                        KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
+                        KeyValue::new(MESSAGING_DESTINATION_NAME, "request"),
+                    ];
+
+                    let start = SystemTime::now();
                     if let Err(e) = self.node.lock().unwrap().handle_request(source, &id, message, response_channel) {
+                        attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process request message: {e}");
                     }
+                    messaging_process_duration.record(
+                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
+                        &attributes,
+                    );
                 }
                 message = self.request_failures.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
+                    let mut attributes = vec![
+                        KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
+                        KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
+                        KeyValue::new(MESSAGING_DESTINATION_NAME, "request_failure"),
+                    ];
+
+                    let start = SystemTime::now();
                     if let Err(e) = self.node.lock().unwrap().handle_request_failure(source, message) {
+                        attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process request failure message: {e}");
-                    };
+                    }
+                    messaging_process_duration.record(
+                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
+                        &attributes,
+                    );
                 }
                 message = self.responses.next() => {
                     let (source, message) = message.expect("message stream should be infinite");
+                    let mut attributes = vec![
+                        KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
+                        KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
+                        KeyValue::new(MESSAGING_DESTINATION_NAME, "response"),
+                    ];
+
+                    let start = SystemTime::now();
                     if let Err(e) = self.node.lock().unwrap().handle_response(source, message) {
+                        attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process response message: {e}");
                     }
+                    messaging_process_duration.record(
+                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
+                        &attributes,
+                    );
                 }
                 message = self.local_messages.next() => {
                     let (_source, _message) = message.expect("message stream should be infinite");
                     todo!("Local messages will need to be handled once cross-shard messaging is implemented");
                 }
                 () = &mut sleep => {
+                    let attributes = vec![
+                        KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
+                        KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
+                        KeyValue::new(MESSAGING_DESTINATION_NAME, "timeout"),
+                    ];
+
+                    let start = SystemTime::now();
                     // Send any missing blocks.
                     self.node.lock().unwrap().consensus.tick().unwrap();
                     // No messages for a while, so check if consensus wants to timeout
                     self.node.lock().unwrap().handle_timeout().unwrap();
                     sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
+                    messaging_process_duration.record(
+                        start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
+                        &attributes,
+                    );
                 },
                 r = self.reset_timeout_receiver.next() => {
                     let sleep_time = r.expect("reset timeout stream should be infinite");

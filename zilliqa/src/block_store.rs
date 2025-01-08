@@ -501,11 +501,7 @@ impl PeerInfo {
             }
             if let Some(the_n) = last_n {
                 if let Some(max_view_nr) = max_view {
-                    let start = if the_n >= max_view_nr {
-                        0
-                    } else {
-                        max_view_nr - the_n
-                    };
+                    let start = max_view_nr.saturating_sub(the_n);
                     result.with_range(&Range {
                         start,
                         end: max_view_nr,

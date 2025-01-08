@@ -40,7 +40,7 @@ use ethers::{
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
     types::{Bytes, TransactionReceipt, H256, U64},
-    utils::secret_key_to_address,
+    utils::{get_contract_address, secret_key_to_address},
 };
 use foundry_compilers::{
     artifacts::{EvmVersion, SolcInput, Source},
@@ -63,14 +63,14 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tracing::*;
 use zilliqa::{
+    api,
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, disable_rpc_default, eth_chain_id_default,
-        failed_request_sleep_duration_default, json_rpc_port_default, local_address_default,
-        max_blocks_in_flight_default, minimum_time_left_for_empty_block_default,
-        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
-        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
-        Amount, Checkpoint, ConsensusConfig, GenesisDeposit, NodeConfig,
+        block_request_limit_default, eth_chain_id_default, failed_request_sleep_duration_default,
+        max_blocks_in_flight_default, max_rpc_response_size_default, scilla_address_default,
+        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, Amount, ApiServer, Checkpoint,
+        ConsensusConfig, ContractUpgradesBlockHeights, Forks, GenesisDeposit, NodeConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -180,7 +180,8 @@ fn node(
         Arc::new(AtomicUsize::new(0)),
     )?;
     let node = Arc::new(Mutex::new(node));
-    let rpc_module: RpcModule<Arc<Mutex<Node>>> = zilliqa::api::rpc_module(node.clone());
+    let rpc_module: RpcModule<Arc<Mutex<Node>>> =
+        api::rpc_module(node.clone(), &api::all_enabled());
 
     Ok((
         TestNode {
@@ -241,12 +242,14 @@ struct Network {
     do_checkpoints: bool,
     blocks_per_epoch: u64,
     consensus_tick_countdown: u64,
+    deposit_v3_upgrade_block_height: Option<u64>,
 }
 
 impl Network {
     // This is only used in the zilliqa_macros::test macro. Consider refactoring this to a builder
     // or removing entirely (and calling new_shard there)?
     /// Create a main shard network with reasonable defaults.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rng: Arc<Mutex<ChaCha8Rng>>,
         nodes: usize,
@@ -255,6 +258,7 @@ impl Network {
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
         blocks_per_epoch: u64,
+        deposit_v3_upgrade_block_height: Option<u64>,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -267,6 +271,7 @@ impl Network {
             scilla_stdlib_dir,
             do_checkpoints,
             blocks_per_epoch,
+            deposit_v3_upgrade_block_height,
         )
     }
 
@@ -282,6 +287,7 @@ impl Network {
         scilla_stdlib_dir: String,
         do_checkpoints: bool,
         blocks_per_epoch: u64,
+        deposit_v3_upgrade_block_height: Option<u64>,
     ) -> Network {
         let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -314,16 +320,19 @@ impl Network {
             })
             .collect();
 
+        let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
+            deposit_v3: deposit_v3_upgrade_block_height,
+        };
+
         let config = NodeConfig {
             eth_chain_id: shard_id,
             consensus: ConsensusConfig {
                 genesis_deposits: genesis_deposits.clone(),
                 is_main: send_to_parent.is_none(),
                 consensus_timeout: Duration::from_secs(5),
-                minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
-                empty_block_timeout: Duration::from_millis(25),
+                block_time: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
                 scilla_stdlib_dir: scilla_stdlib_dir.clone(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
@@ -337,10 +346,18 @@ impl Network {
                 blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 total_native_token_supply: total_native_token_supply_default(),
+                scilla_call_gas_exempt_addrs: vec![
+                    // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
+                    Address::new(get_contract_address(secret_key_to_address(&genesis_key).0, 2).0),
+                ],
+                contract_upgrade_block_heights,
+                forks: Forks::default(),
             },
-            json_rpc_port: json_rpc_port_default(),
+            api_servers: vec![ApiServer {
+                port: 4201,
+                enabled_apis: api::all_enabled(),
+            }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
-            disable_rpc: disable_rpc_default(),
             data_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
@@ -350,6 +367,8 @@ impl Network {
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            enable_ots_indices: true,
+            max_rpc_response_size: max_rpc_response_size_default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -410,6 +429,7 @@ impl Network {
             blocks_per_epoch,
             scilla_stdlib_dir,
             consensus_tick_countdown: 10,
+            deposit_v3_upgrade_block_height,
         }
     }
 
@@ -432,21 +452,26 @@ impl Network {
     }
 
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
+        let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
+            deposit_v3: self.deposit_v3_upgrade_block_height,
+        };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
-            json_rpc_port: json_rpc_port_default(),
+            api_servers: vec![ApiServer {
+                port: 4201,
+                enabled_apis: api::all_enabled(),
+            }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             state_cache_size: state_cache_size_default(),
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
-            disable_rpc: disable_rpc_default(),
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
                 is_main: self.is_main(),
                 consensus_timeout: Duration::from_secs(5),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
-                empty_block_timeout: Duration::from_millis(25),
+                block_time: Duration::from_millis(25),
                 local_address: "host.docker.internal".to_owned(),
                 rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
@@ -454,19 +479,25 @@ impl Network {
                 eth_block_gas_limit: EvmGas(84000000),
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
-                minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
                 scilla_address: scilla_address_default(),
                 blocks_per_epoch: self.blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
+                scilla_call_gas_exempt_addrs: vec![Address::new(
+                    get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
+                )],
+                contract_upgrade_block_heights,
+                forks: Forks::default(),
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            enable_ots_indices: true,
+            max_rpc_response_size: max_rpc_response_size_default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
@@ -501,20 +532,6 @@ impl Network {
             .map(|n| (n.secret_key, n.onchain_key.clone()))
             .collect::<Vec<_>>();
 
-        // The initial stake of each node.
-        let stake = 32_000_000_000_000_000_000u128;
-        let genesis_deposits: Vec<_> = keys
-            .iter()
-            .map(|k| GenesisDeposit {
-                public_key: k.0.node_public_key(),
-                peer_id: k.0.to_libp2p_keypair().public().to_peer_id(),
-                stake: stake.into(),
-                reward_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true).into_addr(),
-                control_address: TransactionPublicKey::Ecdsa(*k.1.verifying_key(), true)
-                    .into_addr(),
-            })
-            .collect();
-
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
             Vec<_>,
             Vec<_>,
@@ -538,44 +555,7 @@ impl Network {
                     warn!("Failed to copy data dir over");
                 }
 
-                let config = NodeConfig {
-                    eth_chain_id: self.shard_id,
-                    allowed_timestamp_skew: allowed_timestamp_skew_default(),
-                    data_dir: None,
-                    state_cache_size: state_cache_size_default(),
-                    load_checkpoint: None,
-                    do_checkpoints: self.do_checkpoints,
-                    disable_rpc: disable_rpc_default(),
-                    json_rpc_port: json_rpc_port_default(),
-                    consensus: ConsensusConfig {
-                        genesis_deposits: genesis_deposits.clone(),
-                        is_main: self.is_main(),
-                        consensus_timeout: Duration::from_secs(5),
-                        // Give a genesis account 1 billion ZIL.
-                        genesis_accounts: Self::genesis_accounts(&self.genesis_key),
-                        empty_block_timeout: Duration::from_millis(25),
-                        rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
-                        blocks_per_hour: 3600 * 40,
-                        minimum_stake: 32_000_000_000_000_000_000u128.into(),
-                        eth_block_gas_limit: EvmGas(84000000),
-                        gas_price: 4_761_904_800_000u128.into(),
-                        local_address: local_address_default(),
-                        main_shard_id: None,
-                        minimum_time_left_for_empty_block:
-                            minimum_time_left_for_empty_block_default(),
-                        scilla_address: scilla_address_default(),
-                        blocks_per_epoch: self.blocks_per_epoch,
-                        epochs_per_checkpoint: 1,
-                        scilla_stdlib_dir: scilla_stdlib_dir_default(),
-                        scilla_ext_libs_path: scilla_ext_libs_path_default(),
-                        total_native_token_supply: total_native_token_supply_default(),
-                    },
-                    block_request_limit: block_request_limit_default(),
-                    max_blocks_in_flight: max_blocks_in_flight_default(),
-                    block_request_batch_size: block_request_batch_size_default(),
-                    state_rpc_limit: state_rpc_limit_default(),
-                    failed_request_sleep_duration: failed_request_sleep_duration_default(),
-                };
+                let config = self.nodes[i].inner.lock().unwrap().config.clone();
 
                 node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
             })
@@ -896,6 +876,7 @@ impl Network {
                                     self.scilla_stdlib_dir.clone(),
                                     self.do_checkpoints,
                                     self.blocks_per_epoch,
+                                    self.deposit_v3_upgrade_block_height,
                                 ),
                             );
                         }
@@ -1004,9 +985,20 @@ impl Network {
                                 let mut inner = node.inner.lock().unwrap();
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
-                                    inner
-                                        .handle_broadcast(source, external_message.clone())
-                                        .unwrap();
+                                    match external_message {
+                                        // Re-route Proposals from Broadcast to Requests, which is the behaviour in Production.
+                                        ExternalMessage::Proposal(_) => inner
+                                            .handle_request(
+                                                source,
+                                                "(faux-id)",
+                                                external_message.clone(),
+                                                ResponseChannel::Local,
+                                            )
+                                            .unwrap(),
+                                        _ => inner
+                                            .handle_broadcast(source, external_message.clone())
+                                            .unwrap(),
+                                    }
                                 }
                             });
                         }
@@ -1015,22 +1007,24 @@ impl Network {
             }
             AnyMessage::Response { channel, message } => {
                 info!(%message, ?channel, "response");
-                let destination = self.pending_responses.remove(channel).unwrap();
-                let (index, node) = self
-                    .nodes
-                    .iter()
-                    .enumerate()
-                    .find(|(_, n)| n.peer_id == destination)
-                    .unwrap();
-                if !self.disconnected.contains(&index) {
-                    let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
-                    span.in_scope(|| {
-                        let mut inner = node.inner.lock().unwrap();
-                        // Send to nodes only in the same shard (having same chain_id)
-                        if inner.config.eth_chain_id == sender_chain_id {
-                            inner.handle_response(source, message.clone()).unwrap();
-                        }
-                    });
+                // skip on faux response
+                if let Some(destination) = self.pending_responses.remove(channel) {
+                    let (index, node) = self
+                        .nodes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, n)| n.peer_id == destination)
+                        .unwrap();
+                    if !self.disconnected.contains(&index) {
+                        let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
+                        span.in_scope(|| {
+                            let mut inner = node.inner.lock().unwrap();
+                            // Send to nodes only in the same shard (having same chain_id)
+                            if inner.config.eth_chain_id == sender_chain_id {
+                                inner.handle_response(source, message.clone()).unwrap();
+                            }
+                        });
+                    }
                 }
             }
         }

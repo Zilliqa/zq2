@@ -7,8 +7,8 @@ use std::{
 };
 
 use alloy::{
-    consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy},
-    primitives::{keccak256, Address, Signature, TxKind, B256, U256},
+    consensus::{transaction::RlpEcdsaTx, SignableTransaction, TxEip1559, TxEip2930, TxLegacy},
+    primitives::{keccak256, Address, PrimitiveSignature, TxKind, B256, U256},
     rlp::{Encodable, Header, EMPTY_STRING_CODE},
     sol_types::SolValue,
 };
@@ -131,17 +131,17 @@ pub enum SignedTransaction {
     Legacy {
         #[serde(with = "ser_rlp")]
         tx: TxLegacy,
-        sig: Signature,
+        sig: PrimitiveSignature,
     },
     Eip2930 {
         #[serde(with = "ser_rlp")]
         tx: TxEip2930,
-        sig: Signature,
+        sig: PrimitiveSignature,
     },
     Eip1559 {
         #[serde(with = "ser_rlp")]
         tx: TxEip1559,
-        sig: Signature,
+        sig: PrimitiveSignature,
     },
     Zilliqa {
         tx: TxZilliqa,
@@ -252,9 +252,9 @@ impl SignedTransaction {
 
     pub fn sig_v(&self) -> u64 {
         match self {
-            SignedTransaction::Legacy { sig, .. } => sig.v().to_u64(),
-            SignedTransaction::Eip2930 { sig, .. } => sig.v().to_u64(),
-            SignedTransaction::Eip1559 { sig, .. } => sig.v().to_u64(),
+            SignedTransaction::Legacy { sig, .. } => sig.v() as u64,
+            SignedTransaction::Eip2930 { sig, .. } => sig.v() as u64,
+            SignedTransaction::Eip1559 { sig, .. } => sig.v() as u64,
             SignedTransaction::Zilliqa { .. } => 0,
             SignedTransaction::Intershard { .. } => 0,
         }
@@ -349,7 +349,7 @@ impl SignedTransaction {
 
     // We don't validate Zilliqa txns against their maximum cost, but against
     // the deposit size.
-    fn maximum_validation_cost(&self) -> Result<u128> {
+    pub(crate) fn maximum_validation_cost(&self) -> Result<u128> {
         match self {
             SignedTransaction::Legacy { tx, .. } => {
                 Ok(tx.gas_limit as u128 * tx.gas_price + u128::try_from(tx.value)?)
@@ -430,21 +430,9 @@ impl SignedTransaction {
     /// using [`Self::verify()`] and the `hash` field from [RecoveredTransaction].
     pub fn calculate_hash(&self) -> crypto::Hash {
         match self {
-            SignedTransaction::Legacy { tx, sig } => {
-                let mut out = BytesMut::with_capacity(1024);
-                tx.encode_with_signature_fields(sig, &mut out);
-                (keccak256(out)).into()
-            }
-            SignedTransaction::Eip2930 { tx, sig } => {
-                let mut out = BytesMut::with_capacity(1024);
-                tx.encode_with_signature(sig, &mut out, false);
-                (keccak256(out)).into()
-            }
-            SignedTransaction::Eip1559 { tx, sig } => {
-                let mut out = BytesMut::with_capacity(1024);
-                tx.encode_with_signature(sig, &mut out, false);
-                (keccak256(out)).into()
-            }
+            SignedTransaction::Legacy { tx, sig } => tx.tx_hash(sig).into(),
+            SignedTransaction::Eip2930 { tx, sig } => tx.tx_hash(sig).into(),
+            SignedTransaction::Eip1559 { tx, sig } => tx.tx_hash(sig).into(),
             SignedTransaction::Zilliqa { tx, key, .. } => {
                 let txn_data = encode_zilliqa_transaction(tx, *key);
                 crypto::Hash(Sha256::digest(txn_data).into())
@@ -590,7 +578,10 @@ impl SignedTransaction {
             return Ok(ValidationOutcome::Success);
         };
         if nonce < account.nonce {
-            warn!("Nonce is too low");
+            warn!(
+                "Nonce is too low. Txn nonce is: {}, acc: {}",
+                nonce, account.nonce
+            );
             return Ok(ValidationOutcome::NonceTooLow(nonce, account.nonce));
         }
         Ok(ValidationOutcome::Success)

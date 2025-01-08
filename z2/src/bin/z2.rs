@@ -8,13 +8,15 @@ use alloy::primitives::B256;
 use anyhow::{anyhow, Context, Result};
 use clap::{builder::ArgAction, Args, Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use libp2p::PeerId;
 use z2lib::{
-    chain,
+    chain::{self, node::NodePort},
     components::Component,
+    deployer::{ApiOperation, Metrics},
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{BlsSignature, NodePublicKey, SecretKey};
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -90,16 +92,20 @@ enum DeployerCommands {
     Deposit(DeployerActionsArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
-    /// Backup locally a node data dir
+    /// Run command over SSH in the internal network nodes
+    Ssh(DeployerSshArgs),
+    /// Backup a node data dir in the persistence bucket
     Backup(DeployerBackupArgs),
-    /// Restore a node data dir from a local backup
+    /// Restore a node data dir from a backup in the persistence bucket
     Restore(DeployerRestoreArgs),
     /// Reset a network stopping all the nodes and cleaning the /data folder
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
-    /// Generate the validators reward wallets. --force to replace if already existing
-    GenerateRewardWallets(DeployerGenerateActionsArgs),
+    /// Monitor the network nodes specified metrics
+    Monitor(DeployerMonitorArgs),
+    /// Perform operation over the network API nodes
+    Api(DeployerApiArgs),
     /// Generate the node private keys. --force to replace if already existing
     GeneratePrivateKeys(DeployerGenerateActionsArgs),
     /// Generate the genesis key. --force to replace if already existing
@@ -108,17 +114,14 @@ enum DeployerCommands {
 
 #[derive(Args, Debug)]
 pub struct DeployerNewArgs {
-    #[clap(long)]
     /// ZQ2 network name
+    #[clap(long)]
     network_name: Option<String>,
-    #[clap(long)]
     /// ZQ2 EVM chain ID
-    eth_chain_id: Option<u64>,
     #[clap(long)]
-    /// GCP project-id where the network is running
-    project_id: Option<String>,
-    #[clap(long, value_enum, value_delimiter = ',')]
+    eth_chain_id: Option<u64>,
     /// Virtual Machine roles
+    #[clap(long, value_enum, value_delimiter = ',')]
     roles: Option<Vec<chain::node::NodeRole>>,
 }
 
@@ -141,9 +144,12 @@ pub struct DeployerInstallArgs {
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
-    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-folder
     #[clap(long)]
     persistence_url: Option<String>,
+    /// gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the install will be performed only on the validator nodes
+    #[clap(long)]
+    checkpoint_url: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -168,6 +174,21 @@ pub struct DeployerActionsArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct DeployerMonitorArgs {
+    /// The metric to display. Default: block-number
+    #[clap(long)]
+    metric: Option<Metrics>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// After showing the metrics, watch for changes
+    #[clap(long)]
+    follow: bool,
+    /// The network deployer config file
+    config_file: Option<String>,
+}
+
+#[derive(Args, Debug)]
 pub struct DeployerRpcArgs {
     /// Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
     #[clap(long)]
@@ -175,27 +196,52 @@ pub struct DeployerRpcArgs {
     /// Method to run
     #[clap(long, short, about)]
     method: String,
-    /// List of parameters for the method. ie "["string_value", true]"
-    #[clap(long, short, about)]
+    /// List of parameters for the method. ie "[\"string_value\",true]"
+    #[clap(long)]
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// The port where to run the rpc call on
+    #[clap(long, short, about)]
+    port: Option<NodePort>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerSshArgs {
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// The network deployer config file
+    config_file: String,
+    /// Method to run
+    // #[clap(long, short, about, allow_hyphen_values = true, num_args = 1..)]
+    #[arg(trailing_var_arg = true)]
+    command: Vec<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerBackupArgs {
-    /// The path of the backup file
+    /// The name of the backup folder. If zip is specified, it represents the name of the zip file.
     #[clap(long, short)]
-    file: String,
+    name: Option<String>,
+    /// If specified, create a zip file containing the backup
+    #[clap(long)]
+    zip: bool,
     /// The network deployer config file
     config_file: Option<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerRestoreArgs {
-    /// The path of the backup file
+    /// The name of the backup folder. If zip is specified, it represents the name of the zip file.
     #[clap(long, short)]
-    file: String,
+    name: Option<String>,
+    /// If specified, restore the persistence from a zip file
+    #[clap(long)]
+    zip: bool,
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
@@ -222,6 +268,15 @@ pub struct DeployerGenerateGenesisArgs {
     /// Generate and replace the existing key
     #[clap(long)]
     force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerApiArgs {
+    /// The operation to perform over the API nodes
+    #[clap(long, short)]
+    operation: ApiOperation,
+    /// The network deployer config file
+    config_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -406,9 +461,9 @@ struct JoinStruct {
     /// Specify the ZQ2 chain you want join
     #[clap(long = "chain")]
     chain_name: chain::Chain,
-    /// Specify the container label to run
-    #[clap(long = "container")]
-    container: Option<String>,
+    /// Specify the tag of the image to run
+    #[clap(long)]
+    image_tag: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -431,9 +486,12 @@ struct DepositStruct {
     /// Specify the staking reward address
     #[clap(long, short)]
     reward_address: String,
-    /// Specify the Validator Proof-of-Possession
+    /// Specify the signing address
+    #[clap(long, short)]
+    signing_address: String,
+    /// Specify the Validator deposit signature
     #[clap(long)]
-    pop_signature: String,
+    deposit_auth_signature: String,
 }
 
 #[derive(Args, Debug)]
@@ -701,10 +759,6 @@ async fn main() -> Result<()> {
                     .network_name
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("--network-name is a mandatory argument"))?;
-                let project_id = arg
-                    .project_id
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("--project-id is a mandatory argument"))?;
                 let roles = arg
                     .roles
                     .clone()
@@ -712,7 +766,7 @@ async fn main() -> Result<()> {
                 let eth_chain_id = arg
                     .eth_chain_id
                     .ok_or_else(|| anyhow::anyhow!("--eth-chain-id is a mandatory argument"))?;
-                plumbing::run_deployer_new(&network_name, eth_chain_id, &project_id, roles)
+                plumbing::run_deployer_new(&network_name, eth_chain_id, roles)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer new command: {}", err)
@@ -725,11 +779,18 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
+
+                if arg.persistence_url.is_some() && arg.checkpoint_url.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "Provide only one of [--persistence-url] and [--checkpoint-url]"
+                    ));
+                }
                 plumbing::run_deployer_install(
                     &config_file,
                     arg.select,
                     arg.max_parallel,
                     arg.persistence_url.clone(),
+                    arg.checkpoint_url.clone(),
                 )
                 .await
                 .map_err(|err| {
@@ -794,14 +855,24 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             DeployerCommands::Rpc(ref args) => {
-                plumbing::run_rpc_call(
+                plumbing::run_deployer_rpc(
                     &args.method,
                     &args.params,
                     &args.config_file,
                     &args.timeout,
+                    args.select,
+                    args.port.clone().unwrap_or_default(),
                 )
                 .await
                 .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
+                Ok(())
+            }
+            DeployerCommands::Ssh(ref args) => {
+                plumbing::run_deployer_ssh(args.command.clone(), &args.config_file, args.select)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer ssh command: {}", err)
+                    })?;
                 Ok(())
             }
             DeployerCommands::Backup(ref arg) => {
@@ -810,7 +881,7 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_backup(&config_file, &arg.file)
+                plumbing::run_deployer_backup(&config_file, arg.name.clone(), arg.zip)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer backup command: {}", err)
@@ -823,11 +894,16 @@ async fn main() -> Result<()> {
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_restore(&config_file, &arg.file, arg.max_parallel)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer restore command: {}", err)
-                    })?;
+                plumbing::run_deployer_restore(
+                    &config_file,
+                    arg.max_parallel,
+                    arg.name.clone(),
+                    arg.zip,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer restore command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::Reset(ref arg) => {
@@ -854,6 +930,24 @@ async fn main() -> Result<()> {
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer restart command: {}", err)
                     })?;
+                Ok(())
+            }
+            DeployerCommands::Monitor(ref arg) => {
+                let config_file: String = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_monitor(
+                    &config_file,
+                    arg.metric.clone().unwrap_or_default(),
+                    arg.select,
+                    arg.follow,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer monitor command: {}", err)
+                })?;
                 Ok(())
             }
             DeployerCommands::GenerateGenesisKey(ref arg) => {
@@ -888,20 +982,15 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::GenerateRewardWallets(ref arg) => {
+            DeployerCommands::Api(ref arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_generate_reward_wallets(&config_file, arg.select, arg.force)
+                plumbing::run_deployer_api_operation(&config_file, arg.operation.clone())
                     .await
-                    .map_err(|err| {
-                        anyhow::anyhow!(
-                            "Failed to run deployer generate-reward-wallets command: {}",
-                            err
-                        )
-                    })?;
+                    .map_err(|err| anyhow::anyhow!("Failed to run API operation: {}", err))?;
                 Ok(())
             }
         },
@@ -946,18 +1035,23 @@ async fn main() -> Result<()> {
         },
         Commands::Join(ref args) => {
             let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain, &args.container).await?;
+            validators::gen_validator_startup_script(&chain, &args.image_tag).await?;
             Ok(())
         }
         Commands::Deposit(ref args) => {
-            let node =
-                validators::Validator::new(&args.peer_id, &args.public_key, &args.pop_signature)?;
+            let node = validators::Validator::new(
+                PeerId::from_str(&args.peer_id).unwrap(),
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap(),
+                BlsSignature::from_string(&args.deposit_auth_signature).unwrap(),
+            )?;
             let stake = validators::StakeDeposit::new(
                 node,
                 args.amount,
-                args.chain_name.clone(),
+                args.chain_name.get_endpoint()?,
                 &args.private_key,
                 &args.reward_address,
+                &args.signing_address,
             )?;
             validators::deposit_stake(&stake).await
         }

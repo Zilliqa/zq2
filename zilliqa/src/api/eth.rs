@@ -3,10 +3,9 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use alloy::{
-    consensus::{TxEip1559, TxEip2930, TxLegacy},
-    eips::{eip2930::AccessList, BlockId, BlockNumberOrTag, RpcBlockHash},
-    primitives::{Address, Bytes, Parity, Signature, TxKind, B256, U256, U64},
-    rlp::{Decodable, Header},
+    consensus::{transaction::RlpEcdsaTx, TxEip1559, TxEip2930, TxLegacy},
+    eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
+    primitives::{Address, B256, U256, U64},
     rpc::types::{
         pubsub::{self, SubscriptionKind},
         FilteredParams,
@@ -32,10 +31,12 @@ use super::{
     to_hex::ToHex,
     types::eth::{
         self, CallParams, ErrorCode, HashOrTransaction, OneOrMany, SyncingResult, SyncingStruct,
+        TransactionReceipt,
     },
 };
 use crate::{
-    api::zil::ZilAddress,
+    api::zilliqa::ZilAddress,
+    cfg::EnabledApi,
     crypto::Hash,
     error::ensure_success,
     message::Block,
@@ -47,23 +48,28 @@ use crate::{
 };
 use crate::api::types::eth::{Proof, StorageProof};
 
-pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
+pub fn rpc_module(
+    node: Arc<Mutex<Node>>,
+    enabled_apis: &[EnabledApi],
+) -> RpcModule<Arc<Mutex<Node>>> {
     let mut module = super::declare_module!(
         node,
+        enabled_apis,
         [
             ("eth_accounts", accounts),
+            ("eth_blobBaseFee", blob_base_fee),
             ("eth_blockNumber", block_number),
             ("eth_call", call),
             ("eth_chainId", chain_id),
             ("eth_estimateGas", estimate_gas),
-            ("eth_getBalance", get_balance),
-            ("eth_getCode", get_code),
-            ("eth_getStorageAt", get_storage_at),
-            ("eth_getTransactionCount", get_transaction_count),
+            ("eth_feeHistory", fee_history),
             ("eth_gasPrice", get_gas_price),
+            ("eth_getAccount", get_account),
+            ("eth_getBalance", get_balance),
             ("eth_getProof", get_proof),
-            ("eth_getBlockByNumber", get_block_by_number),
             ("eth_getBlockByHash", get_block_by_hash),
+            ("eth_getBlockByNumber", get_block_by_number),
+            ("eth_getBlockReceipts", get_block_receipts),
             (
                 "eth_getBlockTransactionCountByHash",
                 get_block_transaction_count_by_hash
@@ -72,7 +78,12 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 "eth_getBlockTransactionCountByNumber",
                 get_block_transaction_count_by_number
             ),
+            ("eth_getCode", get_code),
+            ("eth_getFilterChanges", get_filter_changes),
+            ("eth_getFilterLogs", get_filter_logs),
             ("eth_getLogs", get_logs),
+            ("eth_getProof", get_proof),
+            ("eth_getStorageAt", get_storage_at),
             (
                 "eth_getTransactionByBlockHashAndIndex",
                 get_transaction_by_block_hash_and_index
@@ -82,18 +93,28 @@ pub fn rpc_module(node: Arc<Mutex<Node>>) -> RpcModule<Arc<Mutex<Node>>> {
                 get_transaction_by_block_number_and_index
             ),
             ("eth_getTransactionByHash", get_transaction_by_hash),
+            ("eth_getTransactionCount", get_transaction_count),
             ("eth_getTransactionReceipt", get_transaction_receipt),
-            ("eth_sendRawTransaction", send_raw_transaction),
-            ("eth_getUncleCountByBlockHash", get_uncle_count),
-            ("eth_getUncleCountByBlockNumber", get_uncle_count),
             ("eth_getUncleByBlockHashAndIndex", get_uncle),
             ("eth_getUncleByBlockNumberAndIndex", get_uncle),
+            ("eth_getUncleCountByBlockHash", get_uncle_count),
+            ("eth_getUncleCountByBlockNumber", get_uncle_count),
+            ("eth_hashrate", hashrate),
+            ("eth_maxPriorityFeePerGas", max_priority_fee_per_gas),
             ("eth_mining", mining),
+            ("eth_newBlockFilter", new_block_filter),
+            ("eth_newFilter", new_filter),
+            (
+                "eth_newPendingTransactionFilter",
+                new_pending_transaction_filter
+            ),
             ("eth_protocolVersion", protocol_version),
+            ("eth_sendRawTransaction", send_raw_transaction),
+            ("eth_signTransaction", sign_transaction),
+            ("eth_simulateV1", simulate_v1),
+            ("eth_submitWork", submit_work),
             ("eth_syncing", syncing),
-            ("net_peerCount", net_peer_count),
-            ("net_listening", net_listening),
-
+            ("eth_uninstallFilter", uninstall_filter),
         ],
     );
 
@@ -255,6 +276,27 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .to_hex())
 }
 
+fn get_block_receipts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TransactionReceipt>> {
+    let block_id: BlockId = params.one()?;
+
+    let node = node.lock().unwrap();
+
+    // Get the block
+    let block = node
+        .get_block(block_id)?
+        .ok_or_else(|| anyhow!("block not found"))?;
+
+    // Get receipts for all transactions in the block
+    let mut receipts = Vec::new();
+    for tx_hash in block.transactions {
+        if let Some(receipt) = get_transaction_receipt_inner(tx_hash, &node)? {
+            receipts.push(receipt);
+        }
+    }
+
+    Ok(receipts)
+}
+
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let mut params = params.sequence();
     let address: Address = params.next()?;
@@ -357,14 +399,48 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     Ok(block)
 }
 
+pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u8; 256]> {
+    let mut logs_bloom = [0; 256];
+    for txn_receipt in node.get_transaction_receipts_in_block(block.hash())?.iter() {
+        // Ideally we'd implement a full blown bloom filter type but this'll do for now
+        txn_receipt
+            .logs
+            .clone()
+            .into_iter()
+            .map(|log| match log {
+                Log::Evm(log) => log,
+                Log::Scilla(log) => log.into_evm(),
+            })
+            .enumerate()
+            .map(|(log_index, log)| {
+                let log = eth::Log::new(
+                    log,
+                    log_index,
+                    txn_receipt.index as usize,
+                    txn_receipt.tx_hash,
+                    block.number(),
+                    block.hash(),
+                );
+
+                log.bloom(&mut logs_bloom);
+
+                log
+            })
+            .collect_vec();
+    }
+    Ok(logs_bloom)
+}
+
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
+    let logs_bloom = get_block_logs_bloom(node, block)?;
     if !full {
         let miner = node.get_proposer_reward_address(block.header)?;
-        let block_gas_limit = node.config.consensus.eth_block_gas_limit;
+        let block_gas_limit = block.gas_limit();
         Ok(eth::Block::from_block(
             block,
             miner.unwrap_or_default(),
             block_gas_limit,
+            logs_bloom,
         ))
     } else {
         let transactions = block
@@ -377,8 +453,13 @@ fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<e
             .map(|t| Ok(HashOrTransaction::Transaction(t?)))
             .collect::<Result<_>>()?;
         let miner = node.get_proposer_reward_address(block.header)?;
-        let block_gas_limit = node.config.consensus.eth_block_gas_limit;
-        let block = eth::Block::from_block(block, miner.unwrap_or_default(), block_gas_limit);
+        let block_gas_limit = block.gas_limit();
+        let block = eth::Block::from_block(
+            block,
+            miner.unwrap_or_default(),
+            block_gas_limit,
+            logs_bloom,
+        );
         Ok(eth::Block {
             transactions,
             ..block
@@ -768,94 +849,17 @@ fn parse_transaction(bytes: &[u8]) -> Result<SignedTransaction> {
 }
 
 fn parse_legacy_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
-    let mut bytes = Header::decode_bytes(&mut buf, true)?;
-
-    let nonce = u64::decode(&mut bytes)?;
-    let gas_price = u128::decode(&mut bytes)?;
-    let gas_limit = u64::decode(&mut bytes)?;
-    let to = TxKind::decode(&mut bytes)?;
-    let value = U256::decode(&mut bytes)?;
-    let input = Bytes::decode(&mut bytes)?;
-    let v = u64::decode(&mut bytes)?;
-    let r = U256::decode(&mut bytes)?;
-    let s = U256::decode(&mut bytes)?;
-
-    let sig = Signature::from_rs_and_parity(r, s, v)?;
-
-    let tx = TxLegacy {
-        chain_id: sig.v().chain_id(),
-        nonce,
-        gas_price,
-        gas_limit,
-        to,
-        value,
-        input,
-    };
-
+    let (tx, sig) = TxLegacy::rlp_decode_with_signature(&mut buf)?;
     Ok(SignedTransaction::Legacy { tx, sig })
 }
 
 fn parse_eip2930_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
-    let mut bytes = Header::decode_bytes(&mut buf, true)?;
-
-    let chain_id = u64::decode(&mut bytes)?;
-    let nonce = u64::decode(&mut bytes)?;
-    let gas_price = u128::decode(&mut bytes)?;
-    let gas_limit = u64::decode(&mut bytes)?;
-    let to = TxKind::decode(&mut bytes)?;
-    let value = U256::decode(&mut bytes)?;
-    let input = Bytes::decode(&mut bytes)?;
-    let access_list = AccessList::decode(&mut bytes)?;
-    let y_is_odd = bool::decode(&mut bytes)?;
-    let r = U256::decode(&mut bytes)?;
-    let s = U256::decode(&mut bytes)?;
-
-    let sig = Signature::from_rs_and_parity(r, s, Parity::Parity(y_is_odd))?;
-
-    let tx = TxEip2930 {
-        chain_id,
-        nonce,
-        gas_price,
-        gas_limit,
-        to,
-        value,
-        input,
-        access_list,
-    };
-
+    let (tx, sig) = TxEip2930::rlp_decode_with_signature(&mut buf)?;
     Ok(SignedTransaction::Eip2930 { tx, sig })
 }
 
 fn parse_eip1559_transaction(mut buf: &[u8]) -> Result<SignedTransaction> {
-    let mut bytes = Header::decode_bytes(&mut buf, true)?;
-
-    let chain_id = u64::decode(&mut bytes)?;
-    let nonce = u64::decode(&mut bytes)?;
-    let max_priority_fee_per_gas = u128::decode(&mut bytes)?;
-    let max_fee_per_gas = u128::decode(&mut bytes)?;
-    let gas_limit = u64::decode(&mut bytes)?;
-    let to = TxKind::decode(&mut bytes)?;
-    let value = U256::decode(&mut bytes)?;
-    let input = Bytes::decode(&mut bytes)?;
-    let access_list = AccessList::decode(&mut bytes)?;
-    let y_is_odd = bool::decode(&mut bytes)?;
-    let r = U256::decode(&mut bytes)?;
-    let s = U256::decode(&mut bytes)?;
-
-    let sig = Signature::from_rs_and_parity(r, s, Parity::Parity(y_is_odd))?;
-
-    let tx = TxEip1559 {
-        chain_id,
-        nonce,
-        max_priority_fee_per_gas,
-        max_fee_per_gas,
-        gas_limit,
-        to,
-        value,
-        input,
-        access_list,
-    };
-
+    let (tx, sig) = TxEip1559::rlp_decode_with_signature(&mut buf)?;
     Ok(SignedTransaction::Eip1559 { tx, sig })
 }
 
@@ -888,14 +892,6 @@ fn syncing(params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingResult> {
     } else {
         Ok(SyncingResult::Bool(false))
     }
-}
-
-fn net_peer_count(_: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
-    Ok("0x0".to_string())
-}
-
-fn net_listening(_: Params, _: &Arc<Mutex<Node>>) -> Result<bool> {
-    Ok(true)
 }
 
 fn get_proof(params: Params, node: &Arc<Mutex<Node>>) -> Result<Proof> {
@@ -1061,4 +1057,94 @@ async fn subscribe(
     }
 
     Ok(())
+}
+
+/// eth_blobBaseFee
+/// Returns the expected base fee for blobs in the next block
+fn blob_base_fee(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_feeHistory
+/// Returns the collection of historical gas information
+fn fee_history(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_getAccount
+/// Retrieve account details by specifying an address and a block number/tag.
+fn get_account(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_getFilterChanges
+/// Polling method for a filter, which returns an array of events that have occurred since the last poll.
+fn get_filter_changes(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_getFilterLogs
+/// Returns an array of all logs matching filter with given id.
+fn get_filter_logs(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_getProof
+/// Returns the account and storage values of the specified account including the Merkle-proof.
+fn get_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_hashrate
+/// Returns the number of hashes per second that the node is mining with.
+fn hashrate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_maxPriorityFeePerGas
+/// Get the priority fee needed to be included in a block.
+fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_newBlockFilter
+/// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
+fn new_block_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_newFilter
+/// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
+fn new_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_newPendingTransactionFilter
+/// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
+fn new_pending_transaction_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_signTransaction
+/// Signs a transaction that can be submitted to the network later using eth_sendRawTransaction
+fn sign_transaction(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_simulateV1
+/// Simulates a series of transactions at a specific block height with optional state overrides. This method allows you to test transactions with custom block and state parameters without actually submitting them to the network.
+fn simulate_v1(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_submitWork
+/// Used for submitting a proof-of-work solution.
+fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
+}
+
+/// eth_uninstallFilter
+/// It uninstalls a filter with the given filter id.
+fn uninstall_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+    todo!("Endpoint not implemented yet")
 }

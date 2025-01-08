@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ZQ_VERSION="{{ version }}"
-ZQ2_IMAGE={% if container %}"{{container}}"{% else %}"asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:${ZQ_VERSION}"{% endif %}
+ZQ2_IMAGE={% if image_tag %}"{{ image_tag }}"{% else %}"asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:${ZQ_VERSION}"{% endif %}
 CHAIN_NAME="{{ chain_name }}"
 
 NODE_PRIVATE_KEY=""
@@ -80,7 +80,9 @@ start() {
     DOCKER_COMMAND="docker run -td \
     -p 3333:3333/udp \
     -p 4201:4201 \
+    -p 4202:4202 \
     --net=host \
+    --restart=unless-stopped \
     --name zilliqa-${ZQ_VERSION} \
     -e RUST_LOG='zilliqa=debug' \
     -e RUST_BACKTRACE=1 \

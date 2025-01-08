@@ -12,7 +12,7 @@ use revm::{
     primitives::{
         Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
     },
-    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext, Inspector,
+    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
 };
 use scilla_parser::{
     ast::nodes::{
@@ -25,7 +25,7 @@ use scilla_parser::{
 use crate::{
     cfg::scilla_ext_libs_path_default,
     constants::SCILLA_INVOKE_RUNNER,
-    exec::{scilla_call, PendingState, ScillaError},
+    exec::{scilla_call, ExternalContext, PendingState, ScillaError},
     inspector::ScillaInspector,
     state::Code,
     transaction::{EvmGas, ZilAmount},
@@ -185,7 +185,11 @@ fn oog<T>() -> Result<T, PrecompileErrors> {
 }
 
 fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
-    Err(PrecompileErrors::Error(PrecompileError::other(message)))
+    Err(err_inner(message))
+}
+
+fn err_inner(message: impl Into<String>) -> PrecompileErrors {
+    PrecompileErrors::Error(PrecompileError::other(message))
 }
 
 fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
@@ -215,8 +219,9 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
 
         let mut decoder = Decoder::new(input, false);
 
-        let address = Address::detokenize(decoder.decode().unwrap());
-        let field = String::detokenize(decoder.decode().unwrap());
+        let address =
+            Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
+        let field = String::detokenize(decoder.decode().map_err(|_| err_inner("invalid field"))?);
 
         let account = match context.db.load_account(address) {
             Ok(account) => account,
@@ -327,19 +332,73 @@ impl ContextStatefulPrecompile<PendingState> for ScillaRead {
     }
 }
 
-pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>(
-    handler: &mut EvmHandler<'_, I, PendingState>,
+pub fn scilla_call_handle_register<I: ScillaInspector>(
+    handler: &mut EvmHandler<'_, ExternalContext<I>, PendingState>,
 ) {
+    // Create handler
+    let prev_handle = handler.execution.create.clone();
+    handler.execution.create = Arc::new(move |ctx, inputs| {
+        // Reserve enough space to store the caller.
+        ctx.external.callers.reserve(
+            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
+        );
+        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
+            ctx.external.callers.push(Address::ZERO);
+        }
+        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+
+        prev_handle(ctx, inputs)
+    });
+
+    // EOF create handler
+    let prev_handle = handler.execution.eofcreate.clone();
+    handler.execution.eofcreate = Arc::new(move |ctx, inputs| {
+        // Reserve enough space to store the caller.
+        ctx.external.callers.reserve(
+            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
+        );
+        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
+            ctx.external.callers.push(Address::ZERO);
+        }
+        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+
+        prev_handle(ctx, inputs)
+    });
+
     // Call handler
     let prev_handle = handler.execution.call.clone();
     handler.execution.call = Arc::new(move |ctx, inputs| {
+        // Reserve enough space to store the caller.
+        ctx.external.callers.reserve(
+            (ctx.evm.journaled_state.depth + 1).saturating_sub(ctx.external.callers.len()),
+        );
+        for _ in ctx.external.callers.len()..(ctx.evm.journaled_state.depth + 1) {
+            ctx.external.callers.push(Address::ZERO);
+        }
+        ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
+
         if inputs.bytecode_address != Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53") {
             return prev_handle(ctx, inputs);
         }
 
         let gas = Gas::new(inputs.gas_limit);
-        let outcome =
-            scilla_call_precompile(&inputs, gas.limit(), &mut ctx.evm.inner, &mut ctx.external);
+        let gas_exempt = ctx
+            .external
+            .scilla_call_gas_exempt_addrs
+            .contains(&inputs.caller);
+
+        // The behaviour is different for contracts having 21k gas and/or deployed with zq1
+        // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
+        // 2. if precompile failed and gas_exempt -> mark entire txn as failed (not only the current precompile)
+        // 3. Otherwise, let it run with what it's given and let the caller decide
+
+        let outcome = scilla_call_precompile(
+            &inputs,
+            gas.limit(),
+            &mut ctx.evm.inner,
+            &mut ctx.external,
+            gas_exempt,
+        );
 
         // Copied from `EvmContext::call_precompile`
         let mut result = InterpreterResult {
@@ -367,6 +426,22 @@ pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>
             Err(PrecompileErrors::Fatal { msg }) => return Err(EVMError::Precompile(msg)),
         }
 
+        if ctx
+            .external
+            .fork
+            .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        {
+            // If precompile failed and this is whitelisted contract -> mark entire transaction as failed
+            match result.result {
+                InstructionResult::Return => {}
+                _ => {
+                    if gas_exempt {
+                        ctx.external.enforce_transaction_failure = true;
+                    }
+                }
+            }
+        }
+
         Ok(FrameOrResult::new_call_result(
             result,
             inputs.return_memory_offset.clone(),
@@ -374,25 +449,36 @@ pub fn scilla_call_handle_register<I: Inspector<PendingState> + ScillaInspector>
     });
 }
 
-fn scilla_call_precompile(
+fn scilla_call_precompile<I: ScillaInspector>(
     input: &CallInputs,
     gas_limit: u64,
     evmctx: &mut InnerEvmContext<PendingState>,
-    inspector: &mut (impl Inspector<PendingState> + ScillaInspector),
+    external_context: &mut ExternalContext<I>,
+    gas_exempt: bool,
 ) -> PrecompileResult {
     let Ok(input_len) = u64::try_from(input.input.len()) else {
         return err("input too long");
     };
+
     let required_gas = input_len * PER_BYTE_COST + BASE_COST + EvmGas::from(SCILLA_INVOKE_RUNNER).0;
-    if gas_limit < required_gas {
+
+    if !gas_exempt && gas_limit < required_gas {
         return oog();
     }
 
     let mut decoder = Decoder::new(&input.input, false);
 
-    let address = Address::detokenize(decoder.decode().unwrap());
-    let transition = String::detokenize(decoder.decode().unwrap());
-    let keep_origin = U256::detokenize(decoder.decode().unwrap());
+    let address = Address::detokenize(decoder.decode().map_err(|_| err_inner("invalid address"))?);
+    let transition = String::detokenize(
+        decoder
+            .decode()
+            .map_err(|_| err_inner("invalid transition"))?,
+    );
+    let keep_origin = U256::detokenize(
+        decoder
+            .decode()
+            .map_err(|_| err_inner("invalid keep_origin"))?,
+    );
 
     let keep_origin = if keep_origin == U256::from(0) {
         false
@@ -455,25 +541,39 @@ fn scilla_call_precompile(
         scilla,
         evmctx.env.tx.caller,
         if keep_origin {
-            evmctx.env.tx.caller
+            if external_context
+                .fork
+                .call_mode_1_sets_caller_to_parent_caller
+            {
+                // Use the caller of the parent call-stack.
+                external_context.callers[evmctx.journaled_state.depth - 1]
+            } else {
+                // Use the original transaction signer.
+                evmctx.env.tx.caller
+            }
         } else {
             input.caller
         },
-        EvmGas(gas_limit - required_gas).into(),
+        // If this call is gas exempt the gas limit likely is not enough to invoke the Scilla call, therefore we lie
+        // and pass a large number instead.
+        if gas_exempt {
+            EvmGas(u64::MAX).into()
+        } else {
+            EvmGas(gas_limit - required_gas).into()
+        },
         address,
         ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
         serde_json::to_string(&message).unwrap(),
-        inspector,
+        &mut external_context.inspector,
         &scilla_ext_libs_path_default(),
     ) else {
         return fatal("scilla call failed");
     };
     if !&result.success {
-        if result
-            .errors
-            .values()
-            .any(|errs| errs.iter().any(|err| matches!(err, ScillaError::OutOfGas)))
-        {
+        if result.errors.values().any(|errs| {
+            errs.iter()
+                .any(|err| matches!(err, ScillaError::GasNotSufficient))
+        }) {
             return oog();
         } else {
             return err("scilla call failed");
@@ -493,7 +593,11 @@ fn scilla_call_precompile(
     // TODO(#767): Handle transfer to Scilla contract if `result.accepted`.
 
     Ok(PrecompileOutput::new(
-        required_gas + result.gas_used.0,
+        if gas_exempt {
+            u64::min(required_gas, gas_limit)
+        } else {
+            required_gas + result.gas_used.0
+        },
         Bytes::new(),
     ))
 }

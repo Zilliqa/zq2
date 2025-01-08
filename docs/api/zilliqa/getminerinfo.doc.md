@@ -8,12 +8,12 @@ miner,info,get
 
 # Status
 
-NotYetDocumented
+Deprecated
 
 # Description
 
 DS nodes no longer exist in ZQ2, so this API now returns placeholder data.
-In Zilliqa 2.0, sharding structure should be accessed via the XShard on-chain query mechanism.
+In Zilliqa 2.0, sharding structure should instead be accessed via the XShard on-chain query mechanism.
 
 # Curl
 

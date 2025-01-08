@@ -1,111 +1,27 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.20;
 
-struct Withdrawal {
-    uint256 startedAt;
-    uint256 amount;
-}
-
-// Implementation of a double-ended queue of `Withdrawal`s, backed by a circular buffer.
-library Deque {
-    struct Withdrawals {
-        Withdrawal[] values;
-        // The physical index of the first element, if it exists. If `len == 0`, the value of `head` is unimportant.
-        uint256 head;
-        // The number of elements in the queue.
-        uint256 len;
-    }
-
-    // Returns the physical index of an element, given its logical index.
-    function physicalIdx(
-        Withdrawals storage deque,
-        uint256 idx
-    ) internal view returns (uint256) {
-        uint256 physical = deque.head + idx;
-        // Wrap the physical index in case it is out-of-bounds of the buffer.
-        if (physical >= deque.values.length) {
-            return physical - deque.values.length;
-        } else {
-            return physical;
-        }
-    }
-
-    function length(Withdrawals storage deque) internal view returns (uint256) {
-        return deque.len;
-    }
-
-    // Get the element at the given logical index. Reverts if `idx >= queue.length()`.
-    function get(
-        Withdrawals storage deque,
-        uint256 idx
-    ) internal view returns (Withdrawal storage) {
-        if (idx >= deque.len) {
-            revert("element does not exist");
-        }
-
-        uint256 pIdx = physicalIdx(deque, idx);
-        return deque.values[pIdx];
-    }
-
-    // Push an empty element to the back of the queue. Returns a reference to the new element.
-    function pushBack(
-        Withdrawals storage deque
-    ) internal returns (Withdrawal storage) {
-        // Add more space in the buffer if it is full.
-        if (deque.len == deque.values.length) {
-            deque.values.push();
-        }
-
-        uint256 idx = physicalIdx(deque, deque.len);
-        deque.len += 1;
-
-        return deque.values[idx];
-    }
-
-    // Pop an element from the front of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
-    function popFront(
-        Withdrawals storage deque
-    ) internal returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        uint256 oldHead = deque.head;
-        deque.head = physicalIdx(deque, 1);
-        deque.len -= 1;
-        return deque.values[oldHead];
-    }
-
-    // Peeks the element at the back of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
-    function back(
-        Withdrawals storage deque
-    ) internal view returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        return get(deque, deque.len - 1);
-    }
-
-    // Peeks the element at the front of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
-    function front(
-        Withdrawals storage deque
-    ) internal view returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        return get(deque, 0);
-    }
-}
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {Deque, Withdrawal} from "./utils/deque.sol";
 
 using Deque for Deque.Withdrawals;
+
+/// Argument has unexpected length
+/// @param argument name of argument
+/// @param required expected length
+error UnexpectedArgumentLength(string argument, uint256 required);
+
+/// Maximum number of stakers has been reached
+error TooManyStakers();
+/// Key already staked
+error KeyAlreadyStaked();
+/// Key is not staked
+error KeyNotStaked();
+/// Stake amount less than minimum
+error StakeAmountTooLow();
+
+/// Proof of possession verification failed
+error RogueKeyCheckFailed();
 
 struct CommitteeStakerEntry {
     // The index of the value in the `stakers` array plus 1.
@@ -143,107 +59,130 @@ struct InitialStaker {
     uint256 amount;
 }
 
-contract Deposit {
-    // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
-    // is stored at index (currentEpoch() % 3).
-    Committee[3] _committee;
+contract Deposit is UUPSUpgradeable {
+    // Emitted to inform that a new staker identified by `blsPubKey`
+    // is going to be added to the committee `atFutureBlock`, increasing
+    // the total stake by `newStake`
+    event StakerAdded(bytes blsPubKey, uint256 atFutureBlock, uint256 newStake);
 
-    // All stakers. Keys into this map are stored by the `Committee`.
-    mapping(bytes => Staker) _stakersMap;
-    // Mapping from `controlAddress` to `blsPubKey` for each staker.
-    mapping(address => bytes) _stakerKeys;
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // is going to be removed from the committee `atFutureBlock`
+    event StakerRemoved(bytes blsPubKey, uint256 atFutureBlock);
 
-    // The latest epoch for which the committee was calculated. It is implied that no changes have (yet) occurred in
-    // future epochs, either because those epochs haven't happened yet or because they have happened, but no deposits
-    // or withdrawals were made.
-    uint64 latestComputedEpoch;
+    // Emitted to inform that the deposited stake of the staker
+    // identified by `blsPubKey` is going to change to `newStake`
+    // at `atFutureBlock`
+    event StakeChanged(
+        bytes blsPubKey,
+        uint256 atFutureBlock,
+        uint256 newStake
+    );
 
-    uint256 public immutable minimumStake;
-    uint256 public immutable maximumStakers;
+    // Emitted to inform that the staker identified by `blsPubKey`
+    // has updated its data that can be refetched using `getStakerData()`
+    event StakerUpdated(bytes blsPubKey);
 
-    uint64 public immutable blocksPerEpoch;
+    uint64 public constant VERSION = 2;
+
+    /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
+    struct DepositStorage {
+        // The committee in the current epoch and the 2 epochs following it. The value for the current epoch
+        // is stored at index (currentEpoch() % 3).
+        Committee[3] _committee;
+        // All stakers. Keys into this map are stored by the `Committee`.
+        mapping(bytes => Staker) _stakersMap;
+        // Mapping from `controlAddress` to `blsPubKey` for each staker.
+        mapping(address => bytes) _stakerKeys;
+        // The latest epoch for which the committee was calculated. It is implied that no changes have (yet) occurred in
+        // future epochs, either because those epochs haven't happened yet or because they have happened, but no deposits
+        // or withdrawals were made.
+        uint64 latestComputedEpoch;
+        uint256 minimumStake;
+        uint256 maximumStakers;
+        uint64 blocksPerEpoch;
+    }
 
     modifier onlyControlAddress(bytes calldata blsPubKey) {
-        require(blsPubKey.length == 48);
+        DepositStorage storage $ = _getDepositStorage();
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
         require(
-            _stakersMap[blsPubKey].controlAddress == msg.sender,
+            $._stakersMap[blsPubKey].controlAddress == msg.sender,
             "sender is not the control address"
         );
         _;
     }
 
-    constructor(
-        uint256 _minimumStake,
-        uint256 _maximumStakers,
-        uint64 _blocksPerEpoch,
-        InitialStaker[] memory initialStakers
-    ) {
-        minimumStake = _minimumStake;
-        maximumStakers = _maximumStakers;
-        blocksPerEpoch = _blocksPerEpoch;
-        latestComputedEpoch = currentEpoch();
+    // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DepositStorage")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant DEPOSIT_STORAGE_LOCATION =
+        0x958a6cf6390bd7165e3519675caa670ab90f0161508a9ee714d3db7edc507400;
 
-        for (uint i = 0; i < initialStakers.length; i++) {
-            InitialStaker memory initialStaker = initialStakers[i];
-            bytes memory blsPubKey = initialStaker.blsPubKey;
-            bytes memory peerId = initialStaker.peerId;
-            address rewardAddress = initialStaker.rewardAddress;
-            address controlAddress = initialStaker.controlAddress;
-            uint256 amount = initialStaker.amount;
-
-            require(blsPubKey.length == 48);
-            require(peerId.length == 38);
-            require(
-                controlAddress != address(0),
-                "control address cannot be zero"
-            );
-
-            Committee storage currentCommittee = committee();
-            require(
-                currentCommittee.stakerKeys.length < maximumStakers,
-                "too many stakers"
-            );
-
-            Staker storage staker = _stakersMap[blsPubKey];
-            // This must be a new staker, meaning the control address must be zero.
-            require(
-                staker.controlAddress == address(0),
-                "staker already exists"
-            );
-
-            if (amount < minimumStake) {
-                revert("stake is less than minimum stake");
-            }
-
-            _stakerKeys[controlAddress] = blsPubKey;
-            staker.peerId = peerId;
-            staker.rewardAddress = rewardAddress;
-            staker.controlAddress = controlAddress;
-
-            currentCommittee.totalStake += amount;
-            currentCommittee.stakers[blsPubKey].balance = amount;
-            currentCommittee.stakers[blsPubKey].index =
-                currentCommittee.stakerKeys.length +
-                1;
-            currentCommittee.stakerKeys.push(blsPubKey);
+    function _getDepositStorage()
+        private
+        pure
+        returns (DepositStorage storage $)
+    {
+        assembly {
+            $.slot := DEPOSIT_STORAGE_LOCATION
         }
     }
 
+    function version() public view returns (uint64) {
+        return _getInitializedVersion();
+    }
+
+    function _authorizeUpgrade(
+        // solhint-disable-next-line no-unused-vars
+        address newImplementation
+    ) internal virtual override {
+        require(
+            msg.sender == address(0),
+            "system contract must be upgraded by the system"
+        );
+    }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    // explicitly set version number in contract code
+    // solhint-disable-next-line no-empty-blocks
+    function reinitialize() public reinitializer(VERSION) {}
+
     function currentEpoch() public view returns (uint64) {
-        return uint64(block.number / blocksPerEpoch);
+        DepositStorage storage $ = _getDepositStorage();
+        return uint64(block.number / $.blocksPerEpoch);
     }
 
     function committee() private view returns (Committee storage) {
-        if (latestComputedEpoch <= currentEpoch()) {
+        DepositStorage storage $ = _getDepositStorage();
+        if ($.latestComputedEpoch <= currentEpoch()) {
             // If the current epoch is after the latest computed epoch, it is implied that no changes have happened to
             // the committee since the latest computed epoch. Therefore, it suffices to return the committee at that
             // latest computed epoch.
-            return _committee[latestComputedEpoch % 3];
+            return $._committee[$.latestComputedEpoch % 3];
         } else {
             // Otherwise, the committee has been changed. The caller who made the change will have pre-computed the
             // result for us, so we can just return it.
-            return _committee[currentEpoch() % 3];
+            return $._committee[currentEpoch() % 3];
         }
+    }
+
+    function minimumStake() public view returns (uint256) {
+        DepositStorage storage $ = _getDepositStorage();
+        return $.minimumStake;
+    }
+
+    function maximumStakers() public view returns (uint256) {
+        DepositStorage storage $ = _getDepositStorage();
+        return $.maximumStakers;
+    }
+
+    function blocksPerEpoch() public view returns (uint64) {
+        DepositStorage storage $ = _getDepositStorage();
+        return $.blocksPerEpoch;
     }
 
     function leaderFromRandomness(
@@ -252,16 +191,16 @@ contract Deposit {
         Committee storage currentCommittee = committee();
         // Get a random number in the inclusive range of 0 to (totalStake - 1)
         uint256 position = randomness % currentCommittee.totalStake;
-        uint256 cummulative_stake = 0;
+        uint256 cummulativeStake = 0;
 
         // TODO: Consider binary search for performance. Or consider an alias method for O(1) performance.
         for (uint256 i = 0; i < currentCommittee.stakerKeys.length; i++) {
             bytes memory stakerKey = currentCommittee.stakerKeys[i];
             uint256 stakedBalance = currentCommittee.stakers[stakerKey].balance;
 
-            cummulative_stake += stakedBalance;
+            cummulativeStake += stakedBalance;
 
-            if (position < cummulative_stake) {
+            if (position < cummulativeStake) {
                 return stakerKey;
             }
         }
@@ -286,28 +225,63 @@ contract Deposit {
         return committee().totalStake;
     }
 
+    function getFutureTotalStake() public view returns (uint256) {
+        DepositStorage storage $ = _getDepositStorage();
+        // if `latestComputedEpoch > currentEpoch()`
+        // then `latestComputedEpoch` determines the future committee we need
+        // otherwise there are no committee changes after `currentEpoch()`
+        // i.e. `latestComputedEpoch` determines the most recent committee
+        return $._committee[$.latestComputedEpoch % 3].totalStake;
+    }
+
     function getStakersData()
         public
         view
         returns (
             bytes[] memory stakerKeys,
+            uint256[] memory indices,
             uint256[] memory balances,
             Staker[] memory stakers
         )
     {
+        // TODO clean up doule call to _getDepositStorage() here
+        DepositStorage storage $ = _getDepositStorage();
         Committee storage currentCommittee = committee();
+
         stakerKeys = currentCommittee.stakerKeys;
         balances = new uint256[](stakerKeys.length);
         stakers = new Staker[](stakerKeys.length);
-        for (uint i = 0; i < stakerKeys.length; i++) {
+        for (uint256 i = 0; i < stakerKeys.length; i++) {
             bytes memory key = stakerKeys[i];
+            // The stakerKeys are not sorted by the stakers'
+            // index in the current committee, therefore we
+            // return the indices too, to help identify the
+            // stakers in the bit vectors stored along with
+            // BLS aggregate signatures
+            indices[i] = currentCommittee.stakers[key].index;
             balances[i] = currentCommittee.stakers[key].balance;
-            stakers[i] = _stakersMap[key];
+            stakers[i] = $._stakersMap[key];
         }
     }
 
+    function getStakerData(
+        bytes calldata blsPubKey
+    )
+        public
+        view
+        returns (uint256 index, uint256 balance, Staker memory staker)
+    {
+        DepositStorage storage $ = _getDepositStorage();
+        Committee storage currentCommittee = committee();
+        index = currentCommittee.stakers[blsPubKey].index;
+        balance = currentCommittee.stakers[blsPubKey].balance;
+        staker = $._stakersMap[blsPubKey];
+    }
+
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
-        require(blsPubKey.length == 48);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
 
         // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
         // balance will default to zero.
@@ -317,13 +291,18 @@ contract Deposit {
     function getFutureStake(
         bytes calldata blsPubKey
     ) public view returns (uint256) {
-        require(blsPubKey.length == 48);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
+        DepositStorage storage $ = _getDepositStorage();
 
         // if `latestComputedEpoch > currentEpoch()`
         // then `latestComputedEpoch` determines the future committee we need
         // otherwise there are no committee changes after `currentEpoch()`
         // i.e. `latestComputedEpoch` determines the most recent committee
-        Committee storage latestCommittee = _committee[latestComputedEpoch % 3];
+        Committee storage latestCommittee = $._committee[
+            $.latestComputedEpoch % 3
+        ];
 
         // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
         // balance will default to zero.
@@ -333,92 +312,116 @@ contract Deposit {
     function getRewardAddress(
         bytes calldata blsPubKey
     ) public view returns (address) {
-        require(blsPubKey.length == 48);
-        if (_stakersMap[blsPubKey].controlAddress == address(0)) {
-            revert("not staked");
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
         }
-        return _stakersMap[blsPubKey].rewardAddress;
+        DepositStorage storage $ = _getDepositStorage();
+        if ($._stakersMap[blsPubKey].controlAddress == address(0)) {
+            revert KeyNotStaked();
+        }
+        return $._stakersMap[blsPubKey].rewardAddress;
     }
 
     function getControlAddress(
         bytes calldata blsPubKey
     ) public view returns (address) {
-        require(blsPubKey.length == 48);
-        if (_stakersMap[blsPubKey].controlAddress == address(0)) {
-            revert("not staked");
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
         }
-        return _stakersMap[blsPubKey].controlAddress;
+        DepositStorage storage $ = _getDepositStorage();
+        if ($._stakersMap[blsPubKey].controlAddress == address(0)) {
+            revert KeyNotStaked();
+        }
+        return $._stakersMap[blsPubKey].controlAddress;
     }
 
     function setRewardAddress(
         bytes calldata blsPubKey,
         address rewardAddress
     ) public onlyControlAddress(blsPubKey) {
-        _stakersMap[blsPubKey].rewardAddress = rewardAddress;
+        DepositStorage storage $ = _getDepositStorage();
+        $._stakersMap[blsPubKey].rewardAddress = rewardAddress;
     }
 
     function setControlAddress(
         bytes calldata blsPubKey,
         address controlAddress
     ) public onlyControlAddress(blsPubKey) {
-        _stakersMap[blsPubKey].controlAddress = controlAddress;
+        DepositStorage storage $ = _getDepositStorage();
+        $._stakersMap[blsPubKey].controlAddress = controlAddress;
     }
 
     function getPeerId(
         bytes calldata blsPubKey
     ) public view returns (bytes memory) {
-        require(blsPubKey.length == 48);
-        if (_stakersMap[blsPubKey].controlAddress == address(0)) {
-            revert("not staked");
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
         }
-        return _stakersMap[blsPubKey].peerId;
+        DepositStorage storage $ = _getDepositStorage();
+        if ($._stakersMap[blsPubKey].controlAddress == address(0)) {
+            revert KeyNotStaked();
+        }
+        return $._stakersMap[blsPubKey].peerId;
     }
 
     function updateLatestComputedEpoch() internal {
+        DepositStorage storage $ = _getDepositStorage();
         // If the latest computed epoch is less than two epochs ahead of the current one, we must fill in the missing
         // epochs. This just involves copying the committee from the previous epoch to the next one. It is assumed that
         // the caller will then want to update the future epochs.
-        if (latestComputedEpoch < currentEpoch() + 2) {
-            Committee storage latestComputedCommittee = _committee[
-                latestComputedEpoch % 3
+        if ($.latestComputedEpoch < currentEpoch() + 2) {
+            Committee storage latestComputedCommittee = $._committee[
+                $.latestComputedEpoch % 3
             ];
             // Note the early exit condition if `latestComputedEpoch + 3` which ensures this loop will not run more
             // than twice. This is acceptable because we only store 3 committees at a time, so once we have updated two
             // of them to the latest computed committee, there is no more work to do.
             for (
-                uint64 i = latestComputedEpoch + 1;
-                i <= currentEpoch() + 2 && i < latestComputedEpoch + 3;
+                uint64 i = $.latestComputedEpoch + 1;
+                i <= currentEpoch() + 2 && i < $.latestComputedEpoch + 3;
                 i++
             ) {
                 // The operation we want to do is: `_committee[i % 3] = latestComputedCommittee` but we need to do it
                 // explicitly because `stakers` is a mapping.
 
                 // Delete old keys from `_committee[i % 3].stakers`.
-                for (uint j = 0; j < _committee[i % 3].stakerKeys.length; j++) {
-                    delete _committee[i % 3].stakers[
-                        _committee[i % 3].stakerKeys[j]
+                for (
+                    uint256 j = 0;
+                    j < $._committee[i % 3].stakerKeys.length;
+                    j++
+                ) {
+                    delete $._committee[i % 3].stakers[
+                        $._committee[i % 3].stakerKeys[j]
                     ];
                 }
 
-                _committee[i % 3].totalStake = latestComputedCommittee
+                $._committee[i % 3].totalStake = latestComputedCommittee
                     .totalStake;
-                _committee[i % 3].stakerKeys = latestComputedCommittee
+                $._committee[i % 3].stakerKeys = latestComputedCommittee
                     .stakerKeys;
                 for (
-                    uint j = 0;
+                    uint256 j = 0;
                     j < latestComputedCommittee.stakerKeys.length;
                     j++
                 ) {
                     bytes storage stakerKey = latestComputedCommittee
                         .stakerKeys[j];
-                    _committee[i % 3].stakers[
+                    $._committee[i % 3].stakers[
                         stakerKey
                     ] = latestComputedCommittee.stakers[stakerKey];
                 }
             }
 
-            latestComputedEpoch = currentEpoch() + 2;
+            $.latestComputedEpoch = currentEpoch() + 2;
         }
+    }
+
+    // Returns the next block number at which new stakers are added,
+    // existing ones removed and/or deposits of existing stakers change
+    function nextUpdate() public view returns (uint256 blockNumber) {
+        DepositStorage storage $ = _getDepositStorage();
+        if ($.latestComputedEpoch > currentEpoch())
+            blockNumber = $.latestComputedEpoch * $.blocksPerEpoch;
     }
 
     // keep in-sync with zilliqa/src/precompiles.rs
@@ -431,7 +434,7 @@ contract Deposit {
             signature,
             pubkey
         );
-        uint inputLength = input.length;
+        uint256 inputLength = input.length;
         bytes memory output = new bytes(32);
         bool success;
         assembly {
@@ -455,39 +458,46 @@ contract Deposit {
         bytes calldata signature,
         address rewardAddress
     ) public payable {
-        require(blsPubKey.length == 48);
-        require(peerId.length == 38);
-        require(signature.length == 96);
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
+        if (peerId.length != 38) {
+            revert UnexpectedArgumentLength("peer id", 38);
+        }
+        if (signature.length != 96) {
+            revert UnexpectedArgumentLength("signature", 96);
+        }
+        DepositStorage storage $ = _getDepositStorage();
 
         // Verify signature as a proof-of-possession of the private key.
         bool pop = _popVerify(blsPubKey, signature);
-        require(pop, "rogue key check");
-
-        Staker storage staker = _stakersMap[blsPubKey];
-
-        if (msg.value < minimumStake) {
-            revert("stake is less than minimum stake");
+        if (!pop) {
+            revert RogueKeyCheckFailed();
         }
 
-        _stakerKeys[msg.sender] = blsPubKey;
+        Staker storage staker = $._stakersMap[blsPubKey];
+
+        if (msg.value < $.minimumStake) {
+            revert StakeAmountTooLow();
+        }
+
+        $._stakerKeys[msg.sender] = blsPubKey;
         staker.peerId = peerId;
         staker.rewardAddress = rewardAddress;
         staker.controlAddress = msg.sender;
 
         updateLatestComputedEpoch();
 
-        Committee storage futureCommittee = _committee[
+        Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
         ];
 
-        require(
-            futureCommittee.stakerKeys.length < maximumStakers,
-            "too many stakers"
-        );
-        require(
-            futureCommittee.stakers[blsPubKey].index == 0,
-            "staker already exists"
-        );
+        if (futureCommittee.stakerKeys.length >= $.maximumStakers) {
+            revert TooManyStakers();
+        }
+        if (futureCommittee.stakers[blsPubKey].index != 0) {
+            revert KeyAlreadyStaked();
+        }
 
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[blsPubKey].balance = msg.value;
@@ -495,47 +505,60 @@ contract Deposit {
             futureCommittee.stakerKeys.length +
             1;
         futureCommittee.stakerKeys.push(blsPubKey);
+
+        emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
     }
 
     function depositTopup() public payable {
-        bytes storage stakerKey = _stakerKeys[msg.sender];
-        require(stakerKey.length != 0, "staker does not exist");
+        DepositStorage storage $ = _getDepositStorage();
+        bytes storage stakerKey = $._stakerKeys[msg.sender];
+        if (stakerKey.length == 0) {
+            revert KeyNotStaked();
+        }
 
         updateLatestComputedEpoch();
 
-        Committee storage futureCommittee = _committee[
+        Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
         ];
-        require(
-            futureCommittee.stakers[stakerKey].index != 0,
-            "staker does not exist"
-        );
+        if (futureCommittee.stakers[stakerKey].index == 0) {
+            revert KeyNotStaked();
+        }
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[stakerKey].balance += msg.value;
+
+        emit StakeChanged(
+            stakerKey,
+            nextUpdate(),
+            futureCommittee.stakers[stakerKey].balance
+        );
     }
 
     function unstake(uint256 amount) public {
-        bytes storage stakerKey = _stakerKeys[msg.sender];
-        require(stakerKey.length != 0, "staker does not exist");
-        Staker storage staker = _stakersMap[stakerKey];
+        DepositStorage storage $ = _getDepositStorage();
+        bytes storage stakerKey = $._stakerKeys[msg.sender];
+        if (stakerKey.length == 0) {
+            revert KeyNotStaked();
+        }
+        Staker storage staker = $._stakersMap[stakerKey];
 
         updateLatestComputedEpoch();
 
-        Committee storage futureCommittee = _committee[
+        Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
         ];
+        if (futureCommittee.stakers[stakerKey].index == 0) {
+            revert KeyNotStaked();
+        }
 
-        require(
-            futureCommittee.stakers[stakerKey].index != 0,
-            "staker does not exist"
-        );
-        require(futureCommittee.stakerKeys.length > 1, "too few stakers");
         require(
             futureCommittee.stakers[stakerKey].balance >= amount,
             "amount is greater than staked balance"
         );
 
         if (futureCommittee.stakers[stakerKey].balance - amount == 0) {
+            require(futureCommittee.stakerKeys.length > 1, "too few stakers");
+
             // Remove the staker from the future committee, because their staked amount has gone to zero.
             futureCommittee.totalStake -= amount;
 
@@ -559,16 +582,24 @@ contract Deposit {
             delete futureCommittee.stakers[stakerKey];
 
             // Note that we leave the staker in `_stakersMap` forever.
+
+            emit StakerRemoved(stakerKey, nextUpdate());
         } else {
             require(
                 futureCommittee.stakers[stakerKey].balance - amount >=
-                    minimumStake,
+                    $.minimumStake,
                 "unstaking this amount would take the validator below the minimum stake"
             );
 
             // Partial unstake. The staker stays in the committee, but with a reduced stake.
             futureCommittee.totalStake -= amount;
             futureCommittee.stakers[stakerKey].balance -= amount;
+
+            emit StakeChanged(
+                stakerKey,
+                nextUpdate(),
+                futureCommittee.stakers[stakerKey].balance
+            );
         }
 
         // Enqueue the withdrawal for this staker.
@@ -587,6 +618,7 @@ contract Deposit {
             // Add a new withdrawal to the end of the queue.
             currentWithdrawal = withdrawals.pushBack();
             currentWithdrawal.startedAt = block.timestamp;
+            currentWithdrawal.amount = 0;
         }
         currentWithdrawal.amount += amount;
     }
@@ -608,7 +640,8 @@ contract Deposit {
     function _withdraw(uint256 count) internal {
         uint256 releasedAmount = 0;
 
-        Staker storage staker = _stakersMap[_stakerKeys[msg.sender]];
+        DepositStorage storage $ = _getDepositStorage();
+        Staker storage staker = $._stakersMap[$._stakerKeys[msg.sender]];
 
         Deque.Withdrawals storage withdrawals = staker.withdrawals;
         count = (count == 0 || count > withdrawals.length())

@@ -11,6 +11,35 @@ library ScillaConnector {
      * @dev Calls a ZRC2 contract function with two arguments
      * @param target The address of the ZRC2 contract
      * @param tran_name The name of the function to call
+     */
+    function call(address target, string memory tran_name) internal {
+        bytes memory encodedArgs = abi.encode(
+            target,
+            tran_name,
+            CALL_SCILLA_WITH_THE_SAME_SENDER
+        );
+        uint256 argsLength = encodedArgs.length;
+
+        assembly {
+            let ok := call(
+                gas(),
+                SCILLA_CALL_PRECOMPILE_ADDRESS,
+                0,
+                add(encodedArgs, 0x20),
+                argsLength,
+                0x20,
+                0
+            )
+            if iszero(ok) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    /**
+     * @dev Calls a ZRC2 contract function with two arguments
+     * @param target The address of the ZRC2 contract
+     * @param tran_name The name of the function to call
      * @param arg1 The first argument to the function
      * @param arg2 The second argument to the function
      */
@@ -30,7 +59,7 @@ library ScillaConnector {
         uint256 argsLength = encodedArgs.length;
 
         assembly {
-            let alwaysSuccessForThisPrecompile := call(
+            let ok := call(
                 gas(),
                 SCILLA_CALL_PRECOMPILE_ADDRESS,
                 0,
@@ -39,6 +68,47 @@ library ScillaConnector {
                 0x20,
                 0
             )
+            if iszero(ok) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    /**
+     * @dev Calls a ZRC2 contract function with two arguments
+     * @param target The address of the ZRC2 contract
+     * @param tran_name The name of the function to call
+     * @param arg1 The first argument to the function
+     * @param arg2 The second argument to the function
+     */
+    function callWithBadGas(
+        address target,
+        string memory tran_name,
+        address arg1,
+        uint128 arg2
+    ) internal {
+        bytes memory encodedArgs = abi.encode(
+            target,
+            tran_name,
+            CALL_SCILLA_WITH_THE_SAME_SENDER,
+            arg1,
+            arg2
+        );
+        uint256 argsLength = encodedArgs.length;
+
+        assembly {
+            let ok := call(
+                21000, // This should not actually be enough to call anything.
+                SCILLA_CALL_PRECOMPILE_ADDRESS,
+                0,
+                add(encodedArgs, 0x20),
+                argsLength,
+                0x20,
+                0
+            )
+            if iszero(ok) {
+                revert(0, 0)
+            }
         }
     }
 
@@ -274,6 +344,13 @@ contract ScillaInterop {
         return scillaContract.readNestedMapUint128(varName, key1, key2);
     }
 
+    function callScillaNoArgs(
+        address scillaContract,
+        string memory transitionName
+    ) public {
+        scillaContract.call(transitionName);
+    }
+
     function callScilla(
         address scillaContract,
         string memory transitionName,
@@ -282,6 +359,18 @@ contract ScillaInterop {
         uint128 arg2
     ) public returns (uint128) {
         scillaContract.call(transitionName, arg1, arg2);
+
+        return readMapUint128(scillaContract, varName, arg1);
+    }
+
+    function callScillaWithBadGas(
+        address scillaContract,
+        string memory transitionName,
+        string memory varName,
+        address arg1,
+        uint128 arg2
+    ) public returns (uint128) {
+        scillaContract.callWithBadGas(transitionName, arg1, arg2);
 
         return readMapUint128(scillaContract, varName, arg1);
     }

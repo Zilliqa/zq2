@@ -6,7 +6,13 @@ GetDSBlockVerbose
 
 DS,block,get,verbose
 
+# Status
+
+Deprecated
+
 # Description
+
+This API is deprecated in ZQ2. It now returns a placeholder value for backwards compatibility.
 
 Returns verbose details of a specified Directory Service block.
 Deprecated in ZQ2; now returns a constant placeholder value.

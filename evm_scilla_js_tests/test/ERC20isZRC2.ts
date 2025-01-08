@@ -1,10 +1,9 @@
 import {expect} from "chai";
-import {Contract, utils} from "ethers";
+import {Contract, utils, Wallet} from "ethers";
 import hre, {ethers} from "hardhat";
 import {ScillaContract} from "hardhat-scilla-plugin";
 import {parallelizer} from "../helpers";
 import {defaultAbiCoder, toUtf8Bytes} from "ethers/lib/utils";
-import {Event} from "./subscriptions/shared";
 import {SignerWithAddress} from "@nomiclabs/hardhat-ethers/signers";
 
 function validateScillaEvent(scillaEventName: string, contractAddress: string, event: any) {
@@ -26,7 +25,7 @@ describe("ERC20 Is ZRC2", function () {
   let zrc2_contract: ScillaContract;
   let erc20_contract: Contract;
   let erc165_contract: Contract;
-  let contractOwner: SignerWithAddress;
+  let contractOwner: Wallet;
   let alice: SignerWithAddress;
   let bob: SignerWithAddress;
 

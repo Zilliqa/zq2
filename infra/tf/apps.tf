@@ -7,28 +7,13 @@ resource "google_compute_firewall" "allow_apps_external_http" {
   network = local.network_name
 
   direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = local.google_load_balancer_ip_ranges
 
   target_tags = [format("%s-%s", var.chain_name, "apps")]
 
   allow {
     protocol = "tcp"
     ports    = ["80", "8080"]
-  }
-}
-
-resource "google_compute_firewall" "allow_apps_external_https" {
-  name    = "${var.chain_name}-apps-allow-external-https"
-  network = local.network_name
-
-  direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
-
-  target_tags = [format("%s-%s", var.chain_name, "apps")]
-
-  allow {
-    protocol = "tcp"
-    ports    = ["443"]
   }
 }
 
@@ -124,6 +109,9 @@ resource "google_compute_backend_service" "spout" {
       capacity_scaler = 1.0
     }
   }
+
+  ## Attach Cloud Armor policy to the backend service
+  security_policy = module.spout_security_policies.policy.self_link
 }
 
 resource "google_compute_url_map" "apps" {
@@ -212,4 +200,38 @@ resource "google_compute_global_forwarding_rule" "faucet_https" {
   port_range            = "443"
   target                = google_compute_target_https_proxy.apps.id
   ip_address            = data.google_compute_global_address.faucet.address
+}
+
+module "spout_security_policies" {
+  source = "./modules/google-cloud-armor"
+
+  project_id          = var.project_id
+  name                = "${var.chain_name}-apps-spout"
+  description         = "Cloud Armor security policy for the ${var.chain_name} faucet"
+  default_rule_action = "deny(403)"
+  type                = "CLOUD_ARMOR"
+
+  security_rules = {
+    allow_whitelisted_ip_ranges = {
+      action        = "allow"
+      priority      = 999
+      description   = "Allow whitelisted IP address ranges"
+      src_ip_ranges = ["*"]
+    }
+  }
+
+  custom_rules = {
+    throttle = {
+      action      = "throttle"
+      priority    = 990
+      description = "Limit requests per IP"
+      expression  = "!inIpRange(origin.ip, '${local.monitoring_ip_range}')"
+      rate_limit_options = {
+        enforce_on_key                       = "IP"
+        exceed_action                        = "deny(429)"
+        rate_limit_http_request_count        = var.apps.faucet_max_hourly_requests
+        rate_limit_http_request_interval_sec = 3600
+      }
+    }
+  }
 }
