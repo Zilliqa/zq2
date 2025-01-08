@@ -77,6 +77,9 @@ contract Deposit is UUPSUpgradeable {
     // has updated its data that can be refetched using `getStakerData()`
     event StakerUpdated(bytes blsPubKey);
 
+    // Emitted to inform that a stakers position in the list of stakers (committee.stakerKeys) has changed 
+    event StakerMoved(bytes blsPubKey, uint256 newPosition, uint256 atFutureBlock);
+
     uint64 public constant VERSION = 3;
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
@@ -595,7 +598,8 @@ contract Deposit is UUPSUpgradeable {
                 // We need to remember to update the moved staker's `index` too.
                 futureCommittee.stakers[lastStakerKey].index = futureCommittee
                     .stakers[blsPubKey]
-                    .index;
+                    .index;  
+                emit StakerMoved(blsPubKey, deleteIndex, blocksPerEpoch() * (currentEpoch() + 2));
             }
 
             // It is now safe to delete the final staker in the list.
