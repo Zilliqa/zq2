@@ -527,13 +527,17 @@ impl Code {
         }
     }
 
-    pub fn scilla_code_and_init_data(self) -> Option<(String, Vec<ParamValue>)> {
+    pub fn scilla_code_and_init_data(&self) -> Option<(&str, &[ParamValue])> {
         match self {
             Code::Scilla {
                 code, init_data, ..
             } => Some((code, init_data)),
             _ => None,
         }
+    }
+
+    pub fn is_scilla(&self) -> bool {
+        matches!(self, Code::Scilla { .. })
     }
 }
 
