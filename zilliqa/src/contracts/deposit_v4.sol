@@ -100,10 +100,9 @@ contract Deposit is UUPSUpgradeable {
         if (blsPubKey.length != 48) {
             revert UnexpectedArgumentLength("bls public key", 48);
         }
-        require(
-            $._stakersMap[blsPubKey].controlAddress == msg.sender,
-            "sender is not the control address"
-        );
+        if ($._stakersMap[blsPubKey].controlAddress != msg.sender) {
+            revert Unauthorised();
+        }
         _;
     }
 
@@ -536,10 +535,7 @@ contract Deposit is UUPSUpgradeable {
         emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
     }
 
-    function depositTopup(bytes calldata blsPubKey) public payable {
-        if (blsPubKey.length != 48) {
-            revert UnexpectedArgumentLength("bls public key", 48);
-        }
+    function depositTopup(bytes calldata blsPubKey) public payable onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
 
         updateLatestComputedEpoch();
@@ -550,9 +546,7 @@ contract Deposit is UUPSUpgradeable {
         if (futureCommittee.stakers[blsPubKey].index == 0) {
             revert KeyNotStaked();
         }
-        if ($._stakersMap[blsPubKey].controlAddress != msg.sender) {
-            revert Unauthorised();
-        }
+
         futureCommittee.totalStake += msg.value;
         futureCommittee.stakers[blsPubKey].balance += msg.value;
 
@@ -563,12 +557,8 @@ contract Deposit is UUPSUpgradeable {
         );
     }
 
-    function unstake(bytes calldata blsPubKey, uint256 amount) public {
-        if (blsPubKey.length != 48) {
-            revert UnexpectedArgumentLength("bls public key", 48);
-        }
+    function unstake(bytes calldata blsPubKey, uint256 amount) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
-
 
         updateLatestComputedEpoch();
 
@@ -577,11 +567,6 @@ contract Deposit is UUPSUpgradeable {
         ];
         if (futureCommittee.stakers[blsPubKey].index == 0) {
             revert KeyNotStaked();
-        }
-
-        Staker storage staker = $._stakersMap[blsPubKey];
-        if (staker.controlAddress != msg.sender) {
-            revert Unauthorised();
         }
 
         require(
@@ -636,7 +621,7 @@ contract Deposit is UUPSUpgradeable {
         }
 
         // Enqueue the withdrawal for this staker.
-        Deque.Withdrawals storage withdrawals = staker.withdrawals;
+        Deque.Withdrawals storage withdrawals = $._stakersMap[blsPubKey].withdrawals;
         Withdrawal storage currentWithdrawal;
         // We know `withdrawals` is sorted by `startedAt`. We also know `block.number` is monotonically
         // non-decreasing. Therefore if there is an existing entry with a `startedAt = block.number`, it must be
@@ -671,20 +656,12 @@ contract Deposit is UUPSUpgradeable {
         return 2 weeks;
     }
 
-    function _withdraw(bytes calldata blsPubKey, uint256 count) internal {
-        if (blsPubKey.length != 48) {
-            revert UnexpectedArgumentLength("bls public key", 48);
-        }
+    function _withdraw(bytes calldata blsPubKey, uint256 count) internal onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
 
         uint256 releasedAmount = 0;
 
-        Staker storage staker = $._stakersMap[blsPubKey];
-        if (staker.controlAddress != msg.sender) {
-            revert Unauthorised();
-        }
-
-        Deque.Withdrawals storage withdrawals = staker.withdrawals;
+        Deque.Withdrawals storage withdrawals = $._stakersMap[blsPubKey].withdrawals;
         count = (count == 0 || count > withdrawals.length())
             ? withdrawals.length()
             : count;
