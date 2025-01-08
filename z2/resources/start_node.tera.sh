@@ -82,6 +82,7 @@ start() {
     -p 4201:4201 \
     -p 4202:4202 \
     --net=host \
+    --restart=unless-stopped \
     --name zilliqa-${ZQ_VERSION} \
     -e RUST_LOG='zilliqa=debug' \
     -e RUST_BACKTRACE=1 \

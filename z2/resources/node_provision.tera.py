@@ -56,7 +56,7 @@ def query_metadata_ext_ip() -> str:
         "Metadata-Flavor" : "Google" })
     return r.text
 
-API_HEALTHCHECK_SCRIPT="""from flask import Flask
+HEALTHCHECK_SCRIPT="""from flask import Flask
 import requests
 from time import time
 
@@ -104,14 +104,14 @@ if __name__ == "__main__":
     app.run(debug=True, port=8080, host="0.0.0.0")
 """
 
-API_HEALTHCHECK_SERVICE_DESC="""
+HEALTHCHECK_SERVICE_DESC="""
 [Unit]
 Description=Zilliqa Node Healthcheck
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'python3 /api_healthcheck.py'
-ExecStop=pkill -f /api_healthcheck.py
+ExecStart=/bin/bash -c 'python3 /healthcheck.py'
+ExecStop=pkill -f /healthcheck.py
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
@@ -131,6 +131,7 @@ start() {
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
     --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
     -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
+    --restart=unless-stopped \
     -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
     """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} ${1} --log-json
 }
@@ -469,16 +470,21 @@ def go(role):
     install_gcloud()
     login_registry()
     match role:
-        case "bootstrap" | "checkpoint":
-            log("Configuring a validator node")
+        case "bootstrap" | "checkpoint" | "api" | "persistence":
+            log("Configuring a not validator node")
+            stop_healthcheck()
+            install_healthcheck()
             configure_logrotate()
             pull_zq2_image()
             stop_zq2()
             install_zilliqa()
             download_persistence()
             start_zq2()
+            start_healthcheck()
         case "validator":
             log("Configuring a validator node")
+            stop_healthcheck()
+            install_healthcheck()
             configure_logrotate()
             pull_zq2_image()
             stop_zq2()
@@ -486,17 +492,7 @@ def go(role):
             download_persistence()
             download_checkpoint()
             start_zq2()
-        case "api" | "persistence":
-            log("Configuring an API node")
-            stop_api_healthcheck()
-            install_api_healthcheck()
-            configure_logrotate()
-            pull_zq2_image()
-            stop_zq2()
-            install_zilliqa()
-            download_persistence()
-            start_zq2()
-            start_api_healthcheck()
+            start_healthcheck()
         case "apps":
             log("Configuring the blockchain app node")
             stop_apps()
@@ -676,25 +672,25 @@ def stop_zq2():
         run_or_die(["sudo", "systemctl", "stop", "zilliqa"])
     pass
 
-def install_api_healthcheck():
+def install_healthcheck():
     run_or_die(["sudo", "pip3", "install", "flask", "requests"])
-    with open("/api_healthcheck.py", "w") as f:
-        f.write(API_HEALTHCHECK_SCRIPT)
+    with open("/healthcheck.py", "w") as f:
+        f.write(HEALTHCHECK_SCRIPT)
 
-    with open("/tmp/api_healthcheck.service", "w") as f:
-        f.write(API_HEALTHCHECK_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/api_healthcheck.service","/etc/systemd/system/api_healthcheck.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/api_healthcheck.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/api_healthcheck.service", "/etc/systemd/system/multi-user.target.wants/api_healthcheck.service"])
-    run_or_die(["sudo", "systemctl", "enable", "api_healthcheck.service"])
+    with open("/tmp/healthcheck.service", "w") as f:
+        f.write(HEALTHCHECK_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/healthcheck.service","/etc/systemd/system/healthcheck.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/healthcheck.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/healthcheck.service", "/etc/systemd/system/multi-user.target.wants/healthcheck.service"])
+    run_or_die(["sudo", "systemctl", "enable", "healthcheck.service"])
 
 
-def start_api_healthcheck():
-    run_or_die(["sudo", "systemctl", "start", "api_healthcheck.service"])
+def start_healthcheck():
+    run_or_die(["sudo", "systemctl", "start", "healthcheck.service"])
 
-def stop_api_healthcheck():
-    if os.path.exists("/etc/systemd/system/api_healthcheck.service"):
-        run_or_die(["sudo", "systemctl", "stop", "api_healthcheck"])
+def stop_healthcheck():
+    if os.path.exists("/etc/systemd/system/healthcheck.service"):
+        run_or_die(["sudo", "systemctl", "stop", "healthcheck"])
     pass
 
 if __name__ == "__main__":
