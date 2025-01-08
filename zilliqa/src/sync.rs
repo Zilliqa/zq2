@@ -48,7 +48,6 @@ use crate::{
 // 4. If it does, we inject the entire queue into the pipeline.
 // 5. We are caught up.
 
-const GAP_THRESHOLD: usize = 20; // Size of internal Proposal cache.
 const DO_SPECULATIVE: bool = false; // Speeds up syncing by speculatively fetching blocks.
 
 #[derive(Debug)]
@@ -97,6 +96,8 @@ impl Sync {
             })
             .collect();
         let peer_id = message_sender.our_peer_id;
+        let max_batch_size = config.block_request_batch_size.clamp(30, 180); // 30-180 sec of blocks at a time.
+        let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
 
         Ok(Self {
             db,
@@ -104,14 +105,14 @@ impl Sync {
             peers,
             peer_id,
             request_timeout: config.consensus.consensus_timeout,
-            max_batch_size: config.block_request_batch_size.max(31), // between 30 seconds and 3 days of blocks.
-            max_blocks_in_flight: config.max_blocks_in_flight.min(3600), // cap to 1-hr worth of blocks
+            max_batch_size,
+            max_blocks_in_flight,
             in_flight: None,
             in_pipeline: usize::MIN,
             chain_metadata: BTreeMap::new(),
             chain_segments: Vec::new(),
             state: SyncState::Phase0,
-            recent_proposals: VecDeque::with_capacity(GAP_THRESHOLD),
+            recent_proposals: VecDeque::with_capacity(max_batch_size),
         })
     }
 
@@ -125,7 +126,7 @@ impl Sync {
     /// We do not perform checks on the Proposal here. This is done in the consensus layer.
     pub fn sync_proposal(&mut self, proposal: Proposal) -> Result<()> {
         // just stuff the latest proposal into the fixed-size queue.
-        while self.recent_proposals.len() >= GAP_THRESHOLD {
+        while self.recent_proposals.len() >= self.max_batch_size {
             self.recent_proposals.pop_front();
         }
         self.recent_proposals.push_back(proposal);
