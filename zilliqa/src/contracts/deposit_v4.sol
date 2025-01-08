@@ -11,6 +11,8 @@ using Deque for Deque.Withdrawals;
 /// @param required expected length
 error UnexpectedArgumentLength(string argument, uint256 required);
 
+/// Message sender does not control the key it is attempting to modify
+error Unauthorised();
 /// Maximum number of stakers has been reached
 error TooManyStakers();
 /// Key already staked
@@ -84,8 +86,6 @@ contract Deposit is UUPSUpgradeable {
         Committee[3] _committee;
         // All stakers. Keys into this map are stored by the `Committee`.
         mapping(bytes => Staker) _stakersMap;
-        // Mapping from `controlAddress` to `blsPubKey` for each staker.
-        mapping(address => bytes) _stakerKeys;
         // The latest epoch for which the committee was calculated. It is implied that no changes have (yet) occurred in
         // future epochs, either because those epochs haven't happened yet or because they have happened, but no deposits
         // or withdrawals were made.
@@ -100,10 +100,9 @@ contract Deposit is UUPSUpgradeable {
         if (blsPubKey.length != 48) {
             revert UnexpectedArgumentLength("bls public key", 48);
         }
-        require(
-            $._stakersMap[blsPubKey].controlAddress == msg.sender,
-            "sender is not the control address"
-        );
+        if ($._stakersMap[blsPubKey].controlAddress != msg.sender) {
+            revert Unauthorised();
+        }
         _;
     }
 
@@ -369,8 +368,6 @@ contract Deposit is UUPSUpgradeable {
     ) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
         $._stakersMap[blsPubKey].controlAddress = controlAddress;
-        delete $._stakerKeys[msg.sender];
-        $._stakerKeys[controlAddress] = blsPubKey;
     }
 
     function getPeerId(
@@ -509,7 +506,6 @@ contract Deposit is UUPSUpgradeable {
             revert StakeAmountTooLow();
         }
 
-        $._stakerKeys[msg.sender] = blsPubKey;
         Staker storage staker = $._stakersMap[blsPubKey];
         staker.peerId = peerId;
         staker.rewardAddress = rewardAddress;
@@ -539,60 +535,52 @@ contract Deposit is UUPSUpgradeable {
         emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
     }
 
-    function depositTopup() public payable {
+    function depositTopup(bytes calldata blsPubKey) public payable onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
-        bytes storage stakerKey = $._stakerKeys[msg.sender];
-        if (stakerKey.length == 0) {
-            revert KeyNotStaked();
-        }
 
         updateLatestComputedEpoch();
 
         Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
         ];
-        if (futureCommittee.stakers[stakerKey].index == 0) {
+        if (futureCommittee.stakers[blsPubKey].index == 0) {
             revert KeyNotStaked();
         }
+
         futureCommittee.totalStake += msg.value;
-        futureCommittee.stakers[stakerKey].balance += msg.value;
+        futureCommittee.stakers[blsPubKey].balance += msg.value;
 
         emit StakeChanged(
-            stakerKey,
+            blsPubKey,
             nextUpdate(),
-            futureCommittee.stakers[stakerKey].balance
+            futureCommittee.stakers[blsPubKey].balance
         );
     }
 
-    function unstake(uint256 amount) public {
+    function unstake(bytes calldata blsPubKey, uint256 amount) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
-        bytes storage stakerKey = $._stakerKeys[msg.sender];
-        if (stakerKey.length == 0) {
-            revert KeyNotStaked();
-        }
-        Staker storage staker = $._stakersMap[stakerKey];
 
         updateLatestComputedEpoch();
 
         Committee storage futureCommittee = $._committee[
             (currentEpoch() + 2) % 3
         ];
-        if (futureCommittee.stakers[stakerKey].index == 0) {
+        if (futureCommittee.stakers[blsPubKey].index == 0) {
             revert KeyNotStaked();
         }
 
         require(
-            futureCommittee.stakers[stakerKey].balance >= amount,
+            futureCommittee.stakers[blsPubKey].balance >= amount,
             "amount is greater than staked balance"
         );
 
-        if (futureCommittee.stakers[stakerKey].balance - amount == 0) {
+        if (futureCommittee.stakers[blsPubKey].balance - amount == 0) {
             require(futureCommittee.stakerKeys.length > 1, "too few stakers");
 
             // Remove the staker from the future committee, because their staked amount has gone to zero.
             futureCommittee.totalStake -= amount;
 
-            uint256 deleteIndex = futureCommittee.stakers[stakerKey].index - 1;
+            uint256 deleteIndex = futureCommittee.stakers[blsPubKey].index - 1;
             uint256 lastIndex = futureCommittee.stakerKeys.length - 1;
 
             if (deleteIndex != lastIndex) {
@@ -603,37 +591,37 @@ contract Deposit is UUPSUpgradeable {
                 futureCommittee.stakerKeys[deleteIndex] = lastStakerKey;
                 // We need to remember to update the moved staker's `index` too.
                 futureCommittee.stakers[lastStakerKey].index = futureCommittee
-                    .stakers[stakerKey]
+                    .stakers[blsPubKey]
                     .index;
             }
 
             // It is now safe to delete the final staker in the list.
             futureCommittee.stakerKeys.pop();
-            delete futureCommittee.stakers[stakerKey];
+            delete futureCommittee.stakers[blsPubKey];
 
             // Note that we leave the staker in `_stakersMap` forever.
 
-            emit StakerRemoved(stakerKey, nextUpdate());
+            emit StakerRemoved(blsPubKey, nextUpdate());
         } else {
             require(
-                futureCommittee.stakers[stakerKey].balance - amount >=
+                futureCommittee.stakers[blsPubKey].balance - amount >=
                     $.minimumStake,
                 "unstaking this amount would take the validator below the minimum stake"
             );
 
             // Partial unstake. The staker stays in the committee, but with a reduced stake.
             futureCommittee.totalStake -= amount;
-            futureCommittee.stakers[stakerKey].balance -= amount;
+            futureCommittee.stakers[blsPubKey].balance -= amount;
 
             emit StakeChanged(
-                stakerKey,
+                blsPubKey,
                 nextUpdate(),
-                futureCommittee.stakers[stakerKey].balance
+                futureCommittee.stakers[blsPubKey].balance
             );
         }
 
         // Enqueue the withdrawal for this staker.
-        Deque.Withdrawals storage withdrawals = staker.withdrawals;
+        Deque.Withdrawals storage withdrawals = $._stakersMap[blsPubKey].withdrawals;
         Withdrawal storage currentWithdrawal;
         // We know `withdrawals` is sorted by `startedAt`. We also know `block.number` is monotonically
         // non-decreasing. Therefore if there is an existing entry with a `startedAt = block.number`, it must be
@@ -653,12 +641,12 @@ contract Deposit is UUPSUpgradeable {
         currentWithdrawal.amount += amount;
     }
 
-    function withdraw() public {
-        _withdraw(0);
+    function withdraw(bytes calldata blsPubKey) public {
+        _withdraw(blsPubKey, 0);
     }
 
-    function withdraw(uint256 count) public {
-        _withdraw(count);
+    function withdraw(bytes calldata blsPubKey, uint256 count) public {
+        _withdraw(blsPubKey, count);
     }
 
     /// Unbonding period for withdrawals measured in number of blocks (note that we have 1 second block times)
@@ -668,13 +656,12 @@ contract Deposit is UUPSUpgradeable {
         return 2 weeks;
     }
 
-    function _withdraw(uint256 count) internal {
+    function _withdraw(bytes calldata blsPubKey, uint256 count) internal onlyControlAddress(blsPubKey) {
+        DepositStorage storage $ = _getDepositStorage();
+
         uint256 releasedAmount = 0;
 
-        DepositStorage storage $ = _getDepositStorage();
-        Staker storage staker = $._stakersMap[$._stakerKeys[msg.sender]];
-
-        Deque.Withdrawals storage withdrawals = staker.withdrawals;
+        Deque.Withdrawals storage withdrawals = $._stakersMap[blsPubKey].withdrawals;
         count = (count == 0 || count > withdrawals.length())
             ? withdrawals.length()
             : count;
