@@ -97,6 +97,8 @@ pub enum NodeRole {
     Checkpoint,
     /// Virtual machine persistence
     Persistence,
+    /// Virtual machine query
+    Query,
     /// Virtual machine sentry
     Sentry,
 }
@@ -111,6 +113,7 @@ impl FromStr for NodeRole {
             "validator" => Ok(NodeRole::Validator),
             "checkpoint" => Ok(NodeRole::Checkpoint),
             "persistence" => Ok(NodeRole::Persistence),
+            "query" => Ok(NodeRole::Query),
             "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
@@ -126,6 +129,7 @@ impl fmt::Display for NodeRole {
             NodeRole::Validator => write!(f, "validator"),
             NodeRole::Checkpoint => write!(f, "checkpoint"),
             NodeRole::Persistence => write!(f, "persistence"),
+            NodeRole::Query => write!(f, "query"),
             NodeRole::Sentry => write!(f, "sentry"),
         }
     }
@@ -818,6 +822,12 @@ impl ChainNode {
         // Enable Otterscan indices on API nodes.
         let enable_ots_indices = self.role == NodeRole::Api;
 
+        let max_rpc_response_size = if self.role == NodeRole::Query {
+            u32::MAX
+        } else {
+            10 * 1024 * 1024
+        };
+
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
         ctx.insert("eth_chain_id", &eth_chain_id);
@@ -826,6 +836,7 @@ impl ChainNode {
         ctx.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
         ctx.insert("set_bootstrap_address", set_bootstrap_address);
         ctx.insert("genesis_address", &genesis_account.address);
+        ctx.insert("max_rpc_response_size", &max_rpc_response_size);
         ctx.insert(
             "whitelisted_evm_contract_addresses",
             &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
