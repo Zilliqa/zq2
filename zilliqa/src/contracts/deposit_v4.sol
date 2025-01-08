@@ -599,7 +599,7 @@ contract Deposit is UUPSUpgradeable {
                 futureCommittee.stakers[lastStakerKey].index = futureCommittee
                     .stakers[blsPubKey]
                     .index;  
-                emit StakerMoved(blsPubKey, deleteIndex, blocksPerEpoch() * (currentEpoch() + 2));
+                emit StakerMoved(blsPubKey, deleteIndex, nextUpdate());
             }
 
             // It is now safe to delete the final staker in the list.
