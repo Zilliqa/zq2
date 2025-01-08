@@ -352,6 +352,7 @@ contract Deposit is UUPSUpgradeable {
     ) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
         $._stakersMap[blsPubKey].rewardAddress = rewardAddress;
+        emit StakerUpdated(blsPubKey);
     }
 
     function setSigningAddress(
@@ -360,6 +361,7 @@ contract Deposit is UUPSUpgradeable {
     ) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
         $._stakersMap[blsPubKey].signingAddress = signingAddress;
+        emit StakerUpdated(blsPubKey);
     }
 
     function setControlAddress(
@@ -368,6 +370,7 @@ contract Deposit is UUPSUpgradeable {
     ) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
         $._stakersMap[blsPubKey].controlAddress = controlAddress;
+        emit StakerUpdated(blsPubKey);
     }
 
     function getPeerId(
