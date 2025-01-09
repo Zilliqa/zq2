@@ -340,6 +340,9 @@ impl Node {
                 .consensus
                 .sync
                 .handle_metadata_response(from, response)?,
+            ExternalMessage::BlockResponse(response) => {
+                self.consensus.sync.handle_block_response(from, response)?
+            }
             ExternalMessage::Acknowledgement => {}
             msg => {
                 warn!(%msg, "unexpected message type");

@@ -245,10 +245,10 @@ pub struct InjectedProposal {
 /// Used to hold metadata about the chain
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainMetaData {
-    // An encoded PeerId
-    pub block_hash: Hash,
     pub parent_hash: Hash,
+    pub block_hash: Hash,
     pub block_number: u64,
+    pub view_number: u64,
 }
 
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.

@@ -13,7 +13,10 @@ use crate::{
     cfg::NodeConfig,
     crypto::Hash,
     db::Db,
-    message::{Block, ChainMetaData, ExternalMessage, InjectedProposal, Proposal, RequestBlock},
+    message::{
+        Block, BlockResponse, ChainMetaData, ExternalMessage, InjectedProposal, Proposal,
+        RequestBlock,
+    },
     node::MessageSender,
     time::SystemTime,
 };
@@ -75,7 +78,7 @@ pub struct Sync {
     // complete chain metadata, in-memory
     chain_metadata: BTreeMap<Hash, ChainMetaData>,
     // markers to segments in the chain, and the source peer for that segment.
-    chain_segments: Vec<(PeerId, Hash, u64)>,
+    chain_segments: Vec<(PeerId, ChainMetaData)>,
     // fixed-size queue of the most recent proposals
     recent_proposals: VecDeque<Proposal>,
 }
@@ -90,6 +93,7 @@ impl Sync {
         let peers = peers
             .into_iter()
             .map(|peer_id| PeerInfo {
+                version: PeerVer::V2, // default to V2 peer
                 score: 0,
                 peer_id,
                 last_used: Instant::now(),
@@ -138,12 +142,20 @@ impl Sync {
                 if self.db.get_block_by_hash(&parent_hash)?.is_none() {
                     // No parent block, trigger sync
                     tracing::warn!("sync::SyncProposal : syncing from {parent_hash}",);
+                    let block_hash = self.recent_proposals.back().unwrap().hash();
                     let block_number = self.recent_proposals.back().unwrap().number();
-                    self.request_missing_metadata(Some((parent_hash, block_number)))?;
+                    let view_number = self.recent_proposals.back().unwrap().view();
+                    let meta = ChainMetaData {
+                        block_hash,
+                        parent_hash,
+                        block_number,
+                        view_number,
+                    };
+                    self.request_missing_metadata(Some(meta))?;
                 }
             }
             // Continue phase 1, until we hit history/genesis.
-            SyncState::Phase1(_, _) if self.in_pipeline < self.max_batch_size => {
+            SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
                 self.request_missing_metadata(None)?;
             }
             // Continue phase 2, until we have all segments.
@@ -193,9 +205,10 @@ impl Sync {
     /// Convenience function to extract metadata from the block.
     fn block_to_metadata(&self, block: Block) -> ChainMetaData {
         ChainMetaData {
-            block_number: block.number(),
-            block_hash: block.hash(),
             parent_hash: block.parent_hash(),
+            block_hash: block.hash(),
+            block_number: block.number(),
+            view_number: block.view(),
         }
     }
 
@@ -210,15 +223,18 @@ impl Sync {
         }
 
         // remove the last segment from the chain metadata
-        let (peer, hash, num) = self.chain_segments.pop().unwrap();
-        let mut key = hash;
+        let (peer, meta) = self.chain_segments.pop().unwrap();
+        let mut key = meta.parent_hash;
         while let Some(p) = self.chain_metadata.remove(&key) {
             key = p.parent_hash;
         }
 
         // allow retry from p1
-        self.state = SyncState::Phase1(hash, num);
-        tracing::info!("sync::RetryPhase1 : retrying block {hash} from {peer}");
+        tracing::info!(
+            "sync::RetryPhase1 : retrying block {} from {peer}",
+            meta.parent_hash
+        );
+        self.state = SyncState::Phase1(meta);
         if DO_SPECULATIVE {
             self.request_missing_metadata(None)?;
         }
@@ -260,7 +276,7 @@ impl Sync {
         );
 
         // Spurious response
-        let Some((peer_id, hash, _)) = self.chain_segments.last() else {
+        let Some((peer_id, meta)) = self.chain_segments.last() else {
             anyhow::bail!("sync::MultiBlockResponse: no more chain_segments!");
         };
 
@@ -272,8 +288,11 @@ impl Sync {
 
         // Segment history does not match, retry phase 1.
         let prop_hash = response.first().as_ref().unwrap().hash();
-        if *hash != prop_hash {
-            tracing::error!("sync::MultiBlockResponse : mismatched landmark {hash} != {prop_hash}");
+        if meta.parent_hash != prop_hash {
+            tracing::error!(
+                "sync::MultiBlockResponse : mismatched landmark {} != {prop_hash}",
+                meta.parent_hash
+            );
             return self.retry_phase1();
         }
 
@@ -380,9 +399,9 @@ impl Sync {
         // will be re-inserted below
         if let Some(peer) = self.get_next_peer() {
             // If we have no chain_segments, we have nothing to do
-            if let Some((peer_id, hash, _)) = self.chain_segments.last() {
+            if let Some((peer_id, meta)) = self.chain_segments.last() {
                 let mut request_hashes = Vec::with_capacity(self.max_batch_size);
-                let mut key = *hash; // start from this block
+                let mut key = meta.parent_hash; // start from this block
                 while let Some(meta) = self.chain_metadata.remove(&key) {
                     request_hashes.push(meta.block_hash);
                     key = meta.parent_hash;
@@ -411,6 +430,7 @@ impl Sync {
                 )?;
                 self.peers.push(peer); // reinsert peer, as we will be using a faux peer below
                 self.in_flight = Some(PeerInfo {
+                    version: PeerVer::V2,
                     peer_id: *peer_id,
                     last_used: std::time::Instant::now(),
                     score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
@@ -423,6 +443,26 @@ impl Sync {
             tracing::warn!(
                 "sync::RequestMissingBlocks : insufficient peers to request missing blocks"
             );
+        }
+        Ok(())
+    }
+
+    /// Handle a V1 block response
+    ///
+    /// This will be called during both Phase 1 & Phase 2 block responses.
+    /// In phase 1, it will extract the metadata and feed it into handle_metadata_response.
+    /// In phase 2, it will extract the blocks and feed it into handle_multiblock_response.
+    pub fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
+        // ...
+        match self.state {
+            // Phase 1
+            // Phase 2
+            _ => {
+                tracing::debug!(
+                    "sync::HandleBlockResponse : from={from} response={:?}",
+                    response
+                );
+            }
         }
         Ok(())
     }
@@ -451,12 +491,12 @@ impl Sync {
         }
 
         // Check the linkage of the returned chain
-        let SyncState::Phase1(p1_hash, p1_num) = self.state else {
+        let SyncState::Phase1(meta) = &self.state else {
             anyhow::bail!("sync::MetadataResponse : invalid state");
         };
 
-        let mut block_hash = p1_hash;
-        let mut block_num = p1_num;
+        let mut block_hash = meta.parent_hash;
+        let mut block_num = meta.block_number;
         for meta in response.iter() {
             // check that the block hash and number is as expected.
             if meta.block_hash != Hash::ZERO
@@ -482,13 +522,11 @@ impl Sync {
         let segment = response;
 
         // Record landmark, including peer that has this set of blocks
-        self.chain_segments.push((from, p1_hash, p1_num));
+        self.chain_segments.push((from, meta.clone()));
 
         // Record the oldest block in the chain's parent
-        self.state = SyncState::Phase1(
-            segment.last().unwrap().parent_hash,
-            segment.last().unwrap().block_number,
-        );
+        self.state = SyncState::Phase1(segment.last().cloned().unwrap());
+        let last_block_hash = segment.last().as_ref().unwrap().block_hash;
 
         tracing::info!(
             "sync::MetadataResponse : received {} metadata segment #{} from {}",
@@ -498,7 +536,6 @@ impl Sync {
         );
 
         // Record the actual chain metadata
-        let last_block_hash = segment.last().as_ref().unwrap().block_hash;
         for meta in segment {
             if self.chain_metadata.insert(meta.block_hash, meta).is_some() {
                 anyhow::bail!("loop in chain!"); // there is a possible loop in the chain
@@ -565,7 +602,7 @@ impl Sync {
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If phase 1 is in progress, it continues requesting blocks from the last known phase 1 block.
     /// Otherwise, it requests blocks from the given omega_block.
-    pub fn request_missing_metadata(&mut self, block: Option<(Hash, u64)>) -> Result<()> {
+    pub fn request_missing_metadata(&mut self, meta: Option<ChainMetaData>) -> Result<()> {
         if matches!(self.state, SyncState::Phase2(_)) || matches!(self.state, SyncState::Phase3) {
             anyhow::bail!("sync::RequestMissingMetadata : invalid state");
         }
@@ -591,17 +628,20 @@ impl Sync {
 
         if let Some(peer) = self.get_next_peer() {
             let message = match self.state {
-                SyncState::Phase1(hash, _) => ExternalMessage::MetaDataRequest(RequestBlock {
-                    request_at: SystemTime::now(),
-                    from_hash: hash,
-                    batch_size: self.max_batch_size,
-                }),
-                SyncState::Phase0 if block.is_some() => {
-                    let (hash, number) = block.unwrap();
-                    self.state = SyncState::Phase1(hash, number);
+                SyncState::Phase1(ChainMetaData { parent_hash, .. }) => {
                     ExternalMessage::MetaDataRequest(RequestBlock {
                         request_at: SystemTime::now(),
-                        from_hash: hash,
+                        from_hash: parent_hash,
+                        batch_size: self.max_batch_size,
+                    })
+                }
+                SyncState::Phase0 if meta.is_some() => {
+                    let meta = meta.unwrap();
+                    self.state = SyncState::Phase1(meta.clone());
+                    let ChainMetaData { parent_hash, .. } = meta;
+                    ExternalMessage::MetaDataRequest(RequestBlock {
+                        request_at: SystemTime::now(),
+                        from_hash: parent_hash,
                         batch_size: self.max_batch_size,
                     })
                 }
@@ -688,6 +728,16 @@ impl Sync {
     /// Downgrade a peer based on the response received.
     fn done_with_peer(&mut self, downgrade: DownGrade) {
         if let Some(mut peer) = self.in_flight.take() {
+            // TODO: Double-check version logic
+            peer.version = match downgrade {
+                // a V1 will not respond with anything to a V2 request.
+                DownGrade::Timeout if matches!(peer.version, PeerVer::V2) => PeerVer::V1,
+                // a V2 will respond with availability = None to a V1 request.
+                DownGrade::Unavailable if matches!(peer.version, PeerVer::V1) => PeerVer::V2,
+                // Otherwise, maintain
+                _ => peer.version,
+            };
+
             // Downgrade peer, if necessary
             peer.score = peer.score.saturating_add(downgrade as u32);
             // Ensure that the next peer is equal or better, to avoid a single source of truth.
@@ -703,6 +753,7 @@ impl Sync {
     pub fn add_peer(&mut self, peer: PeerId) {
         // new peers should be tried last, which gives them time to sync first.
         let new_peer = PeerInfo {
+            version: PeerVer::V2, // default V2
             score: self.peers.iter().map(|p| p.score).max().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
@@ -727,11 +778,12 @@ impl Sync {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 struct PeerInfo {
     score: u32,
     peer_id: PeerId,
     last_used: Instant,
+    version: PeerVer,
 }
 
 impl Ord for PeerInfo {
@@ -753,6 +805,7 @@ impl PartialOrd for PeerInfo {
 #[derive(Debug)]
 enum DownGrade {
     None,
+    Unavailable,
     Partial,
     Timeout,
     Empty,
@@ -762,7 +815,14 @@ enum DownGrade {
 #[derive(Debug)]
 enum SyncState {
     Phase0,
-    Phase1(Hash, u64),
+    Phase1(ChainMetaData),
     Phase2(Hash),
     Phase3,
+}
+
+/// Peer Version
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum PeerVer {
+    V1,
+    V2,
 }
