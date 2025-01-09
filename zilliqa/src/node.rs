@@ -294,11 +294,12 @@ impl Node {
                 self.handle_injected_proposal(from, p)?;
             }
             // Respond negatively to block request from old nodes
-            ExternalMessage::BlockRequest(req) => {
+            ExternalMessage::BlockRequest(_) => {
+                // respond with an invalid response
                 let message = ExternalMessage::BlockResponse(BlockResponse {
                     availability: None,
                     proposals: vec![],
-                    from_view: req.from_view,
+                    from_view: u64::MAX,
                 });
                 self.request_responses.send((response_channel, message))?;
             }

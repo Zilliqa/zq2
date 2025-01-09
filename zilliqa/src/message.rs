@@ -228,7 +228,7 @@ impl fmt::Debug for BlockResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequestBlock {
+pub struct BlockRequestV2 {
     pub request_at: SystemTime,
     pub from_hash: Hash,
     pub batch_size: usize,
@@ -286,7 +286,7 @@ pub enum ExternalMessage {
     AddPeer,
     RemovePeer,
     InjectedProposal(InjectedProposal),
-    MetaDataRequest(RequestBlock),
+    MetaDataRequest(BlockRequestV2),
     MetaDataResponse(Vec<ChainMetaData>),
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),

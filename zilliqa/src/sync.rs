@@ -14,8 +14,8 @@ use crate::{
     crypto::Hash,
     db::Db,
     message::{
-        Block, BlockRequest, BlockResponse, ChainMetaData, ExternalMessage, InjectedProposal,
-        Proposal, RequestBlock,
+        Block, BlockRequest, BlockRequestV2, BlockResponse, ChainMetaData, ExternalMessage,
+        InjectedProposal, Proposal,
     },
     node::MessageSender,
     time::SystemTime,
@@ -51,7 +51,10 @@ use crate::{
 // 4. If it does, we inject the entire queue into the pipeline.
 // 5. We are caught up.
 
-const DO_SPECULATIVE: bool = false; // Speeds up syncing by speculatively fetching blocks.
+#[cfg(debug_assertions)]
+const DO_SPECULATIVE: bool = false;
+#[cfg(not(debug_assertions))]
+const DO_SPECULATIVE: bool = true; // Speeds up syncing by speculatively fetching blocks.
 
 #[derive(Debug)]
 pub struct Sync {
@@ -81,6 +84,8 @@ pub struct Sync {
     chain_segments: Vec<(PeerInfo, ChainMetaData)>,
     // fixed-size queue of the most recent proposals
     recent_proposals: VecDeque<Proposal>,
+    // for statistics only
+    inject_at: Option<(std::time::Instant, usize)>,
 }
 
 impl Sync {
@@ -93,7 +98,7 @@ impl Sync {
         let peers = peers
             .into_iter()
             .map(|peer_id| PeerInfo {
-                version: PeerVer::V2, // default to V2 peer
+                version: PeerVer::V1, // default to V1 peer, until otherwise proven.
                 score: 0,
                 peer_id,
                 last_used: Instant::now(),
@@ -117,6 +122,7 @@ impl Sync {
             chain_segments: Vec::new(),
             state: SyncState::Phase0,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
+            inject_at: None,
         })
     }
 
@@ -215,10 +221,11 @@ impl Sync {
     /// Retry phase 1
     ///
     /// If something went wrong, phase 1 may need to be retried for the most recent segment.
-    /// Pop the segment from the landmark, and continue phase 1.
+    /// Pop the segment from the segment marker, and continue phase 1.
     fn retry_phase1(&mut self) -> Result<()> {
         if self.chain_segments.is_empty() {
             tracing::error!("sync::RetryPhase1 : cannot retry phase 1 without chain_segments!");
+            self.state = SyncState::Phase0;
             return Ok(());
         }
 
@@ -277,24 +284,14 @@ impl Sync {
         );
 
         // Spurious response
-        let Some((peer_info, meta)) = self.chain_segments.last() else {
+        let Some((peer_info, _)) = self.chain_segments.last() else {
             anyhow::bail!("sync::MultiBlockResponse: no more chain_segments!");
         };
 
-        // If the response is not from the expected peer, retry phase 2.
+        // If the response is not from the expected peer e.g. delayed response, retry phase 2.
         if peer_info.peer_id != from {
             tracing::warn!("sync::MultiBlockResponse: unknown peer {from}, will retry");
             return Ok(());
-        }
-
-        // Segment history does not match, retry phase 1.
-        let prop_hash = response.first().as_ref().unwrap().hash();
-        if meta.parent_hash != prop_hash {
-            tracing::error!(
-                "sync::MultiBlockResponse : mismatched landmark {} != {prop_hash}",
-                meta.parent_hash
-            );
-            return self.retry_phase1();
         }
 
         // If the checksum does not match, retry phase 1. Maybe the node has pruned the segment.
@@ -373,7 +370,7 @@ impl Sync {
     ///
     /// It constructs a set of hashes, which constitute the series of blocks that are missing.
     /// These hashes are then sent to a Peer for retrieval.
-    /// This is Part 2 of the syncing algorithm.
+    /// This is phase 2 of the syncing algorithm.
     fn request_missing_blocks(&mut self) -> Result<()> {
         if !matches!(self.state, SyncState::Phase2(_)) {
             anyhow::bail!("sync::RequestMissingBlocks : invalid state");
@@ -399,6 +396,9 @@ impl Sync {
 
         // will be re-inserted below
         if let Some(peer) = self.get_next_peer() {
+            // reinsert peer, as we will use a faux peer below, to force the request to go to the original responder
+            self.peers.push(peer);
+
             // If we have no chain_segments, we have nothing to do
             if let Some((peer_info, meta)) = self.chain_segments.last() {
                 let to_view = meta.view_number.saturating_sub(1);
@@ -429,8 +429,6 @@ impl Sync {
                     peer_info.peer_id,
                 );
 
-                self.peers.push(peer); // reinsert peer, as we will be using a faux peer below
-
                 let message = match peer_info.version {
                     PeerVer::V2 => {
                         self.in_flight = Some(PeerInfo {
@@ -453,9 +451,6 @@ impl Sync {
                 };
                 self.message_sender
                     .send_external_message(peer_info.peer_id, message)?;
-            } else {
-                // No more chain_segments, we're done
-                self.peers.push(peer);
             }
         } else {
             tracing::warn!(
@@ -468,14 +463,26 @@ impl Sync {
     /// Handle a V1 block response
     ///
     /// This will be called during both Phase 1 & Phase 2 block responses.
+    /// If the response if from a V2 peer, it will upgrade that peer to V2.
     /// In phase 1, it will extract the metadata and feed it into handle_metadata_response.
     /// In phase 2, it will extract the blocks and feed it into handle_multiblock_response.
     pub fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
-        // ...
+        // Upgrade to V2 peer.
+        if response.availability.is_none()
+            && response.proposals.is_empty()
+            && response.from_view == u64::MAX
+        {
+            tracing::info!("sync::HandleBlockResponse : upgrading {from} to V2",);
+            self.in_flight.as_mut().unwrap().version = PeerVer::V2;
+            self.done_with_peer(DownGrade::None);
+            return Ok(());
+        }
+
+        // Convert the V1 response into a V2 response.
         match self.state {
             // Phase 1
             SyncState::Phase1(_) => {
-                // TODO: Should be buffer the proposals? Probably not!
+                // We do not buffer the proposals, as it takes 250MB/day!
                 let metadata = response
                     .proposals
                     .into_iter()
@@ -491,11 +498,12 @@ impl Sync {
             }
             // Phase 2
             SyncState::Phase2(_) => {
-                let multi_blocks = response
+                let mut multi_blocks = response
                     .proposals
                     .into_iter()
                     .sorted_by(|a, b| b.view().cmp(&a.view()))
                     .collect_vec();
+                multi_blocks.retain(|p| self.chain_metadata.contains_key(&p.hash()));
                 self.handle_multiblock_response(from, multi_blocks)?;
             }
             _ => {
@@ -511,7 +519,8 @@ impl Sync {
     /// Handle a response to a metadata request.
     ///
     /// This is the first step in the syncing algorithm, where we receive a set of metadata and use it to
-    /// construct a chain history.
+    /// construct a chain history. We check that the metadata does indeed constitute a chain. If it does,
+    /// we record its segment marker and store the entire chain in-memory.
     pub fn handle_metadata_response(
         &mut self,
         from: PeerId,
@@ -603,7 +612,7 @@ impl Sync {
     pub fn handle_metadata_request(
         &mut self,
         from: PeerId,
-        request: RequestBlock,
+        request: BlockRequestV2,
     ) -> Result<ExternalMessage> {
         tracing::debug!(
             "sync::MetadataRequest : received a metadata request from {}",
@@ -643,7 +652,7 @@ impl Sync {
     ///
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If phase 1 is in progress, it continues requesting blocks from the last known phase 1 block.
-    /// Otherwise, it requests blocks from the given omega_block.
+    /// Otherwise, it requests blocks from the given starting metadata.
     pub fn request_missing_metadata(&mut self, meta: Option<ChainMetaData>) -> Result<()> {
         if matches!(self.state, SyncState::Phase2(_)) || matches!(self.state, SyncState::Phase3) {
             anyhow::bail!("sync::RequestMissingMetadata : invalid state");
@@ -660,7 +669,7 @@ impl Sync {
                 return Ok(());
             }
         } else if self.in_pipeline > self.max_batch_size {
-            // anything more than this and we cannot check whether the segment hits history
+            // anything more than this and we cannot be sure whether the segment hits history
             tracing::warn!(
                 "sync::RequestMissingMetadata :  syncing {} blocks in pipeline",
                 self.in_pipeline
@@ -673,7 +682,7 @@ impl Sync {
                 SyncState::Phase1(ChainMetaData { parent_hash, .. })
                     if matches!(peer.version, PeerVer::V2) =>
                 {
-                    ExternalMessage::MetaDataRequest(RequestBlock {
+                    ExternalMessage::MetaDataRequest(BlockRequestV2 {
                         request_at: SystemTime::now(),
                         from_hash: parent_hash,
                         batch_size: self.max_batch_size,
@@ -691,7 +700,7 @@ impl Sync {
                     let meta = meta.unwrap();
                     let parent_hash = meta.parent_hash;
                     self.state = SyncState::Phase1(meta);
-                    ExternalMessage::MetaDataRequest(RequestBlock {
+                    ExternalMessage::MetaDataRequest(BlockRequestV2 {
                         request_at: SystemTime::now(),
                         from_hash: parent_hash,
                         batch_size: self.max_batch_size,
@@ -727,12 +736,20 @@ impl Sync {
 
     /// Inject the proposals into the chain.
     ///
-    /// Besides pumping the set of Proposals into the processing pipeline, it also records the
-    /// last known Proposal in the pipeline. This is used for speculative fetches, and also for
-    /// knowing where to continue fetching from.
+    /// It adds the list of proposals into the pipeline for execution.
+    /// It also outputs some syncing statistics.
     fn inject_proposals(&mut self, proposals: Vec<Proposal>) -> Result<()> {
         if proposals.is_empty() {
             return Ok(());
+        }
+
+        // Output some stats
+        if let Some((when, injected)) = self.inject_at {
+            tracing::debug!(
+                "sync::InjectProposals : synced {}/{:?}",
+                injected - self.in_pipeline,
+                when.elapsed()
+            );
         }
 
         // Increment proposals injected
@@ -742,7 +759,7 @@ impl Sync {
         // Just pump the Proposals back to ourselves.
         for p in proposals {
             tracing::trace!(
-                "Injecting proposal number: {} hash: {}",
+                "sync::InjectProposals : injecting number: {} hash: {}",
                 p.number(),
                 p.hash(),
             );
@@ -755,6 +772,8 @@ impl Sync {
                 }),
             )?;
         }
+
+        self.inject_at = Some((std::time::Instant::now(), self.in_pipeline));
 
         tracing::debug!(
             "sync::InjectProposals : injected {}/{} proposals",
@@ -788,16 +807,6 @@ impl Sync {
     /// Downgrade a peer based on the response received.
     fn done_with_peer(&mut self, downgrade: DownGrade) {
         if let Some(mut peer) = self.in_flight.take() {
-            // TODO: Double-check version logic
-            peer.version = match downgrade {
-                // a V1 will not respond with anything to a V2 request.
-                DownGrade::Timeout if matches!(peer.version, PeerVer::V2) => PeerVer::V1,
-                // a V2 will respond with availability = None to a V1 request.
-                DownGrade::Unavailable if matches!(peer.version, PeerVer::V1) => PeerVer::V2,
-                // Otherwise, maintain
-                _ => peer.version,
-            };
-
             // Downgrade peer, if necessary
             peer.score = peer.score.saturating_add(downgrade as u32);
             // Ensure that the next peer is equal or better, to avoid a single source of truth.
@@ -813,7 +822,7 @@ impl Sync {
     pub fn add_peer(&mut self, peer: PeerId) {
         // new peers should be tried last, which gives them time to sync first.
         let new_peer = PeerInfo {
-            version: PeerVer::V2, // default V2
+            version: PeerVer::V1, // default V2
             score: self.peers.iter().map(|p| p.score).max().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
@@ -865,7 +874,6 @@ impl PartialOrd for PeerInfo {
 #[derive(Debug)]
 enum DownGrade {
     None,
-    Unavailable,
     Partial,
     Timeout,
     Empty,
