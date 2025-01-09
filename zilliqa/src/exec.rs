@@ -1627,7 +1627,7 @@ fn scilla_create(
     let transitions = contract_info.transitions;
 
     let account = state.load_account(contract_address)?;
-    account.account.balance = txn.amount.get();
+    account.account.balance += txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
         init_data,
