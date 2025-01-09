@@ -301,7 +301,7 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         let stake = validators::StakeDeposit::new(
             validator,
             VALIDATOR_DEPOSIT_IN_MILLIONS,
-            chain.chain()?.get_endpoint()?,
+            chain.chain()?.get_api_endpoint()?,
             &genesis_private_key,
             ZERO_ACCOUNT,
             ZERO_ACCOUNT,
