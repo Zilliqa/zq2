@@ -77,8 +77,12 @@ contract Deposit is UUPSUpgradeable {
     // has updated its data that can be refetched using `getStakerData()`
     event StakerUpdated(bytes blsPubKey);
 
-    // Emitted to inform that a stakers position in the list of stakers (committee.stakerKeys) has changed 
-    event StakerMoved(bytes blsPubKey, uint256 newPosition, uint256 atFutureBlock);
+    // Emitted to inform that a stakers position in the list of stakers (committee.stakerKeys) has changed
+    event StakerMoved(
+        bytes blsPubKey,
+        uint256 newPosition,
+        uint256 atFutureBlock
+    );
 
     uint64 public constant VERSION = 3;
 
@@ -541,7 +545,9 @@ contract Deposit is UUPSUpgradeable {
         emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
     }
 
-    function depositTopup(bytes calldata blsPubKey) public payable onlyControlAddress(blsPubKey) {
+    function depositTopup(
+        bytes calldata blsPubKey
+    ) public payable onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
 
         updateLatestComputedEpoch();
@@ -563,7 +569,10 @@ contract Deposit is UUPSUpgradeable {
         );
     }
 
-    function unstake(bytes calldata blsPubKey, uint256 amount) public onlyControlAddress(blsPubKey) {
+    function unstake(
+        bytes calldata blsPubKey,
+        uint256 amount
+    ) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
 
         updateLatestComputedEpoch();
@@ -598,7 +607,7 @@ contract Deposit is UUPSUpgradeable {
                 // We need to remember to update the moved staker's `index` too.
                 futureCommittee.stakers[lastStakerKey].index = futureCommittee
                     .stakers[blsPubKey]
-                    .index;  
+                    .index;
                 emit StakerMoved(lastStakerKey, deleteIndex, nextUpdate());
             }
 
@@ -628,7 +637,9 @@ contract Deposit is UUPSUpgradeable {
         }
 
         // Enqueue the withdrawal for this staker.
-        Deque.Withdrawals storage withdrawals = $._stakersMap[blsPubKey].withdrawals;
+        Deque.Withdrawals storage withdrawals = $
+            ._stakersMap[blsPubKey]
+            .withdrawals;
         Withdrawal storage currentWithdrawal;
         // We know `withdrawals` is sorted by `startedAt`. We also know `block.number` is monotonically
         // non-decreasing. Therefore if there is an existing entry with a `startedAt = block.number`, it must be
@@ -663,12 +674,17 @@ contract Deposit is UUPSUpgradeable {
         return 2 weeks;
     }
 
-    function _withdraw(bytes calldata blsPubKey, uint256 count) internal onlyControlAddress(blsPubKey) {
+    function _withdraw(
+        bytes calldata blsPubKey,
+        uint256 count
+    ) internal onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
 
         uint256 releasedAmount = 0;
 
-        Deque.Withdrawals storage withdrawals = $._stakersMap[blsPubKey].withdrawals;
+        Deque.Withdrawals storage withdrawals = $
+            ._stakersMap[blsPubKey]
+            .withdrawals;
         count = (count == 0 || count > withdrawals.length())
             ? withdrawals.length()
             : count;
