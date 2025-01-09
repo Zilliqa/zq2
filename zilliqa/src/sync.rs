@@ -14,8 +14,8 @@ use crate::{
     crypto::Hash,
     db::Db,
     message::{
-        Block, BlockResponse, ChainMetaData, ExternalMessage, InjectedProposal, Proposal,
-        RequestBlock,
+        Block, BlockRequest, BlockResponse, ChainMetaData, ExternalMessage, InjectedProposal,
+        Proposal, RequestBlock,
     },
     node::MessageSender,
     time::SystemTime,
@@ -78,7 +78,7 @@ pub struct Sync {
     // complete chain metadata, in-memory
     chain_metadata: BTreeMap<Hash, ChainMetaData>,
     // markers to segments in the chain, and the source peer for that segment.
-    chain_segments: Vec<(PeerId, ChainMetaData)>,
+    chain_segments: Vec<(PeerInfo, ChainMetaData)>,
     // fixed-size queue of the most recent proposals
     recent_proposals: VecDeque<Proposal>,
 }
@@ -223,7 +223,7 @@ impl Sync {
         }
 
         // remove the last segment from the chain metadata
-        let (peer, meta) = self.chain_segments.pop().unwrap();
+        let (peer_info, meta) = self.chain_segments.pop().unwrap();
         let mut key = meta.parent_hash;
         while let Some(p) = self.chain_metadata.remove(&key) {
             key = p.parent_hash;
@@ -231,8 +231,9 @@ impl Sync {
 
         // allow retry from p1
         tracing::info!(
-            "sync::RetryPhase1 : retrying block {} from {peer}",
-            meta.parent_hash
+            "sync::RetryPhase1 : retrying block {} from {}",
+            meta.parent_hash,
+            peer_info.peer_id,
         );
         self.state = SyncState::Phase1(meta);
         if DO_SPECULATIVE {
@@ -276,12 +277,12 @@ impl Sync {
         );
 
         // Spurious response
-        let Some((peer_id, meta)) = self.chain_segments.last() else {
+        let Some((peer_info, meta)) = self.chain_segments.last() else {
             anyhow::bail!("sync::MultiBlockResponse: no more chain_segments!");
         };
 
         // If the response is not from the expected peer, retry phase 2.
-        if *peer_id != from {
+        if peer_info.peer_id != from {
             tracing::warn!("sync::MultiBlockResponse: unknown peer {from}, will retry");
             return Ok(());
         }
@@ -399,12 +400,15 @@ impl Sync {
         // will be re-inserted below
         if let Some(peer) = self.get_next_peer() {
             // If we have no chain_segments, we have nothing to do
-            if let Some((peer_id, meta)) = self.chain_segments.last() {
+            if let Some((peer_info, meta)) = self.chain_segments.last() {
+                let to_view = meta.view_number.saturating_sub(1);
+                let mut from_view = meta.view_number;
                 let mut request_hashes = Vec::with_capacity(self.max_batch_size);
                 let mut key = meta.parent_hash; // start from this block
                 while let Some(meta) = self.chain_metadata.remove(&key) {
                     request_hashes.push(meta.block_hash);
                     key = meta.parent_hash;
+                    from_view = meta.view_number;
                     self.chain_metadata.insert(meta.block_hash, meta); // reinsert, for retries
                 }
 
@@ -422,19 +426,33 @@ impl Sync {
                     "sync::RequestMissingBlocks : requesting {} blocks of segment #{} from {}",
                     request_hashes.len(),
                     self.chain_segments.len(),
-                    peer_id,
+                    peer_info.peer_id,
                 );
-                self.message_sender.send_external_message(
-                    *peer_id,
-                    ExternalMessage::MultiBlockRequest(request_hashes),
-                )?;
+
                 self.peers.push(peer); // reinsert peer, as we will be using a faux peer below
-                self.in_flight = Some(PeerInfo {
-                    version: PeerVer::V2,
-                    peer_id: *peer_id,
-                    last_used: std::time::Instant::now(),
-                    score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
-                });
+
+                let message = match peer_info.version {
+                    PeerVer::V2 => {
+                        self.in_flight = Some(PeerInfo {
+                            version: PeerVer::V2,
+                            peer_id: peer_info.peer_id,
+                            last_used: std::time::Instant::now(),
+                            score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
+                        });
+                        ExternalMessage::MultiBlockRequest(request_hashes)
+                    }
+                    PeerVer::V1 => {
+                        self.in_flight = Some(PeerInfo {
+                            version: PeerVer::V1,
+                            peer_id: peer_info.peer_id,
+                            last_used: std::time::Instant::now(),
+                            score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
+                        });
+                        ExternalMessage::BlockRequest(BlockRequest { to_view, from_view })
+                    }
+                };
+                self.message_sender
+                    .send_external_message(peer_info.peer_id, message)?;
             } else {
                 // No more chain_segments, we're done
                 self.peers.push(peer);
@@ -456,9 +474,32 @@ impl Sync {
         // ...
         match self.state {
             // Phase 1
+            SyncState::Phase1(_) => {
+                // TODO: Should be buffer the proposals? Probably not!
+                let metadata = response
+                    .proposals
+                    .into_iter()
+                    .sorted_by(|a, b| b.view().cmp(&a.view()))
+                    .map(|p| ChainMetaData {
+                        block_hash: p.hash(),
+                        parent_hash: p.header.qc.block_hash,
+                        block_number: p.number(),
+                        view_number: p.view(),
+                    })
+                    .collect_vec();
+                self.handle_metadata_response(from, metadata)?;
+            }
             // Phase 2
+            SyncState::Phase2(_) => {
+                let multi_blocks = response
+                    .proposals
+                    .into_iter()
+                    .sorted_by(|a, b| b.view().cmp(&a.view()))
+                    .collect_vec();
+                self.handle_multiblock_response(from, multi_blocks)?;
+            }
             _ => {
-                tracing::debug!(
+                tracing::error!(
                     "sync::HandleBlockResponse : from={from} response={:?}",
                     response
                 );
@@ -476,6 +517,7 @@ impl Sync {
         from: PeerId,
         response: Vec<ChainMetaData>,
     ) -> Result<()> {
+        let segment_peer = self.in_flight.as_ref().unwrap().clone();
         // Process whatever we have received.
         if response.is_empty() {
             // Empty response, downgrade peer and retry with a new peer.
@@ -522,7 +564,7 @@ impl Sync {
         let segment = response;
 
         // Record landmark, including peer that has this set of blocks
-        self.chain_segments.push((from, meta.clone()));
+        self.chain_segments.push((segment_peer, meta.clone()));
 
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
@@ -628,26 +670,44 @@ impl Sync {
 
         if let Some(peer) = self.get_next_peer() {
             let message = match self.state {
-                SyncState::Phase1(ChainMetaData { parent_hash, .. }) => {
+                SyncState::Phase1(ChainMetaData { parent_hash, .. })
+                    if matches!(peer.version, PeerVer::V2) =>
+                {
                     ExternalMessage::MetaDataRequest(RequestBlock {
                         request_at: SystemTime::now(),
                         from_hash: parent_hash,
                         batch_size: self.max_batch_size,
                     })
                 }
-                SyncState::Phase0 if meta.is_some() => {
+                SyncState::Phase1(ChainMetaData { view_number, .. })
+                    if matches!(peer.version, PeerVer::V1) =>
+                {
+                    ExternalMessage::BlockRequest(BlockRequest {
+                        to_view: view_number.saturating_sub(1), // we want the parent i.e. earlier view
+                        from_view: view_number.saturating_sub(self.max_batch_size as u64),
+                    })
+                }
+                SyncState::Phase0 if meta.is_some() && matches!(peer.version, PeerVer::V2) => {
                     let meta = meta.unwrap();
-                    self.state = SyncState::Phase1(meta.clone());
-                    let ChainMetaData { parent_hash, .. } = meta;
+                    let parent_hash = meta.parent_hash;
+                    self.state = SyncState::Phase1(meta);
                     ExternalMessage::MetaDataRequest(RequestBlock {
                         request_at: SystemTime::now(),
                         from_hash: parent_hash,
                         batch_size: self.max_batch_size,
+                    })
+                }
+                SyncState::Phase0 if meta.is_some() && matches!(peer.version, PeerVer::V1) => {
+                    let meta = meta.unwrap();
+                    let view_number = meta.view_number;
+                    self.state = SyncState::Phase1(meta);
+                    ExternalMessage::BlockRequest(BlockRequest {
+                        to_view: view_number.saturating_sub(1), // we want the parent i.e. earlier view
+                        from_view: view_number.saturating_sub(self.max_batch_size as u64),
                     })
                 }
                 _ => anyhow::bail!("sync::MissingMetadata : invalid state"),
             };
-
             tracing::info!(
                 ?message,
                 "sync::RequestMissingMetadata : requesting missing chain from {}",

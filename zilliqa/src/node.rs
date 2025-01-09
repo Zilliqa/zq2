@@ -275,6 +275,7 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
+            // RFC-161 sync algorithm, phase 2.
             ExternalMessage::MultiBlockRequest(request) => {
                 let message = self
                     .consensus
@@ -282,6 +283,7 @@ impl Node {
                     .handle_multiblock_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
+            // RFC-161 sync algorithm, phase 1.
             ExternalMessage::MetaDataRequest(request) => {
                 let message = self.consensus.sync.handle_metadata_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
@@ -291,7 +293,7 @@ impl Node {
             ExternalMessage::InjectedProposal(p) => {
                 self.handle_injected_proposal(from, p)?;
             }
-            // Respond negatively to old block requests
+            // Respond negatively to block request from old nodes
             ExternalMessage::BlockRequest(req) => {
                 let message = ExternalMessage::BlockResponse(BlockResponse {
                     availability: None,
