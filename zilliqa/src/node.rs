@@ -291,6 +291,15 @@ impl Node {
             ExternalMessage::InjectedProposal(p) => {
                 self.handle_injected_proposal(from, p)?;
             }
+            // Respond negatively to old block requests
+            ExternalMessage::BlockRequest(req) => {
+                let message = ExternalMessage::BlockResponse(BlockResponse {
+                    availability: None,
+                    proposals: vec![],
+                    from_view: req.from_view,
+                });
+                self.request_responses.send((response_channel, message))?;
+            }
             // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
             // a Request by the underlying layer, with a faux request-id. This is to mitigate issues when there are
             // too many transactions in the broadcast queue.
