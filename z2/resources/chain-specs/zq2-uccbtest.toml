@@ -1,5 +1,5 @@
 p2p_port = 3333
-bootstrap_address = [ "12D3KooWM45RWg3Ro4a7L52qaxEw7W2sFqA4Yk2cosVcYSa2RMMk", "/ip4/34.124.239.96/tcp/3333" ]
+bootstrap_address = [ "12D3KooWM45RWg3Ro4a7L52qaxEw7W2sFqA4Yk2cosVcYSa2RMMk", "/dns/bootstrap.zq2-uccbtest.zilstg.dev/tcp/3333" ]
 
 [[nodes]]
 eth_chain_id = 33469
@@ -15,3 +15,7 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
+consensus.scilla_call_gas_exempt_addrs = []
+consensus.contract_upgrade_block_heights = {}
+
+api_servers = [{ port = 4201, enabled_apis = [{ apis = ["blockNumber"], namespace = "eth" }] }, { enabled_apis = ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"], port = 4202 }]

@@ -1,12 +1,12 @@
 p2p_port = 3333
-bootstrap_address = [ "12D3KooWACUuqbMYRddTh34HejKg8i1QyuPJoffWVecYotCi8FzZ", "/ip4/34.87.179.185/udp/3333/quic-v1" ]
+bootstrap_address = [ "12D3KooWACUuqbMYRddTh34HejKg8i1QyuPJoffWVecYotCi8FzZ", "/dns/bootstrap.zq2-richard.zilstg.dev/tcp/3333" ]
 
 [[nodes]]
 eth_chain_id = 33469
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [ ["0xed4Ec243b08456404F37CFA9a09DFdF6a52137F1", "20_800_000_000_000_000_000_000_000_000" ] ]
-consensus.genesis_deposits = [ ["a81a31aaf946111bbe9a958cd9b8bd85d277b8b7c64fc67f579696dbcb6a460a96d4f70e0187064cda83a74b32b1f81f", "12D3KooWACUuqbMYRddTh34HejKg8i1QyuPJoffWVecYotCi8FzZ", "100_000_000_000_000_000_000_000_000", "0xed4Ec243b08456404F37CFA9a09DFdF6a52137F1", "0xed4Ec243b08456404F37CFA9a09DFdF6a52137F1"] ]
+consensus.genesis_accounts = [ ["0xed4ec243b08456404f37cfa9a09dfdf6a52137f1", "900_000_000_000_000_000_000_000_000" ] ]
+consensus.genesis_deposits = [ ["a81a31aaf946111bbe9a958cd9b8bd85d277b8b7c64fc67f579696dbcb6a460a96d4f70e0187064cda83a74b32b1f81f", "12D3KooWACUuqbMYRddTh34HejKg8i1QyuPJoffWVecYotCi8FzZ", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "0xed4ec243b08456404f37cfa9a09dfdf6a52137f1"] ]
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
@@ -15,3 +15,7 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
+consensus.scilla_call_gas_exempt_addrs = []
+consensus.contract_upgrade_block_heights = {}
+
+api_servers = [{ port = 4201, enabled_apis = [{ apis = ["blockNumber"], namespace = "eth" }] }, { enabled_apis = ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"], port = 4202 }]
