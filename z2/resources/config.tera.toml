@@ -1,7 +1,7 @@
 p2p_port = 3333
 
 {%- if set_bootstrap_address == "true" %}
-bootstrap_address = [ "{{ bootstrap_peer_id }}", "/ip4/{{ bootstrap_public_ip }}/tcp/3333" ]
+bootstrap_address = [ "{{ bootstrap_peer_id }}", "/dns/{{ bootstrap_endpoint }}/tcp/3333" ]
 {%- endif %}
 
 [[nodes]]

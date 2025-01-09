@@ -17,7 +17,8 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-richard",
         props(
-            endpoint = "https://api.zq2-richard.zilstg.dev",
+            bootstrap_endpoint = "bootstrap.zq2-richard.zilstg.dev",
+            api_endpoint = "https://api.zq2-richard.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -26,7 +27,8 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-uccbtest",
         props(
-            endpoint = "https://api.zq2-uccbtest.zilstg.dev",
+            bootstrap_endpoint = "bootstrap.zq2-uccbtest.zilstg.dev",
+            api_endpoint = "https://api.zq2-uccbtest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -35,7 +37,8 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-infratest",
         props(
-            endpoint = "https://api.zq2-infratest.zilstg.dev",
+            bootstrap_endpoint = "bootstrap.zq2-infratest.zilstg.dev",
+            api_endpoint = "https://api.zq2-infratest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -44,7 +47,8 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-perftest",
         props(
-            endpoint = "https://api.zq2-perftest.zilstg.dev",
+            bootstrap_endpoint = "bootstrap.zq2-perftest.zilstg.dev",
+            api_endpoint = "https://api.zq2-perftest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -53,7 +57,8 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-devnet",
         props(
-            endpoint = "https://api.zq2-devnet.zilliqa.com",
+            bootstrap_endpoint = "bootstrap.zq2-devnet.zilliqa.com",
+            api_endpoint = "https://api.zq2-devnet.zilliqa.com",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -62,7 +67,8 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-prototestnet",
         props(
-            endpoint = "https://api.zq2-prototestnet.zilliqa.com",
+            bootstrap_endpoint = "bootstrap.zq2-prototestnet.zilliqa.com",
+            api_endpoint = "https://api.zq2-prototestnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8"
         )
     )]
@@ -71,7 +77,8 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-protomainnet",
         props(
-            endpoint = "https://api.zq2-protomainnet.zilliqa.com",
+            bootstrap_endpoint = "bootstrap.zq2-protomainnet.zilliqa.com",
+            api_endpoint = "https://api.zq2-protomainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl"
         )
     )]
@@ -80,7 +87,8 @@ pub enum Chain {
     // #[strum(
     //     serialize = "zq2-testnet",
     //     props(
-    //         endpoint = "https://api.zq2-testnet.zilliqa.com",
+    //         bootstrap_endpoint = "bootstrap.zq2-testnet.zilliqa.com",
+    //         api_endpoint = "https://api.zq2-testnet.zilliqa.com",
     //         project_id = "prj-d-zq2-testnet-g13pnaa8"
     //     )
     // )]
@@ -89,7 +97,8 @@ pub enum Chain {
     // #[strum(
     //     serialize = "zq2-mainnet",
     //     props(
-    //         endpoint = "https://api.zq2-mainnet.zilliqa.com",
+    //         bootstrap_endpoint = "bootstrap.zq2-mainnet.zilliqa.com",
+    //         api_endpoint = "https://api.zq2-mainnet.zilliqa.com",
     //         project_id = "prj-p-zq2-mainnet-sn5n8wfl"
     //     )
     // )]
@@ -186,17 +195,34 @@ impl Chain {
         }
     }
 
-    pub fn get_endpoint(&self) -> Result<&'static str> {
-        let endpoint = self.get_str("endpoint");
+    pub fn get_bootstrap_endpoint(&self) -> Result<&'static str> {
+        let endpoint = self.get_str("bootstrap_endpoint");
 
         if let Some(endpoint) = endpoint {
-            println!("{}", format!("Using the endpoint {}", endpoint).green());
+            println!(
+                "{}",
+                format!("Using the bootstrap endpoint {}", endpoint).green()
+            );
             return Ok(endpoint);
         }
 
         Err(anyhow!(
             "{}",
-            format!("endpoint not available for the chain {}", self).red()
+            format!("bootstrap endpoint not available for the chain {}", self).red()
+        ))
+    }
+
+    pub fn get_api_endpoint(&self) -> Result<&'static str> {
+        let endpoint = self.get_str("api_endpoint");
+
+        if let Some(endpoint) = endpoint {
+            println!("{}", format!("Using the API endpoint {}", endpoint).green());
+            return Ok(endpoint);
+        }
+
+        Err(anyhow!(
+            "{}",
+            format!("API endpoint not available for the chain {}", self).red()
         ))
     }
 

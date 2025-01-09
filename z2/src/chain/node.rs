@@ -804,7 +804,7 @@ impl ChainNode {
             EthereumAddress::from_private_key(&selected_bootstrap.get_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
-        let bootstrap_public_ip = selected_bootstrap.machine.external_address;
+        let bootstrap_endpoint = self.chain()?.get_bootstrap_endpoint()?;
         let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
@@ -831,7 +831,7 @@ impl ChainNode {
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
         ctx.insert("eth_chain_id", &eth_chain_id);
-        ctx.insert("bootstrap_public_ip", &bootstrap_public_ip);
+        ctx.insert("bootstrap_endpoint", bootstrap_endpoint);
         ctx.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
         ctx.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
         ctx.insert("set_bootstrap_address", set_bootstrap_address);
