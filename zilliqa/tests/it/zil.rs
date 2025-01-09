@@ -86,7 +86,7 @@ pub async fn zilliqa_account_with_funds(
     (secret_key, address)
 }
 
-enum ToAddr {
+pub enum ToAddr {
     Address(H160),
     StringVal(String),
 }
@@ -159,7 +159,7 @@ async fn issue_create_transaction(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn send_transaction(
+pub async fn send_transaction(
     network: &mut Network,
     secret_key: &schnorr::SecretKey,
     nonce: u64,

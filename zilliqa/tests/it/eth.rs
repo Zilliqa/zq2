@@ -19,6 +19,7 @@ use ethers::{
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
 
@@ -1472,4 +1473,82 @@ async fn get_block_receipts(mut network: Network) {
         .unwrap();
 
     assert!(receipts.contains(&individual1));
+}
+
+#[zilliqa_macros::test]
+async fn verify_scilla_contract_receipt_address(mut network: Network) {
+    // Deploy a Scilla contract
+    let (secret_key, address) = crate::zil::zilliqa_account(&mut network).await;
+    let code = crate::zil::scilla_test_contract_code();
+    let data = crate::zil::scilla_test_contract_data(address);
+
+    let wallet = network.random_wallet().await;
+
+    // Deploy the contract
+    let (_, txn) = crate::zil::send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        crate::zil::ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(&code),
+        Some(&data),
+    )
+    .await;
+
+    let tx_hash: H256 = txn["ID"].as_str().unwrap().parse().unwrap();
+
+    // Get transaction receipt from API
+    let response_from_eth_api_call: Value = wallet
+        .provider()
+        .request("eth_getTransactionReceipt", [tx_hash])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    dbg!(&response_from_eth_api_call);
+
+    let address_from_eth_api_call: Option<Address> =
+        serde_json::from_value(response_from_eth_api_call["contractAddress"].clone())
+            .expect("Failed to deserialize response");
+
+    dbg!(address_from_eth_api_call);
+
+    // Get the transaction receipt using direct call
+    let receipt_from_direct_call = wallet
+        .get_transaction_receipt(tx_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    let address_from_direct_call = receipt_from_direct_call.contract_address.unwrap();
+
+    dbg!(address_from_direct_call);
+
+    // Get the deployed contract address from Zilliqa API
+    let address_from_zil_api_call: H160 = wallet
+        .provider()
+        .request(
+            "GetContractAddressFromTransactionID",
+            [txn["ID"].as_str().unwrap()],
+        )
+        .await
+        .unwrap();
+
+    dbg!(address_from_zil_api_call);
+
+    // Assert that addresses match
+    assert_eq!(address_from_zil_api_call, address_from_direct_call);
+    assert_eq!(
+        address_from_zil_api_call.as_bytes(),
+        address_from_eth_api_call.unwrap().as_slice()
+    );
+
+    // Verify the contract exists at this address
+    let code_response: Value = wallet
+        .provider()
+        .request("GetSmartContractCode", [address_from_direct_call])
+        .await
+        .unwrap();
+
+    assert_eq!(code, code_response["code"].as_str().unwrap());
 }
