@@ -306,10 +306,6 @@ impl Sync {
             tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
             return self.retry_phase1();
-        } else if response.len() < self.max_batch_size {
-            // Partial response, process blocks.
-            tracing::warn!("sync::MultiBlockResponse : partial blocks {from}",);
-            self.done_with_peer(DownGrade::None);
         } else {
             self.done_with_peer(DownGrade::None);
         }
@@ -443,14 +439,12 @@ impl Sync {
 
             // If we have no chain_segments, we have nothing to do
             if let Some((peer_info, meta)) = self.chain_segments.last() {
-                let to_view = meta.view_number.saturating_add(Self::VIEW_DRIFT);
-                let mut from_view = meta.view_number;
+                // let mut from_view = meta.view_number;
                 let mut request_hashes = Vec::with_capacity(self.max_batch_size);
                 let mut key = meta.parent_hash; // start from this block
                 while let Some(meta) = self.chain_metadata.remove(&key) {
                     request_hashes.push(meta.block_hash);
                     key = meta.parent_hash;
-                    from_view = meta.view_number;
                     self.chain_metadata.insert(meta.block_hash, meta); // reinsert, for retries
                 }
 
@@ -488,7 +482,11 @@ impl Sync {
                             last_used: std::time::Instant::now(),
                             score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
                         });
-                        ExternalMessage::BlockRequest(BlockRequest { to_view, from_view })
+                        // do not add VIEW_DRIFT - the stored marker is accurate!
+                        ExternalMessage::BlockRequest(BlockRequest {
+                            to_view: meta.view_number.saturating_sub(1),
+                            from_view: meta.view_number.saturating_sub(self.max_batch_size as u64),
+                        })
                     }
                 };
                 self.message_sender
@@ -615,10 +613,6 @@ impl Sync {
             tracing::warn!("sync::MetadataResponse : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
-        } else if response.len() < self.max_batch_size {
-            // Partial response, process the response.
-            tracing::warn!("sync::MetadataResponse : partial blocks {from}",);
-            self.done_with_peer(DownGrade::None);
         } else {
             self.done_with_peer(DownGrade::None);
         }
