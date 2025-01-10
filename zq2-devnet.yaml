@@ -7,6 +7,7 @@ roles:
 - apps
 - checkpoint
 - persistence
+- query
 versions:
   zq2: v0.5.1
   otterscan: develop

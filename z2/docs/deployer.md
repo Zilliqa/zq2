@@ -69,6 +69,7 @@ Options:
           - apps:        Virtual machine apps
           - checkpoint:  Virtual machine checkpoint
           - persistence: Virtual machine persistence
+          - query:       Virtual machine query
           - sentry:      Virtual machine sentry
 
   -v, --verbose...
@@ -428,6 +429,7 @@ Options:
           - apps:        Virtual machine apps
           - checkpoint:  Virtual machine checkpoint
           - persistence: Virtual machine persistence
+          - query:       Virtual machine query
           - sentry:      Virtual machine sentry
 
   -v, --verbose...

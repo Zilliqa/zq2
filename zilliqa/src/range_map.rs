@@ -7,7 +7,6 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tracing::*;
 
 /// A block map - a reasonably efficient, easily implementable representation of a collection of ranges.
 /// Feel free to make this generic - we only ever need the u64 variant so I didn't bother.
@@ -177,20 +176,50 @@ impl RangeMap {
 
     /// Add a range to this RangeMap, returning a reference to self.
     pub fn with_range(&mut self, range: &Range<u64>) -> &mut Self {
-        if !range.is_empty() {
-            let mut inserted = false;
-            for (idx, r) in self.ranges.iter().enumerate() {
-                if r.start > range.start {
-                    self.ranges.insert(idx, range.clone());
-                    inserted = true;
-                    break;
-                }
-            }
-            if !inserted {
-                self.ranges.push(range.clone());
-            }
-            self.canonicalise();
+        if range.is_empty() {
+            return self;
         }
+
+        if self.is_empty() {
+            self.ranges.push(range.clone());
+            return self;
+        }
+
+        let last = self.ranges.last_mut().unwrap();
+        // Optimise the common case where the new range overlaps with the current greatest range. Note that `end`
+        // is exclusive, since `Range`s are half-open, but we still check `range.start <= last.end`. In the case
+        // where `range.start == last.end`, the ranges are not overlapping, but adjacent and we can still merge
+        // them immediately.
+        if last.start <= range.start && range.start <= last.end {
+            // If `range` is completely covered by `last`, there is nothing to do
+            if range.end <= last.end {
+                return self;
+            }
+
+            // Otherwise, expand `last` to cover `range`.
+            last.end = range.end;
+            return self;
+        }
+        // Optimise the common case where the new range is greater than all current ranges.
+        if range.start > last.end {
+            self.ranges.push(range.clone());
+            return self;
+        }
+
+        // General case
+        let mut inserted = false;
+        for (idx, r) in self.ranges.iter().enumerate() {
+            if r.start > range.start {
+                self.ranges.insert(idx, range.clone());
+                inserted = true;
+                break;
+            }
+        }
+        if !inserted {
+            self.ranges.push(range.clone());
+        }
+        self.canonicalise();
+
         self
     }
 
@@ -321,7 +350,6 @@ impl RangeMap {
                     intersection.with_range(&mid);
                 }
 
-                trace!(" .. self {next_self:?} remove {current_remove:?} overlap early {early:?} middle {mid:?} .. ");
                 // now, either there are still things in self that too large for to_remove
                 match next_self.end.cmp(&current_remove.end) {
                     Ordering::Greater => {
@@ -329,7 +357,6 @@ impl RangeMap {
                             start: max(next_self.start, current_remove.end),
                             end: next_self.end,
                         });
-                        trace!("self remains {current_self_iter:?}");
                         // But next_self starts after current_remove.end, so we know that nothing in
                         // current_remove can possibly overlap this, so
                         current_remove_iter = remove_iter.next().cloned();
@@ -340,13 +367,11 @@ impl RangeMap {
                             start: max(current_remove.start, next_self.end),
                             end: current_remove.end,
                         });
-                        trace!("remove remains {current_remove_iter:?}");
                         // But current_remove now starts after next_self, so we can advance self
                         current_self_iter = self_iter.next().cloned();
                     }
                     _ => {
                         // If we get here, then the two ended precisely at the same place. Advance both iterators.
-                        trace!("self and remove both empty; moving on");
                         current_self_iter = self_iter.next().cloned();
                         current_remove_iter = remove_iter.next().cloned();
                     }
@@ -358,7 +383,6 @@ impl RangeMap {
             }
         }
         // We've run out of things; anything left to remove will therefore not be removed and we're done.
-        trace!("Done! {intersection:?} {diff:?}");
         (intersection, diff)
     }
 

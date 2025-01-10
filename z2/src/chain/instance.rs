@@ -206,7 +206,7 @@ impl ChainInstance {
         params: &Option<String>,
         timeout: usize,
     ) -> Result<String> {
-        let endpoint = self.chain()?.get_endpoint()?;
+        let endpoint = self.chain()?.get_api_endpoint()?;
         let body = format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
             method,

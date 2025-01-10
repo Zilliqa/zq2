@@ -8,6 +8,7 @@ variable "node_role_mappings" {
     validator   = "val",
     checkpoint  = "che",
     persistence = "per",
+    query       = "que",
     sentry      = "sen",
   }
 }
@@ -70,8 +71,8 @@ variable "role" {
   description = "VM role"
   type        = string
   validation {
-    condition     = contains(["bootstrap", "api", "validator", "apps", "checkpoint", "persistence", "sentry"], var.role)
-    error_message = "The role value must be one of:  'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'sentry'."
+    condition     = contains(["bootstrap", "api", "validator", "apps", "checkpoint", "persistence", "query", "sentry"], var.role)
+    error_message = "The role value must be one of:  'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'query', 'sentry'."
   }
 }
 
