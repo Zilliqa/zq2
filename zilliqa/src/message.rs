@@ -209,13 +209,22 @@ pub struct BlockRequest {
     pub to_view: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub proposals: Vec<Proposal>,
     pub from_view: u64,
     /// When we send a block response, we may also send data on what blocks we are prepared
     /// to serve.
     pub availability: Option<Vec<BlockStrategy>>,
+}
+
+impl fmt::Debug for BlockResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BlockResponse")
+            .field("proposals", &self.proposals)
+            .field("from_view", &self.from_view)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
@@ -286,16 +295,12 @@ impl Display for ExternalMessage {
                 let first = views.next();
                 let last = views.last();
                 match (first, last) {
-                    (None, None) => write!(f, "BlockResponse([], avail={:?})", r.availability),
+                    (None, None) => write!(f, "BlockResponse([])"),
                     (Some(first), None) => {
-                        write!(f, "BlockResponse([{first}, avail={:?}])", r.availability)
+                        write!(f, "BlockResponse([{first}])")
                     }
                     (Some(first), Some(last)) => {
-                        write!(
-                            f,
-                            "BlockResponse([{first}, ..., {last}, avail={:?}])",
-                            r.availability
-                        )
+                        write!(f, "BlockResponse([{first}, ..., {last}])")
                     }
                     (None, Some(_)) => unreachable!(),
                 }
