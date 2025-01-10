@@ -912,12 +912,10 @@ fn get_proof(params: Params, node: &Arc<Mutex<Node>>) -> Result<Proof> {
 
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    let mut state = node
+    let state = node
         .consensus
         .state()
         .at_root(block.state_root_hash().into());
-    // recover from db root node using given root hash
-    let _ = state.root_hash()?;
     let computed_proof = state.get_proof(address, &storage_keys)?;
 
     let acc_code = Bytecode::new_raw(

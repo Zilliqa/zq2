@@ -380,6 +380,7 @@ where
     /// nodes of the longest existing prefix of the key (at least the root node), ending
     /// with the node that proves the absence of the key.
     fn get_proof(&mut self, key: &[u8]) -> TrieResult<Vec<Vec<u8>>> {
+        self.commit()?;
         let key_path = &Nibbles::from_raw(key, true);
         let result = self.get_path_at(&self.root, key_path, 0);
 

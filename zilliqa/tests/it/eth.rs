@@ -1563,14 +1563,14 @@ async fn test_eth_get_proof(mut network: Network) {
         let memdb = Arc::new(MemoryDB::new(true));
         let trie = EthTrie::new(Arc::clone(&memdb));
 
-        let mut storage_proof = vec![];
+        // There's only a single key we want to proove
+        let single_proof = proof.storage_proof.last().unwrap();
 
-        for single_proof in proof.storage_proof {
-            let bytes = &single_proof.proof;
-            for byte in bytes {
-                storage_proof.push(byte.to_vec());
-            }
-        }
+        let storage_proof = single_proof
+            .proof
+            .iter()
+            .map(|elem| elem.to_vec())
+            .collect::<Vec<_>>();
 
         let verify_result = trie
             .verify_proof(
