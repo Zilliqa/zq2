@@ -2436,11 +2436,7 @@ impl Consensus {
         from: PeerId,
         availability: &Option<Vec<BlockStrategy>>,
     ) -> Result<()> {
-        trace!(
-            "Received block availability from {:?} avail {:?}",
-            from,
-            availability
-        );
+        trace!("Received block availability from {:?}", from);
         self.block_store.update_availability(from, availability)?;
         Ok(())
     }

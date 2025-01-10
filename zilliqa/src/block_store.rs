@@ -141,7 +141,7 @@ impl BlockCache {
 
     pub fn destructive_proposals_from_parent_hashes(
         &mut self,
-        hashes: &Vec<Hash>,
+        hashes: &[Hash],
     ) -> Vec<(PeerId, Proposal)> {
         // For each hash, find the list of blocks that have it as the parent.
         let cache_keys = hashes
@@ -149,7 +149,6 @@ impl BlockCache {
             .filter_map(|x| self.by_parent_hash.remove(x))
             .flatten()
             .collect::<Vec<u128>>();
-        trace!("block_store::destructive.. : parent hashes {hashes:?} maps to keys {cache_keys:?}");
         let maybe = cache_keys
             .iter()
             .filter_map(|key| {
@@ -172,13 +171,6 @@ impl BlockCache {
             // We got a real block! Reset the fork counter.
             self.fork_counter = 0;
         }
-        trace!(
-            "block_store::destructive.. : pulled blocks for parent hashes {hashes:?} - {}",
-            maybe
-                .iter()
-                .map(|(_, v)| format!("v={} b={}", v.header.view, v.header.number))
-                .fold("".to_string(), |x, y| format!("{},{}", x, y))
-        );
         maybe
     }
 
@@ -191,26 +183,12 @@ impl BlockCache {
 
     pub fn trim(&mut self, highest_confirmed_view: u64) {
         let lowest_ignored_key = self.min_key_for_view(highest_confirmed_view);
-        debug!(
-            "before trim {highest_confirmed_view} cache has {0:?} expecting {3:?} with {1}/{2}",
-            self.extant_block_ranges(),
-            self.cache.len(),
-            self.head_cache.len(),
-            &self.views_expecting_proposals
-        );
         debug!("trim: lowest_ignored_key = {0}", lowest_ignored_key);
         self.trim_with_fn(|k, _| -> bool { *k < lowest_ignored_key });
         // We don't care about anything lower than what we're about to flush
         self.views_expecting_proposals = self
             .views_expecting_proposals
             .split_off(&highest_confirmed_view);
-        debug!(
-            "after trim cache has {0:?} with {3:?} , {1}/{2}",
-            self.extant_block_ranges(),
-            self.cache.len(),
-            self.head_cache.len(),
-            &self.views_expecting_proposals
-        );
     }
 
     /// DANGER WILL ROBINSON! This function only searches from the minimum key to the maximum, so
@@ -338,12 +316,6 @@ impl BlockCache {
                 proposal,
             );
         } else {
-            trace!(
-                "block_store:: cache insert {:?}  with key {1} view {2} ",
-                parent_hash,
-                key,
-                proposal.header.view
-            );
             insert_with_replacement(
                 &mut self.cache,
                 &mut self.by_parent_hash,
@@ -844,26 +816,13 @@ impl BlockStore {
         // Prune the pending requests
         self.prune_pending_requests()?;
 
-        trace!(
-            "block_store::request_blocks() : entry remain {:?} clock {}",
-            remain,
-            self.clock
-        );
-
         // If it's in our input queue, don't expect it again.
         let expected = self.buffered.expectant_block_ranges();
-        trace!("block_store::request_blocks() : in our input queue {expected:?}");
         (_, remain) = remain.diff_inter(&expected);
 
         // If it's already buffered, don't request it again - wait for us to reject it and
         // then we can re-request.
         let extant = self.buffered.extant_block_ranges();
-        trace!(
-            "block_store::request_blocks() : cache has {0:?} with {1}/{2}",
-            extant,
-            self.buffered.cache.len(),
-            self.buffered.head_cache.len()
-        );
 
         (_, remain) = remain.diff_inter(&extant);
         (_, remain) = remain.diff_inter(&self.buffered.empty_view_ranges);
@@ -878,7 +837,6 @@ impl BlockStore {
                 });
             }
         }
-        debug!("block_store::request_blocks() : requests in flight {in_flight:?}");
         (_, remain) = remain.diff_inter(&in_flight);
 
         let now = SystemTime::now();
@@ -954,10 +912,6 @@ impl BlockStore {
                 };
 
                 let mut request_sent = false;
-                debug!(
-                    " block_store::request_blocks() :.. Requests to send: {:?}",
-                    requests
-                );
                 // Send all requests now ..
                 for request in requests.ranges.iter() {
                     if !request.is_empty() {
@@ -1071,7 +1025,7 @@ impl BlockStore {
         // There are two sets
         let result = self
             .buffered
-            .destructive_proposals_from_parent_hashes(&vec![block.hash()]);
+            .destructive_proposals_from_parent_hashes(&[block.hash()]);
 
         // Update highest_confirmed_view, but don't trim the cache if
         // we're not changing anything.
@@ -1116,9 +1070,8 @@ impl BlockStore {
     // Because of forks there might be many of these.
     pub fn obtain_child_block_candidates_for(
         &mut self,
-        hashes: &Vec<Hash>,
+        hashes: &[Hash],
     ) -> Result<Vec<(PeerId, Proposal)>> {
-        trace!("block_store::obtain_child_block_candidates_for :  {hashes:?}");
         // The easy case is that there's something in the buffer with us as its parent hash.
         let with_parent_hashes = self
             .buffered
@@ -1151,9 +1104,6 @@ impl BlockStore {
             let revised = self
                 .buffered
                 .destructive_proposals_from_parent_hashes(&parent_hashes);
-            trace!(
-                "block_store::obtain_child_block_candidates : fork evasion of {fork_elems} elements - {parent_hashes:?} produces {revised:?}"
-            );
             if !revised.is_empty() {
                 // Found some!
                 self.buffered.reset_fork_counter();
