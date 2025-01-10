@@ -401,7 +401,7 @@ impl Sync {
 
             // If we have no chain_segments, we have nothing to do
             if let Some((peer_info, meta)) = self.chain_segments.last() {
-                let to_view = meta.view_number.saturating_sub(1);
+                let to_view = meta.view_number.saturating_add(Self::VIEW_DRIFT);
                 let mut from_view = meta.view_number;
                 let mut request_hashes = Vec::with_capacity(self.max_batch_size);
                 let mut key = meta.parent_hash; // start from this block
@@ -460,6 +460,11 @@ impl Sync {
         Ok(())
     }
 
+    // we request a little more than we need, due to drift
+    // 10 ~ 1min
+    // 20 ~ 1hr
+    const VIEW_DRIFT: u64 = 10;
+
     /// Handle a V1 block response
     ///
     /// This will be called during both Phase 1 & Phase 2 block responses.
@@ -478,15 +483,33 @@ impl Sync {
             return Ok(());
         }
 
+        if response.proposals.is_empty() {
+            tracing::info!("sync::HandleBlockResponse : empty V1 from {from}");
+            self.done_with_peer(DownGrade::Empty);
+            return Ok(());
+        }
+
         // Convert the V1 response into a V2 response.
         match self.state {
-            // Phase 1
-            SyncState::Phase1(_) => {
+            // Phase 1 - extract metadata from the set of proposals
+            SyncState::Phase1(ChainMetaData {
+                block_number,
+                mut parent_hash,
+                ..
+            }) => {
                 // We do not buffer the proposals, as it takes 250MB/day!
                 let metadata = response
                     .proposals
                     .into_iter()
-                    .sorted_by(|a, b| b.view().cmp(&a.view()))
+                    .filter(|p| p.number() < block_number) // filter extras
+                    .sorted_by(|a, b| b.number().cmp(&a.number()))
+                    .filter(|p| {
+                        if parent_hash != p.hash() {
+                            return false;
+                        }
+                        parent_hash = p.header.qc.block_hash;
+                        true
+                    }) // filter forks
                     .map(|p| ChainMetaData {
                         block_hash: p.hash(),
                         parent_hash: p.header.qc.block_hash,
@@ -494,16 +517,17 @@ impl Sync {
                         view_number: p.view(),
                     })
                     .collect_vec();
+
                 self.handle_metadata_response(from, metadata)?;
             }
-            // Phase 2
+            // Phase 2 - extract the requested blocks only
             SyncState::Phase2(_) => {
-                let mut multi_blocks = response
+                let multi_blocks = response
                     .proposals
                     .into_iter()
-                    .sorted_by(|a, b| b.view().cmp(&a.view()))
+                    .filter(|p| self.chain_metadata.contains_key(&p.hash())) // filter extras
+                    .sorted_by(|a, b| b.number().cmp(&a.number()))
                     .collect_vec();
-                multi_blocks.retain(|p| self.chain_metadata.contains_key(&p.hash()));
                 self.handle_multiblock_response(from, multi_blocks)?;
             }
             _ => {
@@ -560,7 +584,9 @@ impl Sync {
                 // TODO: possibly, discard and rebuild entire chain
                 // if something does not match, do nothing and retry the request with the next peer.
                 tracing::error!(
-                    "sync::MetadataResponse : retry metadata history for {block_hash}/{block_num}"
+                    "sync::MetadataResponse : retry metadata expected hash={block_hash} != {} num={block_num} != {}",
+                    meta.block_hash,
+                    meta.block_number,
                 );
                 return Ok(());
             }
@@ -692,7 +718,7 @@ impl Sync {
                     if matches!(peer.version, PeerVer::V1) =>
                 {
                     ExternalMessage::BlockRequest(BlockRequest {
-                        to_view: view_number.saturating_sub(1), // we want the parent i.e. earlier view
+                        to_view: view_number.saturating_add(Self::VIEW_DRIFT),
                         from_view: view_number.saturating_sub(self.max_batch_size as u64),
                     })
                 }
@@ -711,7 +737,7 @@ impl Sync {
                     let view_number = meta.view_number;
                     self.state = SyncState::Phase1(meta);
                     ExternalMessage::BlockRequest(BlockRequest {
-                        to_view: view_number.saturating_sub(1), // we want the parent i.e. earlier view
+                        to_view: view_number.saturating_add(Self::VIEW_DRIFT),
                         from_view: view_number.saturating_sub(self.max_batch_size as u64),
                     })
                 }
@@ -870,13 +896,14 @@ impl PartialOrd for PeerInfo {
     }
 }
 
-/// Peer downgrade states/values, for downgrading an internal peer from selection.
+/// For downgrading a peer from being selected in get_next_peer().
+/// Ordered by degree of offence i.e. None is good, Timeout is worst
 #[derive(Debug)]
 enum DownGrade {
     None,
     Partial,
-    Timeout,
     Empty,
+    Timeout,
 }
 
 /// Sync state
