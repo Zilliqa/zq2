@@ -3,7 +3,6 @@ use std::{
     collections::{BTreeMap, BinaryHeap, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
-    u64,
 };
 
 use alloy::primitives::BlockNumber;
@@ -924,7 +923,9 @@ impl Sync {
             )?
             .expect("missing highest block");
         Ok((
-            self.in_pipeline > 0 || !matches!(self.state, SyncState::Phase0),
+            !self.chain_metadata.is_empty()
+                || !self.chain_segments.is_empty()
+                || !self.recent_proposals.is_empty(),
             highest_block,
         ))
     }
