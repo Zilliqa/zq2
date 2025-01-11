@@ -6,7 +6,6 @@ use ethabi::{ethereum_types::U64, Token};
 use ethers::{
     abi::FunctionExt,
     core::types::{Bytes, Signature},
-    prelude::contract,
     providers::{Middleware, MiddlewareError, Provider},
     types::{
         transaction::{
@@ -21,12 +20,9 @@ use ethers::{
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
-use zilliqa::{
-    scilla::storage_key,
-    state::{Account, State},
-};
+use zilliqa::state::{Account, State};
 
-use crate::{deploy_contract, node, LocalRpcClient, Network, Wallet};
+use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
@@ -1485,7 +1481,7 @@ async fn test_eth_get_proof(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
-    let (hash, abi) = deploy_contract(
+    let (hash, _) = deploy_contract(
         "tests/it/contracts/Storage.sol",
         "Storage",
         &wallet,
