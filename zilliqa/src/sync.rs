@@ -822,11 +822,9 @@ impl Sync {
 
         // Output some stats
         if let Some((when, injected)) = self.inject_at {
-            tracing::debug!(
-                "sync::InjectProposals : synced {}/{:?}",
-                injected - self.in_pipeline,
-                when.elapsed()
-            );
+            let diff = injected - self.in_pipeline;
+            let rate = diff as f32 / when.elapsed().as_secs_f32();
+            tracing::debug!("sync::InjectProposals : synced {} block/s", rate);
         }
 
         // Increment proposals injected
