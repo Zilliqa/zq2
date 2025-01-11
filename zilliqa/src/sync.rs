@@ -882,10 +882,13 @@ impl Sync {
     }
 
     /// Downgrade a peer based on the response received.
+    ///
+    /// This algorithm favours good peers that respond quickly (i.e. no timeout).
+    /// In most cases, it eventually degenerates into 2 sources - avoid a single source of truth.
     fn done_with_peer(&mut self, downgrade: DownGrade) {
         if let Some(mut peer) = self.in_flight.take() {
             peer.score = peer.score.saturating_add(downgrade as u32);
-            // Ensure that the next peer is equal or better, to avoid a single source of truth.
+            // Ensure that the next peer is equal or better
             peer.score = peer.score.max(self.peers.peek().unwrap().score);
             // Reinsert peers that are good
             if peer.score < u32::MAX {
@@ -896,7 +899,10 @@ impl Sync {
 
     /// Add a peer to the list of peers.
     pub fn add_peer(&mut self, peer: PeerId) {
-        // new peers should be tried later, which gives them time to sync first.
+        // ensure that it is unique - avoids single source of truth
+        self.remove_peer(peer);
+        // if the new peer is not synced, it will get downgraded to the back of heap.
+        // but by placing them at the back of the 'best' pack, we get to try them out soon.
         let new_peer = PeerInfo {
             version: PeerVer::V1, // default V2
             score: self.peers.iter().map(|p| p.score).min().unwrap_or_default(),
@@ -908,7 +914,7 @@ impl Sync {
 
     /// Remove a peer from the list of peers.
     pub fn remove_peer(&mut self, peer: PeerId) {
-        self.peers.retain(|p| p.peer_id != peer);
+        self.peers.retain(|p: &PeerInfo| p.peer_id != peer);
     }
 
     /// Get the next best peer to use
