@@ -102,6 +102,9 @@ impl Sync {
     // 30 ~ 2-days
     const VIEW_DRIFT: u64 = 10;
 
+    // Minimum of 2 peers to avoid single source of truth.
+    const MIN_PEERS: usize = 2;
+
     pub fn new(
         config: &NodeConfig,
         db: Arc<Db>,
@@ -199,8 +202,10 @@ impl Sync {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
                 if self.db.get_block_by_hash(&ancestor_hash)?.is_some() {
                     tracing::info!(
-                        "sync::SyncProposal : finishing up {} blocks for segment #0 from {ancestor_hash}",
-                        self.recent_proposals.len()
+                        "sync::SyncProposal : finishing {} blocks for segment #{} from {}",
+                        self.recent_proposals.len(),
+                        self.chain_segments.len(),
+                        self.peer_id,
                     );
                     // inject the proposals
                     let proposals = self.recent_proposals.drain(..).collect_vec();
@@ -253,24 +258,24 @@ impl Sync {
     /// This will rebuild history from the previous marker, with another peer.
     fn retry_phase1(&mut self) -> Result<()> {
         if self.chain_segments.is_empty() {
-            tracing::error!("sync::RetryPhase1 : cannot retry phase 1 without chain_segments!");
+            tracing::error!("sync::RetryPhase1 : cannot retry phase 1 without chain segments!");
             self.state = SyncState::Phase0;
             return Ok(());
         }
 
+        tracing::debug!(
+            "sync::RetryPhase1 : retrying segment #{}",
+            self.chain_segments.len(),
+        );
+
         // remove the last segment from the chain metadata
-        let (peer_info, meta) = self.chain_segments.pop().unwrap();
+        let (_, meta) = self.chain_segments.pop().unwrap();
         let mut key = meta.parent_hash;
         while let Some(p) = self.chain_metadata.remove(&key) {
             key = p.parent_hash;
         }
 
         // retry from Phase 1
-        tracing::info!(
-            "sync::RetryPhase1 : retrying block {} from {}",
-            meta.parent_hash,
-            peer_info.peer_id,
-        );
         self.state = SyncState::Phase1(meta);
         if Self::DO_SPECULATIVE {
             self.request_missing_metadata(None)?;
@@ -310,10 +315,6 @@ impl Sync {
             self.done_with_peer(DownGrade::None);
         }
 
-        let SyncState::Phase2(p2_hash) = self.state else {
-            anyhow::bail!("sync::MultiBlockResponse : invalid state");
-        };
-
         tracing::info!(
             "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
             response.len(),
@@ -321,18 +322,11 @@ impl Sync {
             from
         );
 
-        // Spurious response
-        let Some((peer_info, _)) = self.chain_segments.last() else {
-            anyhow::bail!("sync::MultiBlockResponse: no more chain_segments!");
+        // If the checksum does not match, retry phase 1. Maybe the node has pruned the segment.
+        let SyncState::Phase2(check_sum) = self.state else {
+            anyhow::bail!("sync::MultiBlockResponse : invalid state");
         };
 
-        // If the response is not from the expected peer e.g. delayed response, retry phase 2.
-        if peer_info.peer_id != from {
-            tracing::warn!("sync::MultiBlockResponse: unknown peer {from}, will retry");
-            return Ok(());
-        }
-
-        // If the checksum does not match, retry phase 1. Maybe the node has pruned the segment.
         let checksum = response
             .iter()
             .fold(Hash::builder().with(Hash::ZERO.as_bytes()), |sum, p| {
@@ -340,8 +334,10 @@ impl Sync {
             })
             .finalize();
 
-        if p2_hash != checksum {
-            tracing::error!("sync::MultiBlockResponse : mismatch history {checksum}");
+        if check_sum != checksum {
+            tracing::error!(
+                "sync::MultiBlockResponse : unexpected checksum={check_sum} != {checksum}"
+            );
             return self.retry_phase1();
         }
 
@@ -464,7 +460,6 @@ impl Sync {
                     self.chain_segments.len(),
                     peer_info.peer_id,
                 );
-
                 let message = match peer_info.version {
                     PeerVer::V2 => {
                         self.in_flight = Some(PeerInfo {
@@ -493,9 +488,7 @@ impl Sync {
                     .send_external_message(peer_info.peer_id, message)?;
             }
         } else {
-            tracing::warn!(
-                "sync::RequestMissingBlocks : insufficient peers to request missing blocks"
-            );
+            tracing::warn!("sync::RequestMissingBlocks : insufficient peers to handle request");
         }
         Ok(())
     }
@@ -511,7 +504,7 @@ impl Sync {
             && response.proposals.is_empty()
             && response.from_view == u64::MAX
         {
-            tracing::info!("sync::HandleBlockResponse : upgrading {from} to V2",);
+            tracing::info!("sync::HandleBlockResponse : upgrading {from}",);
             self.in_flight.as_mut().unwrap().version = PeerVer::V2;
             self.done_with_peer(DownGrade::None);
             return Ok(());
@@ -519,10 +512,15 @@ impl Sync {
 
         // Downgrade empty responses
         if response.proposals.is_empty() {
-            tracing::info!("sync::HandleBlockResponse : empty V1 from {from}");
+            tracing::info!("sync::HandleBlockResponse : empty response {from}");
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
         }
+
+        tracing::trace!(
+            "sync::HandleBlockResponse : received {} blocks from {from}",
+            response.proposals.len()
+        );
 
         // Convert the V1 response into a V2 response.
         match self.state {
@@ -564,7 +562,7 @@ impl Sync {
                 let multi_blocks = response
                     .proposals
                     .into_iter()
-                    // filter any blocks that are not needed
+                    // filter any blocks that are not in the chain e.g. forks
                     .filter(|p| self.chain_metadata.contains_key(&p.hash()))
                     .sorted_by(|a, b| b.number().cmp(&a.number()))
                     .collect_vec();
@@ -731,7 +729,7 @@ impl Sync {
     /// If Phase 1 is in progress, it continues requesting blocks from the last known Phase 1 block.
     /// Otherwise, it requests blocks from the given starting metadata.
     pub fn request_missing_metadata(&mut self, meta: Option<ChainMetaData>) -> Result<()> {
-        if matches!(self.state, SyncState::Phase2(_)) || matches!(self.state, SyncState::Phase3) {
+        if !matches!(self.state, SyncState::Phase1(_)) && !matches!(self.state, SyncState::Phase0) {
             anyhow::bail!("sync::RequestMissingMetadata : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
@@ -755,7 +753,12 @@ impl Sync {
         }
 
         if let Some(peer) = self.get_next_peer() {
-            let peer_id = peer.peer_id;
+            tracing::info!(
+                "sync::RequestMissingMetadata : requesting {} metadata of segment #{} from {}",
+                self.max_batch_size,
+                self.chain_segments.len() + 1,
+                peer.peer_id
+            );
             let message = match self.state {
                 SyncState::Phase1(ChainMetaData { parent_hash, .. })
                     if matches!(peer.version, PeerVer::V2) =>
@@ -795,18 +798,11 @@ impl Sync {
                 }
                 _ => anyhow::bail!("sync::MissingMetadata : invalid state"),
             };
-            tracing::info!(
-                ?message,
-                "sync::RequestMissingMetadata : requesting missing chain from {}",
-                peer_id
-            );
-            self.in_flight = Some(peer);
             self.message_sender
-                .send_external_message(peer_id, message)?;
+                .send_external_message(peer.peer_id, message)?;
+            self.in_flight = Some(peer);
         } else {
-            tracing::warn!(
-                "sync::RequestMissingMetadata : insufficient peers to request missing blocks"
-            );
+            tracing::warn!("sync::RequestMissingMetadata : insufficient peers to handle request");
         }
         Ok(())
     }
@@ -829,7 +825,11 @@ impl Sync {
 
         // Increment proposals injected
         self.in_pipeline = self.in_pipeline.saturating_add(proposals.len());
-        let len = proposals.len();
+        tracing::debug!(
+            "sync::InjectProposals : injecting {}/{} proposals",
+            proposals.len(),
+            self.in_pipeline
+        );
 
         // Just pump the Proposals back to ourselves.
         for p in proposals {
@@ -849,12 +849,6 @@ impl Sync {
         }
 
         self.inject_at = Some((std::time::Instant::now(), self.in_pipeline));
-
-        tracing::debug!(
-            "sync::InjectProposals : injected {}/{} proposals",
-            len,
-            self.in_pipeline
-        );
         // return last proposal
         Ok(())
     }
@@ -885,6 +879,7 @@ impl Sync {
     /// In most cases, it eventually degenerates into 2 sources - avoid a single source of truth.
     fn done_with_peer(&mut self, downgrade: DownGrade) {
         if let Some(mut peer) = self.in_flight.take() {
+            tracing::trace!("sync::DoneWithPeer {} {:?}", peer.peer_id, downgrade);
             peer.score = peer.score.saturating_add(downgrade as u32);
             // Ensure that the next peer is equal or better
             peer.score = peer.score.max(self.peers.peek().unwrap().score);
@@ -897,8 +892,6 @@ impl Sync {
 
     /// Add a peer to the list of peers.
     pub fn add_peer(&mut self, peer: PeerId) {
-        // ensure that it is unique - avoids single source of truth
-        self.remove_peer(peer);
         // if the new peer is not synced, it will get downgraded to the back of heap.
         // but by placing them at the back of the 'best' pack, we get to try them out soon.
         let new_peer = PeerInfo {
@@ -907,24 +900,27 @@ impl Sync {
             peer_id: peer,
             last_used: Instant::now(),
         };
+        tracing::trace!("sync::AddPeer {peer}");
+        // ensure that it is unique - avoids single source of truth
+        self.peers.retain(|p: &PeerInfo| p.peer_id != peer);
         self.peers.push(new_peer);
     }
 
     /// Remove a peer from the list of peers.
     pub fn remove_peer(&mut self, peer: PeerId) {
+        tracing::trace!("sync::RemovePeer {peer}");
         self.peers.retain(|p: &PeerInfo| p.peer_id != peer);
     }
 
     /// Get the next best peer to use
     fn get_next_peer(&mut self) -> Option<PeerInfo> {
-        // Minimum of 2 peers to avoid single source of truth.
-        if self.peers.len() < 2 {
-            return None;
+        if self.peers.len() >= Self::MIN_PEERS {
+            let mut peer = self.peers.pop()?;
+            peer.last_used = std::time::Instant::now(); // used to determine stale requests.
+            tracing::trace!("sync::GetNextPeer {} ({})", peer.peer_id, peer.score);
+            return Some(peer);
         }
-
-        let mut peer = self.peers.pop()?;
-        peer.last_used = std::time::Instant::now(); // used to determine stale requests.
-        Some(peer)
+        None
     }
 
     /// Returns (am_syncing, current_highest_block)
@@ -938,9 +934,9 @@ impl Sync {
             )?
             .expect("missing highest block");
         Ok((
-            !self.chain_metadata.is_empty()
-                || !self.chain_segments.is_empty()
-                || !self.recent_proposals.is_empty(),
+            !self.recent_proposals.is_empty()
+                || !self.chain_metadata.is_empty()
+                || !self.chain_segments.is_empty(),
             highest_block,
         ))
     }
