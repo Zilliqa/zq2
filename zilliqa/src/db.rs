@@ -1012,12 +1012,7 @@ impl Db {
     }
 
     pub fn get_total_transaction_count(&self) -> Result<usize> {
-        let count: usize =
-            self.db
-                .lock()
-                .unwrap()
-                .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))?;
-        Ok(count)
+        Ok(0)
     }
 
     /// Retrieve a list of the views in our db.
