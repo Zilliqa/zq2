@@ -9,6 +9,7 @@ use alloy::primitives::BlockNumber;
 use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
+use rusqlite::named_params;
 
 use crate::{
     cfg::NodeConfig,
@@ -126,6 +127,75 @@ impl Sync {
             .clamp(Self::VIEW_DRIFT as usize * 2, 180); // up to 180 sec of blocks at a time.
         let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
 
+        // FIXME: Move these to db.rs later
+        db.with_sqlite_tx(|c| {
+            c.execute_batch(
+                "CREATE TABLE IF NOT EXISTS sync_data (
+                block_hash BLOB NOT NULL UNIQUE,
+                parent_hash BLOB NOT NULL,
+                block_number INTEGER NOT NULL PRIMARY KEY,
+                view_number INTEGER NOT NULL,
+                peer BLOB DEFAULT NULL
+            );",
+            )?;
+            Ok(())
+        })?;
+
+        // Restore metadata/segments
+        let mut metadata: BTreeMap<Hash, ChainMetaData> = BTreeMap::new();
+        let mut segments: Vec<(PeerInfo, ChainMetaData)> = Vec::new();
+
+        db.with_sqlite_tx(|c| {
+            let _ = c.prepare(
+                "SELECT parent_hash, block_hash, block_number, view_number, peer FROM sync_data ORDER BY rowid DESC",
+            )?
+            .query_map([], |row| {
+                let m = ChainMetaData{
+                    parent_hash: row.get_unwrap(0),
+                    block_hash: row.get_unwrap(1),
+                    block_number: row.get_unwrap(2),
+                    view_number: row.get_unwrap(3),
+                };
+                metadata.insert(m.block_hash, m.clone());
+
+                if let Ok(p) = row.get::<_, Vec<u8>>(4) {
+                    if let Ok(peer_id) = PeerId::from_bytes(&p) {
+                        segments.push((
+                            PeerInfo {
+                                version: PeerVer::V1,
+                                score: 0,
+                                peer_id,
+                                last_used: Instant::now(),
+                            },
+                            m.clone(),
+                        ));
+                    }
+                }
+
+                Ok(m)
+        })?.collect_vec();
+            Ok(())
+        })?;
+
+        // remove last segment
+        if let Some((_, meta)) = segments.pop() {
+            let mut key = meta.parent_hash;
+            while let Some(p) = metadata.remove(&key) {
+                key = p.parent_hash;
+            }
+        }
+
+        let state = if segments.is_empty() {
+            SyncState::Phase0
+        } else {
+            tracing::info!(
+                "sync::New : continue from segment #{} with {} metadata",
+                segments.len(),
+                metadata.len()
+            );
+            SyncState::Phase1(segments.last().as_ref().unwrap().1.clone())
+        };
+
         Ok(Self {
             db,
             message_sender,
@@ -136,12 +206,61 @@ impl Sync {
             max_blocks_in_flight,
             in_flight: None,
             in_pipeline: usize::MIN,
-            chain_metadata: BTreeMap::new(),
-            chain_segments: Vec::new(),
-            state: SyncState::Phase0,
+            chain_metadata: metadata,
+            chain_segments: segments,
+            state,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
             started_at_block_number: u64::MIN,
+        })
+    }
+
+    fn pop_segment(&self, meta: ChainMetaData) -> Result<()> {
+        self.db.with_sqlite_tx(|c| {
+            c.execute(
+                "UPDATE sync_data SET peer = NULL WHERE block_hash = :block_hash",
+                named_params! {
+                    ":block_hash": meta.block_hash,
+                },
+            )?;
+            Ok(())
+        })
+    }
+
+    fn push_segment(&self, peer: PeerInfo, meta: ChainMetaData) -> Result<()> {
+        self.db.with_sqlite_tx(|c| {
+            c.execute(
+                "UPDATE sync_data SET peer = :peer WHERE block_hash = :block_hash",
+                named_params! {
+                    ":peer": peer.peer_id.to_bytes(),
+                    ":block_hash": meta.block_hash,
+                },
+            )?;
+            Ok(())
+        })
+    }
+
+    // TODO: Move into db.rs, optimise
+    fn insert_metadata(&mut self, meta: ChainMetaData) -> Result<()> {
+        self.db.with_sqlite_tx(|c| {
+            c.execute(
+                "INSERT INTO sync_data (parent_hash, block_hash, block_number, view_number) VALUES (:parent_hash, :block_hash, :block_number, :view_number)",
+                named_params! {
+                    ":parent_hash": meta.parent_hash,
+                    ":block_hash": meta.block_hash,
+                    ":block_number": meta.block_number,
+                    ":view_number": meta.view_number,
+                },
+            )?;
+            Ok(())
+        })
+    }
+
+    // TODO: Move into db.rs, optimise
+    fn remove_metadata(&self, hash: Hash) -> Result<()> {
+        self.db.with_sqlite_tx(|c| {
+            c.execute("DELETE FROM sync_data WHERE block_hash = ?1", [hash])?;
+            Ok(())
         })
     }
 
@@ -270,9 +389,12 @@ impl Sync {
 
         // remove the last segment from the chain metadata
         let (_, meta) = self.chain_segments.pop().unwrap();
+        self.pop_segment(meta.clone())?;
+
         let mut key = meta.parent_hash;
         while let Some(p) = self.chain_metadata.remove(&key) {
             key = p.parent_hash;
+            self.remove_metadata(p.block_hash)?;
         }
 
         // retry from Phase 1
@@ -351,11 +473,15 @@ impl Sync {
         for p in &proposals {
             if self.chain_metadata.remove(&p.hash()).is_none() {
                 anyhow::bail!("missing chain data for proposal"); // this should never happen!
+            } else {
+                self.remove_metadata(p.hash())?;
             }
         }
 
         // Done with this segment
-        self.chain_segments.pop();
+        if let Some((_, meta)) = self.chain_segments.pop() {
+            self.pop_segment(meta)?;
+        }
         self.inject_proposals(proposals)?;
 
         // Done with phase 2
@@ -649,6 +775,7 @@ impl Sync {
         let segment = response;
 
         // Record landmark, including peer that has this set of blocks
+        self.push_segment(segment_peer.clone(), meta.clone())?;
         self.chain_segments.push((segment_peer, meta.clone()));
 
         // Record the oldest block in the chain's parent
@@ -664,8 +791,14 @@ impl Sync {
 
         // Record the constructed chain metadata, check for loops
         for meta in segment {
-            if self.chain_metadata.insert(meta.block_hash, meta).is_some() {
+            if self
+                .chain_metadata
+                .insert(meta.block_hash, meta.clone())
+                .is_some()
+            {
                 anyhow::bail!("sync::MetadataResponse : loop in chain!"); // there is a possible loop in the chain
+            } else {
+                self.insert_metadata(meta)?;
             }
         }
 
