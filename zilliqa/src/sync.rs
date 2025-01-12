@@ -142,8 +142,8 @@ impl Sync {
         })?;
 
         // Restore metadata/segments
-        let mut metadata: BTreeMap<Hash, ChainMetaData> = BTreeMap::new();
-        let mut segments: Vec<(PeerInfo, ChainMetaData)> = Vec::new();
+        let mut metadata = BTreeMap::new();
+        let mut segments = Vec::new();
 
         db.with_sqlite_tx(|c| {
             let _ = c.prepare(
@@ -182,18 +182,31 @@ impl Sync {
             let mut key = meta.parent_hash;
             while let Some(p) = metadata.remove(&key) {
                 key = p.parent_hash;
+                db.with_sqlite_tx(|c| {
+                    c.execute(
+                        "DELETE FROM sync_data WHERE block_hash = ?1",
+                        [p.block_hash],
+                    )?;
+                    Ok(())
+                })?;
             }
         }
 
         let state = if segments.is_empty() {
             SyncState::Phase0
         } else {
-            tracing::info!(
+            tracing::debug!(
                 "sync::New : continue from segment #{} with {} metadata",
                 segments.len(),
                 metadata.len()
             );
             SyncState::Phase1(segments.last().as_ref().unwrap().1.clone())
+        };
+
+        let start_at = if let SyncState::Phase1(m) = &state {
+            m.block_number
+        } else {
+            u64::MIN
         };
 
         Ok(Self {
@@ -211,7 +224,7 @@ impl Sync {
             state,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
-            started_at_block_number: u64::MIN,
+            started_at_block_number: start_at,
         })
     }
 
@@ -244,7 +257,7 @@ impl Sync {
     fn insert_metadata(&mut self, meta: ChainMetaData) -> Result<()> {
         self.db.with_sqlite_tx(|c| {
             c.execute(
-                "INSERT INTO sync_data (parent_hash, block_hash, block_number, view_number) VALUES (:parent_hash, :block_hash, :block_number, :view_number)",
+                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number) VALUES (:parent_hash, :block_hash, :block_number, :view_number)",
                 named_params! {
                     ":parent_hash": meta.parent_hash,
                     ":block_hash": meta.block_hash,
@@ -561,13 +574,11 @@ impl Sync {
 
             // If we have no chain_segments, we have nothing to do
             if let Some((peer_info, meta)) = self.chain_segments.last() {
-                // let mut from_view = meta.view_number;
                 let mut request_hashes = Vec::with_capacity(self.max_batch_size);
                 let mut key = meta.parent_hash; // start from this block
-                while let Some(meta) = self.chain_metadata.remove(&key) {
+                while let Some(meta) = self.chain_metadata.get(&key) {
                     request_hashes.push(meta.block_hash);
                     key = meta.parent_hash;
-                    self.chain_metadata.insert(meta.block_hash, meta); // reinsert, for retries
                 }
 
                 // Checksum of the request hashes
