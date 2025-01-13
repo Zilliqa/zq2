@@ -46,7 +46,7 @@ resource "google_storage_bucket" "checkpoint" {
   public_access_prevention    = "inherited"
 
   versioning {
-    enabled = true
+    enabled = var.checkpoint.bucket_versioning
   }
 
   # Delete objects 30 days after creation
