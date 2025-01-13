@@ -174,6 +174,7 @@ variable "checkpoint" {
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     bucket_force_destroy = optional(bool, true)
+    bucket_versioning    = optional(bool, true)
     nodes = list(object({
       count  = number
       region = optional(string)
@@ -325,6 +326,13 @@ variable "gcp_docker_registry_project_id" {
 
 variable "persistence_bucket_force_destroy" {
   description = "(Optional) Whether force destroying the persistence bucket deprovisioning the infrastructure."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "persistence_bucket_versioning" {
+  description = "(Optional) Ebable the persistence bucket versioning."
   type        = bool
   default     = true
   nullable    = false

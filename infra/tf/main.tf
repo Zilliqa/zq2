@@ -41,7 +41,7 @@ resource "google_storage_bucket" "persistence" {
   public_access_prevention    = "inherited"
 
   versioning {
-    enabled = true
+    enabled = var.persistence_bucket_versioning
   }
 
   lifecycle_rule {
