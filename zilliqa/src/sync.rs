@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BinaryHeap, VecDeque},
+    collections::{BinaryHeap, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -9,7 +9,7 @@ use alloy::primitives::BlockNumber;
 use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
-use rusqlite::named_params;
+use rusqlite::{named_params, OptionalExtension};
 
 use crate::{
     cfg::NodeConfig,
@@ -76,10 +76,6 @@ pub struct Sync {
     peer_id: PeerId,
     // internal sync state
     state: SyncState,
-    // complete chain metadata, in-memory
-    chain_metadata: BTreeMap<Hash, ChainMetaData>,
-    // markers to segments in the chain, and the source peer for that segment.
-    chain_segments: Vec<(PeerInfo, ChainMetaData)>,
     // fixed-size queue of the most recent proposals
     recent_proposals: VecDeque<Proposal>,
     // for statistics only
@@ -127,7 +123,8 @@ impl Sync {
             .clamp(Self::VIEW_DRIFT as usize * 2, 180); // up to 180 sec of blocks at a time.
         let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
 
-        // FIXME: Move these to db.rs later
+        // This DB could be left in-here as it is only used in this module
+        // TODO: Make this in-memory by exploiting SQLite TEMP tables i.e. CREATE TEMP TABLE
         db.with_sqlite_tx(|c| {
             c.execute_batch(
                 "CREATE TABLE IF NOT EXISTS sync_data (
@@ -136,77 +133,26 @@ impl Sync {
                 block_number INTEGER NOT NULL PRIMARY KEY,
                 view_number INTEGER NOT NULL,
                 peer BLOB DEFAULT NULL
-            );",
+            );
+            CREATE INDEX IF NOT EXISTS idx_sync_data ON sync_data(block_number) WHERE peer IS NOT NULL;",
             )?;
             Ok(())
         })?;
 
         // Restore metadata/segments
-        let mut metadata = BTreeMap::new();
-        let mut segments = Vec::new();
-
+        let mut segments = 0;
         db.with_sqlite_tx(|c| {
-            let _ = c.prepare(
-                "SELECT parent_hash, block_hash, block_number, view_number, peer FROM sync_data ORDER BY rowid DESC",
-            )?
-            .query_map([], |row| {
-                let m = ChainMetaData{
-                    parent_hash: row.get_unwrap(0),
-                    block_hash: row.get_unwrap(1),
-                    block_number: row.get_unwrap(2),
-                    view_number: row.get_unwrap(3),
-                };
-                metadata.insert(m.block_hash, m.clone());
-
-                if let Ok(p) = row.get::<_, Vec<u8>>(4) {
-                    if let Ok(peer_id) = PeerId::from_bytes(&p) {
-                        segments.push((
-                            PeerInfo {
-                                version: PeerVer::V1,
-                                score: 0,
-                                peer_id,
-                                last_used: Instant::now(),
-                            },
-                            m.clone(),
-                        ));
-                    }
-                }
-
-                Ok(m)
-        })?.collect_vec();
+            segments = c
+                .prepare_cached("SELECT COUNT(block_number) FROM sync_data WHERE peer IS NOT NULL")?
+                .query_row([], |row| row.get::<_, usize>(0))
+                .optional()?
+                .unwrap_or_default();
             Ok(())
         })?;
-
-        // remove last segment
-        if let Some((_, meta)) = segments.pop() {
-            let mut key = meta.parent_hash;
-            while let Some(p) = metadata.remove(&key) {
-                key = p.parent_hash;
-                db.with_sqlite_tx(|c| {
-                    c.execute(
-                        "DELETE FROM sync_data WHERE block_hash = ?1",
-                        [p.block_hash],
-                    )?;
-                    Ok(())
-                })?;
-            }
-        }
-
-        let state = if segments.is_empty() {
+        let state = if segments == 0 {
             SyncState::Phase0
         } else {
-            tracing::debug!(
-                "sync::New : continue from segment #{} with {} metadata",
-                segments.len(),
-                metadata.len()
-            );
-            SyncState::Phase1(segments.last().as_ref().unwrap().1.clone())
-        };
-
-        let start_at = if let SyncState::Phase1(m) = &state {
-            m.block_number
-        } else {
-            u64::MIN
+            SyncState::Retry1
         };
 
         Ok(Self {
@@ -219,45 +165,147 @@ impl Sync {
             max_blocks_in_flight,
             in_flight: None,
             in_pipeline: usize::MIN,
-            chain_metadata: metadata,
-            chain_segments: segments,
             state,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
-            started_at_block_number: start_at,
+            started_at_block_number: 0,
         })
     }
 
-    fn pop_segment(&self, meta: ChainMetaData) -> Result<()> {
+    /// Returns the number of stored segments
+    fn count_segments(&self) -> Result<usize> {
+        let mut segments = 0;
         self.db.with_sqlite_tx(|c| {
-            c.execute(
-                "UPDATE sync_data SET peer = NULL WHERE block_hash = :block_hash",
-                named_params! {
-                    ":block_hash": meta.block_hash,
+            segments = c
+                .prepare_cached("SELECT COUNT(block_number) FROM sync_data WHERE peer IS NOT NULL")?
+                .query_row([], |row| row.get(0))
+                .optional()?
+                .unwrap_or_default();
+            Ok(())
+        })?;
+        Ok(segments)
+    }
+
+    /// Checks if the stored metadata exists
+    fn contains_metadata(&self, hash: &Hash) -> Result<bool> {
+        let mut result = false;
+        self.db.with_sqlite_tx(|c| {
+            result = c
+                .prepare_cached("SELECT block_number FROM sync_data WHERE block_hash = ?1")?
+                .query_row([hash], |row| row.get::<_, u64>(0))
+                .optional()?
+                .is_some();
+            Ok(())
+        })?;
+        Ok(result)
+    }
+
+    /// Retrieves bulk metadata information from the given block_hash (inclusive)
+    fn get_segment(&self, hash: Hash) -> Result<Vec<Hash>> {
+        let mut hashes = Vec::with_capacity(self.max_batch_size);
+        let mut block_hash = hash;
+        self.db.with_sqlite_tx(|c| {
+            while let Some(parent_hash) = c
+                .prepare_cached("SELECT parent_hash FROM sync_data WHERE block_hash = ?1")?
+                .query_row([block_hash], |row| row.get::<_, Hash>(0))
+                .optional()?
+            {
+                hashes.push(block_hash);
+                block_hash = parent_hash;
+            }
+            Ok(())
+        })?;
+        Ok(hashes)
+    }
+
+    /// Peeks into the top of the segment stack.
+    fn last_segment(&self) -> Result<Option<(ChainMetaData, PeerInfo)>> {
+        let mut result = None;
+        self.db.with_sqlite_tx(|c| {
+            result = c
+                .prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, peer FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
+                .query_row([], |row| Ok((
+                    ChainMetaData{
+                    parent_hash: row.get(0)?,
+                    block_hash: row.get(1)?,
+                    block_number: row.get(2)?,
+                    view_number: row.get(3)?,
                 },
-            )?;
+                PeerInfo {
+                    last_used: Instant::now(),
+                    score:u32::MAX,
+                    version: PeerVer::V1,
+                    peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(4)?.as_slice()).unwrap(),
+                },
+            )))
+                .optional()?;
+            Ok(())
+        })?;
+        Ok(result)
+    }
+
+    /// Pops a segment from the stack; and bulk removes all metadata associated with it.
+    fn pop_segment(&self) -> Result<()> {
+        self.db.with_sqlite_tx(|c| {
+            if let Some(block_hash) = c.prepare_cached("SELECT block_hash FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
+            .query_row([], |row| row.get::<_,Hash>(0)).optional()? {
+                if let Some(parent_hash) = c.prepare_cached("SELECT parent_hash FROM sync_data WHERE block_hash = ?1")?
+                .query_row([block_hash], |row| row.get(0)).optional()? {
+
+                // update marker
+                c.prepare_cached(
+                    "UPDATE sync_data SET peer = NULL WHERE block_hash = ?1")?
+                    .execute(
+                    [block_hash]
+                )?;
+
+                // remove segment                
+                let mut hashes = Vec::with_capacity(self.max_batch_size);
+                let mut block_hash = parent_hash;
+                while let Some(parent_hash) = c
+                        .prepare_cached("SELECT parent_hash FROM sync_data WHERE block_hash = ?1")?
+                        .query_row([block_hash], |row| row.get::<_, Hash>(0))
+                        .optional()?
+                    {
+                        hashes.push(block_hash);
+                        block_hash = parent_hash;
+                    }
+
+                for hash in hashes {
+                    c.prepare_cached("DELETE FROM sync_data WHERE block_hash = ?1")?
+                    .execute([hash])?;
+                }
+                }
+            }
             Ok(())
         })
     }
 
+    /// Pushes a particular segment into the stack.
     fn push_segment(&self, peer: PeerInfo, meta: ChainMetaData) -> Result<()> {
         self.db.with_sqlite_tx(|c| {
-            c.execute(
-                "UPDATE sync_data SET peer = :peer WHERE block_hash = :block_hash",
+            c.prepare_cached(
+                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, peer) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :peer)")?
+                .execute(
                 named_params! {
-                    ":peer": peer.peer_id.to_bytes(),
+                    ":parent_hash": meta.parent_hash,
                     ":block_hash": meta.block_hash,
+                    ":block_number": meta.block_number,
+                    ":view_number": meta.view_number,
+                    ":peer": peer.peer_id.to_bytes(),
                 },
             )?;
             Ok(())
         })
     }
 
-    // TODO: Move into db.rs, optimise
-    fn insert_metadata(&mut self, meta: ChainMetaData) -> Result<()> {
+    /// Bulk inserts a bunch of metadata.
+    fn insert_metadata(&self, metas: Vec<ChainMetaData>) -> Result<()> {
         self.db.with_sqlite_tx(|c| {
-            c.execute(
-                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number) VALUES (:parent_hash, :block_hash, :block_number, :view_number)",
+            for meta in metas {
+            c.prepare_cached(
+                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number) VALUES (:parent_hash, :block_hash, :block_number, :view_number)")?
+                .execute(
                 named_params! {
                     ":parent_hash": meta.parent_hash,
                     ":block_hash": meta.block_hash,
@@ -265,14 +313,15 @@ impl Sync {
                     ":view_number": meta.view_number,
                 },
             )?;
+        }
             Ok(())
         })
     }
 
-    // TODO: Move into db.rs, optimise
-    fn remove_metadata(&self, hash: Hash) -> Result<()> {
+    /// Empty the metadata table.
+    fn empty_metadata(&self) -> Result<()> {
         self.db.with_sqlite_tx(|c| {
-            c.execute("DELETE FROM sync_data WHERE block_hash = ?1", [hash])?;
+            c.execute("DELETE FROM sync_data", [])?;
             Ok(())
         })
     }
@@ -336,14 +385,30 @@ impl Sync {
                     tracing::info!(
                         "sync::SyncProposal : finishing {} blocks for segment #{} from {}",
                         self.recent_proposals.len(),
-                        self.chain_segments.len(),
+                        self.count_segments()?,
                         self.peer_id,
                     );
                     // inject the proposals
                     let proposals = self.recent_proposals.drain(..).collect_vec();
                     self.inject_proposals(proposals)?;
                 }
+                self.empty_metadata()?;
                 self.state = SyncState::Phase0;
+            }
+            // Retry to fix sync issues e.g. peers that are now offline
+            SyncState::Retry1 if self.in_pipeline == 0 => {
+                self.retry_phase1()?;
+                if self.started_at_block_number == 0 {
+                    let highest_block = self
+                        .db
+                        .get_canonical_block_by_number(
+                            self.db
+                                .get_highest_canonical_block_number()?
+                                .expect("no highest block"),
+                        )?
+                        .expect("missing highest block");
+                    self.started_at_block_number = highest_block.number();
+                }
             }
             _ => {
                 tracing::debug!(
@@ -388,8 +453,9 @@ impl Sync {
     ///
     /// Pop the most recently used segment from the segment marker, and retry phase 1.
     /// This will rebuild history from the previous marker, with another peer.
+    /// If this function is called many times, it will eventually restart from Phase 0.
     fn retry_phase1(&mut self) -> Result<()> {
-        if self.chain_segments.is_empty() {
+        if self.count_segments()? == 0 {
             tracing::error!("sync::RetryPhase1 : cannot retry phase 1 without chain segments!");
             self.state = SyncState::Phase0;
             return Ok(());
@@ -397,24 +463,14 @@ impl Sync {
 
         tracing::debug!(
             "sync::RetryPhase1 : retrying segment #{}",
-            self.chain_segments.len(),
+            self.count_segments()?,
         );
 
         // remove the last segment from the chain metadata
-        let (_, meta) = self.chain_segments.pop().unwrap();
-        self.pop_segment(meta.clone())?;
-
-        let mut key = meta.parent_hash;
-        while let Some(p) = self.chain_metadata.remove(&key) {
-            key = p.parent_hash;
-            self.remove_metadata(p.block_hash)?;
-        }
-
-        // retry from Phase 1
+        let (meta, _) = self.last_segment()?.unwrap();
+        self.pop_segment()?;
         self.state = SyncState::Phase1(meta);
-        if Self::DO_SPECULATIVE {
-            self.request_missing_metadata(None)?;
-        }
+
         Ok(())
     }
 
@@ -445,7 +501,8 @@ impl Sync {
             // Empty response, downgrade peer and retry phase 1.
             tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
             self.done_with_peer(DownGrade::Empty);
-            return self.retry_phase1();
+            self.state = SyncState::Retry1;
+            return Ok(());
         } else {
             self.done_with_peer(DownGrade::None);
         }
@@ -453,7 +510,7 @@ impl Sync {
         tracing::info!(
             "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
             response.len(),
-            self.chain_segments.len(),
+            self.count_segments()?,
             from
         );
 
@@ -473,7 +530,8 @@ impl Sync {
             tracing::error!(
                 "sync::MultiBlockResponse : unexpected checksum={check_sum} != {checksum}"
             );
-            return self.retry_phase1();
+            self.state = SyncState::Retry1;
+            return Ok(());
         }
 
         // Response seems sane.
@@ -482,23 +540,11 @@ impl Sync {
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
-        // Remove the blocks from the chain metadata
-        for p in &proposals {
-            if self.chain_metadata.remove(&p.hash()).is_none() {
-                anyhow::bail!("missing chain data for proposal"); // this should never happen!
-            } else {
-                self.remove_metadata(p.hash())?;
-            }
-        }
-
-        // Done with this segment
-        if let Some((_, meta)) = self.chain_segments.pop() {
-            self.pop_segment(meta)?;
-        }
+        self.pop_segment()?;
         self.inject_proposals(proposals)?;
 
         // Done with phase 2
-        if self.chain_segments.is_empty() {
+        if self.count_segments()? == 0 {
             self.state = SyncState::Phase3;
         } else if Self::DO_SPECULATIVE {
             // Speculatively request more blocks
@@ -573,13 +619,8 @@ impl Sync {
             self.peers.push(peer);
 
             // If we have no chain_segments, we have nothing to do
-            if let Some((peer_info, meta)) = self.chain_segments.last() {
-                let mut request_hashes = Vec::with_capacity(self.max_batch_size);
-                let mut key = meta.parent_hash; // start from this block
-                while let Some(meta) = self.chain_metadata.get(&key) {
-                    request_hashes.push(meta.block_hash);
-                    key = meta.parent_hash;
-                }
+            if let Some((meta, peer_info)) = self.last_segment()? {
+                let request_hashes = self.get_segment(meta.parent_hash)?;
 
                 // Checksum of the request hashes
                 let checksum = request_hashes
@@ -594,7 +635,7 @@ impl Sync {
                 tracing::info!(
                     "sync::RequestMissingBlocks : requesting {} blocks of segment #{} from {}",
                     request_hashes.len(),
-                    self.chain_segments.len(),
+                    self.count_segments()?,
                     peer_info.peer_id,
                 );
                 let message = match peer_info.version {
@@ -700,7 +741,7 @@ impl Sync {
                     .proposals
                     .into_iter()
                     // filter any blocks that are not in the chain e.g. forks
-                    .filter(|p| self.chain_metadata.contains_key(&p.hash()))
+                    .filter(|p| self.contains_metadata(&p.hash()).unwrap_or_default())
                     .sorted_by(|a, b| b.number().cmp(&a.number()))
                     .collect_vec();
 
@@ -786,8 +827,7 @@ impl Sync {
         let segment = response;
 
         // Record landmark, including peer that has this set of blocks
-        self.push_segment(segment_peer.clone(), meta.clone())?;
-        self.chain_segments.push((segment_peer, meta.clone()));
+        self.push_segment(segment_peer, meta.clone())?;
 
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
@@ -796,22 +836,12 @@ impl Sync {
         tracing::info!(
             "sync::MetadataResponse : received {} metadata segment #{} from {}",
             segment.len(),
-            self.chain_segments.len(),
+            self.count_segments()?,
             from
         );
 
-        // Record the constructed chain metadata, check for loops
-        for meta in segment {
-            if self
-                .chain_metadata
-                .insert(meta.block_hash, meta.clone())
-                .is_some()
-            {
-                anyhow::bail!("sync::MetadataResponse : loop in chain!"); // there is a possible loop in the chain
-            } else {
-                self.insert_metadata(meta)?;
-            }
-        }
+        // Record the constructed chain metadata
+        self.insert_metadata(segment)?;
 
         // If the segment hits our history, start Phase 2.
         if self.db.get_block_by_hash(&last_block_hash)?.is_some() {
@@ -900,7 +930,7 @@ impl Sync {
             tracing::info!(
                 "sync::RequestMissingMetadata : requesting {} metadata of segment #{} from {}",
                 self.max_batch_size,
-                self.chain_segments.len() + 1,
+                self.count_segments()? + 1,
                 peer.peer_id
             );
             let message = match self.state {
@@ -1007,12 +1037,12 @@ impl Sync {
                 prop.from
             );
         }
-        if let Some(p) = self.chain_metadata.remove(&prop.block.hash()) {
-            tracing::warn!(
-                "sync::MarkReceivedProposal : removing stale metadata {}",
-                p.block_hash
-            );
-        }
+        // if let Some(p) = self.chain_metadata.remove(&prop.block.hash()) {
+        //     tracing::warn!(
+        //         "sync::MarkReceivedProposal : removing stale metadata {}",
+        //         p.block_hash
+        //     );
+        // }
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
         Ok(())
     }
@@ -1078,9 +1108,9 @@ impl Sync {
             )?
             .expect("missing highest block");
         Ok((
-            !self.recent_proposals.is_empty()
-                || !self.chain_metadata.is_empty()
-                || !self.chain_segments.is_empty(),
+            self.in_pipeline != 0
+                || !self.recent_proposals.is_empty()
+                || self.count_segments()? != 0,
             highest_block,
         ))
     }
@@ -1142,6 +1172,7 @@ enum SyncState {
     Phase1(ChainMetaData),
     Phase2(Hash),
     Phase3,
+    Retry1,
 }
 
 /// Peer Version
