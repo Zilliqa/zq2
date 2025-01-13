@@ -48,7 +48,3 @@ fi
 end_time=$(date +%s)
 duration=$((end_time - start_time))
 log_message "Persistence export completed successfully in $duration seconds"
-
-# Keep only the most recent 30 checkpoints in the GCS bucket
-gsutil ls -d "$GCS_BUCKET/{{ eth_chain_id }}-persistence-*/" | sort -r | tail -n +101 | awk '{print $1}' | xargs -I {} gsutil rm -rfa {}
-log_message "Cleanup completed"
