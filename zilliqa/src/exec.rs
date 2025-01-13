@@ -672,6 +672,7 @@ impl State {
                 txn.data,
                 inspector,
                 &self.scilla_ext_libs_path,
+                self.forks.get(current_block.number),
             )
         }?;
 
@@ -1719,6 +1720,7 @@ pub fn scilla_call(
     data: String,
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
+    fork: Fork,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = gas_limit;
 
@@ -1744,12 +1746,14 @@ pub fn scilla_call(
 
         let contract = current_state.load_account(to_addr)?;
         let code_and_data = match &contract.account.code {
-            // EOAs are currently represented by [Code::Evm] with no code.
-            Code::Evm(code) if code.is_empty() => None,
+            // Note that EOAs are represented by [Code::Evm] with no code.
+            Code::Evm(code) if fork.scilla_messages_can_call_evm_contracts || code.is_empty() => {
+                None
+            }
             Code::Scilla {
                 code, init_data, ..
             } => Some((code, init_data)),
-            // Calls to EVM contracts should fail.
+            // Calls to EVM contracts should fail because `fork.scilla_messages_can_call_evm_contract == false`.
             Code::Evm(_) => {
                 return Ok((
                     ScillaResult {
