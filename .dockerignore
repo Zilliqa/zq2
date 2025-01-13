@@ -1,5 +1,2 @@
 .cache
 **/target/
-
-docker-compose.yaml
-Dockerfile
