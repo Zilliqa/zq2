@@ -9,7 +9,11 @@ use alloy::primitives::BlockNumber;
 use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
-use rusqlite::{named_params, OptionalExtension};
+use rusqlite::{
+    named_params,
+    types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef},
+    OptionalExtension,
+};
 
 use crate::{
     cfg::NodeConfig,
@@ -132,7 +136,8 @@ impl Sync {
                 parent_hash BLOB NOT NULL,
                 block_number INTEGER NOT NULL PRIMARY KEY,
                 view_number INTEGER NOT NULL,
-                peer BLOB DEFAULT NULL
+                peer BLOB DEFAULT NULL,
+                version INTEGER DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_sync_data ON sync_data(block_number) WHERE peer IS NOT NULL;",
             )?;
@@ -223,7 +228,7 @@ impl Sync {
         let mut result = None;
         self.db.with_sqlite_tx(|c| {
             result = c
-                .prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, peer FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
+                .prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, peer, version FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
                 .query_row([], |row| Ok((
                     ChainMetaData{
                     parent_hash: row.get(0)?,
@@ -234,7 +239,7 @@ impl Sync {
                 PeerInfo {
                     last_used: Instant::now(),
                     score:u32::MAX,
-                    version: PeerVer::V1,
+                    version: row.get(5)?,
                     peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(4)?.as_slice()).unwrap(),
                 },
             )))
@@ -285,7 +290,7 @@ impl Sync {
     fn push_segment(&self, peer: PeerInfo, meta: ChainMetaData) -> Result<()> {
         self.db.with_sqlite_tx(|c| {
             c.prepare_cached(
-                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, peer) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :peer)")?
+                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, peer, version) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :peer, :version)")?
                 .execute(
                 named_params! {
                     ":parent_hash": meta.parent_hash,
@@ -293,6 +298,7 @@ impl Sync {
                     ":block_number": meta.block_number,
                     ":view_number": meta.view_number,
                     ":peer": peer.peer_id.to_bytes(),
+                    ":version": peer.version,
                 },
             )?;
             Ok(())
@@ -1178,6 +1184,22 @@ enum SyncState {
 /// Peer Version
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum PeerVer {
-    V1,
-    V2,
+    V1 = 1,
+    V2 = 2,
+}
+
+impl FromSql for PeerVer {
+    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
+        u32::column_result(value).map(|i| match i {
+            1 => PeerVer::V1,
+            2 => PeerVer::V2,
+            _ => todo!("invalid version"),
+        })
+    }
+}
+
+impl ToSql for PeerVer {
+    fn to_sql(&self) -> Result<ToSqlOutput, rusqlite::Error> {
+        Ok((self.clone() as u32).into())
+    }
 }
