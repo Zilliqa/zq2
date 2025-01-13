@@ -1,6 +1,6 @@
 # Title
 
-eth_getGasPrice
+eth_gasPrice
 
 # Keywords
 
@@ -34,5 +34,3 @@ curl -d '{
 | `jsonrpc` | string | Required | `"2.0"`          |
 | `method`  | string | Required | `"eth_gasPrice"` |
 | `params`  | empty  | Optional | `[]` if present  |
-
-
