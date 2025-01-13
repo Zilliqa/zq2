@@ -48,6 +48,27 @@ resource "google_storage_bucket" "checkpoint" {
   versioning {
     enabled = true
   }
+
+  # Delete objects 30 days after creation
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age = 30
+    }
+  }
+
+  # Delete noncurrent (deleted) file versions after 7 days
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      days_since_noncurrent_time = 7
+      send_age_if_zero           = false
+    }
+  }
 }
 
 resource "google_storage_bucket_iam_binding" "checkpoint_bucket_admins" {

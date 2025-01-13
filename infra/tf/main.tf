@@ -43,6 +43,36 @@ resource "google_storage_bucket" "persistence" {
   versioning {
     enabled = true
   }
+
+  lifecycle_rule {
+    action {
+      type          = "SetStorageClass"
+      storage_class = "NEARLINE"
+    }
+    condition {
+      age = 7
+    }
+  }
+
+  lifecycle_rule {
+    action {
+      type          = "SetStorageClass"
+      storage_class = "COLDLINE"
+    }
+    condition {
+      age = 37 # 7 days in Standard + 30 days in Nearline
+    }
+  }
+
+  lifecycle_rule {
+    action {
+      type          = "SetStorageClass"
+      storage_class = "ARCHIVE"
+    }
+    condition {
+      age = 127 # 37 days + 90 days in Coldline
+    }
+  }
 }
 
 resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {

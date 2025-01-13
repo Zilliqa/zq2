@@ -34,7 +34,3 @@ find "$CHECKPOINT_DIR" -type f ! -name '*.part' -printf "%T@ %p\n" | sort -n | a
         log_message "Failed to upload $CHECKPOINT_FILE to GCS"
     fi
 done
-
-# Keep only the most recent 30 checkpoints in the GCS bucket
-gsutil ls -l "$GCS_BUCKET/previous/*.dat" | sort -k2 -r | tail -n +30 | awk '{print $3}' | xargs -I {} gsutil rm {}
-log_message "Cleanup completed"
