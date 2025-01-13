@@ -58,10 +58,9 @@ resource "google_compute_firewall" "allow_bootstrap_external_http" {
 resource "google_compute_health_check" "bootstrap" {
   name = "${var.chain_name}-bootstrap-health"
 
-  http_health_check {
-    port               = "8080"
-    port_specification = "USE_FIXED_PORT"
-    request_path       = "/health"
+  tcp_health_check {
+    port_name          = "peer"
+    port_specification = "USE_NAMED_PORT"
   }
 }
 
