@@ -1856,6 +1856,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "colored"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
+dependencies = [
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10176,7 +10185,7 @@ dependencies = [
  "clap",
  "clap-verbosity-flag",
  "cliclack",
- "colored",
+ "colored 3.0.0",
  "crypto-bigint",
  "env_logger",
  "eth_trie",
@@ -10488,7 +10497,7 @@ dependencies = [
  "anyhow",
  "base64 0.21.7",
  "clap",
- "colored",
+ "colored 2.2.0",
  "ethers",
  "gcp-bigquery-client",
  "home",
