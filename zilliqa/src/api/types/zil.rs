@@ -800,25 +800,26 @@ impl TransactionStatusResponse {
                 tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
             ),
         };
-        let status_code = if receipt.accepted.is_some() && receipt.accepted.unwrap() {
-            TxnStatusCode::Confirmed
-        } else if receipt.accepted.is_none() {
-            TxnStatusCode::Dispatched
-        } else {
-            let errors: Vec<ScillaError> =
-                receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
-            if errors.len() == 1 {
-                match errors[0] {
-                    ScillaError::CallContractFailed => TxnStatusCode::FailScillaLib,
-                    ScillaError::CreateContractFailed => TxnStatusCode::Error,
-                    ScillaError::GasNotSufficient => TxnStatusCode::InsufficientGas,
-                    ScillaError::BalanceTransferFailed => TxnStatusCode::InsufficientBalance,
-                    _ => TxnStatusCode::Error,
-                }
+        let status_code =
+            if receipt.accepted.is_some() && receipt.accepted.unwrap() && receipt.success {
+                TxnStatusCode::Confirmed
+            } else if receipt.success {
+                TxnStatusCode::Dispatched
             } else {
-                TxnStatusCode::Error
-            }
-        };
+                let errors: Vec<ScillaError> =
+                    receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
+                if errors.len() == 1 {
+                    match errors[0] {
+                        ScillaError::CallContractFailed => TxnStatusCode::FailScillaLib,
+                        ScillaError::CreateContractFailed => TxnStatusCode::Error,
+                        ScillaError::GasNotSufficient => TxnStatusCode::InsufficientGas,
+                        ScillaError::BalanceTransferFailed => TxnStatusCode::InsufficientBalance,
+                        _ => TxnStatusCode::Error,
+                    }
+                } else {
+                    TxnStatusCode::Error
+                }
+            };
         let modification_state = if receipt.accepted.is_none() { 0 } else { 2 };
         Ok(Self {
             id: tx.hash.to_string(),
