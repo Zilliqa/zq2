@@ -209,7 +209,7 @@ pub struct BlockRequest {
     pub to_view: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub proposals: Vec<Proposal>,
     pub from_view: u64,

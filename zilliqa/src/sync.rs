@@ -19,10 +19,7 @@ use crate::{
     cfg::NodeConfig,
     crypto::Hash,
     db::Db,
-    message::{
-        Block, BlockRequest, BlockRequestV2, BlockResponse, ChainMetaData, ExternalMessage,
-        InjectedProposal, Proposal,
-    },
+    message::{Block, BlockRequest, BlockRequestV2, BlockResponse, ChainMetaData, ExternalMessage, InjectedProposal, Proposal},
     node::MessageSender,
     time::SystemTime,
 };

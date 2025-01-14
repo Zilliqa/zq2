@@ -19,7 +19,7 @@ use crate::{
     constants,
     crypto::Hash,
     db::Db,
-    message::{Block, BlockRequest, BlockStrategy, ExternalMessage, Proposal},
+    message::{Block, BlockStrategy, Proposal},
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     range_map::RangeMap,
     time::SystemTime,
