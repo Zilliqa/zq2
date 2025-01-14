@@ -1519,6 +1519,7 @@ pub fn store_external_libraries(
     Ok((ext_libs_dir_in_zq2, ext_libs_dir_in_scilla))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scilla_create(
     mut state: PendingState,
     scilla: MutexGuard<'_, Scilla>,
