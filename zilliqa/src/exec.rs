@@ -659,6 +659,7 @@ impl State {
                 current_block,
                 inspector,
                 &self.scilla_ext_libs_path,
+                self.forks.get(current_block.number),
             )
         } else {
             scilla_call(
@@ -1526,6 +1527,7 @@ fn scilla_create(
     current_block: BlockHeader,
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
+    fork: Fork,
 ) -> Result<(ScillaResult, PendingState)> {
     if txn.data.is_empty() {
         return Err(anyhow!("contract creation without init data"));
@@ -1628,6 +1630,11 @@ fn scilla_create(
     let transitions = contract_info.transitions;
 
     let account = state.load_account(contract_address)?;
+    if fork.adjust_contract_balance_on_deployment_if_contract_address_already_funded {
+        account.account.balance += txn.amount.get();
+    } else {
+        account.account.balance = txn.amount.get();
+    }
     account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
