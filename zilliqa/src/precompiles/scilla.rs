@@ -566,6 +566,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
         serde_json::to_string(&message).unwrap(),
         &mut external_context.inspector,
         &scilla_ext_libs_path_default(),
+        external_context.fork,
     ) else {
         return fatal("scilla call failed");
     };

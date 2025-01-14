@@ -182,14 +182,16 @@ impl Chain {
     pub fn get_forks(&self) -> Option<Vec<Value>> {
         match self {
             Chain::Zq2ProtoTestnet => Some(vec![
-                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false }),
+                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false, "scilla_messages_can_call_evm_contracts": false }),
                 // estimated: 2024-12-18T14:57:53Z
-                json!({ "at_height": 8404000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
+                json!({ "at_height": 8404000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true, "scilla_messages_can_call_evm_contracts": false }),
+                // estimated: 2025-01-15T09:10:37Z
+                json!({ "at_height": 10200000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true, "scilla_messages_can_call_evm_contracts": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
-                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false }),
+                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false, "scilla_messages_can_call_evm_contracts": false }),
                 // estimated: 2024-12-20T23:33:12Z
-                json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
+                json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true, "scilla_messages_can_call_evm_contracts": false }),
             ]),
             _ => None,
         }

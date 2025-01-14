@@ -431,6 +431,7 @@ impl Default for Forks {
             at_height: 0,
             failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
             call_mode_1_sets_caller_to_parent_caller: true,
+            scilla_messages_can_call_evm_contracts: true,
         }]
         .try_into()
         .unwrap()
@@ -468,6 +469,10 @@ pub struct Fork {
     /// When this flag is true, `D` will see the `_sender` as `B`. When this flag is false, `D` will see the `_sender`
     /// as `A`.
     pub call_mode_1_sets_caller_to_parent_caller: bool,
+    /// If true, when a Scilla message is sent to an EVM contract, the EVM contract will be treated as if it was an
+    /// EOA (i.e. any ZIL passed will be transferred to the contract and execution will continue). If false, sending a
+    /// Scilla message to an EVM contract will cause the Scilla transaction to fail.
+    pub scilla_messages_can_call_evm_contracts: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
