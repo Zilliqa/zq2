@@ -9,6 +9,6 @@ roles:
 - persistence
 - query
 versions:
-  zq2: v0.5.1
+  zq2: v0.5.3
   otterscan: develop
   spout: main
