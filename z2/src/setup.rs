@@ -625,6 +625,7 @@ impl Setup {
             tokio::fs::create_dir(&data_dir_path).await?;
             node_config.eth_chain_id = CHAIN_ID | 0x8000;
             node_config.data_dir = Some(utils::string_from_path(&data_dir_path)?);
+            node_config.enable_ots_indices = *node_index == 0;
             node_config
                 .consensus
                 .genesis_deposits
