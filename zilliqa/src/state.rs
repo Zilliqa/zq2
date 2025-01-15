@@ -73,7 +73,7 @@ impl State {
             gas_price: *consensus_config.gas_price,
             scilla_call_gas_exempt_addrs: consensus_config.scilla_call_gas_exempt_addrs.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
-            forks: consensus_config.forks.clone(),
+            forks: consensus_config.forks.clone().into(),
             block_store,
         }
     }

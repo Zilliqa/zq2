@@ -366,7 +366,7 @@ pub struct ConsensusConfig {
     /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
     /// difference applies.
     #[serde(default)]
-    pub forks: Forks,
+    pub forks: DeltaForks,
 }
 
 impl Default for ConsensusConfig {
@@ -394,6 +394,50 @@ impl Default for ConsensusConfig {
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
             forks: Default::default(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeltaForks(Vec<DeltaFork>);
+impl Default for DeltaForks {
+    fn default() -> Self {
+        DeltaForks(vec![DeltaFork {
+            at_height: 0,
+            failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
+            call_mode_1_sets_caller_to_parent_caller: Some(true),
+            scilla_messages_can_call_evm_contracts: Some(true),
+            adjust_contract_balance_on_deployment_if_contract_address_already_funded: Some(true),
+        }])
+    }
+}
+
+impl From<DeltaForks> for Forks {
+    fn from(delta_forks: DeltaForks) -> Self {
+        let mut forks: Vec<Fork> = vec![];
+        for delta in delta_forks.0 {
+            if let Some(last_fork) = forks.last() {
+                let new_fork = last_fork.apply_delta_fork(&delta);
+                forks.push(new_fork);
+            } else {
+                let base_fork = Fork {
+                    at_height: delta.at_height,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: delta
+                        .failed_scilla_call_from_gas_exempt_caller_causes_revert
+                        .unwrap_or(true),
+                    call_mode_1_sets_caller_to_parent_caller: delta
+                        .call_mode_1_sets_caller_to_parent_caller
+                        .unwrap_or(true),
+                    scilla_messages_can_call_evm_contracts: delta
+                        .scilla_messages_can_call_evm_contracts
+                        .unwrap_or(true),
+                    adjust_contract_balance_on_deployment_if_contract_address_already_funded: delta
+                        .adjust_contract_balance_on_deployment_if_contract_address_already_funded
+                        .unwrap_or(true),
+                };
+                forks.push(base_fork);
+            }
+        }
+        Forks(forks)
     }
 }
 
@@ -456,10 +500,19 @@ impl Forks {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct Fork {
     pub at_height: u64,
+    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
+    pub call_mode_1_sets_caller_to_parent_caller: bool,
+    pub scilla_messages_can_call_evm_contracts: bool,
+    pub adjust_contract_balance_on_deployment_if_contract_address_already_funded: bool,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct DeltaFork {
+    pub at_height: u64,
     /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`
     /// precompile and the inner Scilla call fails, the entire transaction will revert. If false, the normal EVM
     /// semantics apply where the caller can decide how to act based on the success of the inner call.
-    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
+    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: Option<bool>,
     /// If true, if a call is made to the `scilla_call` precompile with `call_mode` / `keep_origin` set to `1`, the
     /// `_sender` of the inner Scilla call will be set to the caller of the current call-stack. If false, the `_sender`
     /// will be set to the original transaction signer.
@@ -469,16 +522,38 @@ pub struct Fork {
     ///
     /// When this flag is true, `D` will see the `_sender` as `B`. When this flag is false, `D` will see the `_sender`
     /// as `A`.
-    pub call_mode_1_sets_caller_to_parent_caller: bool,
+    pub call_mode_1_sets_caller_to_parent_caller: Option<bool>,
     /// If true, when a Scilla message is sent to an EVM contract, the EVM contract will be treated as if it was an
     /// EOA (i.e. any ZIL passed will be transferred to the contract and execution will continue). If false, sending a
     /// Scilla message to an EVM contract will cause the Scilla transaction to fail.
-    pub scilla_messages_can_call_evm_contracts: bool,
+    pub scilla_messages_can_call_evm_contracts: Option<bool>,
 
     /// If true, when a contract is deployed, if the contract address is already funded,
     /// the contract balance will be sum of the existing balance and the amount sent in the deployment transaction.
     /// If false, the contract balance will be the amount sent in the deployment transaction.
-    pub adjust_contract_balance_on_deployment_if_contract_address_already_funded: bool,
+    pub adjust_contract_balance_on_deployment_if_contract_address_already_funded: Option<bool>,
+}
+
+impl Fork {
+    pub fn apply_delta_fork(&self, delta: &DeltaFork) -> Fork {
+        Fork {
+            at_height: delta.at_height,
+            failed_scilla_call_from_gas_exempt_caller_causes_revert: delta
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+                .unwrap_or(self.failed_scilla_call_from_gas_exempt_caller_causes_revert),
+            call_mode_1_sets_caller_to_parent_caller: delta
+                .call_mode_1_sets_caller_to_parent_caller
+                .unwrap_or(self.call_mode_1_sets_caller_to_parent_caller),
+            scilla_messages_can_call_evm_contracts: delta
+                .scilla_messages_can_call_evm_contracts
+                .unwrap_or(self.scilla_messages_can_call_evm_contracts),
+            adjust_contract_balance_on_deployment_if_contract_address_already_funded: delta
+                .adjust_contract_balance_on_deployment_if_contract_address_already_funded
+                .unwrap_or(
+                    self.adjust_contract_balance_on_deployment_if_contract_address_already_funded,
+                ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -558,5 +633,100 @@ impl ContractUpgradesBlockHeights {
                 })
                 .collect(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_single_delta_fork() {
+        let delta_forks = DeltaForks(vec![DeltaFork {
+            at_height: 0,
+            failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
+            call_mode_1_sets_caller_to_parent_caller: Some(false),
+            scilla_messages_can_call_evm_contracts: Some(true),
+            adjust_contract_balance_on_deployment_if_contract_address_already_funded: Some(false),
+        }]);
+
+        let result = Forks::try_from(delta_forks).unwrap();
+        assert_eq!(result.0.len(), 1);
+        assert_eq!(result.0[0].at_height, 0);
+        assert_eq!(result.0[0].call_mode_1_sets_caller_to_parent_caller, false);
+        assert_eq!(
+            result.0[0].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
+            false
+        );
+    }
+
+    #[test]
+    fn test_multiple_delta_forks() {
+        let delta_forks = DeltaForks(vec![
+            DeltaFork {
+                at_height: 0,
+                failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
+                call_mode_1_sets_caller_to_parent_caller: Some(true),
+                scilla_messages_can_call_evm_contracts: Some(true),
+                adjust_contract_balance_on_deployment_if_contract_address_already_funded: Some(
+                    true,
+                ),
+            },
+            DeltaFork {
+                at_height: 100,
+                failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                call_mode_1_sets_caller_to_parent_caller: Some(false),
+                scilla_messages_can_call_evm_contracts: None,
+                adjust_contract_balance_on_deployment_if_contract_address_already_funded: Some(
+                    false,
+                ),
+            },
+            DeltaFork {
+                at_height: 200,
+                failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
+                call_mode_1_sets_caller_to_parent_caller: None,
+                scilla_messages_can_call_evm_contracts: Some(false),
+                adjust_contract_balance_on_deployment_if_contract_address_already_funded: None,
+            },
+        ]);
+
+        let result = Forks::try_from(delta_forks).unwrap();
+        assert_eq!(result.0.len(), 3);
+
+        assert_eq!(result.0[0].at_height, 0);
+        assert_eq!(
+            result.0[0].failed_scilla_call_from_gas_exempt_caller_causes_revert,
+            true
+        );
+        assert_eq!(result.0[0].call_mode_1_sets_caller_to_parent_caller, true);
+        assert_eq!(result.0[0].scilla_messages_can_call_evm_contracts, true);
+        assert_eq!(
+            result.0[0].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
+            true
+        );
+
+        assert_eq!(result.0[1].at_height, 100);
+        assert_eq!(
+            result.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert,
+            true
+        );
+        assert_eq!(result.0[1].call_mode_1_sets_caller_to_parent_caller, false);
+        assert_eq!(result.0[1].scilla_messages_can_call_evm_contracts, true);
+        assert_eq!(
+            result.0[1].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
+            false
+        );
+
+        assert_eq!(result.0[2].at_height, 200);
+        assert_eq!(
+            result.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert,
+            false
+        );
+        assert_eq!(result.0[2].call_mode_1_sets_caller_to_parent_caller, false);
+        assert_eq!(result.0[2].scilla_messages_can_call_evm_contracts, false);
+        assert_eq!(
+            result.0[2].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
+            false
+        );
     }
 }
