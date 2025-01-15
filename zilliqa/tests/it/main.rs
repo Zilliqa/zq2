@@ -351,7 +351,7 @@ impl Network {
                     Address::new(get_contract_address(secret_key_to_address(&genesis_key).0, 2).0),
                 ],
                 contract_upgrade_block_heights,
-                forks: Forks::default(),
+                forks: DeltaForks::default(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -489,7 +489,7 @@ impl Network {
                     get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
                 )],
                 contract_upgrade_block_heights,
-                forks: Forks::default(),
+                forks: DeltaForks::default(),
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
