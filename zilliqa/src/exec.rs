@@ -659,6 +659,7 @@ impl State {
                 current_block,
                 inspector,
                 &self.scilla_ext_libs_path,
+                self.forks.get(current_block.number),
             )
         } else {
             scilla_call(
@@ -1518,6 +1519,7 @@ pub fn store_external_libraries(
     Ok((ext_libs_dir_in_zq2, ext_libs_dir_in_scilla))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scilla_create(
     mut state: PendingState,
     scilla: MutexGuard<'_, Scilla>,
@@ -1526,6 +1528,7 @@ fn scilla_create(
     current_block: BlockHeader,
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
+    fork: Fork,
 ) -> Result<(ScillaResult, PendingState)> {
     if txn.data.is_empty() {
         return Err(anyhow!("contract creation without init data"));
@@ -1628,6 +1631,11 @@ fn scilla_create(
     let transitions = contract_info.transitions;
 
     let account = state.load_account(contract_address)?;
+    if fork.scilla_contract_creation_increments_account_balance {
+        account.account.balance += txn.amount.get();
+    } else {
+        account.account.balance = txn.amount.get();
+    }
     account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),

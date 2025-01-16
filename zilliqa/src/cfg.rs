@@ -432,6 +432,7 @@ impl Default for Forks {
             failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
             call_mode_1_sets_caller_to_parent_caller: true,
             scilla_messages_can_call_evm_contracts: true,
+            scilla_contract_creation_increments_account_balance: true,
         }]
         .try_into()
         .unwrap()
@@ -473,6 +474,11 @@ pub struct Fork {
     /// EOA (i.e. any ZIL passed will be transferred to the contract and execution will continue). If false, sending a
     /// Scilla message to an EVM contract will cause the Scilla transaction to fail.
     pub scilla_messages_can_call_evm_contracts: bool,
+    /// If true, if a Scilla contract is deployed to an address with a non-zero balance, the contract balance will be equal
+    /// to the account's existing balance plus the amount sent in the deployment transaction. If false, the contract
+    /// balance will be equal to the amount sent in the deployment transaction. The account's existing balance is wiped
+    /// out (meaning the total supply of the network is not preserved).
+    pub scilla_contract_creation_increments_account_balance: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
