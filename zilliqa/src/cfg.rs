@@ -474,11 +474,11 @@ pub struct Fork {
     /// EOA (i.e. any ZIL passed will be transferred to the contract and execution will continue). If false, sending a
     /// Scilla message to an EVM contract will cause the Scilla transaction to fail.
     pub scilla_messages_can_call_evm_contracts: bool,
-
-    /// If true, when a contract is deployed, if the contract address is already funded,
-    /// the contract balance will be sum of the existing balance and the amount sent in the deployment transaction.
-    /// If false, the contract balance will be the amount sent in the deployment transaction.
-    pub adjust_contract_balance_on_deployment_if_contract_address_already_funded: bool,
+    /// If true, if a Scilla contract is deployed to an address with a non-zero balance, the contract balance will be equal
+    /// to the account's existing balance plus the amount sent in the deployment transaction. If false, the contract
+    /// balance will be equal to the amount sent in the deployment transaction. The account's existing balance is wiped
+    /// out (meaning the total supply of the network is not preserved).
+    pub scilla_contract_creation_increments_account_balance: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
