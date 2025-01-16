@@ -70,7 +70,7 @@ use zilliqa::{
         max_blocks_in_flight_default, max_rpc_response_size_default, scilla_address_default,
         scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default,
         state_rpc_limit_default, total_native_token_supply_default, Amount, ApiServer, Checkpoint,
-        ConsensusConfig, ContractUpgradesBlockHeights, Forks, GenesisDeposit, NodeConfig,
+        ConsensusConfig, ContractUpgradesBlockHeights, DeltaForks, GenesisDeposit, NodeConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
