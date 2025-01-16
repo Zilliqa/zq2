@@ -432,7 +432,7 @@ impl Default for Forks {
             failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
             call_mode_1_sets_caller_to_parent_caller: true,
             scilla_messages_can_call_evm_contracts: true,
-            adjust_contract_balance_on_deployment_if_contract_address_already_funded: true,
+            scilla_contract_creation_increments_account_balance: true,
         }]
         .try_into()
         .unwrap()

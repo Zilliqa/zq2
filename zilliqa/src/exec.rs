@@ -1631,7 +1631,7 @@ fn scilla_create(
     let transitions = contract_info.transitions;
 
     let account = state.load_account(contract_address)?;
-    if fork.adjust_contract_balance_on_deployment_if_contract_address_already_funded {
+    if fork.scilla_contract_creation_increments_account_balance {
         account.account.balance += txn.amount.get();
     } else {
         account.account.balance = txn.amount.get();
