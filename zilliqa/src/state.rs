@@ -585,12 +585,7 @@ mod tests {
     use revm::primitives::FixedBytes;
 
     use super::*;
-    use crate::{
-        api::to_hex::ToHex,
-        cfg::NodeConfig,
-        db::Db,
-        message::BlockHeader,
-    };
+    use crate::{api::to_hex::ToHex, cfg::NodeConfig, db::Db, message::BlockHeader};
 
     #[test]
     fn deposit_contract_updateability() {

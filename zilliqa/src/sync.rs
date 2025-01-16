@@ -72,6 +72,7 @@ pub struct Sync {
     request_timeout: Duration,
     // how many blocks to request at once
     max_batch_size: usize,
+    max_batch_size_const: usize,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
     // count of proposals pending in the pipeline
@@ -95,14 +96,6 @@ impl Sync {
     #[cfg(debug_assertions)]
     const DO_SPECULATIVE: bool = false;
 
-    // For V1 BlockRequest, we request a little more than we need, due to drift
-    // Since the view number is an 'internal' clock, it is possible for the same block number
-    // to have different view numbers.
-    // 10 ~ 1-min
-    // 20 ~ 1-hr
-    // 30 ~ 2-days
-    const VIEW_DRIFT: u64 = 10;
-
     // Minimum of 2 peers to avoid single source of truth.
     const MIN_PEERS: usize = 2;
 
@@ -122,9 +115,7 @@ impl Sync {
             })
             .collect();
         let peer_id = message_sender.our_peer_id;
-        let max_batch_size = config
-            .block_request_batch_size
-            .clamp(Self::VIEW_DRIFT as usize * 2, 180); // up to 180 sec of blocks at a time.
+        let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
         let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
 
         // This DB could be left in-here as it is only used in this module
@@ -167,6 +158,7 @@ impl Sync {
             peer_id,
             request_timeout: config.consensus.consensus_timeout,
             max_batch_size,
+            max_batch_size_const: max_batch_size,
             max_blocks_in_flight,
             in_flight: None,
             in_pipeline: usize::MIN,
@@ -707,8 +699,20 @@ impl Sync {
         // Downgrade empty responses
         if response.proposals.is_empty() {
             tracing::info!("sync::HandleBlockResponse : empty response {from}");
+
+            if let Some(availability) = response.availability {
+                tracing::info!("sync::Availability {}", availability.len());
+                // response may be too large, so reduce request range
+                // this has the impact of slowing sync progress to a crawl.
+                self.max_batch_size = self
+                    .max_batch_size
+                    .saturating_sub(self.max_batch_size_const / 20)
+                    .max(5); // 5% reduce, down to 5 - empirical value
+            }
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
+        } else {
+            self.max_batch_size = self.max_batch_size_const;
         }
 
         tracing::trace!(
@@ -962,8 +966,12 @@ impl Sync {
                 SyncState::Phase1(ChainMetaData { view_number, .. })
                     if matches!(peer.version, PeerVer::V1) =>
                 {
+                    // For V1 BlockRequest, we request a little more than we need, due to drift
+                    // Since the view number is an 'internal' clock, it is possible for the same block number
+                    // to have different view numbers.
+                    let drift = self.max_batch_size as u64 / 10;
                     ExternalMessage::BlockRequest(BlockRequest {
-                        to_view: view_number.saturating_add(Self::VIEW_DRIFT),
+                        to_view: view_number.saturating_add(drift),
                         from_view: view_number.saturating_sub(self.max_batch_size as u64),
                     })
                 }
@@ -981,8 +989,9 @@ impl Sync {
                     let meta = meta.unwrap();
                     let view_number = meta.view_number;
                     self.state = SyncState::Phase1(meta);
+                    let drift = self.max_batch_size as u64 / 10;
                     ExternalMessage::BlockRequest(BlockRequest {
-                        to_view: view_number.saturating_add(Self::VIEW_DRIFT),
+                        to_view: view_number.saturating_add(drift),
                         from_view: view_number.saturating_sub(self.max_batch_size as u64),
                     })
                 }
