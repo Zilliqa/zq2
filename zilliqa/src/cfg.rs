@@ -650,7 +650,7 @@ mod tests {
             adjust_contract_balance_on_deployment_if_contract_address_already_funded: Some(false),
         }]);
 
-        let result = Forks::try_from(delta_forks).unwrap();
+        let result = Forks::from(delta_forks);
         assert_eq!(result.0.len(), 1);
         assert_eq!(result.0[0].at_height, 0);
         assert!(!result.0[0].call_mode_1_sets_caller_to_parent_caller);
@@ -689,7 +689,7 @@ mod tests {
             },
         ]);
 
-        let result = Forks::try_from(delta_forks).unwrap();
+        let result = Forks::from(delta_forks);
         assert_eq!(result.0.len(), 3);
 
         assert_eq!(result.0[0].at_height, 0);
