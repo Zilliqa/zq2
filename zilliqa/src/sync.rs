@@ -1333,7 +1333,7 @@ impl FromSql for PeerVer {
 
 impl ToSql for PeerVer {
     fn to_sql(&self) -> Result<ToSqlOutput, rusqlite::Error> {
-        Ok((self.clone() as u32).into())
+        Ok((*self as u32).into())
     }
 }
 
