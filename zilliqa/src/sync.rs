@@ -347,6 +347,16 @@ impl Sync {
         }
         self.recent_proposals.push_back(proposal);
 
+        self.sync_internal()
+    }
+
+    pub fn sync_internal(&mut self) -> Result<()> {
+        if self.recent_proposals.is_empty() {
+            // Do nothing if there's no recent proposals.
+            tracing::debug!("sync::Internal : missing recent proposals");
+            return Ok(());
+        }
+
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {

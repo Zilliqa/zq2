@@ -3161,6 +3161,7 @@ impl Consensus {
         // Drives syncing from timeouts, not just new Proposals
         if self.sync.am_syncing()? {
             // TODO: Sync from Timeouts
+            self.sync.sync_internal()?;
         } else {
             trace!("not syncing ...");
         }
