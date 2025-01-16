@@ -210,12 +210,10 @@ impl Consensus {
             .finalized_view()?
             .get()?
             .map(|view| {
-                Ok::<_, anyhow::Error>(
-                    db.read()?
-                        .blocks()?
-                        .by_view(view)?
-                        .ok_or_else(|| anyhow!("no header found at view {view}"))?,
-                )
+                db.read()?
+                    .blocks()?
+                    .by_view(view)?
+                    .ok_or_else(|| anyhow!("no header found at view {view}"))
             })
             .transpose()?;
 

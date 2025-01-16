@@ -10,11 +10,11 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use eth_trie::{EthTrie, Trie};
+use eth_trie::{EthTrie, MemoryDB, Trie, DB};
 use lz4::{Decoder, EncoderBuilder};
 use redb::{backends::InMemoryBackend, Database};
 pub use tables::*;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{crypto::Hash, message::Block, state::Account, transaction::SignedTransaction};
 
@@ -65,7 +65,7 @@ impl ArcDb for Arc<Db> {
         // Read decompressed file
         let input = File::open(&temp_filename)?;
 
-        let mut reader = BufReader::with_capacity(8192 * 1024, input); // 8 MiB read chunks
+        let mut reader = BufReader::with_capacity(128 * 1024 * 1024, input); // 128 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
@@ -144,6 +144,21 @@ impl ArcDb for Arc<Db> {
             }
         }
 
+        // Helper function used for inserting entries from memory (which backs storage trie) into persistent storage
+        let db_flush = |db: Arc<TrieStorage>, cache: Arc<MemoryDB>| -> Result<()> {
+            let mut cache_storage = cache.storage.write();
+            let (keys, values): (Vec<_>, Vec<_>) = cache_storage.drain().unzip();
+            debug!("Doing write to db with total items {}", keys.len());
+            db.insert_batch(keys, values)?;
+            Ok(())
+        };
+
+        let mut processed_accounts = 0;
+        let mut processed_storage_items = 0;
+        const COMPUTE_ROOT_HASH_EVERY_ACCOUNTS: usize = 10000;
+        const FLUSH_STORAGE_CHANGES_EVERY: usize = 10000;
+        let mem_storage = Arc::new(MemoryDB::new(true));
+
         // then decode state
         loop {
             // Read account key and the serialised Account
@@ -172,7 +187,7 @@ impl ArcDb for Arc<Db> {
             reader.read_exact(&mut account_storage)?;
 
             // Pull out each storage key and value
-            let mut account_trie = EthTrie::new(trie_storage.clone());
+            let mut account_trie = EthTrie::new(mem_storage.clone());
             let mut pointer: usize = 0;
             while account_storage_len > pointer {
                 let storage_key_len_buf: &[u8] =
@@ -192,6 +207,8 @@ impl ArcDb for Arc<Db> {
                 pointer += storage_val_len;
 
                 account_trie.insert(storage_key, storage_val)?;
+
+                processed_storage_items += 1;
             }
 
             let account_trie_root =
@@ -201,8 +218,21 @@ impl ArcDb for Arc<Db> {
                     "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(account_trie_root)
                 ));
             }
+            if processed_storage_items > FLUSH_STORAGE_CHANGES_EVERY {
+                db_flush(trie_storage.clone(), mem_storage.clone())?;
+                processed_storage_items = 0;
+            }
+
             state_trie.insert(&account_hash, &serialised_account)?;
+
+            processed_accounts += 1;
+            // Occasionally flush the cached state changes to disk to minimise memory usage.
+            if processed_accounts % COMPUTE_ROOT_HASH_EVERY_ACCOUNTS == 0 {
+                let _ = state_trie.root_hash()?;
+            }
         }
+
+        db_flush(trie_storage.clone(), mem_storage.clone())?;
 
         if state_trie.root_hash()? != parent.state_root_hash().0 {
             return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
