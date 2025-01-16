@@ -1094,7 +1094,7 @@ impl Consensus {
 
         if supermajority_reached {
             trace!(
-                "(vote) supermajority already reached in this round {}",
+                "(vote) supermajority already reached in this view {}",
                 current_view
             );
             return Ok(None);
@@ -1326,8 +1326,8 @@ impl Consensus {
         };
 
         debug!(
-            "assemble early proposal {} in view {}",
-            executed_block_header.number, executed_block_header.view
+            "assemble early proposal view {} block number {}",
+            executed_block_header.view, executed_block_header.number
         );
 
         // Ensure sane state
@@ -1401,7 +1401,7 @@ impl Consensus {
 
             if milliseconds_remaining_of_block_time == 0 {
                 debug!(
-                    "stopped adding txs to block {} because block time is reached",
+                    "stopped adding txs to block number {} because block time is reached",
                     proposal.header.number,
                 );
                 break;
@@ -1791,7 +1791,7 @@ impl Consensus {
         let mut current_view = self.get_view()?;
         // if the vote is too old and does not count anymore
         if new_view.view < current_view {
-            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
+            trace!(new_view.view, "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
             return Ok(None);
         }
 
@@ -2278,7 +2278,7 @@ impl Consensus {
             .map_err(|e| (e, false))?
         else {
             warn!(
-                "Missing parent block while trying to check validity of block {}",
+                "Missing parent block while trying to check validity of block number {}",
                 block.number()
             );
             return Err((MissingBlockError::from(block.parent_hash()).into(), true));
@@ -2960,8 +2960,8 @@ impl Consensus {
             && from.is_some_and(|peer_id| peer_id == self.peer_id())
         {
             debug!(
-                "fast-forward self-proposal {} for view {}",
-                block.header.number, block.header.view
+                "fast-forward self-proposal view {} block number {}",
+                block.header.view, block.header.number
             );
 
             let mut block_receipts = Vec::new();
