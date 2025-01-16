@@ -17,13 +17,12 @@ use sha3::{Digest, Keccak256};
 use tracing::debug;
 
 use crate::{
-    block_store::BlockStore,
     cfg::{Amount, Forks, NodeConfig, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
-    db::TrieStorage,
+    db::{Db, TrieStorage},
     error::ensure_success,
-    message::{BlockHeader, MAX_COMMITTEE_SIZE},
+    message::{Block, BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
     scilla::{ParamValue, Scilla, Transition},
     serde_util::vec_param_value,
@@ -40,6 +39,7 @@ use crate::{
 /// the storage root is used to index into the state
 /// all the keys are hashed and stored in the same sled tree
 pub struct State {
+    sql: Arc<Db>,
     db: Arc<TrieStorage>,
     accounts: PatriciaTrie<TrieStorage>,
     /// The Scilla interpreter interface. Note that it is lazily initialized - This is a bit of a hack to ensure that
@@ -54,11 +54,10 @@ pub struct State {
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
     pub chain_id: ChainId,
     pub forks: Forks,
-    pub block_store: Arc<BlockStore>,
 }
 
 impl State {
-    pub fn new(trie: TrieStorage, config: &NodeConfig, block_store: Arc<BlockStore>) -> State {
+    pub fn new(trie: TrieStorage, config: &NodeConfig, sql: Arc<Db>) -> State {
         let db = Arc::new(trie);
         let consensus_config = &config.consensus;
         Self {
@@ -74,7 +73,7 @@ impl State {
             scilla_call_gas_exempt_addrs: consensus_config.scilla_call_gas_exempt_addrs.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
             forks: consensus_config.forks.clone(),
-            block_store,
+            sql,
         }
     }
 
@@ -95,17 +94,13 @@ impl State {
         trie: TrieStorage,
         root_hash: B256,
         config: NodeConfig,
-        block_store: Arc<BlockStore>,
+        sql: Arc<Db>,
     ) -> Self {
-        Self::new(trie, &config, block_store).at_root(root_hash)
+        Self::new(trie, &config, sql).at_root(root_hash)
     }
 
-    pub fn new_with_genesis(
-        trie: TrieStorage,
-        config: NodeConfig,
-        block_store: Arc<BlockStore>,
-    ) -> Result<State> {
-        let mut state = State::new(trie, &config, block_store);
+    pub fn new_with_genesis(trie: TrieStorage, config: NodeConfig, sql: Arc<Db>) -> Result<State> {
+        let mut state = State::new(trie, &config, sql);
 
         if config.consensus.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
@@ -285,8 +280,8 @@ impl State {
             gas_price: self.gas_price,
             scilla_call_gas_exempt_addrs: self.scilla_call_gas_exempt_addrs.clone(),
             chain_id: self.chain_id,
-            block_store: self.block_store.clone(),
             forks: self.forks.clone(),
+            sql: self.sql.clone(),
         }
     }
 
@@ -381,6 +376,14 @@ impl State {
             &Self::account_key(address).0,
             &bincode::serialize(&account)?,
         )?)
+    }
+
+    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+        self.sql.get_canonical_block_by_number(number)
+    }
+
+    pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
+        self.sql.get_highest_canonical_block_number()
     }
 }
 
@@ -579,37 +582,23 @@ mod tests {
     use std::{path::PathBuf, sync::Arc};
 
     use crypto::Hash;
-    use libp2p::PeerId;
     use revm::primitives::FixedBytes;
 
     use super::*;
     use crate::{
         api::to_hex::ToHex,
-        block_store::BlockStore,
         cfg::NodeConfig,
         db::Db,
         message::BlockHeader,
-        node::{MessageSender, RequestId},
     };
 
     #[test]
     fn deposit_contract_updateability() {
-        let (s1, _) = tokio::sync::mpsc::unbounded_channel();
-        let (s2, _) = tokio::sync::mpsc::unbounded_channel();
-        let message_sender = MessageSender {
-            our_shard: 0,
-            our_peer_id: PeerId::random(),
-            outbound_channel: s1,
-            local_channel: s2,
-            request_id: RequestId::default(),
-        };
         let db = Db::new::<PathBuf>(None, 0, 0).unwrap();
         let db = Arc::new(db);
         let config = NodeConfig::default();
-        let block_store =
-            Arc::new(BlockStore::new(&config, db.clone(), message_sender.clone()).unwrap());
 
-        let mut state = State::new(db.state_trie().unwrap(), &config, block_store);
+        let mut state = State::new(db.state_trie().unwrap(), &config, db);
 
         let deposit_init_addr = state.deploy_initial_deposit_contract(&config).unwrap();
 

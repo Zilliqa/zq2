@@ -20,7 +20,6 @@ use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
-    block_store::BlockStore,
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
@@ -31,12 +30,11 @@ use crate::{
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
-        ExternalMessage, InternalMessage, NewView, ProcessProposal, Proposal, QuorumCertificate,
-        Vote, MAX_COMMITTEE_SIZE,
+        ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
+        MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
-    range_map::RangeMap,
     state::State,
     sync::Sync,
     time::SystemTime,
@@ -153,7 +151,6 @@ pub struct Consensus {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub sync: Sync,
-    pub block_store: BlockStore,
     latest_leader_cache: RefCell<Option<CachedLeader>>,
     votes: BTreeMap<Hash, BlockVotes>,
     /// Votes for a block we don't have stored. They are retained in case we receive the block later.
@@ -210,18 +207,16 @@ impl Consensus {
 
         let sync = Sync::new(&config, db.clone(), message_sender.clone(), Vec::new())?;
 
-        // It is important to create the `BlockStore` after the checkpoint has been loaded into the DB. The
-        // `BlockStore` pre-loads and caches information about the currently stored blocks.
-        let block_store = BlockStore::new(&config, db.clone(), message_sender.clone())?;
-
         let latest_block = db
             .get_finalized_view()?
-            .map(|view| {
-                block_store
-                    .get_block_by_view(view)?
-                    .ok_or_else(|| anyhow!("no header found at view {view}"))
+            .and_then(|view| {
+                db.get_block_hash_by_view(view)
+                    .expect("no header found at view {view}")
             })
-            .transpose()?;
+            .and_then(|hash| {
+                db.get_block_by_hash(&hash)
+                    .expect("no block found for hash {hash}")
+            });
 
         let mut state = if let Some(latest_block) = &latest_block {
             trace!("Loading state from latest block");
@@ -229,15 +224,11 @@ impl Consensus {
                 db.state_trie()?,
                 latest_block.state_root_hash().into(),
                 config.clone(),
-                block_store.clone_read_only(),
+                db.clone(),
             )
         } else {
             trace!("Constructing new state from genesis");
-            State::new_with_genesis(
-                db.state_trie()?,
-                config.clone(),
-                block_store.clone_read_only(),
-            )?
+            State::new_with_genesis(db.state_trie()?, config.clone(), db.clone())?
         };
 
         let (latest_block, latest_block_view) = match latest_block {
@@ -251,10 +242,9 @@ impl Consensus {
         let (start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
-                    let high_block = block_store
-                        .get_block(qc.block_hash)?
+                    let high_block = db
+                        .get_block_by_hash(&qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-
                     let finalized_number = db
                         .get_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
@@ -291,8 +281,7 @@ impl Consensus {
                         let highest_block_number = db
                             .get_highest_canonical_block_number()?
                             .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
-
-                        let head_block = block_store
+                        let head_block = db
                             .get_canonical_block_by_number(highest_block_number)?
                             .ok_or_else(|| anyhow!("missing head block!"))?;
                         trace!(
@@ -329,7 +318,6 @@ impl Consensus {
             secret_key,
             config,
             sync,
-            block_store,
             latest_leader_cache: RefCell::new(None),
             message_sender,
             reset_timeout,
@@ -401,8 +389,8 @@ impl Consensus {
 
             // Remind block_store of our peers and request any potentially missing blocks
             let high_block = consensus
-                .block_store
-                .get_block(high_qc.block_hash)?
+                .db
+                .get_block_by_hash(&high_qc.block_hash)?
                 .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
 
             let executed_block = BlockHeader {
@@ -413,24 +401,15 @@ impl Consensus {
 
             // Grab last seen committee's peerIds in case others also went offline
             let committee = state_at.get_stakers(executed_block)?;
-            let recent_peer_ids: Vec<_> = committee
+            let recent_peer_ids = committee
                 .iter()
                 .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
                 .filter_map(|&peer_public_key| {
                     state_at.get_peer_id(peer_public_key).unwrap_or(None)
                 })
-                .collect();
+                .collect_vec();
 
-            consensus
-                .block_store
-                .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
-            // It is likley that we missed the most recent proposal. Request it now
-            consensus
-                .block_store
-                .request_blocks(&RangeMap::from_closed_interval(
-                    high_block.view(),
-                    high_block.view() + 1,
-                ))?;
+            consensus.sync.add_peers(recent_peer_ids);
         }
 
         Ok(consensus)
@@ -463,11 +442,11 @@ impl Consensus {
 
     pub fn head_block(&self) -> Block {
         let highest_block_number = self
-            .block_store
+            .db
             .get_highest_canonical_block_number()
             .unwrap()
             .unwrap();
-        self.block_store
+        self.db
             .get_canonical_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
@@ -652,7 +631,7 @@ impl Consensus {
 
         // FIXME: Cleanup
 
-        if self.block_store.contains_block(&block.hash())? {
+        if self.db.contains_block(&block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
             return Ok(None);
         }
@@ -678,29 +657,11 @@ impl Consensus {
             return Ok(None);
         }
 
-        match self.check_block(&block, during_sync) {
-            Ok(()) => {}
-            Err((e, temporary)) => {
-                // If this block could become valid in the future, buffer it.
-                if temporary {
-                    self.block_store.buffer_proposal(
-                        from,
-                        Proposal::from_parts_with_hashes(
-                            block,
-                            transactions
-                                .into_iter()
-                                .map(|tx| {
-                                    let hash = tx.calculate_hash();
-                                    (tx, hash)
-                                })
-                                .collect(),
-                        ),
-                    )?;
-                } else {
-                    warn!(?e, "invalid block proposal received!");
-                }
-                return Ok(None);
+        if let Err((e, temporary)) = self.check_block(&block, during_sync) {
+            if !temporary {
+                warn!(?e, "invalid block proposal received!");
             }
+            return Ok(None);
         }
 
         self.update_high_qc_and_view(block.agg.is_some(), block.header.qc)?;
@@ -723,19 +684,6 @@ impl Consensus {
                     block.view(),
                     view
                 );
-                self.block_store.buffer_proposal(
-                    from,
-                    Proposal::from_parts_with_hashes(
-                        block,
-                        transactions
-                            .into_iter()
-                            .map(|tx| {
-                                let hash = tx.calculate_hash();
-                                (tx, hash)
-                            })
-                            .collect(),
-                    ),
-                )?;
                 return Ok(None);
             }
 
@@ -1990,7 +1938,7 @@ impl Consensus {
         new_high_qc: QuorumCertificate,
     ) -> Result<()> {
         let view = self.get_view()?;
-        let Some(new_high_qc_block) = self.block_store.get_block(new_high_qc.block_hash)? else {
+        let Some(new_high_qc_block) = self.db.get_block_by_hash(&new_high_qc.block_hash)? else {
             // We don't set high_qc to a qc if we don't have its block.
             warn!("Recieved potential high QC but didn't have the corresponding block");
             return Ok(());
@@ -2441,11 +2389,10 @@ impl Consensus {
     pub fn receive_block_availability(
         &mut self,
         from: PeerId,
-        availability: &Option<Vec<BlockStrategy>>,
+        _availability: &Option<Vec<BlockStrategy>>,
     ) -> Result<()> {
         trace!("Received block availability from {:?}", from);
-        self.block_store.update_availability(from, availability)?;
-        Ok(())
+        Ok(()) // FIXME: Stub
     }
 
     // Checks for the validity of a block and adds it to our block store if valid.
@@ -2460,8 +2407,6 @@ impl Consensus {
             proposal.number(),
             proposal.view()
         );
-        self.block_store
-            .received_process_proposal(proposal.header.view);
         let result = self.proposal(from, proposal, true)?;
         // Processing the received block can either result in:
         // * A `Proposal`, if we have buffered votes for this block which form a supermajority, meaning we can
@@ -2477,25 +2422,7 @@ impl Consensus {
         let hash = block.hash();
         debug!(?from, ?hash, ?block.header.view, ?block.header.number, "added block");
         let _ = self.new_blocks.send(block.header);
-        // We may have child blocks; process them too.
-        self.block_store
-            .process_block(from, block)?
-            .into_iter()
-            .try_for_each(|(from_id, child_proposal)| -> Result<()> {
-                // The only reason this can fail is permanent failure of the messaging mechanism, so
-                // propagate it back here.
-                // Mark this block in the cache as "we're about to process this one"
-                let view = child_proposal.header.view;
-                self.message_sender.send_external_message(
-                    self.peer_id(),
-                    ExternalMessage::ProcessProposal(ProcessProposal {
-                        from: from_id.to_bytes(),
-                        block: child_proposal,
-                    }),
-                )?;
-                self.block_store.expect_process_proposal(view);
-                Ok(())
-            })?;
+        self.db.insert_block(&block)?;
         Ok(())
     }
 
@@ -2536,15 +2463,15 @@ impl Consensus {
     }
 
     pub fn get_block(&self, key: &Hash) -> Result<Option<Block>> {
-        self.block_store.get_block(*key)
+        self.db.get_block_by_hash(key)
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        self.block_store.get_block_by_view(view)
+        self.db.get_block_by_view(view)
     }
 
     pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.block_store.get_canonical_block_by_number(number)
+        self.db.get_canonical_block_by_number(number)
     }
 
     fn set_finalized_view(&mut self, view: u64) -> Result<()> {
@@ -2617,7 +2544,7 @@ impl Consensus {
 
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
-            .block_store
+            .db
             .get_canonical_block_by_number(number)?
             .map(|block| self.state.at_root(block.state_root_hash().into())))
     }
@@ -3215,71 +3142,33 @@ impl Consensus {
         }
     }
 
+    pub fn get_num_transactions(&self) -> Result<usize> {
+        let count = self.db.get_total_transaction_count()?;
+        Ok(count)
+    }
+
     pub fn report_outgoing_message_failure(
         &mut self,
-        failure: OutgoingMessageFailure,
+        _failure: OutgoingMessageFailure,
     ) -> Result<()> {
-        self.block_store.report_outgoing_message_failure(failure)
+        Ok(()) // FIXME: Stub
     }
 
     pub fn tick(&mut self) -> Result<()> {
         trace!("consensus::tick()");
         trace!("request_missing_blocks from timer");
 
-        // Drives the block fetching state machine - see docs/fetching_blocks.md
-        if self.block_store.request_missing_blocks()? {
-            // We're syncing..
-            // Is it likely that the next thing in the buffer could be the next block?
-            let likely_blocks = self.block_store.next_proposals_if_likely()?;
-            if likely_blocks.is_empty() {
-                trace!("no blocks buffered");
-                // If there are no next blocks buffered, someone may well have lied to us about
-                // where the gaps in the view range are. This should be a rare occurrence, so in
-                // lieu of timing it out, just zap the view range gap and we'll take the hit on
-                // any rerequests.
-                self.block_store.delete_empty_view_range_cache();
-            } else {
-                likely_blocks.into_iter().for_each(|(from, block)| {
-                    trace!(
-                        "buffer may contain the next block - {0:?} v={1} n={2}",
-                        block.hash(),
-                        block.view(),
-                        block.number()
-                    );
-                    // Ignore errors here - just carry on and wait for re-request to clean up.
-                    let view = block.view();
-                    let _ = self.message_sender.send_external_message(
-                        self.peer_id(),
-                        ExternalMessage::ProcessProposal(ProcessProposal {
-                            from: from.to_bytes(),
-                            block,
-                        }),
-                    );
-                    self.block_store.expect_process_proposal(view);
-                });
-            }
+        // Drives syncing from timeouts, not just new Proposals
+        if self.sync.am_syncing()? {
+            // TODO: Sync from Timeouts
         } else {
             trace!("not syncing ...");
         }
         Ok(())
     }
 
-    pub fn buffer_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
-        self.block_store.buffer_proposal(from, proposal)?;
-        Ok(())
-    }
-
-    pub fn buffer_lack_of_proposals(
-        &mut self,
-        from_view: u64,
-        proposals: &Vec<Proposal>,
-    ) -> Result<()> {
-        self.block_store
-            .buffer_lack_of_proposals(from_view, proposals)
-    }
-
     pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
-        self.block_store.get_sync_data()
+        self.sync.get_sync_data()
     }
 }
 

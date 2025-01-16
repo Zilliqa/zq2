@@ -19,7 +19,10 @@ use crate::{
     cfg::NodeConfig,
     crypto::Hash,
     db::Db,
-    message::{Block, BlockRequest, BlockRequestV2, BlockResponse, ChainMetaData, ExternalMessage, InjectedProposal, Proposal},
+    message::{
+        Block, BlockRequest, BlockRequestV2, BlockResponse, ChainMetaData, ExternalMessage,
+        InjectedProposal, Proposal,
+    },
     node::MessageSender,
     time::SystemTime,
 };
@@ -1067,6 +1070,13 @@ impl Sync {
         }
     }
 
+    /// Add bulk peers
+    pub fn add_peers(&mut self, peers: Vec<PeerId>) {
+        for peer in peers {
+            self.add_peer(peer);
+        }
+    }
+
     /// Add a peer to the list of peers.
     pub fn add_peer(&mut self, peer: PeerId) {
         // if the new peer is not synced, it will get downgraded to the back of heap.
@@ -1101,30 +1111,28 @@ impl Sync {
     }
 
     /// Returns (am_syncing, current_highest_block)
-    pub fn am_syncing(&self) -> Result<(bool, Block)> {
-        let highest_block = self
-            .db
-            .get_canonical_block_by_number(
-                self.db
-                    .get_highest_canonical_block_number()?
-                    .expect("no highest block"),
-            )?
-            .expect("missing highest block");
-        Ok((
-            self.in_pipeline != 0
-                || !self.recent_proposals.is_empty()
-                || self.count_segments()? != 0,
-            highest_block,
-        ))
+    pub fn am_syncing(&self) -> Result<bool> {
+        Ok(self.in_pipeline != 0
+            || self.count_segments()? != 0
+            || !self.recent_proposals.is_empty())
     }
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,
     // None if we're not.
     pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
-        let (flag, highest_block) = self.am_syncing()?;
+        let flag = self.am_syncing()?;
         if !flag {
             Ok(None)
         } else {
+            let highest_block = self
+                .db
+                .get_canonical_block_by_number(
+                    self.db
+                        .get_highest_canonical_block_number()?
+                        .expect("no highest block"),
+                )?
+                .expect("missing highest block");
+
             let highest_saved_block_number = highest_block.number();
             let highest_block_number_seen = self.recent_proposals.back().unwrap().number();
             Ok(Some((

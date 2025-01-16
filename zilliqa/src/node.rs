@@ -911,26 +911,6 @@ impl Node {
         Ok(())
     }
 
-    fn _handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
-        trace!(
-            "block_store::handle_block_response - received blocks response of length {}",
-            response.proposals.len()
-        );
-        self.consensus
-            .receive_block_availability(from, &response.availability)?;
-
-        self.consensus
-            .buffer_lack_of_proposals(response.from_view, &response.proposals)?;
-
-        for block in response.proposals {
-            // Buffer the block so that we know we have it - in fact, add it to the cache so
-            // that we can include it in the chain if necessary.
-            self.consensus.buffer_proposal(from, block)?;
-        }
-        trace!("block_store::handle_block_response: finished handling response");
-        Ok(())
-    }
-
     fn handle_injected_proposal(&mut self, from: PeerId, req: InjectedProposal) -> Result<()> {
         if from != self.consensus.peer_id() {
             warn!("Someone ({from}) sent me a InjectedProposal; illegal- ignoring");
