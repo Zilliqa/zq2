@@ -653,10 +653,9 @@ mod tests {
         let result = Forks::try_from(delta_forks).unwrap();
         assert_eq!(result.0.len(), 1);
         assert_eq!(result.0[0].at_height, 0);
-        assert_eq!(result.0[0].call_mode_1_sets_caller_to_parent_caller, false);
-        assert_eq!(
-            result.0[0].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
-            false
+        assert!(!result.0[0].call_mode_1_sets_caller_to_parent_caller);
+        assert!(
+            !result.0[0].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
         );
     }
 
@@ -694,39 +693,27 @@ mod tests {
         assert_eq!(result.0.len(), 3);
 
         assert_eq!(result.0[0].at_height, 0);
-        assert_eq!(
-            result.0[0].failed_scilla_call_from_gas_exempt_caller_causes_revert,
-            true
-        );
-        assert_eq!(result.0[0].call_mode_1_sets_caller_to_parent_caller, true);
-        assert_eq!(result.0[0].scilla_messages_can_call_evm_contracts, true);
-        assert_eq!(
+        assert!(result.0[0].failed_scilla_call_from_gas_exempt_caller_causes_revert);
+        assert!(result.0[0].call_mode_1_sets_caller_to_parent_caller);
+        assert!(result.0[0].scilla_messages_can_call_evm_contracts);
+        assert!(
             result.0[0].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
-            true
         );
 
         assert_eq!(result.0[1].at_height, 100);
-        assert_eq!(
-            result.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert,
-            true
-        );
-        assert_eq!(result.0[1].call_mode_1_sets_caller_to_parent_caller, false);
-        assert_eq!(result.0[1].scilla_messages_can_call_evm_contracts, true);
-        assert_eq!(
-            result.0[1].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
-            false
+        assert!(result.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert,);
+        assert!(!result.0[1].call_mode_1_sets_caller_to_parent_caller);
+        assert!(result.0[1].scilla_messages_can_call_evm_contracts);
+        assert!(
+            !result.0[1].adjust_contract_balance_on_deployment_if_contract_address_already_funded
         );
 
         assert_eq!(result.0[2].at_height, 200);
-        assert_eq!(
-            result.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert,
-            false
-        );
-        assert_eq!(result.0[2].call_mode_1_sets_caller_to_parent_caller, false);
-        assert_eq!(result.0[2].scilla_messages_can_call_evm_contracts, false);
-        assert_eq!(
-            result.0[2].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
-            false
+        assert!(!result.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert);
+        assert!(!result.0[2].call_mode_1_sets_caller_to_parent_caller);
+        assert!(!result.0[2].scilla_messages_can_call_evm_contracts);
+        assert!(
+            !result.0[2].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
         );
     }
 }
