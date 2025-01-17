@@ -1,15 +1,19 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    cell::{RefCell, RefMut},
+    env,
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy::{
     consensus::TxLegacy, network::TxSignerSync, primitives::Address, signers::local::LocalSigner,
 };
 use bitvec::{bitarr, order::Msb0};
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use eth_trie::{MemoryDB, Trie};
-use indicatif::{ParallelProgressIterator, ProgressBar};
 use libp2p::PeerId;
 use pprof::criterion::{Output, PProfProfiler};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use revm::primitives::{Bytes, TxKind};
 use tempfile::tempdir;
 use tokio::sync::mpsc;
@@ -21,14 +25,14 @@ use zilliqa::{
     message::{Block, ExternalMessage, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
     time::{self, SystemTime},
-    transaction::{EvmGas, SignedTransaction},
+    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
 };
 
-pub fn process_empty(c: &mut Criterion) {
+fn process_empty(c: &mut Criterion) {
     tracing_subscriber::fmt::init();
 
     let mut group = c.benchmark_group("process-empty");
-    group.throughput(criterion::Throughput::Elements(1));
+    group.throughput(Throughput::Elements(1));
     group
         .sample_size(500)
         .measurement_time(Duration::from_secs(10));
@@ -200,16 +204,36 @@ fn consensus(
     .unwrap()
 }
 
-pub fn produce_full(crit: &mut Criterion) {
-    let mut group = crit.benchmark_group("produce-full");
-    group.throughput(criterion::Throughput::Elements(1));
-    let sample_size = 20;
-    group
-        .sample_size(sample_size)
-        .measurement_time(Duration::from_secs(120));
-
+fn full_blocks_evm_transfers(c: &mut Criterion) {
     let signer = LocalSigner::random();
-    let genesis_accounts = vec![(signer.address(), 1_000_000_000_000_000_000_000_000_000)];
+    let to = Address::random();
+    let txns = (0..).map(|nonce| {
+        let mut tx = TxLegacy {
+            chain_id: None,
+            nonce: nonce as u64,
+            gas_price: 1,
+            gas_limit: 21_000,
+            to: TxKind::Call(to),
+            value: alloy::primitives::U256::from(1),
+            input: Bytes::new(),
+        };
+        let sig = signer.sign_transaction_sync(&mut tx).unwrap();
+        let txn = SignedTransaction::Legacy { tx, sig };
+        txn.verify().unwrap()
+    });
+
+    full_transaction_benchmark(c, "full-blocks-evm-transfers", signer.address(), txns);
+}
+
+/// Run a benchmark which produces blocks full of the provided transactions. `txns` should be infinitely iterable
+/// so the benchmark can generate as many transactions as it needs.
+fn full_transaction_benchmark(
+    c: &mut Criterion,
+    name: &str,
+    genesis_address: Address,
+    mut txns: impl Iterator<Item = VerifiedTransaction>,
+) {
+    let genesis_accounts = vec![(genesis_address, 1_000_000_000_000_000_000_000_000_000)];
 
     // We will create a dummy network with 2 validators - 'big' which has a large proportion of the stake and 'tiny'
     // which has a small amount of stake. The intention is that 'big' will always be the block proposer, because the
@@ -231,67 +255,68 @@ pub fn produce_full(crit: &mut Criterion) {
     ];
 
     let mut big = consensus(&genesis_accounts, &genesis_deposits, 0);
-    let mut tiny = consensus(&genesis_accounts, &genesis_deposits, 1);
-
-    // Fill transaction pools with lots of basic transfers.
-    let txn_count = (sample_size as u64 * 40) * 4000;
-    let to = Address::random();
-    let progress = ProgressBar::new(txn_count).with_message("generating transactions");
-    let txns: Vec<_> = (0..txn_count)
-        .into_par_iter()
-        .progress_with(progress)
-        .map(|nonce| {
-            let mut tx = TxLegacy {
-                chain_id: None,
-                nonce,
-                gas_price: 1,
-                gas_limit: 21_000,
-                to: TxKind::Call(to),
-                value: alloy::primitives::U256::from(1),
-                input: Bytes::new(),
-            };
-            let sig = signer.sign_transaction_sync(&mut tx).unwrap();
-            let txn = SignedTransaction::Legacy { tx, sig };
-            txn.verify().unwrap()
-        })
-        .collect();
-    for txn in txns {
-        let result = big.new_transaction(txn.clone()).unwrap();
-        assert!(result.was_added());
-        let result = tiny.new_transaction(txn).unwrap();
-        assert!(result.was_added());
-    }
-
-    // Trigger a timeout to produce the vote for the genesis block.
-    let (_, message) = big.timeout().unwrap().unwrap();
-    let ExternalMessage::Vote(vote) = message else {
-        panic!()
-    };
-    let mut vote = *vote;
-    let from = big.peer_id();
+    let tiny = consensus(&genesis_accounts, &genesis_deposits, 1);
 
     time::sync_with_fake_time(|| {
-        group.bench_function("produce-full", |bench| {
-            bench.iter(|| {
-                // We wrap each of these steps in a separate function call, so that they are listed separately in
-                // flamegraphs and we are able to measure the time spent in each. The function names are deliberately
-                // alphabetical, so they appear in order in the flamegraph.
+        // Trigger a timeout to produce the vote for the genesis block.
+        let (_, message) = big.timeout().unwrap().unwrap();
+        let ExternalMessage::Vote(vote) = message else {
+            panic!()
+        };
+        let mut vote = *vote;
+        let from = big.peer_id();
 
-                // 1. Get 'big' to process the previous vote and propose a block.
-                let proposal = a_big_process_vote(&mut big, vote);
+        let big = RefCell::new(big);
+        let tiny = RefCell::new(tiny);
 
-                // 2. Get 'tiny' to vote on this block.
-                b_tiny_process_block(&mut tiny, from, proposal.clone());
+        let mut group = c.benchmark_group(name);
+        group.throughput(Throughput::Elements(1));
+        group.sample_size(
+            env::var("ZQ_TRANSACTION_BENCHMARK_SAMPLES")
+                .map(|s| s.parse().unwrap())
+                .unwrap_or(20),
+        );
+        group.measurement_time(Duration::from_secs(
+            env::var("ZQ_TRANSACTION_BENCHMARK_MEASUREMENT_TIME_S")
+                .map(|s| s.parse().unwrap())
+                .unwrap_or(60),
+        ));
+        group.bench_function(name, |bench| {
+            bench.iter_batched(
+                || {
+                    let mut big = big.borrow_mut();
+                    let mut tiny = tiny.borrow_mut();
+                    for txn in txns.by_ref().take(4000) {
+                        let result = big.new_transaction(txn.clone()).unwrap();
+                        assert!(result.was_added());
+                        let result = tiny.new_transaction(txn).unwrap();
+                        assert!(result.was_added());
+                    }
+                },
+                |()| {
+                    let mut big = big.borrow_mut();
+                    let mut tiny = tiny.borrow_mut();
 
-                // 3. Get 'big' to vote on this block
-                vote = c_big_process_block(&mut big, from, proposal);
-            })
+                    // We wrap each of these steps in a separate function call, so that they are listed separately in
+                    // flamegraphs and we are able to measure the time spent in each. The function names are deliberately
+                    // alphabetical, so they appear in order in the flamegraph.
+
+                    // 1. Get 'big' to process the previous vote and propose a block.
+                    let proposal = a_big_process_vote(&mut big, vote);
+
+                    // 2. Get 'tiny' to vote on this block.
+                    b_tiny_process_block(&mut tiny, from, proposal.clone());
+
+                    // 3. Get 'big' to vote on this block
+                    vote = c_big_process_block(&mut big, from, proposal);
+                },
+                BatchSize::SmallInput,
+            );
         });
     });
-    group.finish();
 }
 
-fn a_big_process_vote(big: &mut Consensus, vote: Vote) -> Proposal {
+fn a_big_process_vote(big: &mut RefMut<'_, Consensus>, vote: Vote) -> Proposal {
     let proposal = big
         .vote(black_box(vote))
         .unwrap()
@@ -315,7 +340,7 @@ fn a_big_process_vote(big: &mut Consensus, vote: Vote) -> Proposal {
     proposal
 }
 
-fn b_tiny_process_block(tiny: &mut Consensus, from: PeerId, proposal: Proposal) {
+fn b_tiny_process_block(tiny: &mut RefMut<'_, Consensus>, from: PeerId, proposal: Proposal) {
     let (_, tiny_vote) = tiny
         .proposal(from, black_box(proposal), false)
         .unwrap()
@@ -324,7 +349,7 @@ fn b_tiny_process_block(tiny: &mut Consensus, from: PeerId, proposal: Proposal) 
     assert!(matches!(tiny_vote, ExternalMessage::Vote(_)));
 }
 
-fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) -> Vote {
+fn c_big_process_block(big: &mut RefMut<'_, Consensus>, from: PeerId, proposal: Proposal) -> Vote {
     let (_, vote) = big
         .proposal(from, black_box(proposal), false)
         .unwrap()
@@ -338,6 +363,6 @@ fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) ->
 criterion_group!(
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = process_empty, produce_full,
+    targets = process_empty, full_blocks_evm_transfers,
 );
 criterion_main!(benches);
