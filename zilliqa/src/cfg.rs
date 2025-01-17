@@ -527,7 +527,6 @@ pub struct DeltaFork {
     /// EOA (i.e. any ZIL passed will be transferred to the contract and execution will continue). If false, sending a
     /// Scilla message to an EVM contract will cause the Scilla transaction to fail.
     pub scilla_messages_can_call_evm_contracts: Option<bool>,
-
     /// If true, when a contract is deployed, if the contract address is already funded,
     /// the contract balance will be sum of the existing balance and the amount sent in the deployment transaction.
     /// If false, the contract balance will be the amount sent in the deployment transaction.
