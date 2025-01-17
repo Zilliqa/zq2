@@ -1,16 +1,23 @@
 use std::{env, iter, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy::{
-    consensus::TxLegacy, network::TxSignerSync, primitives::Address, signers::local::LocalSigner,
+    consensus::TxLegacy,
+    dyn_abi::JsonAbiExt,
+    network::TxSignerSync,
+    primitives::{Address, U256},
+    signers::local::LocalSigner,
 };
 use bitvec::{bitarr, order::Msb0};
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use eth_trie::{MemoryDB, Trie};
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use libp2p::PeerId;
 use pprof::criterion::{Output, PProfProfiler};
+use prost::Message;
 use revm::primitives::{Bytes, TxKind};
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use tokio::sync::mpsc;
 use zilliqa::{
@@ -20,8 +27,13 @@ use zilliqa::{
     db::Db,
     message::{Block, ExternalMessage, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
+    schnorr,
+    test_util::compile_contract,
     time::{self, SystemTime},
-    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
+    transaction::{
+        EvmGas, ScillaGas, SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount,
+    },
+    zq1_proto::{Nonce, ProtoTransactionCoreInfo},
 };
 
 fn process_empty(c: &mut Criterion) {
@@ -206,11 +218,11 @@ fn full_blocks_evm_transfers(c: &mut Criterion) {
     let txns = (0..).map(|nonce| {
         let mut tx = TxLegacy {
             chain_id: None,
-            nonce: nonce as u64,
+            nonce,
             gas_price: 1,
             gas_limit: 21_000,
             to: TxKind::Call(to),
-            value: alloy::primitives::U256::from(1),
+            value: U256::from(1),
             input: Bytes::new(),
         };
         let sig = signer.sign_transaction_sync(&mut tx).unwrap();
@@ -225,6 +237,107 @@ fn full_blocks_evm_transfers(c: &mut Criterion) {
         iter::empty(),
         txns,
         4000,
+    );
+}
+
+fn full_blocks_zil_transfers(c: &mut Criterion) {
+    let signer = schnorr::SecretKey::random(&mut rand::thread_rng());
+    let key = signer.public_key();
+    let to = Address::random();
+    let txns = (1..).map(|nonce| {
+        let chain_id = 700;
+        let amount = 1;
+        let gas_price = 1;
+        let gas_limit = 50;
+        let tx = TxZilliqa {
+            chain_id,
+            nonce,
+            gas_price: ZilAmount::from_raw(gas_price),
+            gas_limit: ScillaGas(gas_limit),
+            to_addr: to,
+            amount: ZilAmount::from_raw(amount),
+            code: String::new(),
+            data: String::new(),
+        };
+        let version = ((chain_id as u32) << 16) | 1u32;
+        let proto = ProtoTransactionCoreInfo {
+            version,
+            toaddr: to.0.to_vec(),
+            senderpubkey: Some(key.to_sec1_bytes().into()),
+            amount: Some(amount.to_be_bytes().to_vec().into()),
+            gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
+            gaslimit: gas_limit,
+            oneof2: Some(Nonce::Nonce(nonce)),
+            oneof8: None,
+            oneof9: None,
+        };
+        let txn_data = proto.encode_to_vec();
+        let sig = schnorr::sign(&txn_data, &signer);
+        let txn = SignedTransaction::Zilliqa { tx, key, sig };
+        txn.verify().unwrap()
+    });
+
+    let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
+    let address = Address::from_slice(&hashed[12..]);
+
+    full_transaction_benchmark(
+        c,
+        "full-blocks-zil-transfers",
+        address,
+        iter::empty(),
+        txns,
+        4000,
+    );
+}
+
+fn full_blocks_erc20_transfers(c: &mut Criterion) {
+    let (abi, input) = compile_contract("benches/ERC20.sol", "ERC20FixedSupply");
+    let signer = LocalSigner::random();
+
+    let mut tx = TxLegacy {
+        chain_id: None,
+        nonce: 0,
+        gas_price: 1,
+        gas_limit: 10_000_000,
+        to: TxKind::Create,
+        value: U256::ZERO,
+        input,
+    };
+    let sig = signer.sign_transaction_sync(&mut tx).unwrap();
+    let setup_txn = SignedTransaction::Legacy { tx, sig };
+    let setup_txn = setup_txn.verify().unwrap();
+
+    let to = Address::random();
+    let contract_address = signer.address().create(0);
+    let gas_limit = 51_411;
+    let transfer = abi.function("transfer").unwrap()[0].clone();
+    let input: Bytes = transfer
+        .abi_encode_input(&[to.into(), U256::from(1).into()])
+        .unwrap()
+        .into();
+
+    let txns = (1..).map(|nonce| {
+        let mut tx = TxLegacy {
+            chain_id: None,
+            nonce,
+            gas_price: 1,
+            gas_limit,
+            to: TxKind::Call(contract_address),
+            value: U256::ZERO,
+            input: input.clone(),
+        };
+        let sig = signer.sign_transaction_sync(&mut tx).unwrap();
+        let txn = SignedTransaction::Legacy { tx, sig };
+        txn.verify().unwrap()
+    });
+
+    full_transaction_benchmark(
+        c,
+        "full-blocks-erc20-transfers",
+        signer.address(),
+        iter::once(setup_txn),
+        txns,
+        (84_000_000 / gas_limit) as usize,
     );
 }
 
@@ -281,9 +394,9 @@ fn full_transaction_benchmark(
 
                 for txn in &setup_txns {
                     let result = big.new_transaction(txn.clone()).unwrap();
-                    assert!(result.was_added());
+                    assert!(result.was_added(), "transaction not added: {result:?}");
                     let result = tiny.new_transaction(txn.clone()).unwrap();
-                    assert!(result.was_added());
+                    assert!(result.was_added(), "transaction not added: {result:?}");
                 }
 
                 let vote = time::sync_with_fake_time(|| {
@@ -306,9 +419,9 @@ fn full_transaction_benchmark(
 
                 for txn in &txns {
                     let result = big.new_transaction(txn.clone()).unwrap();
-                    assert!(result.was_added());
+                    assert!(result.was_added(), "transaction not added: {result:?}");
                     let result = tiny.new_transaction(txn.clone()).unwrap();
-                    assert!(result.was_added());
+                    assert!(result.was_added(), "transaction not added: {result:?}");
                 }
 
                 (big, tiny, vote)
@@ -343,7 +456,7 @@ fn a_big_process_vote(big: &mut Consensus, vote: Vote, txns_per_block: usize) ->
     // The first vote should immediately result in a proposal. Subsequent views require a timeout before
     // the proposal is produced. Therefore, we trigger a timeout if there was not a proposal from the vote.
     let proposal = proposal.unwrap_or_else(|| {
-        time::advance(Duration::from_secs(1));
+        time::advance(Duration::from_secs(10));
         let (_, message) = big.timeout().unwrap().unwrap();
         let ExternalMessage::Proposal(p) = message else {
             panic!()
@@ -356,16 +469,25 @@ fn a_big_process_vote(big: &mut Consensus, vote: Vote, txns_per_block: usize) ->
         "proposal {} is not the expected size",
         proposal.view()
     );
+
     proposal
 }
 
 fn b_tiny_process_block(tiny: &mut Consensus, from: PeerId, proposal: Proposal) {
+    let last_txn = proposal.transactions.last().map(|t| t.calculate_hash());
     let (_, tiny_vote) = tiny
         .proposal(from, black_box(proposal), false)
         .unwrap()
         .unwrap();
     // We assert 'tiny' actually voted but don't do anything with its vote.
     assert!(matches!(tiny_vote, ExternalMessage::Vote(_)));
+
+    // Get the last transaction receipt and make sure it succeeded. We assume that all other transactions succeeded if
+    // this one did.
+    if let Some(last_txn) = last_txn {
+        let receipt = tiny.get_transaction_receipt(&last_txn).unwrap().unwrap();
+        assert!(receipt.success, "transaction failed: {receipt:?}");
+    }
 }
 
 fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) -> Vote {
@@ -382,6 +504,6 @@ fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) ->
 criterion_group!(
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = process_empty, full_blocks_evm_transfers,
+    targets = process_empty, full_blocks_evm_transfers, full_blocks_zil_transfers, full_blocks_erc20_transfers,
 );
 criterion_main!(benches);
