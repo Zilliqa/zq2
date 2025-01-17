@@ -941,19 +941,15 @@ impl Sync {
                 self.count_segments()? + 1,
                 peer.peer_id
             );
-            let message = match self.state {
-                SyncState::Phase1(ChainMetaData { parent_hash, .. })
-                    if matches!(peer.version, PeerVer::V2) =>
-                {
+            let message = match (self.state.clone(), &peer.version) {
+                (SyncState::Phase1(ChainMetaData { parent_hash, .. }), PeerVer::V2) => {
                     ExternalMessage::MetaDataRequest(BlockRequestV2 {
                         request_at: SystemTime::now(),
                         from_hash: parent_hash,
                         batch_size: self.max_batch_size,
                     })
                 }
-                SyncState::Phase1(ChainMetaData { view_number, .. })
-                    if matches!(peer.version, PeerVer::V1) =>
-                {
+                (SyncState::Phase1(ChainMetaData { view_number, .. }), PeerVer::V1) => {
                     // For V1 BlockRequest, we request a little more than we need, due to drift
                     // Since the view number is an 'internal' clock, it is possible for the same block number
                     // to have different view numbers.
@@ -963,7 +959,7 @@ impl Sync {
                         from_view: view_number.saturating_sub(self.max_batch_size as u64),
                     })
                 }
-                SyncState::Phase0 if meta.is_some() && matches!(peer.version, PeerVer::V2) => {
+                (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
                     let meta = meta.unwrap();
                     let parent_hash = meta.parent_hash;
                     self.state = SyncState::Phase1(meta);
@@ -973,7 +969,7 @@ impl Sync {
                         batch_size: self.max_batch_size,
                     })
                 }
-                SyncState::Phase0 if meta.is_some() && matches!(peer.version, PeerVer::V1) => {
+                (SyncState::Phase0, PeerVer::V1) if meta.is_some() => {
                     let meta = meta.unwrap();
                     let view_number = meta.view_number;
                     self.state = SyncState::Phase1(meta);
@@ -1133,17 +1129,12 @@ impl Sync {
     /// for in a single request, between 1-100 blocks.
     fn dynamic_batch_sizing(&self, peer: &PeerInfo) -> usize {
         match (&self.state, &peer.version, &self.in_flight_reason) {
-            // V1 response may be too large. Reduce request range.
-            (SyncState::Phase1(_), PeerVer::V1, DownGrade::Timeout) => self
-                .max_batch_size
-                .saturating_sub(self.max_batch_size / 2)
-                .max(1),
-            // V1 response may be too large. Reduce request range.
+            // V1 response may be too large, reduce request range.
             (SyncState::Phase1(_), PeerVer::V1, DownGrade::Empty) => self
                 .max_batch_size
                 .saturating_sub(self.max_batch_size / 3)
                 .max(1),
-            // V1 responses are going well, increase the request range linearly
+            // V1 response going well, increase the request range
             (SyncState::Phase1(_), PeerVer::V1, DownGrade::None) => self
                 .max_batch_size
                 .saturating_add(self.max_batch_size)
@@ -1233,7 +1224,7 @@ impl PartialOrd for DownGrade {
 }
 
 /// Sync state
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum SyncState {
     Phase0,
     Phase1(ChainMetaData),
