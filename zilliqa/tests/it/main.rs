@@ -401,6 +401,8 @@ impl Network {
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
+        let peers = nodes.iter().map(|n| n.peer_id).collect_vec();
+
         for node in &nodes {
             trace!(
                 "Node {}: {} (dir: {})",
@@ -408,6 +410,12 @@ impl Network {
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
+            node.inner
+                .lock()
+                .unwrap()
+                .consensus
+                .sync
+                .add_peers(peers.clone());
         }
 
         Network {
@@ -505,6 +513,9 @@ impl Network {
         let (node, receiver, local_receiver, request_responses) =
             node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
 
+        let peers = self.nodes.iter().map(|n| n.peer_id).collect_vec();
+        node.inner.lock().unwrap().consensus.sync.add_peers(peers);
+
         trace!("Node {}: {}", node.index, node.peer_id);
 
         let index = node.index;
@@ -567,6 +578,8 @@ impl Network {
             .chain(request_response_receivers)
             .collect();
 
+        let peers = nodes.iter().map(|n| n.peer_id).collect_vec();
+
         for node in &nodes {
             trace!(
                 "Node {}: {} (dir: {})",
@@ -574,6 +587,12 @@ impl Network {
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
+            node.inner
+                .lock()
+                .unwrap()
+                .consensus
+                .sync
+                .add_peers(peers.clone());
         }
 
         let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();

@@ -234,7 +234,7 @@ impl Sync {
                     version: row.get(5)?,
                     reason: DownGrade::None,
                     batch_size: self.max_batch_size,
-                    peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(4)?.as_slice()).unwrap(),                    
+                    peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(4)?.as_slice()).unwrap(),
                 },
             )))
                 .optional()?;
@@ -680,7 +680,10 @@ impl Sync {
                     .send_external_message(peer_info.peer_id, message)?;
             }
         } else {
-            tracing::warn!("sync::RequestMissingBlocks : insufficient peers to handle request");
+            tracing::warn!(
+                "sync::RequestMissingBlocks : {} insufficient peers to handle request",
+                self.peers.len()
+            );
         }
         Ok(())
     }
@@ -988,7 +991,10 @@ impl Sync {
                 .send_external_message(peer.peer_id, message)?;
             self.in_flight = Some(peer);
         } else {
-            tracing::warn!("sync::RequestMissingMetadata : insufficient peers to handle request");
+            tracing::warn!(
+                "sync::RequestMissingBlocks : {} insufficient peers to handle request",
+                self.peers.len()
+            );
         }
         Ok(())
     }
@@ -1079,8 +1085,11 @@ impl Sync {
 
     /// Add bulk peers
     pub fn add_peers(&mut self, peers: Vec<PeerId>) {
+        tracing::debug!("sync::AddPeers {:?}", peers);
         for peer in peers {
-            self.add_peer(peer);
+            if peer != self.peer_id {
+                self.add_peer(peer);
+            }
         }
     }
 
@@ -1096,10 +1105,11 @@ impl Sync {
             reason: DownGrade::None,
             batch_size: self.max_batch_size,
         };
-        tracing::trace!("sync::AddPeer {peer}");
         // ensure that it is unique - avoids single source of truth
         self.peers.retain(|p: &PeerInfo| p.peer_id != peer);
         self.peers.push(new_peer);
+
+        tracing::trace!("sync::AddPeer {peer}/{}", self.peers.len());
     }
 
     /// Remove a peer from the list of peers.
@@ -1113,10 +1123,11 @@ impl Sync {
         if self.peers.len() >= Self::MIN_PEERS {
             let mut peer = self.peers.pop()?;
             peer.last_used = std::time::Instant::now(); // used to determine stale requests.
-            peer.batch_size = self.dynamic_batch_sizing(&   peer);
+            peer.batch_size = self.dynamic_batch_sizing(&peer);
             tracing::trace!("sync::GetNextPeer {} ({})", peer.peer_id, peer.score);
             return Some(peer);
         }
+        tracing::warn!("sync::NextPeer : {} insufficient peers", self.peers.len());
         None
     }
 
@@ -1128,25 +1139,21 @@ impl Sync {
         match (&self.state, &peer.version, &peer.reason) {
             // V1 response may be too large. Reduce request range.
             (SyncState::Phase1(_), PeerVer::V1, DownGrade::Timeout) => {
-                 peer.batch_size
-                    .saturating_sub(peer.batch_size / 2)
-                    .max(1)
+                peer.batch_size.saturating_sub(peer.batch_size / 2).max(1)
             }
             // V1 response may be too large. Reduce request range.
             (SyncState::Phase1(_), PeerVer::V1, DownGrade::Empty) => {
-                 peer.batch_size
-                    .saturating_sub(peer.batch_size / 3)
-                    .max(1)
+                peer.batch_size.saturating_sub(peer.batch_size / 3).max(1)
             }
             // V1 responses are going well, increase the request range linearly
             (SyncState::Phase1(_), PeerVer::V1, DownGrade::None) => {
-                 peer.batch_size
+                peer.batch_size
                     .saturating_add(self.max_batch_size / 10)
                     // For V1, ~100 empty blocks saturates the response payload
                     .min(100)
             }
             // V2 response may be too large, which can induce a timeout. Split into 10 block segments
-            _ => { self.max_batch_size}
+            _ => self.max_batch_size,
         }
     }
 
