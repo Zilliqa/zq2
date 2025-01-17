@@ -119,8 +119,8 @@ resource "google_compute_url_map" "apps" {
   default_service = google_compute_backend_service.otterscan.id
 
   host_rule {
-    hosts        = ["explorer.${var.subdomain}"]
-    path_matcher = "explorer"
+    hosts        = ["otterscan.${var.subdomain}"]
+    path_matcher = "otterscan"
   }
 
   host_rule {
@@ -129,7 +129,7 @@ resource "google_compute_url_map" "apps" {
   }
 
   path_matcher {
-    name            = "explorer"
+    name            = "otterscan"
     default_service = google_compute_backend_service.otterscan.id
   }
 
@@ -143,7 +143,7 @@ resource "google_compute_managed_ssl_certificate" "apps" {
   name = "${var.chain_name}-apps"
 
   managed {
-    domains = ["explorer.${var.subdomain}", "faucet.${var.subdomain}"]
+    domains = ["otterscan.${var.subdomain}", "faucet.${var.subdomain}"]
   }
 }
 
@@ -158,8 +158,8 @@ resource "google_compute_target_https_proxy" "apps" {
   ssl_certificates = [google_compute_managed_ssl_certificate.apps.id]
 }
 
-data "google_compute_global_address" "explorer" {
-  name = "explorer-${replace(var.subdomain, ".", "-")}"
+data "google_compute_global_address" "otterscan" {
+  name = "otterscan-${replace(var.subdomain, ".", "-")}"
 }
 
 data "google_compute_global_address" "faucet" {
@@ -172,7 +172,7 @@ resource "google_compute_global_forwarding_rule" "otterscan_http" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "80"
   target                = google_compute_target_http_proxy.apps.id
-  ip_address            = data.google_compute_global_address.explorer.address
+  ip_address            = data.google_compute_global_address.otterscan.address
 }
 
 resource "google_compute_global_forwarding_rule" "otter_https" {
@@ -181,7 +181,7 @@ resource "google_compute_global_forwarding_rule" "otter_https" {
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "443"
   target                = google_compute_target_https_proxy.apps.id
-  ip_address            = data.google_compute_global_address.explorer.address
+  ip_address            = data.google_compute_global_address.otterscan.address
 }
 
 resource "google_compute_global_forwarding_rule" "faucet_http" {

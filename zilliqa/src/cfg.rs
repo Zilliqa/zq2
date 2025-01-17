@@ -406,7 +406,7 @@ impl Default for DeltaForks {
             failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
             call_mode_1_sets_caller_to_parent_caller: Some(true),
             scilla_messages_can_call_evm_contracts: Some(true),
-            adjust_contract_balance_on_deployment_if_contract_address_already_funded: Some(true),
+            scilla_contract_creation_increments_account_balance: Some(true),
         }])
     }
 }
@@ -430,8 +430,8 @@ impl From<DeltaForks> for Forks {
                     scilla_messages_can_call_evm_contracts: delta
                         .scilla_messages_can_call_evm_contracts
                         .unwrap_or(true),
-                    adjust_contract_balance_on_deployment_if_contract_address_already_funded: delta
-                        .adjust_contract_balance_on_deployment_if_contract_address_already_funded
+                    scilla_contract_creation_increments_account_balance: delta
+                        .scilla_contract_creation_increments_account_balance
                         .unwrap_or(true),
                 };
                 forks.push(base_fork);
@@ -476,7 +476,7 @@ impl Default for Forks {
             failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
             call_mode_1_sets_caller_to_parent_caller: true,
             scilla_messages_can_call_evm_contracts: true,
-            adjust_contract_balance_on_deployment_if_contract_address_already_funded: true,
+            scilla_contract_creation_increments_account_balance: true,
         }]
         .try_into()
         .unwrap()
@@ -503,7 +503,7 @@ pub struct Fork {
     pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
     pub call_mode_1_sets_caller_to_parent_caller: bool,
     pub scilla_messages_can_call_evm_contracts: bool,
-    pub adjust_contract_balance_on_deployment_if_contract_address_already_funded: bool,
+    pub scilla_contract_creation_increments_account_balance: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -531,7 +531,7 @@ pub struct DeltaFork {
     /// If true, when a contract is deployed, if the contract address is already funded,
     /// the contract balance will be sum of the existing balance and the amount sent in the deployment transaction.
     /// If false, the contract balance will be the amount sent in the deployment transaction.
-    pub adjust_contract_balance_on_deployment_if_contract_address_already_funded: Option<bool>,
+    pub scilla_contract_creation_increments_account_balance: Option<bool>,
 }
 
 impl Fork {
@@ -547,11 +547,9 @@ impl Fork {
             scilla_messages_can_call_evm_contracts: delta
                 .scilla_messages_can_call_evm_contracts
                 .unwrap_or(self.scilla_messages_can_call_evm_contracts),
-            adjust_contract_balance_on_deployment_if_contract_address_already_funded: delta
-                .adjust_contract_balance_on_deployment_if_contract_address_already_funded
-                .unwrap_or(
-                    self.adjust_contract_balance_on_deployment_if_contract_address_already_funded,
-                ),
+            scilla_contract_creation_increments_account_balance: delta
+                .scilla_contract_creation_increments_account_balance
+                .unwrap_or(self.scilla_contract_creation_increments_account_balance),
         }
     }
 }
@@ -647,16 +645,14 @@ mod tests {
             failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
             call_mode_1_sets_caller_to_parent_caller: Some(false),
             scilla_messages_can_call_evm_contracts: Some(true),
-            adjust_contract_balance_on_deployment_if_contract_address_already_funded: Some(false),
+            scilla_contract_creation_increments_account_balance: Some(false),
         }]);
 
         let result = Forks::from(delta_forks);
         assert_eq!(result.0.len(), 1);
         assert_eq!(result.0[0].at_height, 0);
         assert!(!result.0[0].call_mode_1_sets_caller_to_parent_caller);
-        assert!(
-            !result.0[0].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
-        );
+        assert!(!result.0[0].scilla_contract_creation_increments_account_balance,);
     }
 
     #[test]
@@ -667,25 +663,21 @@ mod tests {
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
                 call_mode_1_sets_caller_to_parent_caller: Some(true),
                 scilla_messages_can_call_evm_contracts: Some(true),
-                adjust_contract_balance_on_deployment_if_contract_address_already_funded: Some(
-                    true,
-                ),
+                scilla_contract_creation_increments_account_balance: Some(true),
             },
             DeltaFork {
                 at_height: 100,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                 call_mode_1_sets_caller_to_parent_caller: Some(false),
                 scilla_messages_can_call_evm_contracts: None,
-                adjust_contract_balance_on_deployment_if_contract_address_already_funded: Some(
-                    false,
-                ),
+                scilla_contract_creation_increments_account_balance: Some(false),
             },
             DeltaFork {
                 at_height: 200,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
                 call_mode_1_sets_caller_to_parent_caller: None,
                 scilla_messages_can_call_evm_contracts: Some(false),
-                adjust_contract_balance_on_deployment_if_contract_address_already_funded: None,
+                scilla_contract_creation_increments_account_balance: None,
             },
         ]);
 
@@ -696,24 +688,18 @@ mod tests {
         assert!(result.0[0].failed_scilla_call_from_gas_exempt_caller_causes_revert);
         assert!(result.0[0].call_mode_1_sets_caller_to_parent_caller);
         assert!(result.0[0].scilla_messages_can_call_evm_contracts);
-        assert!(
-            result.0[0].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
-        );
+        assert!(result.0[0].scilla_contract_creation_increments_account_balance,);
 
         assert_eq!(result.0[1].at_height, 100);
         assert!(result.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert,);
         assert!(!result.0[1].call_mode_1_sets_caller_to_parent_caller);
         assert!(result.0[1].scilla_messages_can_call_evm_contracts);
-        assert!(
-            !result.0[1].adjust_contract_balance_on_deployment_if_contract_address_already_funded
-        );
+        assert!(!result.0[1].scilla_contract_creation_increments_account_balance);
 
         assert_eq!(result.0[2].at_height, 200);
         assert!(!result.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert);
         assert!(!result.0[2].call_mode_1_sets_caller_to_parent_caller);
         assert!(!result.0[2].scilla_messages_can_call_evm_contracts);
-        assert!(
-            !result.0[2].adjust_contract_balance_on_deployment_if_contract_address_already_funded,
-        );
+        assert!(!result.0[2].scilla_contract_creation_increments_account_balance,);
     }
 }
