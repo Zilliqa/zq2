@@ -609,6 +609,7 @@ impl Sync {
                     "sync::RequestMissingBlocks : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
+                self.dynamic_batch_sizing(peer.peer_id, DownGrade::Timeout)?;
                 self.done_with_peer(DownGrade::Timeout);
             } else {
                 return Ok(());
@@ -679,6 +680,45 @@ impl Sync {
         Ok(())
     }
 
+    /// Phase 1: Dynamic Batch Sizing
+    ///
+    /// Due to a hard-coded 10MB response limit in libp2p, we may be limited in how many blocks we can request
+    /// for in a single request, between 1-100 blocks.
+    /// TODO: Make this a pro-active setting instead.
+    fn dynamic_batch_sizing(&mut self, from: PeerId, reason: DownGrade) -> Result<()> {
+        let Some(peer) = self.in_flight.as_ref() else {
+            todo!("invalid peer");
+        };
+
+        match (&self.state, &peer.version, reason) {
+            // V1 response may be too large. Reduce request range.
+            (SyncState::Phase1(_), PeerVer::V1, DownGrade::Timeout) => {
+                self.max_batch_size = self
+                    .max_batch_size
+                    .saturating_sub(self.max_batch_size / 2)
+                    .max(1);
+            }
+            (SyncState::Phase1(_), PeerVer::V1, DownGrade::Empty) => {
+                self.max_batch_size = self
+                    .max_batch_size
+                    .saturating_sub(self.max_batch_size / 3)
+                    .max(1);
+            }
+            // V1 responses are going well, increase the request range linearly
+            (SyncState::Phase1(_), PeerVer::V1, DownGrade::None) if from == peer.peer_id => {
+                self.max_batch_size = self
+                    .max_batch_size
+                    .saturating_add(self.max_batch_size_const / 10)
+                    // For V1, ~100 empty blocks saturates the response payload
+                    .min(100);
+            }
+            // V2 response may be too large, which can induce a timeout. Split into 10 block segments
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     /// Phase 1 / 2: Handle a V1 block response
     ///
     /// If the response if from a V2 peer, it will upgrade that peer to V2.
@@ -694,25 +734,6 @@ impl Sync {
             self.in_flight.as_mut().unwrap().version = PeerVer::V2;
             self.done_with_peer(DownGrade::None);
             return Ok(());
-        }
-
-        // Downgrade empty responses
-        if response.proposals.is_empty() {
-            tracing::info!("sync::HandleBlockResponse : empty response {from}");
-
-            if let Some(availability) = response.availability {
-                tracing::info!("sync::Availability {}", availability.len());
-                // response may be too large, so reduce request range
-                // this has the impact of slowing sync progress to a crawl.
-                self.max_batch_size = self
-                    .max_batch_size
-                    .saturating_sub(self.max_batch_size_const / 20)
-                    .max(5); // 5% reduce, down to 5 - empirical value
-            }
-            self.done_with_peer(DownGrade::Empty);
-            return Ok(());
-        } else {
-            self.max_batch_size = self.max_batch_size_const;
         }
 
         tracing::trace!(
@@ -807,9 +828,11 @@ impl Sync {
         if response.is_empty() {
             // Empty response, downgrade peer and retry with a new peer.
             tracing::warn!("sync::MetadataResponse : empty blocks {from}",);
+            self.dynamic_batch_sizing(from, DownGrade::Empty)?;
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
         } else {
+            self.dynamic_batch_sizing(from, DownGrade::None)?;
             self.done_with_peer(DownGrade::None);
         }
 
@@ -933,6 +956,7 @@ impl Sync {
                     "sync::RequestMissingMetadata : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
+                self.dynamic_batch_sizing(peer.peer_id, DownGrade::Timeout)?;
                 self.done_with_peer(DownGrade::Timeout);
             } else {
                 return Ok(());
