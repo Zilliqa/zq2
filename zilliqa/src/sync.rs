@@ -700,8 +700,12 @@ impl Sync {
             && response.from_view == u64::MAX
         {
             tracing::info!("sync::HandleBlockResponse : upgrading {from}",);
-            self.in_flight.as_mut().unwrap().version = PeerVer::V2;
-            self.done_with_peer(DownGrade::None);
+            if let Some(peer) = self.in_flight.as_mut() {
+                if peer.peer_id == from {
+                    peer.version = PeerVer::V2;
+                    self.done_with_peer(DownGrade::None);
+                }
+            }
             return Ok(());
         }
 
