@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Source: https://solidity-by-example.org/calling-contract/
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 contract Callee {
     uint256 public x;

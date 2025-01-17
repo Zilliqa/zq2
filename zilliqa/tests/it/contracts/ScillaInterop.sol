@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 // Source: https://github.com/Zilliqa/zilliqa-developer/blob/main/contracts/experimental/ERC20ProxyForZRC2/contracts/ScillaConnector.sol
 library ScillaConnector {
