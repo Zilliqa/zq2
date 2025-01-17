@@ -72,7 +72,6 @@ pub struct Sync {
     request_timeout: Duration,
     // how many blocks to request at once
     max_batch_size: usize,
-    max_batch_size_const: usize,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
     // count of proposals pending in the pipeline
@@ -105,6 +104,9 @@ impl Sync {
         message_sender: MessageSender,
         peers: Vec<PeerId>,
     ) -> Result<Self> {
+        let peer_id = message_sender.our_peer_id;
+        let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
+        let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
         let peers = peers
             .into_iter()
             .map(|peer_id| PeerInfo {
@@ -112,11 +114,10 @@ impl Sync {
                 score: 0,
                 peer_id,
                 last_used: Instant::now(),
+                reason: DownGrade::None,
+                batch_size: max_batch_size,
             })
             .collect();
-        let peer_id = message_sender.our_peer_id;
-        let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
-        let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
 
         // This DB could be left in-here as it is only used in this module
         // TODO: Make this in-memory by exploiting SQLite TEMP tables i.e. CREATE TEMP TABLE
@@ -158,7 +159,6 @@ impl Sync {
             peer_id,
             request_timeout: config.consensus.consensus_timeout,
             max_batch_size,
-            max_batch_size_const: max_batch_size,
             max_blocks_in_flight,
             in_flight: None,
             in_pipeline: usize::MIN,
@@ -232,7 +232,9 @@ impl Sync {
                     last_used: Instant::now(),
                     score:u32::MAX,
                     version: row.get(5)?,
-                    peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(4)?.as_slice()).unwrap(),
+                    reason: DownGrade::None,
+                    batch_size: self.max_batch_size,
+                    peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(4)?.as_slice()).unwrap(),                    
                 },
             )))
                 .optional()?;
@@ -609,7 +611,6 @@ impl Sync {
                     "sync::RequestMissingBlocks : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
-                self.dynamic_batch_sizing(peer.peer_id, DownGrade::Timeout)?;
                 self.done_with_peer(DownGrade::Timeout);
             } else {
                 return Ok(());
@@ -653,6 +654,8 @@ impl Sync {
                             version: PeerVer::V2,
                             peer_id: peer_info.peer_id,
                             last_used: std::time::Instant::now(),
+                            batch_size: self.max_batch_size, // unused in Phase 2
+                            reason: DownGrade::None,
                             score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
                         });
                         ExternalMessage::MultiBlockRequest(request_hashes)
@@ -662,6 +665,8 @@ impl Sync {
                             version: PeerVer::V1,
                             peer_id: peer_info.peer_id,
                             last_used: std::time::Instant::now(),
+                            batch_size: self.max_batch_size, // unused in Phase 2
+                            reason: DownGrade::None,
                             score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
                         });
                         // do not add VIEW_DRIFT - the stored marker is accurate!
@@ -677,45 +682,6 @@ impl Sync {
         } else {
             tracing::warn!("sync::RequestMissingBlocks : insufficient peers to handle request");
         }
-        Ok(())
-    }
-
-    /// Phase 1: Dynamic Batch Sizing
-    ///
-    /// Due to a hard-coded 10MB response limit in libp2p, we may be limited in how many blocks we can request
-    /// for in a single request, between 1-100 blocks.
-    /// TODO: Make this a pro-active setting instead.
-    fn dynamic_batch_sizing(&mut self, from: PeerId, reason: DownGrade) -> Result<()> {
-        let Some(peer) = self.in_flight.as_ref() else {
-            todo!("invalid peer");
-        };
-
-        match (&self.state, &peer.version, reason) {
-            // V1 response may be too large. Reduce request range.
-            (SyncState::Phase1(_), PeerVer::V1, DownGrade::Timeout) => {
-                self.max_batch_size = self
-                    .max_batch_size
-                    .saturating_sub(self.max_batch_size / 2)
-                    .max(1);
-            }
-            (SyncState::Phase1(_), PeerVer::V1, DownGrade::Empty) => {
-                self.max_batch_size = self
-                    .max_batch_size
-                    .saturating_sub(self.max_batch_size / 3)
-                    .max(1);
-            }
-            // V1 responses are going well, increase the request range linearly
-            (SyncState::Phase1(_), PeerVer::V1, DownGrade::None) if from == peer.peer_id => {
-                self.max_batch_size = self
-                    .max_batch_size
-                    .saturating_add(self.max_batch_size_const / 10)
-                    // For V1, ~100 empty blocks saturates the response payload
-                    .min(100);
-            }
-            // V2 response may be too large, which can induce a timeout. Split into 10 block segments
-            _ => {}
-        }
-
         Ok(())
     }
 
@@ -828,11 +794,9 @@ impl Sync {
         if response.is_empty() {
             // Empty response, downgrade peer and retry with a new peer.
             tracing::warn!("sync::MetadataResponse : empty blocks {from}",);
-            self.dynamic_batch_sizing(from, DownGrade::Empty)?;
             self.done_with_peer(DownGrade::Empty);
             return Ok(());
         } else {
-            self.dynamic_batch_sizing(from, DownGrade::None)?;
             self.done_with_peer(DownGrade::None);
         }
 
@@ -956,7 +920,6 @@ impl Sync {
                     "sync::RequestMissingMetadata : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
-                self.dynamic_batch_sizing(peer.peer_id, DownGrade::Timeout)?;
                 self.done_with_peer(DownGrade::Timeout);
             } else {
                 return Ok(());
@@ -973,7 +936,7 @@ impl Sync {
         if let Some(peer) = self.get_next_peer() {
             tracing::info!(
                 "sync::RequestMissingMetadata : requesting {} metadata of segment #{} from {}",
-                self.max_batch_size,
+                peer.batch_size,
                 self.count_segments()? + 1,
                 peer.peer_id
             );
@@ -984,7 +947,7 @@ impl Sync {
                     ExternalMessage::MetaDataRequest(BlockRequestV2 {
                         request_at: SystemTime::now(),
                         from_hash: parent_hash,
-                        batch_size: self.max_batch_size,
+                        batch_size: peer.batch_size,
                     })
                 }
                 SyncState::Phase1(ChainMetaData { view_number, .. })
@@ -993,10 +956,10 @@ impl Sync {
                     // For V1 BlockRequest, we request a little more than we need, due to drift
                     // Since the view number is an 'internal' clock, it is possible for the same block number
                     // to have different view numbers.
-                    let drift = self.max_batch_size as u64 / 10;
+                    let drift = peer.batch_size as u64 / 10;
                     ExternalMessage::BlockRequest(BlockRequest {
                         to_view: view_number.saturating_add(drift),
-                        from_view: view_number.saturating_sub(self.max_batch_size as u64),
+                        from_view: view_number.saturating_sub(peer.batch_size as u64),
                     })
                 }
                 SyncState::Phase0 if meta.is_some() && matches!(peer.version, PeerVer::V2) => {
@@ -1006,17 +969,17 @@ impl Sync {
                     ExternalMessage::MetaDataRequest(BlockRequestV2 {
                         request_at: SystemTime::now(),
                         from_hash: parent_hash,
-                        batch_size: self.max_batch_size,
+                        batch_size: peer.batch_size,
                     })
                 }
                 SyncState::Phase0 if meta.is_some() && matches!(peer.version, PeerVer::V1) => {
                     let meta = meta.unwrap();
                     let view_number = meta.view_number;
                     self.state = SyncState::Phase1(meta);
-                    let drift = self.max_batch_size as u64 / 10;
+                    let drift = peer.batch_size as u64 / 10;
                     ExternalMessage::BlockRequest(BlockRequest {
                         to_view: view_number.saturating_add(drift),
-                        from_view: view_number.saturating_sub(self.max_batch_size as u64),
+                        from_view: view_number.saturating_sub(peer.batch_size as u64),
                     })
                 }
                 _ => anyhow::bail!("sync::MissingMetadata : invalid state"),
@@ -1103,6 +1066,7 @@ impl Sync {
     fn done_with_peer(&mut self, downgrade: DownGrade) {
         if let Some(mut peer) = self.in_flight.take() {
             tracing::trace!("sync::DoneWithPeer {} {:?}", peer.peer_id, downgrade);
+            peer.reason = downgrade.clone();
             peer.score = peer.score.saturating_add(downgrade as u32);
             // Ensure that the next peer is equal or better
             peer.score = peer.score.max(self.peers.peek().unwrap().score);
@@ -1129,6 +1093,8 @@ impl Sync {
             score: self.peers.iter().map(|p| p.score).min().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
+            reason: DownGrade::None,
+            batch_size: self.max_batch_size,
         };
         tracing::trace!("sync::AddPeer {peer}");
         // ensure that it is unique - avoids single source of truth
@@ -1147,10 +1113,41 @@ impl Sync {
         if self.peers.len() >= Self::MIN_PEERS {
             let mut peer = self.peers.pop()?;
             peer.last_used = std::time::Instant::now(); // used to determine stale requests.
+            peer.batch_size = self.dynamic_batch_sizing(&   peer);
             tracing::trace!("sync::GetNextPeer {} ({})", peer.peer_id, peer.score);
             return Some(peer);
         }
         None
+    }
+
+    /// Phase 1: Dynamic Batch Sizing
+    ///
+    /// Due to a hard-coded 10MB response limit in libp2p, we may be limited in how many blocks we can request
+    /// for in a single request, between 1-100 blocks.
+    fn dynamic_batch_sizing(&self, peer: &PeerInfo) -> usize {
+        match (&self.state, &peer.version, &peer.reason) {
+            // V1 response may be too large. Reduce request range.
+            (SyncState::Phase1(_), PeerVer::V1, DownGrade::Timeout) => {
+                 peer.batch_size
+                    .saturating_sub(peer.batch_size / 2)
+                    .max(1)
+            }
+            // V1 response may be too large. Reduce request range.
+            (SyncState::Phase1(_), PeerVer::V1, DownGrade::Empty) => {
+                 peer.batch_size
+                    .saturating_sub(peer.batch_size / 3)
+                    .max(1)
+            }
+            // V1 responses are going well, increase the request range linearly
+            (SyncState::Phase1(_), PeerVer::V1, DownGrade::None) => {
+                 peer.batch_size
+                    .saturating_add(self.max_batch_size / 10)
+                    // For V1, ~100 empty blocks saturates the response payload
+                    .min(100)
+            }
+            // V2 response may be too large, which can induce a timeout. Split into 10 block segments
+            _ => { self.max_batch_size}
+        }
     }
 
     /// Returns (am_syncing, current_highest_block)
@@ -1193,6 +1190,8 @@ struct PeerInfo {
     peer_id: PeerId,
     last_used: Instant,
     version: PeerVer,
+    batch_size: usize,
+    reason: DownGrade,
 }
 
 impl Ord for PeerInfo {
@@ -1212,11 +1211,23 @@ impl PartialOrd for PeerInfo {
 
 /// For downgrading a peer from being selected in get_next_peer().
 /// Ordered by degree of offence i.e. None is good, Timeout is worst
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum DownGrade {
     None,
     Empty,
     Timeout,
+}
+
+impl Ord for DownGrade {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.clone() as u32).cmp(&(other.clone() as u32))
+    }
+}
+
+impl PartialOrd for DownGrade {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// Sync state
