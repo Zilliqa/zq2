@@ -12,9 +12,12 @@ use alloy::{
 use bitvec::{bitarr, order::Msb0};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use eth_trie::{MemoryDB, Trie};
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use libp2p::PeerId;
 use pprof::criterion::{Output, PProfProfiler};
+use prost::Message;
 use revm::primitives::{Bytes, TxKind};
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use tokio::sync::mpsc;
 use zilliqa::{
@@ -24,8 +27,12 @@ use zilliqa::{
     db::Db,
     message::{Block, ExternalMessage, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
+    schnorr,
     time::{self, SystemTime},
-    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
+    transaction::{
+        EvmGas, ScillaGas, SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount,
+    },
+    zq1_proto::{Nonce, ProtoTransactionCoreInfo},
 };
 
 fn process_empty(c: &mut Criterion) {
@@ -210,7 +217,7 @@ fn full_blocks_evm_transfers(c: &mut Criterion) {
     let txns = (0..).map(|nonce| {
         let mut tx = TxLegacy {
             chain_id: None,
-            nonce: nonce as u64,
+            nonce,
             gas_price: 1,
             gas_limit: 21_000,
             to: TxKind::Call(to),
@@ -223,6 +230,49 @@ fn full_blocks_evm_transfers(c: &mut Criterion) {
     });
 
     full_transaction_benchmark(c, "full-blocks-evm-transfers", signer.address(), txns);
+}
+
+fn full_blocks_zil_transfers(c: &mut Criterion) {
+    let signer = schnorr::SecretKey::random(&mut rand::thread_rng());
+    let key = signer.public_key();
+    let to = Address::random();
+    let txns = (0..).map(|nonce| {
+        let chain_id = 700;
+        let amount = 1;
+        let gas_price = 1;
+        let gas_limit = 50;
+        let tx = TxZilliqa {
+            chain_id,
+            nonce: nonce + 1,
+            gas_price: ZilAmount::from_raw(gas_price),
+            gas_limit: ScillaGas(gas_limit),
+            to_addr: to,
+            amount: ZilAmount::from_raw(amount),
+            code: String::new(),
+            data: String::new(),
+        };
+        let version = ((chain_id as u32) << 16) | 1u32;
+        let proto = ProtoTransactionCoreInfo {
+            version,
+            toaddr: to.0.to_vec(),
+            senderpubkey: Some(key.to_sec1_bytes().into()),
+            amount: Some(amount.to_be_bytes().to_vec().into()),
+            gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
+            gaslimit: gas_limit,
+            oneof2: Some(Nonce::Nonce(nonce + 1)),
+            oneof8: None,
+            oneof9: None,
+        };
+        let txn_data = proto.encode_to_vec();
+        let sig = schnorr::sign(&txn_data, &signer);
+        let txn = SignedTransaction::Zilliqa { tx, key, sig };
+        txn.verify().unwrap()
+    });
+
+    let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
+    let address = Address::from_slice(&hashed[12..]);
+
+    full_transaction_benchmark(c, "full-blocks-zil-transfers", address, txns);
 }
 
 /// Run a benchmark which produces blocks full of the provided transactions. `txns` should be infinitely iterable
@@ -363,6 +413,6 @@ fn c_big_process_block(big: &mut RefMut<'_, Consensus>, from: PeerId, proposal: 
 criterion_group!(
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = process_empty, full_blocks_evm_transfers,
+    targets = process_empty, full_blocks_evm_transfers, full_blocks_zil_transfers,
 );
 criterion_main!(benches);
