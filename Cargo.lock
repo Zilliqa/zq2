@@ -4368,7 +4368,6 @@ dependencies = [
  "console",
  "number_prefix",
  "portable-atomic",
- "rayon",
  "unicode-width 0.2.0",
  "web-time",
 ]
@@ -10385,7 +10384,6 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_core",
- "rayon",
  "revm",
  "revm-inspectors",
  "rusqlite",
