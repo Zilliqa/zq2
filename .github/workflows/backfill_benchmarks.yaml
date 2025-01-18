@@ -1,0 +1,45 @@
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Commit to backfill from"
+        required: true
+        type: string
+      to:
+        description: "Commit to backfill to"
+        required: true
+        type: string
+      benchmarks:
+        description: "Filter for benchmarks to run while backfilling"
+        type: string
+
+jobs:
+  backfill_benchmarks:
+    name: Backfill Benchmarks
+    runs-on: self-hosted
+    timeout-minutes: 2880
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bencherdev/bencher@main
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install dependencies
+        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
+
+      - name: Backfill benchmarks
+        run: |
+          git rev-list ^${{ inputs.from }}~ ${{ inputs.to }} --reverse | \
+          xargs -I{} sh -c 'git checkout {} --quiet && \
+          bencher run \
+          --project zq2 \
+          --token "${{ secrets.BENCHER_API_TOKEN }}" \
+          --branch main \
+          --testbed self-hosted \
+          --threshold-measure latency \
+          --threshold-test t_test \
+          --threshold-max-sample-size 64 \
+          --threshold-upper-boundary 0.99 \
+          --thresholds-reset \
+          --adapter rust_criterion \
+          --backdate $(git show --no-patch --format=%ct) \
+          cargo bench -- "${{ inputs.benchmarks }}"'
