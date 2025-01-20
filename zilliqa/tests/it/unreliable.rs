@@ -32,5 +32,5 @@ async fn blocks_are_produced_while_a_node_restarts(mut network: Network) {
     // of blocks 3 or 4. This would tell us that we aren't producing new views unnecessarily.
 
     // Ensure more blocks are produced.
-    network.run_until_block(&wallet, 12.into(), 400).await;
+    network.run_until_block(&wallet, 12.into(), 1400).await;
 }

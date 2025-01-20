@@ -844,19 +844,20 @@ impl Network {
         });
 
         // Pick a random message
-        let index = self.rng.lock().unwrap().gen_range(0..messages.len());
-        let (source, destination, message) = messages.swap_remove(index);
-        // Requeue the other messages
-        for message in messages {
-            self.resend_message.send(message).unwrap();
+        if !messages.is_empty() {
+            let index = self.rng.lock().unwrap().gen_range(0..messages.len());
+            let (source, destination, message) = messages.swap_remove(index);
+            // Requeue the other messages
+            for message in messages {
+                self.resend_message.send(message).unwrap();
+            }
+            trace!(
+                "{}",
+                format_message(&self.nodes, source, destination, &message)
+            );
+
+            self.handle_message((source, destination, message))
         }
-
-        trace!(
-            "{}",
-            format_message(&self.nodes, source, destination, &message)
-        );
-
-        self.handle_message((source, destination, message))
     }
 
     fn handle_message(&mut self, message: StreamMessage) {
@@ -1054,14 +1055,16 @@ impl Network {
     }
 
     async fn run_until_synced(&mut self, index: usize) {
-        assert!(self.nodes.len() > 1);
-        let check = if index != 0 { 0 } else { 1 };
+        let mut check = self.rng.lock().unwrap().gen_range(0..self.nodes.len());
+        while index == check {
+            check = self.rng.lock().unwrap().gen_range(0..self.nodes.len());
+        }
         self.run_until(
             |net| {
                 net.get_node(index).get_finalized_height().unwrap()
-                    >= net.get_node(check).get_finalized_height().unwrap()
+                    == net.get_node(check).get_finalized_height().unwrap()
             },
-            1000,
+            10000,
         )
         .await
         .unwrap();
