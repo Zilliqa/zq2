@@ -20,16 +20,22 @@ jobs:
     timeout-minutes: 2880
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
       - uses: bencherdev/bencher@main
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Install dependencies
         run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
-
       - name: Backfill benchmarks
         run: |
+          git pull && \
           git rev-list ^${{ inputs.from }}~ ${{ inputs.to }} --reverse | \
-          xargs -I{} sh -c 'git checkout {} --quiet && \
+          xargs -I{} sh -c 'git restore --staged . && \
+          git restore . && \
+          git checkout {} --quiet && \
+          git checkout origin/improve-bench -- Cargo.lock Cargo.toml eth-trie.rs/Cargo.toml z2/Cargo.toml zilliqa/Cargo.toml zilliqa-macros/Cargo.toml zilliqa/benches zilliqa/src/lib.rs zilliqa/src/test_util.rs zilliqa/src/time.rs && \
           bencher run \
           --project zq2 \
           --token "${{ secrets.BENCHER_API_TOKEN }}" \

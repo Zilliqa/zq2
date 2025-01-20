@@ -1,0 +1,650 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 06c7390d..36331998 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -146,15 +146,32 @@ dependencies = [
+ 
+ [[package]]
+ name = "alloy-core"
+-version = "0.8.18"
++version = "0.8.15"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "d0713007d14d88a6edb8e248cddab783b698dbb954a28b8eee4bab21cfb7e578"
++checksum = "c618bd382f0bc2ac26a7e4bfae01c9b015ca8f21b37ca40059ae35a7e62b3dc6"
+ dependencies = [
++ "alloy-dyn-abi",
++ "alloy-json-abi",
+  "alloy-primitives",
+  "alloy-rlp",
+  "alloy-sol-types",
+ ]
+ 
++[[package]]
++name = "alloy-dyn-abi"
++version = "0.8.15"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "41056bde53ae10ffbbf11618efbe1e0290859e5eab0fe9ef82ebdb62f12a866f"
++dependencies = [
++ "alloy-json-abi",
++ "alloy-primitives",
++ "alloy-sol-type-parser",
++ "alloy-sol-types",
++ "const-hex",
++ "itoa",
++ "winnow",
++]
++
+ [[package]]
+ name = "alloy-eip2930"
+ version = "0.1.0"
+@@ -261,9 +278,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "alloy-primitives"
+-version = "0.8.18"
++version = "0.8.19"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "788bb18e8f61d5d9340b52143f27771daf7e1dccbaf2741621d2493f9debf52e"
++checksum = "ec878088ec6283ce1e90d280316aadd3d6ce3de06ff63d68953c855e7e447e92"
+ dependencies = [
+  "alloy-rlp",
+  "bytes",
+@@ -472,6 +489,7 @@ version = "0.8.18"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "19cc9c7f20b90f9be1a8f71a3d8e283a43745137b0837b1a1cb13159d37cad72"
+ dependencies = [
++ "alloy-json-abi",
+  "alloy-sol-macro-input",
+  "const-hex",
+  "heck",
+@@ -490,20 +508,22 @@ version = "0.8.18"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "713b7e6dfe1cb2f55c80fb05fd22ed085a1b4e48217611365ed0ae598a74c6ac"
+ dependencies = [
++ "alloy-json-abi",
+  "const-hex",
+  "dunce",
+  "heck",
+  "proc-macro2",
+  "quote",
++ "serde_json",
+  "syn 2.0.96",
+  "syn-solidity",
+ ]
+ 
+ [[package]]
+ name = "alloy-sol-type-parser"
+-version = "0.8.18"
++version = "0.8.19"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "1eda2711ab2e1fb517fc6e2ffa9728c9a232e296d16810810e6957b781a1b8bc"
++checksum = "74e60b084fe1aef8acecda2743ff2d93c18ff3eb67a2d3b12f62582a1e66ef5e"
+ dependencies = [
+  "serde",
+  "winnow",
+@@ -4368,7 +4388,6 @@ dependencies = [
+  "console",
+  "number_prefix",
+  "portable-atomic",
+- "rayon",
+  "unicode-width 0.2.0",
+  "web-time",
+ ]
+@@ -10385,7 +10404,6 @@ dependencies = [
+  "rand",
+  "rand_chacha",
+  "rand_core",
+- "rayon",
+  "revm",
+  "revm-inspectors",
+  "rusqlite",
+diff --git a/zilliqa/Cargo.toml b/zilliqa/Cargo.toml
+index 9b25090c..78add2a0 100644
+--- a/zilliqa/Cargo.toml
++++ b/zilliqa/Cargo.toml
+@@ -26,7 +26,7 @@ anyhow = { version = "1.0.95", features = ["backtrace"] }
+ vergen = { version = "8.3.1", features = ["git", "git2"] }
+ 
+ [dependencies]
+-alloy = { version = "0.6.4", default-features = false, features = ["consensus", "eips", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
++alloy = { version = "0.6.4", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+ anyhow = { version = "1.0.95", features = ["backtrace"] }
+ async-trait = "0.1.85"
+ base64 = "0.22.1"
+@@ -85,19 +85,18 @@ serde_repr = "0.1.19"
+ thiserror = "2.0.11"
+ lru-mem = "0.3.0"
+ opentelemetry-semantic-conventions = { version = "0.27.0", features = ["semconv_experimental"] }
++semver = "1.0.23"
++foundry-compilers = { version = "0.12.9", features = ["svm-solc"] }
+ 
+ [dev-dependencies]
+ alloy = { version = "0.6.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
+ async-trait = "0.1.85"
+ criterion = "0.5.1"
+ ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
+-foundry-compilers = { version = "0.12.9", features = ["svm-solc"] }
+ fs_extra = "1.3.0"
+-indicatif = { version = "0.17.9", features = ["rayon"] }
++indicatif = "0.17.9"
+ pprof = { version = "0.14.0", default-features = false, features = ["criterion", "flamegraph"] }
+ primitive-types = { version = "0.12.2" }
+-rayon = "1.10.0"
+-semver = "1.0.23"
+ ureq = "2.12.1"
+ zilliqa = { path = ".", default-features = false, features = ["fake_response_channel", "fake_time"] }
+ zilliqa-macros = { path = "../zilliqa-macros" }
+diff --git a/zilliqa/benches/ERC20.sol b/zilliqa/benches/ERC20.sol
+new file mode 100644
+index 00000000..76d8e889
+--- /dev/null
++++ b/zilliqa/benches/ERC20.sol
+@@ -0,0 +1,10 @@
++// SPDX-License-Identifier: MIT OR Apache-2.0
++pragma solidity ^0.8.28;
++
++import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
++
++contract ERC20FixedSupply is ERC20("token", "TKN") {
++    constructor() {
++        _mint(msg.sender, 1_000_000_000);
++    }
++}
+diff --git a/zilliqa/benches/it.rs b/zilliqa/benches/it.rs
+index 75d96308..c6d12d4f 100644
+--- a/zilliqa/benches/it.rs
++++ b/zilliqa/benches/it.rs
+@@ -1,16 +1,23 @@
+-use std::{path::PathBuf, sync::Arc, time::Duration};
++use std::{env, iter, path::PathBuf, sync::Arc, time::Duration};
+ 
+ use alloy::{
+-    consensus::TxLegacy, network::TxSignerSync, primitives::Address, signers::local::LocalSigner,
++    consensus::TxLegacy,
++    dyn_abi::JsonAbiExt,
++    network::TxSignerSync,
++    primitives::{Address, U256},
++    signers::local::LocalSigner,
+ };
+ use bitvec::{bitarr, order::Msb0};
+-use criterion::{black_box, criterion_group, criterion_main, Criterion};
++use criterion::{
++    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
++};
+ use eth_trie::{MemoryDB, Trie};
+-use indicatif::{ParallelProgressIterator, ProgressBar};
++use k256::elliptic_curve::sec1::ToEncodedPoint;
+ use libp2p::PeerId;
+ use pprof::criterion::{Output, PProfProfiler};
+-use rayon::iter::{IntoParallelIterator, ParallelIterator};
++use prost::Message;
+ use revm::primitives::{Bytes, TxKind};
++use sha2::{Digest, Sha256};
+ use tempfile::tempdir;
+ use tokio::sync::mpsc;
+ use zilliqa::{
+@@ -20,15 +27,20 @@ use zilliqa::{
+     db::Db,
+     message::{Block, ExternalMessage, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
+     node::{MessageSender, RequestId},
++    schnorr,
++    test_util::compile_contract,
+     time::{self, SystemTime},
+-    transaction::{EvmGas, SignedTransaction},
++    transaction::{
++        EvmGas, ScillaGas, SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount,
++    },
++    zq1_proto::{Nonce, ProtoTransactionCoreInfo},
+ };
+ 
+-pub fn process_empty(c: &mut Criterion) {
++fn process_empty(c: &mut Criterion) {
+     tracing_subscriber::fmt::init();
+ 
+     let mut group = c.benchmark_group("process-empty");
+-    group.throughput(criterion::Throughput::Elements(1));
++    group.throughput(Throughput::Elements(1));
+     group
+         .sample_size(500)
+         .measurement_time(Duration::from_secs(10));
+@@ -200,17 +212,150 @@ fn consensus(
+     .unwrap()
+ }
+ 
+-pub fn produce_full(crit: &mut Criterion) {
+-    let mut group = crit.benchmark_group("produce-full");
+-    group.throughput(criterion::Throughput::Elements(1));
+-    let sample_size = 20;
+-    group
+-        .sample_size(sample_size)
+-        .measurement_time(Duration::from_secs(120));
++fn full_blocks_evm_transfers(c: &mut Criterion) {
++    let signer = LocalSigner::random();
++    let to = Address::random();
++    let txns = (0..).map(|nonce| {
++        let mut tx = TxLegacy {
++            chain_id: None,
++            nonce,
++            gas_price: 1,
++            gas_limit: 21_000,
++            to: TxKind::Call(to),
++            value: U256::from(1),
++            input: Bytes::new(),
++        };
++        let sig = signer.sign_transaction_sync(&mut tx).unwrap();
++        let txn = SignedTransaction::Legacy { tx, sig };
++        txn.verify().unwrap()
++    });
++
++    full_transaction_benchmark(
++        c,
++        "full-blocks-evm-transfers",
++        signer.address(),
++        iter::empty(),
++        txns,
++        4000,
++    );
++}
++
++fn full_blocks_zil_transfers(c: &mut Criterion) {
++    let signer = schnorr::SecretKey::random(&mut rand::thread_rng());
++    let key = signer.public_key();
++    let to = Address::random();
++    let txns = (1..).map(|nonce| {
++        let chain_id = 700;
++        let amount = 1;
++        let gas_price = 1;
++        let gas_limit = 50;
++        let tx = TxZilliqa {
++            chain_id,
++            nonce,
++            gas_price: ZilAmount::from_raw(gas_price),
++            gas_limit: ScillaGas(gas_limit),
++            to_addr: to,
++            amount: ZilAmount::from_raw(amount),
++            code: String::new(),
++            data: String::new(),
++        };
++        let version = ((chain_id as u32) << 16) | 1u32;
++        let proto = ProtoTransactionCoreInfo {
++            version,
++            toaddr: to.0.to_vec(),
++            senderpubkey: Some(key.to_sec1_bytes().into()),
++            amount: Some(amount.to_be_bytes().to_vec().into()),
++            gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
++            gaslimit: gas_limit,
++            oneof2: Some(Nonce::Nonce(nonce)),
++            oneof8: None,
++            oneof9: None,
++        };
++        let txn_data = proto.encode_to_vec();
++        let sig = schnorr::sign(&txn_data, &signer);
++        let txn = SignedTransaction::Zilliqa { tx, key, sig };
++        txn.verify().unwrap()
++    });
++
++    let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
++    let address = Address::from_slice(&hashed[12..]);
++
++    full_transaction_benchmark(
++        c,
++        "full-blocks-zil-transfers",
++        address,
++        iter::empty(),
++        txns,
++        4000,
++    );
++}
+ 
++fn full_blocks_erc20_transfers(c: &mut Criterion) {
++    let (abi, input, estimate) = compile_contract("benches/ERC20.sol", "ERC20FixedSupply");
+     let signer = LocalSigner::random();
+-    let genesis_accounts = vec![(signer.address(), 1_000_000_000_000_000_000_000_000_000)];
+ 
++    let mut tx = TxLegacy {
++        chain_id: None,
++        nonce: 0,
++        gas_price: 1,
++        gas_limit: 10_000_000,
++        to: TxKind::Create,
++        value: U256::ZERO,
++        input,
++    };
++    let sig = signer.sign_transaction_sync(&mut tx).unwrap();
++    let setup_txn = SignedTransaction::Legacy { tx, sig };
++    let setup_txn = setup_txn.verify().unwrap();
++
++    let to = Address::random();
++    let contract_address = signer.address().create(0);
++    let gas_limit = estimate
++        .external
++        .get("transfer(address,uint256)")
++        .unwrap()
++        .parse()
++        .unwrap();
++    let transfer = abi.function("transfer").unwrap()[0].clone();
++    let input: Bytes = transfer
++        .abi_encode_input(&[to.into(), U256::from(1).into()])
++        .unwrap()
++        .into();
++
++    let txns = (1..).map(|nonce| {
++        let mut tx = TxLegacy {
++            chain_id: None,
++            nonce,
++            gas_price: 1,
++            gas_limit,
++            to: TxKind::Call(contract_address),
++            value: U256::ZERO,
++            input: input.clone(),
++        };
++        let sig = signer.sign_transaction_sync(&mut tx).unwrap();
++        let txn = SignedTransaction::Legacy { tx, sig };
++        txn.verify().unwrap()
++    });
++
++    full_transaction_benchmark(
++        c,
++        "full-blocks-erc20-transfers",
++        signer.address(),
++        iter::once(setup_txn),
++        txns,
++        (84_000_000 / gas_limit) as usize,
++    );
++}
++
++/// Run a benchmark which produces blocks full of the provided transactions. `txns` should be infinitely iterable
++/// so the benchmark can generate as many transactions as it needs.
++fn full_transaction_benchmark(
++    c: &mut Criterion,
++    name: &str,
++    genesis_address: Address,
++    setup_txns: impl Iterator<Item = VerifiedTransaction>,
++    txns: impl Iterator<Item = VerifiedTransaction>,
++    txns_per_block: usize,
++) {
+     // We will create a dummy network with 2 validators - 'big' which has a large proportion of the stake and 'tiny'
+     // which has a small amount of stake. The intention is that 'big' will always be the block proposer, because the
+     // proposer is selected in proportion to the validators' relative stake. However, 'tiny' will still get to have a
+@@ -222,7 +367,7 @@ pub fn produce_full(crit: &mut Criterion) {
+     // Step 2 is important, because we want to measure the time it takes a validator to vote on a block it hasn't seen
+     // before. In step 3, 'big' will skip most of the block validation logic because it knows it built the block
+     // itself.
+-
++    let genesis_accounts = vec![(genesis_address, 1_000_000_000_000_000_000_000_000_000)];
+     let secret_key_big = SecretKey::new().unwrap();
+     let secret_key_tiny = SecretKey::new().unwrap();
+     let genesis_deposits = vec![
+@@ -230,68 +375,85 @@ pub fn produce_full(crit: &mut Criterion) {
+         (secret_key_tiny, 1),
+     ];
+ 
+-    let mut big = consensus(&genesis_accounts, &genesis_deposits, 0);
+-    let mut tiny = consensus(&genesis_accounts, &genesis_deposits, 1);
++    let setup_txns: Vec<_> = setup_txns.collect();
++    let txns: Vec<_> = txns.take(txns_per_block).collect();
+ 
+-    // Fill transaction pools with lots of basic transfers.
+-    let txn_count = (sample_size as u64 * 40) * 4000;
+-    let to = Address::random();
+-    let progress = ProgressBar::new(txn_count).with_message("generating transactions");
+-    let txns: Vec<_> = (0..txn_count)
+-        .into_par_iter()
+-        .progress_with(progress)
+-        .map(|nonce| {
+-            let mut tx = TxLegacy {
+-                chain_id: None,
+-                nonce,
+-                gas_price: 1,
+-                gas_limit: 21_000,
+-                to: TxKind::Call(to),
+-                value: alloy::primitives::U256::from(1),
+-                input: Bytes::new(),
+-            };
+-            let sig = signer.sign_transaction_sync(&mut tx).unwrap();
+-            let txn = SignedTransaction::Legacy { tx, sig };
+-            txn.verify().unwrap()
+-        })
+-        .collect();
+-    for txn in txns {
+-        let result = big.new_transaction(txn.clone()).unwrap();
+-        assert!(result.was_added());
+-        let result = tiny.new_transaction(txn).unwrap();
+-        assert!(result.was_added());
+-    }
+-
+-    // Trigger a timeout to produce the vote for the genesis block.
+-    let (_, message) = big.timeout().unwrap().unwrap();
+-    let ExternalMessage::Vote(vote) = message else {
+-        panic!()
+-    };
+-    let mut vote = *vote;
+-    let from = big.peer_id();
+-
+-    time::sync_with_fake_time(|| {
+-        group.bench_function("produce-full", |bench| {
+-            bench.iter(|| {
+-                // We wrap each of these steps in a separate function call, so that they are listed separately in
+-                // flamegraphs and we are able to measure the time spent in each. The function names are deliberately
+-                // alphabetical, so they appear in order in the flamegraph.
+-
+-                // 1. Get 'big' to process the previous vote and propose a block.
+-                let proposal = a_big_process_vote(&mut big, vote);
+-
+-                // 2. Get 'tiny' to vote on this block.
+-                b_tiny_process_block(&mut tiny, from, proposal.clone());
+-
+-                // 3. Get 'big' to vote on this block
+-                vote = c_big_process_block(&mut big, from, proposal);
+-            })
+-        });
++    let mut group = c.benchmark_group(name);
++    group.throughput(Throughput::Elements(1));
++    group.sample_size(
++        env::var("ZQ_TRANSACTION_BENCHMARK_SAMPLES")
++            .map(|s| s.parse().unwrap())
++            .unwrap_or(10),
++    );
++    group.measurement_time(Duration::from_secs(
++        env::var("ZQ_TRANSACTION_BENCHMARK_MEASUREMENT_TIME_S")
++            .map(|s| s.parse().unwrap())
++            .unwrap_or(120),
++    ));
++    group.sampling_mode(SamplingMode::Linear);
++    group.bench_function(name, |bench| {
++        bench.iter_batched(
++            || {
++                let mut big = consensus(&genesis_accounts, &genesis_deposits, 0);
++                let mut tiny = consensus(&genesis_accounts, &genesis_deposits, 1);
++
++                for txn in &setup_txns {
++                    let result = big.new_transaction(txn.clone()).unwrap();
++                    assert!(result.was_added());
++                    let result = tiny.new_transaction(txn.clone()).unwrap();
++                    assert!(result.was_added());
++                }
++
++                let vote = time::sync_with_fake_time(|| {
++                    // Trigger a timeout to produce the vote for the genesis block.
++                    let (_, message) = big.timeout().unwrap().unwrap();
++                    let ExternalMessage::Vote(vote) = message else {
++                        panic!()
++                    };
++                    let from = big.peer_id();
++
++                    // Produce a single block containing the setup transactions. We assume they all fit in a single
++                    // block.
++                    // 1. Get 'big' to process the previous vote and propose a block.
++                    let proposal = a_big_process_vote(&mut big, *vote, setup_txns.len());
++                    // 2. Get 'tiny' to vote on this block.
++                    b_tiny_process_block(&mut tiny, from, proposal.clone());
++                    // 3. Get 'big' to vote on this block
++                    c_big_process_block(&mut big, from, proposal)
++                });
++
++                for txn in &txns {
++                    let result = big.new_transaction(txn.clone()).unwrap();
++                    assert!(result.was_added());
++                    let result = tiny.new_transaction(txn.clone()).unwrap();
++                    assert!(result.was_added());
++                }
++
++                (big, tiny, vote)
++            },
++            |(mut big, mut tiny, mut vote)| {
++                let from = big.peer_id();
++                time::sync_with_fake_time(|| {
++                    // We wrap each of these steps in a separate function call, so that they are listed separately
++                    // in flamegraphs and we are able to measure the time spent in each. The function names are
++                    // deliberately alphabetical, so they appear in order in the flamegraph.
++
++                    // 1. Get 'big' to process the previous vote and propose a block.
++                    let proposal = a_big_process_vote(&mut big, vote, txns_per_block);
++
++                    // 2. Get 'tiny' to vote on this block.
++                    b_tiny_process_block(&mut tiny, from, proposal.clone());
++
++                    // 3. Get 'big' to vote on this block
++                    vote = c_big_process_block(&mut big, from, proposal);
++                });
++            },
++            BatchSize::SmallInput,
++        );
+     });
+-    group.finish();
+ }
+ 
+-fn a_big_process_vote(big: &mut Consensus, vote: Vote) -> Proposal {
++fn a_big_process_vote(big: &mut Consensus, vote: Vote, txns_per_block: usize) -> Proposal {
+     let proposal = big
+         .vote(black_box(vote))
+         .unwrap()
+@@ -299,7 +461,7 @@ fn a_big_process_vote(big: &mut Consensus, vote: Vote) -> Proposal {
+     // The first vote should immediately result in a proposal. Subsequent views require a timeout before
+     // the proposal is produced. Therefore, we trigger a timeout if there was not a proposal from the vote.
+     let proposal = proposal.unwrap_or_else(|| {
+-        time::advance(Duration::from_secs(10));
++        time::advance(Duration::from_secs(1));
+         let (_, message) = big.timeout().unwrap().unwrap();
+         let ExternalMessage::Proposal(p) = message else {
+             panic!()
+@@ -308,8 +470,8 @@ fn a_big_process_vote(big: &mut Consensus, vote: Vote) -> Proposal {
+     });
+     assert_eq!(
+         proposal.transactions.len(),
+-        4000,
+-        "proposal {} is not full",
++        txns_per_block,
++        "proposal {} is not the expected size",
+         proposal.view()
+     );
+     proposal
+@@ -338,6 +500,6 @@ fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) ->
+ criterion_group!(
+     name = benches;
+     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+-    targets = process_empty, produce_full,
++    targets = process_empty, full_blocks_evm_transfers, full_blocks_zil_transfers, full_blocks_erc20_transfers,
+ );
+ criterion_main!(benches);
+diff --git a/zilliqa/src/lib.rs b/zilliqa/src/lib.rs
+index 9762bc84..b949e649 100644
+--- a/zilliqa/src/lib.rs
++++ b/zilliqa/src/lib.rs
+@@ -23,6 +23,7 @@ pub mod scilla;
+ mod scilla_proto;
+ pub mod serde_util;
+ pub mod state;
++pub mod test_util;
+ pub mod time;
+ pub mod transaction;
+ pub mod zq1_proto;
+diff --git a/zilliqa/src/test_util.rs b/zilliqa/src/test_util.rs
+new file mode 100644
+index 00000000..5a8cf537
+--- /dev/null
++++ b/zilliqa/src/test_util.rs
+@@ -0,0 +1,70 @@
++use std::path::{Path, PathBuf};
++
++use alloy::{json_abi::JsonAbi, primitives::Bytes};
++use foundry_compilers::{
++    artifacts::{
++        output_selection::OutputSelection, EvmVersion, GasEstimates, Optimizer, Settings,
++        SolcInput, Source,
++    },
++    solc::{Solc, SolcLanguage},
++};
++
++pub fn compile_contract(path: &str, contract: &str) -> (JsonAbi, Bytes, GasEstimates) {
++    let full_path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), path);
++    let source_path = Path::new(&full_path);
++    let target_file = tempfile::Builder::new()
++        .suffix(".sol")
++        .tempfile()
++        .unwrap()
++        .into_temp_path();
++    let target_file = target_file.to_path_buf();
++
++    std::fs::copy(source_path, &target_file).unwrap();
++
++    let solc_input = SolcInput::new(
++        SolcLanguage::Solidity,
++        Source::read_all_files(vec![target_file.clone()]).unwrap(),
++        Settings {
++            remappings: vec![format!(
++                "@openzeppelin/contracts={}/../vendor/openzeppelin-contracts/contracts",
++                env!("CARGO_MANIFEST_DIR")
++            )
++            .parse()
++            .unwrap()],
++            optimizer: Optimizer {
++                enabled: Some(true),
++                runs: Some(2usize.pow(32) - 1),
++                details: None,
++            },
++            output_selection: OutputSelection::complete_output_selection(),
++            ..Default::default()
++        },
++    )
++    .evm_version(EvmVersion::Shanghai); // ensure compatible with EVM version in exec.rs
++
++    let mut solc = Solc::find_or_install(&semver::Version::new(0, 8, 28)).unwrap();
++    solc.allow_paths
++        .insert(PathBuf::from("../vendor/openzeppelin-contracts"));
++    let mut output = solc.compile_exact(&solc_input).unwrap();
++
++    if output.has_error() {
++        for error in output.errors {
++            eprintln!("{error}");
++        }
++        panic!("failed to compile contract");
++    }
++
++    let contract = output
++        .contracts
++        .remove(&target_file)
++        .unwrap()
++        .remove(contract)
++        .unwrap();
++    let evm = contract.evm.unwrap();
++
++    (
++        contract.abi.unwrap(),
++        evm.bytecode.unwrap().into_bytes().unwrap(),
++        evm.gas_estimates.unwrap(),
++    )
++}
+diff --git a/zilliqa/src/time.rs b/zilliqa/src/time.rs
+index 707e7321..61e0f690 100644
+--- a/zilliqa/src/time.rs
++++ b/zilliqa/src/time.rs
+@@ -87,7 +87,7 @@ mod time_impl {
+         CURRENT_TIME.scope(Mutex::new(Duration::ZERO), f)
+     }
+ 
+-    pub fn sync_with_fake_time(f: impl FnOnce()) {
++    pub fn sync_with_fake_time<R>(f: impl FnOnce() -> R) -> R {
+         CURRENT_TIME.sync_scope(Mutex::new(Duration::ZERO), f)
+     }
+ 
