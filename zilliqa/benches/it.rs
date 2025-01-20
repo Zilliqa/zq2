@@ -1,16 +1,12 @@
-use std::{
-    cell::{RefCell, RefMut},
-    env,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::{env, iter, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy::{
     consensus::TxLegacy, network::TxSignerSync, primitives::Address, signers::local::LocalSigner,
 };
 use bitvec::{bitarr, order::Msb0};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+};
 use eth_trie::{MemoryDB, Trie};
 use libp2p::PeerId;
 use pprof::criterion::{Output, PProfProfiler};
@@ -222,7 +218,14 @@ fn full_blocks_evm_transfers(c: &mut Criterion) {
         txn.verify().unwrap()
     });
 
-    full_transaction_benchmark(c, "full-blocks-evm-transfers", signer.address(), txns);
+    full_transaction_benchmark(
+        c,
+        "full-blocks-evm-transfers",
+        signer.address(),
+        iter::empty(),
+        txns,
+        4000,
+    );
 }
 
 /// Run a benchmark which produces blocks full of the provided transactions. `txns` should be infinitely iterable
@@ -231,10 +234,10 @@ fn full_transaction_benchmark(
     c: &mut Criterion,
     name: &str,
     genesis_address: Address,
-    mut txns: impl Iterator<Item = VerifiedTransaction>,
+    setup_txns: impl Iterator<Item = VerifiedTransaction>,
+    txns: impl Iterator<Item = VerifiedTransaction>,
+    txns_per_block: usize,
 ) {
-    let genesis_accounts = vec![(genesis_address, 1_000_000_000_000_000_000_000_000_000)];
-
     // We will create a dummy network with 2 validators - 'big' which has a large proportion of the stake and 'tiny'
     // which has a small amount of stake. The intention is that 'big' will always be the block proposer, because the
     // proposer is selected in proportion to the validators' relative stake. However, 'tiny' will still get to have a
@@ -246,7 +249,7 @@ fn full_transaction_benchmark(
     // Step 2 is important, because we want to measure the time it takes a validator to vote on a block it hasn't seen
     // before. In step 3, 'big' will skip most of the block validation logic because it knows it built the block
     // itself.
-
+    let genesis_accounts = vec![(genesis_address, 1_000_000_000_000_000_000_000_000_000)];
     let secret_key_big = SecretKey::new().unwrap();
     let secret_key_tiny = SecretKey::new().unwrap();
     let genesis_deposits = vec![
@@ -254,69 +257,85 @@ fn full_transaction_benchmark(
         (secret_key_tiny, 1),
     ];
 
-    let mut big = consensus(&genesis_accounts, &genesis_deposits, 0);
-    let tiny = consensus(&genesis_accounts, &genesis_deposits, 1);
+    let setup_txns: Vec<_> = setup_txns.collect();
+    let txns: Vec<_> = txns.take(txns_per_block).collect();
 
-    time::sync_with_fake_time(|| {
-        // Trigger a timeout to produce the vote for the genesis block.
-        let (_, message) = big.timeout().unwrap().unwrap();
-        let ExternalMessage::Vote(vote) = message else {
-            panic!()
-        };
-        let mut vote = *vote;
-        let from = big.peer_id();
+    let mut group = c.benchmark_group(name);
+    group.throughput(Throughput::Elements(1));
+    group.sample_size(
+        env::var("ZQ_TRANSACTION_BENCHMARK_SAMPLES")
+            .map(|s| s.parse().unwrap())
+            .unwrap_or(10),
+    );
+    group.measurement_time(Duration::from_secs(
+        env::var("ZQ_TRANSACTION_BENCHMARK_MEASUREMENT_TIME_S")
+            .map(|s| s.parse().unwrap())
+            .unwrap_or(120),
+    ));
+    group.sampling_mode(SamplingMode::Linear);
+    group.bench_function(name, |bench| {
+        bench.iter_batched(
+            || {
+                let mut big = consensus(&genesis_accounts, &genesis_deposits, 0);
+                let mut tiny = consensus(&genesis_accounts, &genesis_deposits, 1);
 
-        let big = RefCell::new(big);
-        let tiny = RefCell::new(tiny);
+                for txn in &setup_txns {
+                    let result = big.new_transaction(txn.clone()).unwrap();
+                    assert!(result.was_added());
+                    let result = tiny.new_transaction(txn.clone()).unwrap();
+                    assert!(result.was_added());
+                }
 
-        let mut group = c.benchmark_group(name);
-        group.throughput(Throughput::Elements(1));
-        group.sample_size(
-            env::var("ZQ_TRANSACTION_BENCHMARK_SAMPLES")
-                .map(|s| s.parse().unwrap())
-                .unwrap_or(20),
-        );
-        group.measurement_time(Duration::from_secs(
-            env::var("ZQ_TRANSACTION_BENCHMARK_MEASUREMENT_TIME_S")
-                .map(|s| s.parse().unwrap())
-                .unwrap_or(60),
-        ));
-        group.bench_function(name, |bench| {
-            bench.iter_batched(
-                || {
-                    let mut big = big.borrow_mut();
-                    let mut tiny = tiny.borrow_mut();
-                    for txn in txns.by_ref().take(4000) {
-                        let result = big.new_transaction(txn.clone()).unwrap();
-                        assert!(result.was_added());
-                        let result = tiny.new_transaction(txn).unwrap();
-                        assert!(result.was_added());
-                    }
-                },
-                |()| {
-                    let mut big = big.borrow_mut();
-                    let mut tiny = tiny.borrow_mut();
+                let vote = time::sync_with_fake_time(|| {
+                    // Trigger a timeout to produce the vote for the genesis block.
+                    let (_, message) = big.timeout().unwrap().unwrap();
+                    let ExternalMessage::Vote(vote) = message else {
+                        panic!()
+                    };
+                    let from = big.peer_id();
 
-                    // We wrap each of these steps in a separate function call, so that they are listed separately in
-                    // flamegraphs and we are able to measure the time spent in each. The function names are deliberately
-                    // alphabetical, so they appear in order in the flamegraph.
+                    // Produce a single block containing the setup transactions. We assume they all fit in a single
+                    // block.
+                    // 1. Get 'big' to process the previous vote and propose a block.
+                    let proposal = a_big_process_vote(&mut big, *vote, setup_txns.len());
+                    // 2. Get 'tiny' to vote on this block.
+                    b_tiny_process_block(&mut tiny, from, proposal.clone());
+                    // 3. Get 'big' to vote on this block
+                    c_big_process_block(&mut big, from, proposal)
+                });
+
+                for txn in &txns {
+                    let result = big.new_transaction(txn.clone()).unwrap();
+                    assert!(result.was_added());
+                    let result = tiny.new_transaction(txn.clone()).unwrap();
+                    assert!(result.was_added());
+                }
+
+                (big, tiny, vote)
+            },
+            |(mut big, mut tiny, mut vote)| {
+                let from = big.peer_id();
+                time::sync_with_fake_time(|| {
+                    // We wrap each of these steps in a separate function call, so that they are listed separately
+                    // in flamegraphs and we are able to measure the time spent in each. The function names are
+                    // deliberately alphabetical, so they appear in order in the flamegraph.
 
                     // 1. Get 'big' to process the previous vote and propose a block.
-                    let proposal = a_big_process_vote(&mut big, vote);
+                    let proposal = a_big_process_vote(&mut big, vote, txns_per_block);
 
                     // 2. Get 'tiny' to vote on this block.
                     b_tiny_process_block(&mut tiny, from, proposal.clone());
 
                     // 3. Get 'big' to vote on this block
                     vote = c_big_process_block(&mut big, from, proposal);
-                },
-                BatchSize::SmallInput,
-            );
-        });
+                });
+            },
+            BatchSize::SmallInput,
+        );
     });
 }
 
-fn a_big_process_vote(big: &mut RefMut<'_, Consensus>, vote: Vote) -> Proposal {
+fn a_big_process_vote(big: &mut Consensus, vote: Vote, txns_per_block: usize) -> Proposal {
     let proposal = big
         .vote(black_box(vote))
         .unwrap()
@@ -324,7 +343,7 @@ fn a_big_process_vote(big: &mut RefMut<'_, Consensus>, vote: Vote) -> Proposal {
     // The first vote should immediately result in a proposal. Subsequent views require a timeout before
     // the proposal is produced. Therefore, we trigger a timeout if there was not a proposal from the vote.
     let proposal = proposal.unwrap_or_else(|| {
-        time::advance(Duration::from_secs(10));
+        time::advance(Duration::from_secs(1));
         let (_, message) = big.timeout().unwrap().unwrap();
         let ExternalMessage::Proposal(p) = message else {
             panic!()
@@ -333,14 +352,14 @@ fn a_big_process_vote(big: &mut RefMut<'_, Consensus>, vote: Vote) -> Proposal {
     });
     assert_eq!(
         proposal.transactions.len(),
-        4000,
-        "proposal {} is not full",
+        txns_per_block,
+        "proposal {} is not the expected size",
         proposal.view()
     );
     proposal
 }
 
-fn b_tiny_process_block(tiny: &mut RefMut<'_, Consensus>, from: PeerId, proposal: Proposal) {
+fn b_tiny_process_block(tiny: &mut Consensus, from: PeerId, proposal: Proposal) {
     let (_, tiny_vote) = tiny
         .proposal(from, black_box(proposal), false)
         .unwrap()
@@ -349,7 +368,7 @@ fn b_tiny_process_block(tiny: &mut RefMut<'_, Consensus>, from: PeerId, proposal
     assert!(matches!(tiny_vote, ExternalMessage::Vote(_)));
 }
 
-fn c_big_process_block(big: &mut RefMut<'_, Consensus>, from: PeerId, proposal: Proposal) -> Vote {
+fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) -> Vote {
     let (_, vote) = big
         .proposal(from, black_box(proposal), false)
         .unwrap()
