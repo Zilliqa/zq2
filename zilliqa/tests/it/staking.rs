@@ -425,12 +425,28 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     check_miner_got_reward(&wallet, 1).await;
 }
 
+async fn wait_for_sync(network: &mut Network, index: usize) {
+    info!("syncing node #{}", index);
+    // sync up new node
+    network
+        .run_until(
+            |net| {
+                net.get_node(index).get_finalized_height().unwrap()
+                    >= net.get_node(0).get_finalized_height().unwrap()
+            },
+            1000,
+        )
+        .await
+        .unwrap();
+    info!("synced node #{}", index);
+}
+
 #[zilliqa_macros::test(blocks_per_epoch = 2, deposit_v3_upgrade_block_height = 12)]
 async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // randomise the current epoch state and current leader
-    let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
+    let blocks_to_prerun = network.rng.lock().unwrap().gen_range(1..8);
     network
         .run_until_block(&wallet, blocks_to_prerun.into(), 100)
         .await;
@@ -447,6 +463,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let staker_wallet = network.wallet_of_node(index).await;
     let pop_sinature = new_validator_key.pop_prove();
 
+    wait_for_sync(&mut network, index).await;
     let deposit_hash = deposit_stake(
         &mut network,
         &wallet,
@@ -535,6 +552,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         .run_until_block(&staker_wallet, deposit_v3_deploy_block.into(), 200)
         .await;
 
+    wait_for_sync(&mut network, index).await;
     let deposit_hash = deposit_v3_stake(
         &mut network,
         &wallet,

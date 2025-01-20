@@ -836,6 +836,10 @@ impl Network {
                     true
                 }
             }
+            AnyMessage::External(ExternalMessage::InjectedProposal(_)) => {
+                self.handle_message(m.clone());
+                false
+            }
             _ => true,
         });
 
@@ -1047,6 +1051,22 @@ impl Network {
                 }
             }
         }
+    }
+
+    async fn run_until_synced(&mut self, index: usize) {
+        let mut check = self.rng.lock().unwrap().gen_range(0..self.nodes.len());
+        while check == index {
+            check = self.rng.lock().unwrap().gen_range(0..self.nodes.len());
+        }
+        self.run_until(
+            |net| {
+                net.get_node(index).get_finalized_height().unwrap()
+                    >= net.get_node(check).get_finalized_height().unwrap()
+            },
+            1000,
+        )
+        .await
+        .unwrap();
     }
 
     async fn run_until(
