@@ -1054,10 +1054,8 @@ impl Network {
     }
 
     async fn run_until_synced(&mut self, index: usize) {
-        let mut check = self.rng.lock().unwrap().gen_range(0..self.nodes.len());
-        while check == index {
-            check = self.rng.lock().unwrap().gen_range(0..self.nodes.len());
-        }
+        assert!(self.nodes.len() > 1);
+        let check = if index != 0 { 0 } else { 1 };
         self.run_until(
             |net| {
                 net.get_node(index).get_finalized_height().unwrap()
