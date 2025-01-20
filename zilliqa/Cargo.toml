@@ -75,7 +75,7 @@ tower = "0.4.13"
 tower-http = { version = "0.6.1", features = ["cors"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
-cbor4ii = "0.3.2"
+cbor4ii = { version = "1.0.0", features = ["serde1"] }
 scilla-parser = "2.0.0"
 scopeguard = "1.2.0"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
