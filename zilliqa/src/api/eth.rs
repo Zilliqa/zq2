@@ -23,6 +23,7 @@ use jsonrpsee::{
     },
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
+use revm::primitives::Bytecode;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tracing::*;
@@ -35,7 +36,10 @@ use super::{
     },
 };
 use crate::{
-    api::zilliqa::ZilAddress,
+    api::{
+        types::eth::{Proof, StorageProof},
+        zilliqa::ZilAddress,
+    },
     cfg::EnabledApi,
     crypto::Hash,
     error::ensure_success,
@@ -65,6 +69,7 @@ pub fn rpc_module(
             ("eth_gasPrice", get_gas_price),
             ("eth_getAccount", get_account),
             ("eth_getBalance", get_balance),
+            ("eth_getProof", get_proof),
             ("eth_getBlockByHash", get_block_by_hash),
             ("eth_getBlockByNumber", get_block_by_number),
             ("eth_getBlockReceipts", get_block_receipts),
@@ -80,7 +85,6 @@ pub fn rpc_module(
             ("eth_getFilterChanges", get_filter_changes),
             ("eth_getFilterLogs", get_filter_logs),
             ("eth_getLogs", get_logs),
-            ("eth_getProof", get_proof),
             ("eth_getStorageAt", get_storage_at),
             (
                 "eth_getTransactionByBlockHashAndIndex",
@@ -908,6 +912,57 @@ fn syncing(params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingResult> {
     }
 }
 
+fn get_proof(params: Params, node: &Arc<Mutex<Node>>) -> Result<Proof> {
+    let mut params = params.sequence();
+    let address: Address = params.next()?;
+    let storage_keys: Vec<U256> = params.next()?;
+    let storage_keys = storage_keys
+        .into_iter()
+        .map(|key| B256::new(key.to_be_bytes()))
+        .collect::<Vec<_>>();
+    let block_id: BlockId = params.next()?;
+    expect_end_of_params(&mut params, 3, 3)?;
+
+    let node = node.lock().unwrap();
+
+    let block = node.get_block(block_id)?;
+
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
+    let state = node
+        .consensus
+        .state()
+        .at_root(block.state_root_hash().into());
+    let computed_proof = state.get_proof(address, &storage_keys)?;
+
+    let acc_code = Bytecode::new_raw(
+        computed_proof
+            .account
+            .code
+            .evm_code()
+            .unwrap_or_default()
+            .into(),
+    );
+
+    Ok(Proof {
+        address,
+        account_proof: computed_proof.account_proof,
+        storage_proof: computed_proof
+            .storage_proofs
+            .into_iter()
+            .map(|single_item| StorageProof {
+                proof: single_item.proof,
+                key: single_item.key,
+                value: single_item.value,
+            })
+            .collect(),
+        nonce: computed_proof.account.nonce,
+        balance: computed_proof.account.balance,
+        storage_hash: computed_proof.account.storage_root,
+        code_hash: acc_code.hash_slow(),
+    })
+}
+
 #[allow(clippy::redundant_allocation)]
 async fn subscribe(
     params: Params<'_>,
@@ -1060,12 +1115,6 @@ fn get_filter_changes(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
 fn get_filter_logs(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
-}
-
-/// eth_getProof
-/// Returns the account and storage values of the specified account including the Merkle-proof.
-fn get_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
