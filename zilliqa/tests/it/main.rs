@@ -1061,10 +1061,12 @@ impl Network {
         }
         self.run_until(
             |net| {
-                net.get_node(index).get_finalized_height().unwrap()
-                    == net.get_node(check).get_finalized_height().unwrap()
+                let height_i = net.get_node(index).get_finalized_height().unwrap();
+                let height_c = net.get_node(check).get_finalized_height().unwrap();
+                info!("syncing {}/{}", height_i, height_c);
+                height_c == height_i && height_i > 0
             },
-            10000,
+            1000,
         )
         .await
         .unwrap();

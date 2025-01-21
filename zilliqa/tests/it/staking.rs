@@ -447,7 +447,6 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let staker_wallet = network.wallet_of_node(index).await;
     let pop_sinature = new_validator_key.pop_prove();
 
-    network.run_until_synced(index).await;
     let deposit_hash = deposit_stake(
         &mut network,
         &wallet,
@@ -536,7 +535,6 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
         .run_until_block(&staker_wallet, deposit_v3_deploy_block.into(), 200)
         .await;
 
-    network.run_until_synced(index).await;
     let deposit_hash = deposit_v3_stake(
         &mut network,
         &wallet,
@@ -609,6 +607,7 @@ async fn block_proposers_are_selected_proportionally_to_their_stake(mut network:
     let staker_wallet = network.wallet_of_node(index).await;
     let pop_signature = new_validator_key.pop_prove();
 
+    network.run_until_synced(index).await;
     deposit_stake(
         &mut network,
         &wallet,
