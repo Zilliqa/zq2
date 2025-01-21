@@ -99,24 +99,10 @@ impl Sync {
     // Minimum of 2 peers to avoid single source of truth.
     const MIN_PEERS: usize = 2;
 
-    pub fn new(
-        config: &NodeConfig,
-        db: Arc<Db>,
-        message_sender: MessageSender,
-        peers: Vec<PeerId>,
-    ) -> Result<Self> {
+    pub fn new(config: &NodeConfig, db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
         let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
         let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
-        let peers = peers
-            .into_iter()
-            .map(|peer_id| PeerInfo {
-                version: PeerVer::V1, // default to V1 peer, until otherwise proven.
-                score: 0,
-                peer_id,
-                last_used: Instant::now(),
-            })
-            .collect();
 
         // This DB could be left in-here as it is only used in this module
         // TODO: Make this in-memory by exploiting SQLite TEMP tables i.e. CREATE TEMP TABLE
@@ -154,7 +140,7 @@ impl Sync {
         Ok(Self {
             db,
             message_sender,
-            peers,
+            peers: BinaryHeap::new(),
             peer_id,
             request_timeout: config.consensus.consensus_timeout,
             max_batch_size,
@@ -698,6 +684,14 @@ impl Sync {
             if let Some(peer) = self.in_flight.as_mut() {
                 if peer.peer_id == from {
                     peer.version = PeerVer::V2;
+                    // retry with upgraded peer
+                    peer.last_used = self
+                        .peers
+                        .peek()
+                        .expect("peers.len() > 1")
+                        .last_used
+                        .checked_sub(Duration::from_secs(1))
+                        .expect("time is ordinal");
                     self.done_with_peer(DownGrade::None);
                 }
             }

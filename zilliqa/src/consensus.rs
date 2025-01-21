@@ -205,7 +205,7 @@ impl Consensus {
             )?;
         }
 
-        let sync = Sync::new(&config, db.clone(), message_sender.clone(), Vec::new())?;
+        let sync = Sync::new(&config, db.clone(), message_sender.clone())?;
 
         let latest_block = db
             .get_finalized_view()?
