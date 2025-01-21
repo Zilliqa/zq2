@@ -353,7 +353,7 @@ impl Sync {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
-                if self.db.get_block_by_hash(&parent_hash)?.is_none() {
+                if !self.db.contains_block(&parent_hash)? {
                     // No parent block, trigger sync
                     tracing::warn!("sync::SyncProposal : syncing from {parent_hash}",);
                     let block_hash = self.recent_proposals.back().unwrap().hash();
@@ -389,7 +389,7 @@ impl Sync {
             // Wait till 99% synced, zip it up!
             SyncState::Phase3 if self.in_pipeline == 0 => {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
-                if self.db.get_block_by_hash(&ancestor_hash)?.is_some() {
+                if self.db.contains_block(&ancestor_hash)? {
                     tracing::info!(
                         "sync::SyncProposal : finishing {} blocks for segment #{} from {}",
                         self.recent_proposals.len(),
@@ -399,9 +399,10 @@ impl Sync {
                     // inject the proposals
                     let proposals = self.recent_proposals.drain(..).collect_vec();
                     self.inject_proposals(proposals)?;
+                } else {
+                    self.empty_metadata()?;
+                    self.state = SyncState::Phase0;
                 }
-                self.empty_metadata()?;
-                self.state = SyncState::Phase0;
             }
             // Retry to fix sync issues e.g. peers that are now offline
             SyncState::Retry1 if self.in_pipeline == 0 => {
@@ -852,7 +853,7 @@ impl Sync {
         self.insert_metadata(segment)?;
 
         // If the segment hits our history, start Phase 2.
-        if self.db.get_block_by_hash(&last_block_hash)?.is_some() {
+        if self.db.contains_block(&last_block_hash)? {
             self.state = SyncState::Phase2(Hash::ZERO);
         } else if Self::DO_SPECULATIVE {
             self.request_missing_metadata(None)?;
@@ -1042,19 +1043,13 @@ impl Sync {
     /// Mark a received proposal
     ///
     /// Mark a proposal as received, and remove it from the chain.
-    pub fn mark_received_proposal(&mut self, prop: &InjectedProposal) -> Result<()> {
-        if prop.from != self.peer_id {
+    pub fn mark_received_proposal(&mut self, from: PeerId) -> Result<()> {
+        if from != self.peer_id {
             tracing::error!(
                 "sync::MarkReceivedProposal : foreign InjectedProposal from {}",
-                prop.from
+                from
             );
         }
-        // if let Some(p) = self.chain_metadata.remove(&prop.block.hash()) {
-        //     tracing::warn!(
-        //         "sync::MarkReceivedProposal : removing stale metadata {}",
-        //         p.block_hash
-        //     );
-        // }
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
         Ok(())
     }

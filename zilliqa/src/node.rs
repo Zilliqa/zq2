@@ -917,8 +917,8 @@ impl Node {
             return Ok(());
         }
         trace!("Handling proposal for view {0}", req.block.header.view);
-        self.consensus.sync.mark_received_proposal(&req)?;
         let proposal = self.consensus.receive_block(from, req.block)?;
+        self.consensus.sync.mark_received_proposal(req.from)?;
         if let Some(proposal) = proposal {
             trace!(
                 " ... broadcasting proposal for view {0}",
