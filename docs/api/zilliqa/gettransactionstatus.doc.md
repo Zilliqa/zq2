@@ -39,8 +39,9 @@ Status codes have been simplified since Zilliqa 1
 
 | `modificationState` | `status` | Description                                    |
 | ------------------- | -------- | ---------------------------------------------- |
-| 1                   | 2        | Pending in mempool or in a non-finalized block |
+| 0                   | 1        | Pending in mempool or in a non-finalized block |
 | 2                   | 3        | Confirmed (in a finalized block)               |
+| 1                   | 4        | Queued in mempool                              |
 | 2                   | 255      | Error                                          |
 
 

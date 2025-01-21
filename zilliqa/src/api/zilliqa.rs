@@ -1503,7 +1503,19 @@ fn get_transaction_status(
         false
     };
 
-    let res = TransactionStatusResponse::new(transaction, receipt, block, finalized)?;
+    let pending;
+    let queued;
+    if block.is_none() {
+        let mempool = node.consensus.txpool_content()?;
+        pending = Some(mempool.pending.iter().any(|x| x.hash == hash));
+        queued = Some(mempool.queued.iter().any(|x| x.hash == hash));
+    } else {
+        pending = None;
+        queued = None;
+    }
+
+    let res =
+        TransactionStatusResponse::new(transaction, receipt, block, finalized, pending, queued)?;
     Ok(res)
 }
 

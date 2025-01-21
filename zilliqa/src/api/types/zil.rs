@@ -679,35 +679,35 @@ pub struct TransactionReceiptResponse {
 #[derive(Serialize_repr, Deserialize_repr, Clone)]
 #[repr(u8)] // Because otherwise it's weird that 255 is a special case
 pub enum TxnStatusCode {
-    NotPresent = 0,
+    // NotPresent = 0,
     Dispatched = 1,
-    SoftConfirmed = 2,
+    // SoftConfirmed = 2,
     Confirmed = 3,
     // Pending
     PresentNonceHigh = 4,
-    PresentGasExceeded = 5,
-    PresentValidConsensusNotReached = 6,
-    // RareDropped
-    MathError = 10,
-    FailScillaLib = 11,
-    FailContractInit = 12,
-    InvalidFromAccount = 13,
-    HighGasLimit = 14,
-    IncorrectTxnType = 15,
-    IncorrectShard = 16,
-    ContractCallWrongShard = 17,
-    HighByteSizeCode = 18,
-    VerifError = 19,
-    //
-    InsufficientGasLimit = 20,
-    InsufficientBalance = 21,
-    InsufficientGas = 22,
-    MempoolAlreadyPresent = 23,
-    MempoolSameNonceLowerGas = 24,
-    //
-    InvalidToAccount = 25,
-    FailContractAccountCreation = 26,
-    NonceTooLow = 27,
+    // PresentGasExceeded = 5,
+    // PresentValidConsensusNotReached = 6,
+    // // RareDropped
+    // MathError = 10,
+    // FailScillaLib = 11,
+    // FailContractInit = 12,
+    // InvalidFromAccount = 13,
+    // HighGasLimit = 14,
+    // IncorrectTxnType = 15,
+    // IncorrectShard = 16,
+    // ContractCallWrongShard = 17,
+    // HighByteSizeCode = 18,
+    // VerifError = 19,
+    // //
+    // InsufficientGasLimit = 20,
+    // InsufficientBalance = 21,
+    // InsufficientGas = 22,
+    // MempoolAlreadyPresent = 23,
+    // MempoolSameNonceLowerGas = 24,
+    // //
+    // InvalidToAccount = 25,
+    // FailContractAccountCreation = 26,
+    // NonceTooLow = 27,
     Error = 255, // MiscError
 }
 
@@ -748,6 +748,8 @@ impl TransactionStatusResponse {
         receipt: TransactionReceipt,
         block: Option<Block>,
         finalized: bool,
+        pending: Option<bool>,
+        queued: Option<bool>,
     ) -> Result<Self> {
         let amount = tx.tx.zil_amount();
         let gas_price = tx.tx.gas_price_per_scilla_gas();
@@ -809,35 +811,17 @@ impl TransactionStatusResponse {
             TxnStatusCode::Error
         } else if finalized {
             TxnStatusCode::Confirmed
-        } else {
+        } else if (block.is_some() && !finalized) || (pending.is_some() && pending.unwrap()) {
             TxnStatusCode::Dispatched
+        } else if queued.is_some() && queued.unwrap() {
+            TxnStatusCode::PresentNonceHigh
+        } else {
+            TxnStatusCode::Error
         };
         let modification_state = match status_code {
-            TxnStatusCode::NotPresent => 2,
             TxnStatusCode::Dispatched => 1,
-            TxnStatusCode::SoftConfirmed => 1,
             TxnStatusCode::Confirmed => 2,
             TxnStatusCode::PresentNonceHigh => 1,
-            TxnStatusCode::PresentGasExceeded => 1,
-            TxnStatusCode::PresentValidConsensusNotReached => 1,
-            TxnStatusCode::MathError => 2,
-            TxnStatusCode::FailScillaLib => 2,
-            TxnStatusCode::FailContractInit => 2,
-            TxnStatusCode::InvalidFromAccount => 2,
-            TxnStatusCode::HighGasLimit => 2,
-            TxnStatusCode::IncorrectTxnType => 2,
-            TxnStatusCode::IncorrectShard => 2,
-            TxnStatusCode::ContractCallWrongShard => 2,
-            TxnStatusCode::HighByteSizeCode => 2,
-            TxnStatusCode::VerifError => 2,
-            TxnStatusCode::InsufficientGasLimit => 2,
-            TxnStatusCode::InsufficientBalance => 2,
-            TxnStatusCode::InsufficientGas => 2,
-            TxnStatusCode::MempoolAlreadyPresent => 2,
-            TxnStatusCode::MempoolSameNonceLowerGas => 2,
-            TxnStatusCode::InvalidToAccount => 2,
-            TxnStatusCode::FailContractAccountCreation => 2,
-            TxnStatusCode::NonceTooLow => 2,
             TxnStatusCode::Error => 2,
         };
         let epoch_inserted = if let Some(block) = &block {
