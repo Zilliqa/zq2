@@ -376,15 +376,35 @@ fn get_contract_address_from_transaction_id(
 ) -> Result<String> {
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
+    let node = node.lock().unwrap();
     let receipt = node
-        .lock()
-        .unwrap()
         .get_transaction_receipt(hash)?
         .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+
+    let signed_transaction = node
+        .get_transaction_by_hash(hash)?
+        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+
+    std::mem::drop(node);
 
     let contract_address = receipt
         .contract_address
         .ok_or_else(|| anyhow!("ID is not a contract txn"))?;
+
+    let contract_address = match signed_transaction.tx {
+        SignedTransaction::Zilliqa { tx, .. } => {
+            let mut hasher = Sha256::new();
+            hasher.update(signed_transaction.signer.as_slice());
+            if tx.nonce > 0 {
+                hasher.update((tx.nonce - 1).to_be_bytes());
+            } else {
+                return Err(anyhow!("Nonce must be greater than 0"));
+            }
+            let hashed = hasher.finalize();
+            Address::from_slice(&hashed[12..])
+        }
+        _ => contract_address,
+    };
 
     Ok(contract_address.to_hex_no_prefix())
 }
