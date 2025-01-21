@@ -678,7 +678,7 @@ fn try_with_zil_transaction(
     let contract_address = transaction.to_addr.is_zero().then(|| {
         let mut hasher = Sha256::new();
         hasher.update(from_addr.as_slice());
-        hasher.update(transaction.nonce.to_be_bytes());
+        hasher.update((transaction.nonce - 1).to_be_bytes());
         let hashed = hasher.finalize();
         Address::from_slice(&hashed[12..])
     });

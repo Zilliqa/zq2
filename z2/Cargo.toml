@@ -47,8 +47,8 @@ jsonrpsee = {version = "0.24.7", features = ["client"]}
 k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "930118ef5a6566f058d22e1614a8e96b4c287262", features = ["identify"]}
-log = "0.4.22"
-octocrab = "0.42.1"
+log = "0.4.25"
+octocrab = "0.43.0"
 primitive-types = "0.12.2"
 prost = "0.13.4"
 rand = "0.8.5"
@@ -59,7 +59,7 @@ revm = {version = "18.0.0", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 rustls = "0.23.21"
 serde = {version = "1.0.217", features = ["derive"]}
-serde_json = "1.0.135"
+serde_json = "1.0.137"
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
