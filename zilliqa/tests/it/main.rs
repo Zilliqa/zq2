@@ -401,7 +401,8 @@ impl Network {
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
-        let peers = nodes.iter().map(|n| n.peer_id).collect_vec();
+        let mut peers = nodes.iter().map(|n| n.peer_id).collect_vec();
+        peers.shuffle(rng.lock().unwrap().deref_mut());
 
         for node in &nodes {
             trace!(
@@ -513,7 +514,8 @@ impl Network {
         let (node, receiver, local_receiver, request_responses) =
             node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
 
-        let peers = self.nodes.iter().map(|n| n.peer_id).collect_vec();
+        let mut peers = self.nodes.iter().map(|n| n.peer_id).collect_vec();
+        peers.shuffle(self.rng.lock().unwrap().deref_mut());
         node.inner.lock().unwrap().consensus.sync.add_peers(peers);
 
         trace!("Node {}: {}", node.index, node.peer_id);
@@ -578,7 +580,8 @@ impl Network {
             .chain(request_response_receivers)
             .collect();
 
-        let peers = nodes.iter().map(|n| n.peer_id).collect_vec();
+        let mut peers = nodes.iter().map(|n| n.peer_id).collect_vec();
+        peers.shuffle(self.rng.lock().unwrap().deref_mut());
 
         for node in &nodes {
             trace!(
