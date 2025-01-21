@@ -1494,15 +1494,16 @@ fn get_transaction_status(
                 "Txn receipt not found".to_string(),
                 jsonrpc_error_data.clone(),
             ))?;
-    let block = node
-        .get_block(receipt.block_hash)?
-        .ok_or(jsonrpsee::types::ErrorObject::owned(
-            RPCErrorCode::RpcDatabaseError as i32,
-            "Block not found".to_string(),
-            jsonrpc_error_data.clone(),
-        ))?;
+    let block = node.get_block(receipt.block_hash)?;
+    let chain_tip_number = node.get_chain_tip();
 
-    let res = TransactionStatusResponse::new(transaction, receipt, block)?;
+    let finalized = if let Some(block) = &block {
+        chain_tip_number - block.number() > 2
+    } else {
+        false
+    };
+
+    let res = TransactionStatusResponse::new(transaction, receipt, block, finalized)?;
     Ok(res)
 }
 

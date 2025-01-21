@@ -15,7 +15,7 @@ use crate::{
         to_hex::ToHex,
         zilliqa::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
     },
-    exec::{ScillaError, ScillaException},
+    exec::ScillaException,
     message::Block,
     schnorr,
     scilla::ParamValue,
@@ -743,7 +743,12 @@ pub struct TransactionStatusResponse {
 }
 
 impl TransactionStatusResponse {
-    pub fn new(tx: VerifiedTransaction, receipt: TransactionReceipt, block: Block) -> Result<Self> {
+    pub fn new(
+        tx: VerifiedTransaction,
+        receipt: TransactionReceipt,
+        block: Option<Block>,
+        finalized: bool,
+    ) -> Result<Self> {
         let amount = tx.tx.zil_amount();
         let gas_price = tx.tx.gas_price_per_scilla_gas();
         let gas_limit = tx.tx.gas_limit_scilla();
@@ -800,38 +805,73 @@ impl TransactionStatusResponse {
                 tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
             ),
         };
-        let status_code = if receipt.success && receipt.errors.is_empty() {
+        let status_code = if !receipt.errors.is_empty() {
+            TxnStatusCode::Error
+        } else if finalized {
             TxnStatusCode::Confirmed
         } else {
-            let errors: Vec<ScillaError> =
-                receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
-            if errors.len() == 1 {
-                match errors[0] {
-                    ScillaError::CallContractFailed => TxnStatusCode::FailScillaLib,
-                    ScillaError::CreateContractFailed => TxnStatusCode::Error,
-                    ScillaError::GasNotSufficient => TxnStatusCode::InsufficientGas,
-                    ScillaError::BalanceTransferFailed => TxnStatusCode::InsufficientBalance,
-                    _ => TxnStatusCode::Error,
-                }
-            } else {
-                TxnStatusCode::Error
-            }
+            TxnStatusCode::Dispatched
         };
-        let modification_state = if receipt.accepted.is_none() { 0 } else { 2 };
+        let modification_state = match status_code {
+            TxnStatusCode::NotPresent => 2,
+            TxnStatusCode::Dispatched => 1,
+            TxnStatusCode::SoftConfirmed => 1,
+            TxnStatusCode::Confirmed => 2,
+            TxnStatusCode::PresentNonceHigh => 1,
+            TxnStatusCode::PresentGasExceeded => 1,
+            TxnStatusCode::PresentValidConsensusNotReached => 1,
+            TxnStatusCode::MathError => 2,
+            TxnStatusCode::FailScillaLib => 2,
+            TxnStatusCode::FailContractInit => 2,
+            TxnStatusCode::InvalidFromAccount => 2,
+            TxnStatusCode::HighGasLimit => 2,
+            TxnStatusCode::IncorrectTxnType => 2,
+            TxnStatusCode::IncorrectShard => 2,
+            TxnStatusCode::ContractCallWrongShard => 2,
+            TxnStatusCode::HighByteSizeCode => 2,
+            TxnStatusCode::VerifError => 2,
+            TxnStatusCode::InsufficientGasLimit => 2,
+            TxnStatusCode::InsufficientBalance => 2,
+            TxnStatusCode::InsufficientGas => 2,
+            TxnStatusCode::MempoolAlreadyPresent => 2,
+            TxnStatusCode::MempoolSameNonceLowerGas => 2,
+            TxnStatusCode::InvalidToAccount => 2,
+            TxnStatusCode::FailContractAccountCreation => 2,
+            TxnStatusCode::NonceTooLow => 2,
+            TxnStatusCode::Error => 2,
+        };
+        let epoch_inserted = if let Some(block) = &block {
+            block.number().to_string()
+        } else {
+            "".to_string()
+        };
+        let epoch_updated = if let Some(block) = &block {
+            block.number().to_string()
+        } else {
+            "".to_string()
+        };
+        let last_modified = if let Some(block) = &block {
+            block
+                .timestamp()
+                .duration_since(SystemTime::UNIX_EPOCH)?
+                .as_micros()
+                .to_string()
+        } else {
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)?
+                .as_micros()
+                .to_string()
+        };
         Ok(Self {
             id: tx.hash.to_string(),
             _id: serde_json::Value::Null,
             amount: amount.to_string(),
             data: data.unwrap_or_default(),
-            epoch_inserted: block.number().to_string(),
-            epoch_updated: block.number().to_string(),
+            epoch_inserted,
+            epoch_updated,
             gas_limit: gas_limit.to_string(),
             gas_price: gas_price.to_string(),
-            last_modified: block
-                .timestamp()
-                .duration_since(SystemTime::UNIX_EPOCH)?
-                .as_micros()
-                .to_string(),
+            last_modified,
             modification_state,
             status: status_code,
             nonce: nonce.to_string(),
