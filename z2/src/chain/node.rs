@@ -99,6 +99,8 @@ pub enum NodeRole {
     Persistence,
     /// Virtual machine query
     Query,
+    /// Virtual machine graph
+    Graph,
     /// Virtual machine sentry
     Sentry,
 }
@@ -114,6 +116,7 @@ impl FromStr for NodeRole {
             "checkpoint" => Ok(NodeRole::Checkpoint),
             "persistence" => Ok(NodeRole::Persistence),
             "query" => Ok(NodeRole::Query),
+            "graph" => Ok(NodeRole::Graph),
             "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
@@ -130,6 +133,7 @@ impl fmt::Display for NodeRole {
             NodeRole::Checkpoint => write!(f, "checkpoint"),
             NodeRole::Persistence => write!(f, "persistence"),
             NodeRole::Query => write!(f, "query"),
+            NodeRole::Graph => write!(f, "graph"),
             NodeRole::Sentry => write!(f, "sentry"),
         }
     }
