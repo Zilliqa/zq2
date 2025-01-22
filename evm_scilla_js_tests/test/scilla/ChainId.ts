@@ -1,7 +1,6 @@
 const {expect} = require("chai");
 import {ScillaContract} from "hardhat-scilla-plugin";
 import hre from "hardhat";
-import {Account} from "@zilliqa-js/zilliqa";
 
 describe("ChainId contract #parallel", () => {
   let contract: ScillaContract;
