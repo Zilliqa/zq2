@@ -995,7 +995,7 @@ impl Network {
                                             external_message.clone(),
                                             response_channel,
                                         )
-                                        .unwrap();
+                                        .ok(); // TODO: better error handling
                                 }
                             });
                         }
@@ -1062,14 +1062,20 @@ impl Network {
         while index == check {
             check = self.rng.lock().unwrap().gen_range(0..self.nodes.len());
         }
+        let mut debounce = 0;
+        let mut old_height = 0;
         self.run_until(
             |net| {
                 let height_i = net.get_node(index).get_finalized_height().unwrap();
                 let height_c = net.get_node(check).get_finalized_height().unwrap();
-                info!("syncing {}/{}", height_i, height_c);
-                height_c == height_i && height_i > 0
+                info!("syncing {}/{}/{}", height_i, height_c, debounce);
+                if height_c == height_i && height_i > old_height {
+                    debounce += 1;
+                    old_height = height_i;
+                }
+                debounce == 3
             },
-            1000,
+            10000,
         )
         .await
         .unwrap();

@@ -385,10 +385,9 @@ impl Sync {
                     // inject the proposals
                     let proposals = self.recent_proposals.drain(..).collect_vec();
                     self.inject_proposals(proposals)?;
-                } else {
-                    self.empty_metadata()?;
-                    self.state = SyncState::Phase0;
                 }
+                self.empty_metadata()?;
+                self.state = SyncState::Phase0;
             }
             // Retry to fix sync issues e.g. peers that are now offline
             SyncState::Retry1 if self.in_pipeline == 0 => {
@@ -693,6 +692,14 @@ impl Sync {
                         .checked_sub(Duration::from_secs(1))
                         .expect("time is ordinal");
                     self.done_with_peer(DownGrade::None);
+
+                    if Self::DO_SPECULATIVE {
+                        match self.state {
+                            SyncState::Phase1(_) => self.request_missing_metadata(None)?,
+                            SyncState::Phase2(_) => self.request_missing_blocks()?,
+                            _ => {}
+                        }
+                    }
                 }
             }
             return Ok(());
@@ -1137,8 +1144,9 @@ impl Sync {
     /// Returns (am_syncing, current_highest_block)
     pub fn am_syncing(&self) -> Result<bool> {
         Ok(self.in_pipeline != 0
-            || self.count_segments()? != 0
-            || !self.recent_proposals.is_empty())
+            || !matches!(self.state, SyncState::Phase0)
+            || !self.recent_proposals.is_empty()
+            || self.count_segments()? != 0)
     }
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,

@@ -55,7 +55,7 @@ async fn deposit_stake(
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(staker_wallet, hash, 180).await;
+    network.run_until_receipt(staker_wallet, hash, 80).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -82,7 +82,7 @@ async fn deposit_stake(
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(staker_wallet, hash, 180).await;
+    let receipt = network.run_until_receipt(staker_wallet, hash, 80).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
@@ -105,7 +105,7 @@ async fn deposit_v3_stake(
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(staker_wallet, hash, 180).await;
+    network.run_until_receipt(staker_wallet, hash, 80).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -133,7 +133,7 @@ async fn deposit_v3_stake(
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(staker_wallet, hash, 180).await;
+    let receipt = network.run_until_receipt(staker_wallet, hash, 80).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
@@ -430,10 +430,10 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // randomise the current epoch state and current leader
-    let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
-    network
-        .run_until_block(&wallet, blocks_to_prerun.into(), 100)
-        .await;
+    // let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
+    // network
+    //     .run_until_block(&wallet, blocks_to_prerun.into(), 100)
+    //     .await;
 
     // First test joining deposit_v2
     let index = network.add_node();

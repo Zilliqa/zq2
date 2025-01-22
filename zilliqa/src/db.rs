@@ -1191,7 +1191,7 @@ fn decompress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path:
 /// An implementor of [eth_trie::DB] which uses a [Connection] to persist data.
 #[derive(Debug, Clone)]
 pub struct TrieStorage {
-    pub db: Arc<Mutex<Connection>>,
+    db: Arc<Mutex<Connection>>,
     cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
 }
 
