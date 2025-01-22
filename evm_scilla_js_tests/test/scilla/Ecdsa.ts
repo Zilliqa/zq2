@@ -1,4 +1,4 @@
-const {assert, expect} = require("chai");
+import { assert, expect } from "chai";
 import {ScillaContract} from "hardhat-scilla-plugin";
 import hre from "hardhat";
 

@@ -1,7 +1,7 @@
 import {assert, expect} from "chai";
 import {ScillaContract} from "hardhat-scilla-plugin";
 import hre from "hardhat";
-const {createHash} = require("crypto");
+import { createHash } from "crypto";
 
 describe("Codehash contract #parallel", () => {
   let expectedCodeHash: string;
@@ -11,7 +11,7 @@ describe("Codehash contract #parallel", () => {
   });
 
   it("Deploy codehash contract @block-1", async () => {
-    expectedCodeHash = "0x" + createHash("sha256").update(contract.code).digest("hex");
+    expectedCodeHash = "0x" + createHash("sha256").update(contract.code!).digest("hex");
     assert.isTrue(contract.address !== undefined);
   });
 
