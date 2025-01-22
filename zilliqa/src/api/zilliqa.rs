@@ -376,16 +376,16 @@ fn get_contract_address_from_transaction_id(
 ) -> Result<String> {
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    let node = node.lock().unwrap();
-    let receipt = node
-        .get_transaction_receipt(hash)?
-        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-
-    let signed_transaction = node
-        .get_transaction_by_hash(hash)?
-        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
-
-    std::mem::drop(node);
+    let (receipt, signed_transaction) = {
+        let node = node.lock().unwrap();
+        let receipt = node
+            .get_transaction_receipt(hash)?
+            .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+        let signed_transaction = node
+            .get_transaction_by_hash(hash)?
+            .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+        (receipt, signed_transaction)
+    };
 
     let contract_address = receipt
         .contract_address
