@@ -70,6 +70,7 @@ Options:
           - checkpoint:  Virtual machine checkpoint
           - persistence: Virtual machine persistence
           - query:       Virtual machine query
+          - graph:       Virtual machine graph
           - sentry:      Virtual machine sentry
 
   -v, --verbose...
@@ -430,6 +431,7 @@ Options:
           - checkpoint:  Virtual machine checkpoint
           - persistence: Virtual machine persistence
           - query:       Virtual machine query
+          - graph:       Virtual machine graph
           - sentry:      Virtual machine sentry
 
   -v, --verbose...

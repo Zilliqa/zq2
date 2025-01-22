@@ -470,7 +470,7 @@ def go(role):
     install_gcloud()
     login_registry()
     match role:
-        case "bootstrap" | "checkpoint" | "api" | "persistence" | "query":
+        case "bootstrap" | "checkpoint" | "api" | "persistence" | "query" | "graph":
             log("Configuring a not validator node")
             stop_healthcheck()
             install_healthcheck()
