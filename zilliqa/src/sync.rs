@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, VecDeque},
+    ops::Sub,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -885,10 +886,17 @@ impl Sync {
         // TODO: Check if we should service this request
         // Validators could respond to this request if there is nothing else to do.
 
-        let batch_size: usize = self.max_batch_size.min(request.batch_size); // mitigate DOS by limiting the number of blocks we return
+        let batch_size: usize = self
+            .max_batch_size
+            .min(request.to_height.saturating_sub(request.from_height) as usize); // mitigate DOS by limiting the number of blocks we return
         let mut metas = Vec::with_capacity(batch_size);
-        let mut hash = request.from_hash;
-        while metas.len() < batch_size {
+        let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
+            tracing::warn!("sync::MetadataRequest : unknown block height");
+            return Ok(ExternalMessage::Acknowledgement);
+        };
+        metas.push(block.header);
+        let mut hash = block.parent_hash();
+        while metas.len() <= batch_size {
             // grab the parent
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
@@ -944,18 +952,14 @@ impl Sync {
             let message = match (self.state.clone(), &peer.version) {
                 (
                     SyncState::Phase1(BlockHeader {
-                        qc:
-                            QuorumCertificate {
-                                block_hash: parent_hash,
-                                ..
-                            },
+                        number: block_number,
                         ..
                     }),
                     PeerVer::V2,
                 ) => ExternalMessage::MetaDataRequest(BlockRequestV2 {
                     request_at: SystemTime::now(),
-                    from_hash: parent_hash,
-                    batch_size: self.max_batch_size,
+                    to_height: block_number.saturating_sub(1),
+                    from_height: block_number.saturating_sub(self.max_batch_size as u64),
                 }),
                 (
                     SyncState::Phase1(BlockHeader {
@@ -974,12 +978,12 @@ impl Sync {
                 }
                 (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
                     let meta = meta.unwrap();
-                    let parent_hash = meta.qc.block_hash;
+                    let block_number = meta.number;
                     self.state = SyncState::Phase1(meta);
                     ExternalMessage::MetaDataRequest(BlockRequestV2 {
                         request_at: SystemTime::now(),
-                        from_hash: parent_hash,
-                        batch_size: self.max_batch_size,
+                        to_height: block_number.sub(1),
+                        from_height: block_number.sub(self.max_batch_size as u64),
                     })
                 }
                 (SyncState::Phase0, PeerVer::V1) if meta.is_some() => {

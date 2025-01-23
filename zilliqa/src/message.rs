@@ -230,8 +230,8 @@ impl fmt::Debug for BlockResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockRequestV2 {
     pub request_at: SystemTime,
-    pub from_hash: Hash,
-    pub batch_size: usize,
+    pub from_height: u64,
+    pub to_height: u64,
 }
 
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
@@ -306,7 +306,11 @@ impl Display for ExternalMessage {
                 write!(f, "MetaDataResponse({})", r.len())
             }
             ExternalMessage::MetaDataRequest(r) => {
-                write!(f, "MetaDataRequest({}, num={})", r.from_hash, r.batch_size)
+                write!(
+                    f,
+                    "MetaDataRequest(from={}, to={})",
+                    r.from_height, r.to_height
+                )
             }
             ExternalMessage::InjectedProposal(p) => {
                 write!(f, "InjectedProposal {}", p.block.number())
