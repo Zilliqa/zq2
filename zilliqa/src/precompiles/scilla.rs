@@ -534,7 +534,9 @@ fn scilla_call_precompile<I: ScillaInspector>(
 
     let empty_state = PendingState::new(evmctx.db.pre_state.clone());
     // Temporarily move the `PendingState` out of `evmctx`, replacing it with an empty state.
-    let state = std::mem::replace(&mut evmctx.db, empty_state);
+    let mut state = std::mem::replace(&mut evmctx.db, empty_state);
+    let journaled_state = &mut evmctx.journaled_state;
+    state.journaled_state = Some(journaled_state);
     let scilla = evmctx.db.pre_state.scilla();
     let Ok((result, state)) = scilla_call(
         state,

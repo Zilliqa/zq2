@@ -22,7 +22,7 @@ use revm::{
         AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
         ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
-    Database, DatabaseRef, Evm, GetInspector, Inspector,
+    Database, DatabaseRef, Evm, GetInspector, Inspector, JournaledState,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1167,9 +1167,15 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 
 /// The account state during the execution of a Scilla transaction. Changes to the original state are kept in memory.
 #[derive(Debug)]
-pub struct PendingState {
+pub struct PendingState<'a> {
+    /// Provider for state. This won't be updated during the execution of the transaction.
     pub pre_state: State,
+    /// State changes made to Scilla contracts. Invariant: `new_state.values().all(|a| a.account.code.is_scilla())`.
     pub new_state: HashMap<Address, PendingAccount>,
+    /// State changes made to EVM contracts. `None` if this Scilla call was not made from an EVM call. Invariant:
+    /// `new_state.values().all(|a| !a.account.code.is_scilla())`. These invariants guarantee an account won't be
+    /// listed in both `new_state` and `journaled_state`.
+    pub journaled_state: Option<&'a mut JournaledState>,
 }
 
 /// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
@@ -1178,11 +1184,14 @@ pub struct PendingState {
 fn load_account<'a>(
     pre_state: &State,
     new_state: &'a mut HashMap<Address, PendingAccount>,
+    journaled_state: &'a mut Option<&'a mut JournaledState>,
     address: Address,
 ) -> Result<&'a mut PendingAccount> {
-    match new_state.entry(address) {
-        Entry::Occupied(entry) => Ok(entry.into_mut()),
-        Entry::Vacant(vac) => {
+    match (new_state.entry(address), journaled_state.and_then(|j| j.state.get(&address))) {
+        (Entry::Occupied(_), Some(_)) => Err(anyhow!("state conflict: {address}")),
+        (Entry::Occupied(entry), None) => Ok(entry.into_mut()),
+        (Entry::Vacant(_), Some(account)) => Ok(PendingAccount),
+        (Entry::Vacant(vac), _) => {
             let account = pre_state.get_account(address)?;
             Ok(vac.insert(account.into()))
         }
@@ -1194,6 +1203,7 @@ impl PendingState {
         PendingState {
             pre_state: state,
             new_state: HashMap::new(),
+            journaled_state: None,
         }
     }
 
@@ -1210,7 +1220,7 @@ impl PendingState {
     }
 
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
-        load_account(&self.pre_state, &mut self.new_state, address)
+        load_account(&self.pre_state, &mut self.new_state, &mut self.journaled_state, address)
     }
 
     pub fn load_var_info(&mut self, address: Address, variable: &str) -> Result<(&str, u8)> {
@@ -1436,6 +1446,7 @@ pub struct PendingAccount {
     pub account: Account,
     /// Cached values of updated or deleted storage. Note that deletions can happen at any level of a map.
     pub storage: BTreeMap<String, StorageValue>,
+    // TODO: mark_touch()
 }
 
 #[derive(Debug, Clone)]
