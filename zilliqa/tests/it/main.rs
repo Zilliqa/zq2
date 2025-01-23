@@ -1058,10 +1058,12 @@ impl Network {
     }
 
     async fn run_until_synced(&mut self, index: usize) {
-        let mut check = self.rng.lock().unwrap().gen_range(0..self.nodes.len());
-        while index == check {
-            check = self.rng.lock().unwrap().gen_range(0..self.nodes.len());
-        }
+        let check = loop {
+            let i = self.random_index();
+            if i != index {
+                break i;
+            }
+        };
         let mut debounce = 0;
         let mut old_height = 0;
         self.run_until(

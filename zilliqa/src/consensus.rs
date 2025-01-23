@@ -3160,9 +3160,8 @@ impl Consensus {
         trace!("consensus::tick()");
         trace!("request_missing_blocks from timer");
 
-        // Drives syncing from timeouts, not just new Proposals
+        // TODO: Drive passive-sync from Timeouts
         if self.sync.am_syncing()? {
-            // TODO: Sync from Timeouts
             self.sync.sync_internal()?;
         } else {
             trace!("not syncing ...");

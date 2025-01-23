@@ -242,16 +242,7 @@ pub struct InjectedProposal {
     pub block: Proposal,
 }
 
-/// Used to hold metadata about the chain
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChainMetaData {
-    pub parent_hash: Hash,
-    pub block_hash: Hash,
-    pub block_number: u64,
-    pub view_number: u64,
-}
-
-/// Used to convey proposal processing internally, to avoid blocking threads for too long.
+/// TODO: Remove. Unused in RFC161 algorithm
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessProposal {
     // An encoded PeerId
@@ -287,7 +278,7 @@ pub enum ExternalMessage {
     RemovePeer,
     InjectedProposal(InjectedProposal),
     MetaDataRequest(BlockRequestV2),
-    MetaDataResponse(Vec<ChainMetaData>),
+    MetaDataResponse(Vec<BlockHeader>),
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),
 }

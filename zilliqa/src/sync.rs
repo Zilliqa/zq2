@@ -20,8 +20,8 @@ use crate::{
     crypto::Hash,
     db::Db,
     message::{
-        Block, BlockRequest, BlockRequestV2, BlockResponse, ChainMetaData, ExternalMessage,
-        InjectedProposal, Proposal,
+        Block, BlockHeader, BlockRequest, BlockRequestV2, BlockResponse, ExternalMessage,
+        InjectedProposal, Proposal, QuorumCertificate,
     },
     node::MessageSender,
     time::SystemTime,
@@ -211,18 +211,13 @@ impl Sync {
     }
 
     /// Peeks into the top of the segment stack.
-    fn last_segment(&self) -> Result<Option<(ChainMetaData, PeerInfo)>> {
+    fn last_segment(&self) -> Result<Option<(BlockHeader, PeerInfo)>> {
         let mut result = None;
         self.db.with_sqlite_tx(|c| {
             result = c
                 .prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, peer, version FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
                 .query_row([], |row| Ok((
-                    ChainMetaData{
-                    parent_hash: row.get(0)?,
-                    block_hash: row.get(1)?,
-                    block_number: row.get(2)?,
-                    view_number: row.get(3)?,
-                },
+                    BlockHeader::from_meta_data(row.get(0)?,row.get(1)?, row.get(2)?, row.get(3)?),
                 PeerInfo {
                     last_used: Instant::now(),
                     score:u32::MAX,
@@ -274,16 +269,16 @@ impl Sync {
     }
 
     /// Pushes a particular segment into the stack.
-    fn push_segment(&self, peer: PeerInfo, meta: ChainMetaData) -> Result<()> {
+    fn push_segment(&self, peer: PeerInfo, meta: BlockHeader) -> Result<()> {
         self.db.with_sqlite_tx(|c| {
             c.prepare_cached(
                 "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, peer, version) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :peer, :version)")?
                 .execute(
                 named_params! {
-                    ":parent_hash": meta.parent_hash,
-                    ":block_hash": meta.block_hash,
-                    ":block_number": meta.block_number,
-                    ":view_number": meta.view_number,
+                    ":parent_hash": meta.qc.block_hash,
+                    ":block_hash": meta.hash,
+                    ":block_number": meta.number,
+                    ":view_number": meta.view,
                     ":peer": peer.peer_id.to_bytes(),
                     ":version": peer.version,
                 },
@@ -293,18 +288,18 @@ impl Sync {
     }
 
     /// Bulk inserts a bunch of metadata.
-    fn insert_metadata(&self, metas: &Vec<ChainMetaData>) -> Result<()> {
+    fn insert_metadata(&self, metas: &Vec<BlockHeader>) -> Result<()> {
         self.db.with_sqlite_tx(|c| {
             for meta in metas {
             c.prepare_cached(
                 "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number) VALUES (:parent_hash, :block_hash, :block_number, :view_number)")?
                 .execute(
                 named_params! {
-                    ":parent_hash": meta.parent_hash,
-                    ":block_hash": meta.block_hash,
-                    ":block_number": meta.block_number,
-                    ":view_number": meta.view_number,
-                },
+                    ":parent_hash": meta.qc.block_hash,
+                    ":block_hash": meta.hash,
+                    ":block_number": meta.number,
+                    ":view_number": meta.view,
+            },
             )?;
         }
             Ok(())
@@ -321,7 +316,7 @@ impl Sync {
 
     /// Phase 0: Sync a block proposal.
     ///
-    /// This is the main entry point for syncing a block proposal.
+    /// This is the main entry point for active-syncing a block proposal.
     /// We start by enqueuing all proposals, and then check if the parent block exists in history.
     /// If the parent block exists, we do nothing. Otherwise, we check the least recent one.
     /// If we find its parent in history, we inject the entire queue. Otherwise, we start syncing.
@@ -354,12 +349,12 @@ impl Sync {
                     let block_hash = self.recent_proposals.back().unwrap().hash();
                     let block_number = self.recent_proposals.back().unwrap().number();
                     let view_number = self.recent_proposals.back().unwrap().view();
-                    let meta = ChainMetaData {
-                        block_hash,
+                    let meta = BlockHeader::from_meta_data(
                         parent_hash,
+                        block_hash,
                         block_number,
                         view_number,
-                    };
+                    );
                     self.request_missing_metadata(Some(meta))?;
 
                     let highest_block = self
@@ -437,16 +432,6 @@ impl Sync {
             .collect_vec();
 
         Proposal::from_parts(block, txs)
-    }
-
-    /// Convenience function to extract metadata from the block.
-    fn block_to_metadata(&self, block: Block) -> ChainMetaData {
-        ChainMetaData {
-            parent_hash: block.parent_hash(),
-            block_hash: block.hash(),
-            block_number: block.number(),
-            view_number: block.view(),
-        }
     }
 
     /// Phase 2: Retry Phase 1
@@ -623,7 +608,7 @@ impl Sync {
 
             // If we have no chain_segments, we have nothing to do
             if let Some((meta, peer_info)) = self.last_segment()? {
-                let request_hashes = self.get_segment(meta.parent_hash)?;
+                let request_hashes = self.get_segment(meta.qc.block_hash)?;
 
                 // Checksum of the request hashes
                 let checksum = request_hashes
@@ -660,8 +645,8 @@ impl Sync {
                         });
                         // do not add VIEW_DRIFT - the stored marker is accurate!
                         ExternalMessage::BlockRequest(BlockRequest {
-                            to_view: meta.view_number.saturating_sub(1),
-                            from_view: meta.view_number.saturating_sub(self.max_batch_size as u64),
+                            to_view: meta.view.saturating_sub(1),
+                            from_view: meta.view.saturating_sub(self.max_batch_size as u64),
                         })
                     }
                 };
@@ -722,13 +707,18 @@ impl Sync {
         // Convert the V1 response into a V2 response.
         match self.state {
             // Phase 1 - construct the metadata chain from the set of received proposals
-            SyncState::Phase1(ChainMetaData {
-                block_number,
-                mut parent_hash,
+            SyncState::Phase1(BlockHeader {
+                number: block_number,
+                qc:
+                    QuorumCertificate {
+                        block_hash: parent_hash,
+                        ..
+                    },
                 ..
             }) => {
                 // We do not buffer the proposals, as it takes 250MB/day!
                 // Instead, we will re-request the proposals again, in Phase 2.
+                let mut parent_hash = parent_hash;
                 let metadata = response
                     .proposals
                     .into_iter()
@@ -743,12 +733,7 @@ impl Sync {
                         parent_hash = p.header.qc.block_hash;
                         true
                     })
-                    .map(|p| ChainMetaData {
-                        block_hash: p.hash(),
-                        parent_hash: p.header.qc.block_hash,
-                        block_number: p.number(),
-                        view_number: p.view(),
-                    })
+                    .map(|p| p.header)
                     .collect_vec();
 
                 self.handle_metadata_response(from, metadata)?;
@@ -784,7 +769,7 @@ impl Sync {
     pub fn handle_metadata_response(
         &mut self,
         from: PeerId,
-        response: Vec<ChainMetaData>,
+        response: Vec<BlockHeader>,
     ) -> Result<()> {
         // Check for expected response
         let segment_peer = if let Some(peer) = self.in_flight.as_ref() {
@@ -817,27 +802,24 @@ impl Sync {
             anyhow::bail!("sync::MetadataResponse : invalid state");
         };
 
-        let mut block_hash = meta.parent_hash;
-        let mut block_num = meta.block_number;
+        let mut block_hash = meta.qc.block_hash;
+        let mut block_num = meta.number;
         for meta in response.iter() {
             // check that the block hash and number is as expected.
-            if meta.block_hash != Hash::ZERO
-                && block_hash == meta.block_hash
-                && block_num == meta.block_number + 1
-            {
-                block_hash = meta.parent_hash;
-                block_num = meta.block_number;
+            if meta.hash != Hash::ZERO && block_hash == meta.hash && block_num == meta.number + 1 {
+                block_hash = meta.qc.block_hash;
+                block_num = meta.number;
             } else {
                 // TODO: possibly, discard and rebuild entire chain
                 // if something does not match, do nothing and retry the request with the next peer.
                 tracing::error!(
                     "sync::MetadataResponse : unexpected metadata hash={block_hash} != {}, num={block_num} != {}",
-                    meta.block_hash,
-                    meta.block_number,
+                    meta.hash,
+                    meta.number,
                 );
                 return Ok(());
             }
-            if meta.block_hash == response.last().unwrap().block_hash {
+            if meta.hash == response.last().unwrap().hash {
                 break; // done, we do not check the last parent, because that's outside this segment
             }
         }
@@ -846,11 +828,11 @@ impl Sync {
         let segment = response;
 
         // Record landmark, including peer that has this set of blocks
-        self.push_segment(segment_peer, meta.clone())?;
+        self.push_segment(segment_peer, *meta)?;
 
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
-        let last_block_hash = segment.last().as_ref().unwrap().block_hash;
+        let last_block_hash = segment.last().as_ref().unwrap().hash;
 
         tracing::info!(
             "sync::MetadataResponse : received {} metadata segment #{} from {}",
@@ -864,7 +846,7 @@ impl Sync {
 
         // If the checkpoint is in this segment,
         let checkpointed = if let Some(checkpoint) = self.checkpoint_hash {
-            segment.iter().any(|b| b.block_hash == checkpoint)
+            segment.iter().any(|b| b.hash == checkpoint)
         } else {
             false
         };
@@ -912,7 +894,7 @@ impl Sync {
                 break; // that's all we have!
             };
             hash = block.parent_hash();
-            metas.push(self.block_to_metadata(block));
+            metas.push(block.header);
         }
 
         let message = ExternalMessage::MetaDataResponse(metas);
@@ -928,7 +910,7 @@ impl Sync {
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If Phase 1 is in progress, it continues requesting blocks from the last known Phase 1 block.
     /// Otherwise, it requests blocks from the given starting metadata.
-    pub fn request_missing_metadata(&mut self, meta: Option<ChainMetaData>) -> Result<()> {
+    pub fn request_missing_metadata(&mut self, meta: Option<BlockHeader>) -> Result<()> {
         if !matches!(self.state, SyncState::Phase1(_)) && !matches!(self.state, SyncState::Phase0) {
             anyhow::bail!("sync::RequestMissingMetadata : invalid state");
         }
@@ -960,14 +942,27 @@ impl Sync {
                 peer.peer_id
             );
             let message = match (self.state.clone(), &peer.version) {
-                (SyncState::Phase1(ChainMetaData { parent_hash, .. }), PeerVer::V2) => {
-                    ExternalMessage::MetaDataRequest(BlockRequestV2 {
-                        request_at: SystemTime::now(),
-                        from_hash: parent_hash,
-                        batch_size: self.max_batch_size,
-                    })
-                }
-                (SyncState::Phase1(ChainMetaData { view_number, .. }), PeerVer::V1) => {
+                (
+                    SyncState::Phase1(BlockHeader {
+                        qc:
+                            QuorumCertificate {
+                                block_hash: parent_hash,
+                                ..
+                            },
+                        ..
+                    }),
+                    PeerVer::V2,
+                ) => ExternalMessage::MetaDataRequest(BlockRequestV2 {
+                    request_at: SystemTime::now(),
+                    from_hash: parent_hash,
+                    batch_size: self.max_batch_size,
+                }),
+                (
+                    SyncState::Phase1(BlockHeader {
+                        view: view_number, ..
+                    }),
+                    PeerVer::V1,
+                ) => {
                     // For V1 BlockRequest, we request a little more than we need, due to drift
                     // Since the view number is an 'internal' clock, it is possible for the same block number
                     // to have different view numbers.
@@ -979,7 +974,7 @@ impl Sync {
                 }
                 (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
                     let meta = meta.unwrap();
-                    let parent_hash = meta.parent_hash;
+                    let parent_hash = meta.qc.block_hash;
                     self.state = SyncState::Phase1(meta);
                     ExternalMessage::MetaDataRequest(BlockRequestV2 {
                         request_at: SystemTime::now(),
@@ -989,7 +984,7 @@ impl Sync {
                 }
                 (SyncState::Phase0, PeerVer::V1) if meta.is_some() => {
                     let meta = meta.unwrap();
-                    let view_number = meta.view_number;
+                    let view_number = meta.view;
                     self.state = SyncState::Phase1(meta);
                     let drift = self.max_batch_size as u64 / 10;
                     ExternalMessage::BlockRequest(BlockRequest {
@@ -1104,7 +1099,7 @@ impl Sync {
         // if the new peer is not synced, it will get downgraded to the back of heap.
         // but by placing them at the back of the 'best' pack, we get to try them out soon.
         let new_peer = PeerInfo {
-            version: PeerVer::V1, // default V2
+            version: PeerVer::V1,
             score: self.peers.iter().map(|p| p.score).min().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
@@ -1237,10 +1232,11 @@ impl PartialOrd for DownGrade {
 }
 
 /// Sync state
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 enum SyncState {
     Phase0,
-    Phase1(ChainMetaData),
+    Phase1(BlockHeader),
     Phase2(Hash),
     Phase3,
     Retry1,
@@ -1266,5 +1262,23 @@ impl FromSql for PeerVer {
 impl ToSql for PeerVer {
     fn to_sql(&self) -> Result<ToSqlOutput, rusqlite::Error> {
         Ok((self.clone() as u32).into())
+    }
+}
+
+impl BlockHeader {
+    pub fn from_meta_data(
+        parent_hash: Hash,
+        block_hash: Hash,
+        block_number: u64,
+        view_number: u64,
+    ) -> BlockHeader {
+        let mut meta = BlockHeader {
+            view: view_number,
+            number: block_number,
+            hash: block_hash,
+            ..Default::default()
+        };
+        meta.qc.block_hash = parent_hash;
+        meta
     }
 }
