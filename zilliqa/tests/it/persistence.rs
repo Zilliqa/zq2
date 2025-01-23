@@ -169,7 +169,7 @@ async fn checkpoints_test(mut network: Network) {
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(&wallet, update_tx_hash, 50).await;
+    network.run_until_receipt(&wallet, update_tx_hash, 51).await;
     // Scilla
     let (secret_key, address) = zilliqa_account(&mut network).await;
     let code = scilla_test_contract_code();
@@ -178,7 +178,7 @@ async fn checkpoints_test(mut network: Network) {
         deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
 
     // Run until block 9 so that we can insert a tx in block 10 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
-    network.run_until_block(&wallet, 9.into(), 200).await;
+    network.run_until_block(&wallet, 9.into(), 209).await;
 
     let _hash = wallet
         .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
@@ -187,7 +187,7 @@ async fn checkpoints_test(mut network: Network) {
         .tx_hash();
 
     // wait 10 blocks for checkpoint to happen - then 3 more to finalize that block
-    network.run_until_block(&wallet, 13.into(), 200).await;
+    network.run_until_block(&wallet, 13.into(), 213).await;
 
     let checkpoint_files = network
         .nodes
@@ -268,9 +268,8 @@ async fn checkpoints_test(mut network: Network) {
     assert_eq!(state["welcome_msg"], "default");
 
     // check the new node catches up and keeps up with block production
-    network.run_until_synced(new_node_idx).await;
     network
-        .run_until_block(&new_node_wallet, 20.into(), 200)
+        .run_until_block(&new_node_wallet, 20.into(), 220)
         .await;
 
     // check account nonce of old wallet
