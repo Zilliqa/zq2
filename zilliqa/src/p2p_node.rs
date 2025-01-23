@@ -17,7 +17,7 @@ use libp2p::{
     kad::{self, store::MemoryStore},
     multiaddr::{Multiaddr, Protocol},
     noise,
-    request_response::{self, OutboundFailure, ProtocolSupport},
+    request_response::{self, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, PeerId, StreamProtocol, Swarm,
 };
@@ -234,8 +234,14 @@ impl P2pNode {
 
         if let Some((peer, address)) = &self.config.bootstrap_address {
             if self.swarm.local_peer_id() != peer {
+                // Add bootstrap node's address and call Kademlia bootstrap
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(peer, address.clone());
+                self.swarm.behaviour_mut().kademlia.bootstrap()?;
+
                 self.swarm.dial(address.clone())?;
-                self.swarm.add_peer_address(*peer, address.clone());
             }
         }
 
@@ -321,14 +327,6 @@ impl P2pNode {
                             }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error })) => {
-                            if let OutboundFailure::DialFailure = error {
-                                // We failed to send a message to a peer. The likely reason is that we don't know their
-                                // address. Someone else in the network must know it, because we learnt their peer ID.
-                                // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
-                                let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
-                            }
-
-
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
                                 self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
