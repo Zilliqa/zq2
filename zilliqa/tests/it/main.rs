@@ -1068,7 +1068,6 @@ impl Network {
             |net| {
                 let height_i = net.get_node(index).get_finalized_height().unwrap();
                 let height_c = net.get_node(check).get_finalized_height().unwrap();
-                info!("syncing {}/{}/{}", height_i, height_c, debounce);
                 if height_c == height_i && height_i > old_height {
                     debounce += 1;
                     old_height = height_i;
