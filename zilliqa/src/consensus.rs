@@ -367,6 +367,8 @@ impl Consensus {
                     .at_root(parent.state_root_hash().into())
                     .get_stakers(block.header)?,
             )?;
+
+            consensus.sync.set_checkpoint(&block);
         }
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down

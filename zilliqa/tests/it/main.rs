@@ -1075,7 +1075,7 @@ impl Network {
                 }
                 debounce == 3
             },
-            10000,
+            2000,
         )
         .await
         .unwrap();

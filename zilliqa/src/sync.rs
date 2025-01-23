@@ -87,6 +87,8 @@ pub struct Sync {
     inject_at: Option<(std::time::Instant, usize)>,
     // record starting number, for eth_syncing() RPC call.
     started_at_block_number: u64,
+    // checkpoint
+    checkpoint_hash: Option<Hash>,
 }
 
 impl Sync {
@@ -152,7 +154,14 @@ impl Sync {
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
             started_at_block_number: 0,
+            checkpoint_hash: None,
         })
+    }
+
+    pub fn set_checkpoint(&mut self, checkpoint: &Block) {
+        let hash = checkpoint.hash();
+        tracing::info!("sync::Checkpoint {}", hash);
+        self.checkpoint_hash = Some(hash);
     }
 
     /// Returns the number of stored segments
@@ -284,7 +293,7 @@ impl Sync {
     }
 
     /// Bulk inserts a bunch of metadata.
-    fn insert_metadata(&self, metas: Vec<ChainMetaData>) -> Result<()> {
+    fn insert_metadata(&self, metas: &Vec<ChainMetaData>) -> Result<()> {
         self.db.with_sqlite_tx(|c| {
             for meta in metas {
             c.prepare_cached(
@@ -851,10 +860,17 @@ impl Sync {
         );
 
         // Record the constructed chain metadata
-        self.insert_metadata(segment)?;
+        self.insert_metadata(&segment)?;
+
+        // If the checkpoint is in this segment,
+        let checkpointed = if let Some(checkpoint) = self.checkpoint_hash {
+            segment.iter().any(|b| b.block_hash == checkpoint)
+        } else {
+            false
+        };
 
         // If the segment hits our history, start Phase 2.
-        if self.db.contains_block(&last_block_hash)? {
+        if checkpointed || self.db.contains_block(&last_block_hash)? {
             self.state = SyncState::Phase2(Hash::ZERO);
         } else if Self::DO_SPECULATIVE {
             self.request_missing_metadata(None)?;
