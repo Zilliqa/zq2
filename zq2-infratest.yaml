@@ -10,6 +10,6 @@ roles:
 - query
 - graph
 versions:
-  zq2: 9c2e6fa9
+  zq2: 1d146079
   otterscan: develop
   spout: main
