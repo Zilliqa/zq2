@@ -59,7 +59,7 @@ rand_chacha = "0.3.1"
 rand_core = "0.6.4"
 revm = { version = "18.0.0", features = ["optional_no_base_fee"] }
 revm-inspectors = { version = "0.11.0", features = ["js-tracer"] }
-rusqlite = { version = "0.32.1", features = ["bundled", "trace"] }
+rusqlite = { version = "0.33.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.217", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
 serde_json = { version = "1.0.137", features = ["raw_value","arbitrary_precision"] }
