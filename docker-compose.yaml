@@ -6,7 +6,7 @@ services:
       - node3 
     environment:
       RUST_BACKTRACE: 1
-      RUST_LOG: zilliqa=info,opentelemetry=trace
+      RUST_LOG: zilliqa=info
     image: zq2-node0
     build:
       context: .
@@ -27,7 +27,7 @@ services:
       - node3
     environment:
       RUST_BACKTRACE: 1
-      RUST_LOG: zilliqa=info,opentelemetry=trace
+      RUST_LOG: zilliqa=info
     container_name: zilliqanode1
     image: zq2-node0
     volumes:
@@ -43,7 +43,7 @@ services:
       - node3
     environment:
       RUST_BACKTRACE: 1
-      RUST_LOG: zilliqa=info,opentelemetry=trace
+      RUST_LOG: zilliqa=info
     container_name: zilliqanode2
     image: zq2-node0
     volumes:
@@ -57,7 +57,7 @@ services:
   node3:
     environment:
       RUST_BACKTRACE: 1
-      RUST_LOG: zilliqa=info,opentelemetry=trace
+      RUST_LOG: zilliqa=info
     container_name: zilliqanode3
     image: zq2-node0
     volumes:
@@ -98,40 +98,6 @@ services:
     networks:
       testnet:
         ipv4_address: 198.51.100.10
-
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    volumes:
-      - ./infra/otel-collector-config.yaml:/etc/otel-collector-config.yaml
-    ports:
-      - "4317:4317"
-      - "9011:8888"
-    networks:
-      - testnet
-
-  mimir:
-    image: grafana/mimir:latest
-    volumes:
-      - "./infra/mimir-config.yaml:/etc/mimir/config.yaml"
-    command:
-      - "./mimir"
-      - "--config.file"
-      - "/etc/mimir/config.yaml"
-    ports:
-      - "9009:9009"
-    networks:
-      - testnet
-
-  grafana:
-    image: grafana/grafana-oss:latest
-    environment:
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-    ports:
-      - "9010:3000"
-    networks:
-      - testnet
 
 networks:
   testnet:
