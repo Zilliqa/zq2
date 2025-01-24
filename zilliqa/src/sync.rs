@@ -149,7 +149,7 @@ impl Sync {
                 db.get_block_by_hash(&hash)
                     .expect("no block found for hash {hash}")
             })
-            .and_then(|block| Some(block.number()));
+            .map(|block| block.number());
 
         Ok(Self {
             db,

@@ -995,7 +995,7 @@ impl Network {
                                             external_message.clone(),
                                             response_channel,
                                         )
-                                        .ok(); // TODO: better error handling
+                                        .unwrap();
                                 }
                             });
                         }

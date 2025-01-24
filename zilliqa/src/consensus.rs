@@ -829,7 +829,6 @@ impl Consensus {
 
         let proposer_address = parent_state.get_reward_address(proposer)?;
 
-        let mut total_cosigner_stake = 0;
         let cosigner_stake: Vec<_> = committee
             .iter()
             .enumerate()
@@ -841,10 +840,14 @@ impl Consensus {
                     .unwrap()
                     .unwrap()
                     .get();
-                total_cosigner_stake += stake;
                 (reward_address, stake)
             })
             .collect();
+
+        let total_cosigner_stake = cosigner_stake.iter().fold(0, |sum, c| sum + c.1);
+        if total_cosigner_stake == 0 {
+            return Err(anyhow!("total stake is 0"));
+        }
 
         // Track total awards given out. This may be different to rewards_per_block because we round down on division when we split the rewards
         let mut total_rewards_issued = 0;
@@ -1698,7 +1701,8 @@ impl Consensus {
 
     fn committee_for_hash(&self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
         let Ok(Some(parent)) = self.get_block(&parent_hash) else {
-            return Err(anyhow!("parent block not found: {:?}", parent_hash));
+            tracing::error!("parent block not found: {:?}", parent_hash);
+            return Ok(Vec::new()); // return an empty vector instead of Err for graceful app-level error-handling
         };
 
         let parent_root_hash = parent.state_root_hash();
