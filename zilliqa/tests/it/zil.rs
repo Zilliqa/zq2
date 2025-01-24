@@ -2994,7 +2994,7 @@ async fn nested_maps_insert_removal(mut network: Network) {
             0,
             50_000,
             None,
-            Some(&call),
+            Some(call),
         )
         .await;
         let event = &txn["receipt"]["event_logs"][0];
@@ -3039,7 +3039,7 @@ async fn nested_maps_insert_removal(mut network: Network) {
             0,
             50_000,
             None,
-            Some(&call),
+            Some(call),
         )
         .await;
         let event = &txn["receipt"]["event_logs"][0];
