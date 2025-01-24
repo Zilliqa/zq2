@@ -87,7 +87,7 @@ mod time_impl {
         CURRENT_TIME.scope(Mutex::new(Duration::ZERO), f)
     }
 
-    pub fn sync_with_fake_time(f: impl FnOnce()) {
+    pub fn sync_with_fake_time<R>(f: impl FnOnce() -> R) -> R {
         CURRENT_TIME.sync_scope(Mutex::new(Duration::ZERO), f)
     }
 
