@@ -412,24 +412,36 @@ contract Deposit is UUPSUpgradeable {
                 i <= currentEpoch() + 2 && i < $.latestComputedEpoch + 3;
                 i++
             ) {
-                // The operation we want to do is: `_committee[i % 3] = latestComputedCommittee` but we need to do it
-                // explicitly because `stakers` is a mapping.
+                // The operation we want to do is: `_committee[i % 3] = latestComputedCommittee` but we are careful to write only when necessary
+                Committee storage committeeToUpdate = $._committee[i % 3];
+                bool stakerIndexChanged = false;
 
-                // Delete old keys from `_committee[i % 3].stakers`.
+                // Overwrite existing staker's data
                 for (
                     uint256 j = 0;
-                    j < $._committee[i % 3].stakerKeys.length;
+                    j < committeeToUpdate.stakerKeys.length;
                     j++
                 ) {
-                    delete $._committee[i % 3].stakers[
-                        $._committee[i % 3].stakerKeys[j]
-                    ];
+                    bytes memory stakerKey = committeeToUpdate.stakerKeys[j];
+                    CommitteeStakerEntry storage stakerInLatestCommittee = latestComputedCommittee.stakers[stakerKey];
+                    // If staker exists in latest then update in new
+                    if (stakerInLatestCommittee.index != 0) {
+                        CommitteeStakerEntry storage stakerInCommitteeToUpdate = committeeToUpdate.stakers[stakerKey];
+                        if (stakerInLatestCommittee.index != stakerInCommitteeToUpdate.index) {
+                            stakerIndexChanged = true;
+                            stakerInCommitteeToUpdate.index = stakerInLatestCommittee.index;
+                        }
+                        if (stakerInLatestCommittee.balance != stakerInCommitteeToUpdate.balance) {
+                            stakerInCommitteeToUpdate.balance = stakerInLatestCommittee.balance;
+                        }
+                    // Otherwise remove them
+                    } else {
+                        delete committeeToUpdate.stakers[stakerKey];
+                        stakerIndexChanged = true;
+                    }
                 }
 
-                $._committee[i % 3].totalStake = latestComputedCommittee
-                    .totalStake;
-                $._committee[i % 3].stakerKeys = latestComputedCommittee
-                    .stakerKeys;
+                // Now add any new stakers
                 for (
                     uint256 j = 0;
                     j < latestComputedCommittee.stakerKeys.length;
@@ -437,9 +449,21 @@ contract Deposit is UUPSUpgradeable {
                 ) {
                     bytes storage stakerKey = latestComputedCommittee
                         .stakerKeys[j];
-                    $._committee[i % 3].stakers[
-                        stakerKey
-                    ] = latestComputedCommittee.stakers[stakerKey];
+                    if (committeeToUpdate.stakers[stakerKey].index == 0) {
+                        committeeToUpdate.stakers[
+                            stakerKey
+                        ] = latestComputedCommittee.stakers[stakerKey]; 
+                        stakerIndexChanged = true;
+                    }
+                }
+
+                if (latestComputedCommittee.totalStake != committeeToUpdate.totalStake) {
+                    committeeToUpdate.totalStake = latestComputedCommittee
+                        .totalStake;
+                }
+                if (stakerIndexChanged) {
+                    committeeToUpdate.stakerKeys = latestComputedCommittee
+                        .stakerKeys;
                 }
             }
 
