@@ -192,7 +192,6 @@ contract Deposit is UUPSUpgradeable {
         uint256 position = randomness % currentCommittee.totalStake;
         uint256 cummulativeStake = 0;
 
-        // TODO: Consider binary search for performance. Or consider an alias method for O(1) performance.
         for (uint256 i = 0; i < currentCommittee.stakerKeys.length; i++) {
             bytes memory stakerKey = currentCommittee.stakerKeys[i];
             uint256 stakedBalance = currentCommittee.stakers[stakerKey].balance;
@@ -243,7 +242,6 @@ contract Deposit is UUPSUpgradeable {
             Staker[] memory stakers
         )
     {
-        // TODO clean up doule call to _getDepositStorage() here
         DepositStorage storage $ = _getDepositStorage();
         Committee storage currentCommittee = committee();
 
