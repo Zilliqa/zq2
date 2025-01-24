@@ -26,6 +26,7 @@ use crate::{
     },
     node::MessageSender,
     time::SystemTime,
+    transaction::EvmGas,
 };
 
 // Syncing Algorithm
@@ -112,7 +113,7 @@ impl Sync {
         let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
         let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
 
-        // This in-memory DB is placed in-here as it is only used in this module.
+        // This in-memory DB is placed here as it is only used in this module.
         db.with_sqlite_tx(|c| {
             c.execute_batch(
                 "CREATE TEMP TABLE IF NOT EXISTS sync_data (
@@ -120,8 +121,9 @@ impl Sync {
                 parent_hash BLOB NOT NULL,
                 block_number INTEGER NOT NULL PRIMARY KEY,
                 view_number INTEGER NOT NULL,
-                peer BLOB DEFAULT NULL,
-                version INTEGER DEFAULT 0
+                gas_used INTEGER NOT NULL,
+                version INTEGER DEFAULT 0,
+                peer BLOB DEFAULT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_sync_data ON sync_data(block_number) WHERE peer IS NOT NULL;",
             )?;
@@ -148,7 +150,6 @@ impl Sync {
             .as_ref()
             .expect("Some(block) expected")
             .number();
-        tracing::info!("latest_block_number = {latest_block_number}");
 
         Ok(Self {
             db,
@@ -220,14 +221,14 @@ impl Sync {
         let mut result = None;
         self.db.with_sqlite_tx(|c| {
             result = c
-                .prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, peer, version FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
+                .prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, gas_used, version, peer FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
                 .query_row([], |row| Ok((
-                    BlockHeader::from_meta_data(row.get(0)?,row.get(1)?, row.get(2)?, row.get(3)?),
+                    BlockHeader::from_meta_data(row.get(0)?,row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?),
                 PeerInfo {
                     last_used: Instant::now(),
                     score:u32::MAX,
                     version: row.get(5)?,
-                    peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(4)?.as_slice()).unwrap(),
+                    peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(6)?.as_slice()).unwrap(),
                 },
             )))
                 .optional()?;
@@ -277,13 +278,14 @@ impl Sync {
     fn push_segment(&self, peer: PeerInfo, meta: BlockHeader) -> Result<()> {
         self.db.with_sqlite_tx(|c| {
             c.prepare_cached(
-                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, peer, version) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :peer, :version)")?
+                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, gas_used, version, peer) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used, :version, :peer)")?
                 .execute(
                 named_params! {
                     ":parent_hash": meta.qc.block_hash,
                     ":block_hash": meta.hash,
                     ":block_number": meta.number,
                     ":view_number": meta.view,
+                    ":gas_used": meta.gas_used,
                     ":peer": peer.peer_id.to_bytes(),
                     ":version": peer.version,
                 },
@@ -297,13 +299,14 @@ impl Sync {
         self.db.with_sqlite_tx(|c| {
             for meta in metas {
             c.prepare_cached(
-                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number) VALUES (:parent_hash, :block_hash, :block_number, :view_number)")?
+                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, gas_used) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used)")?
                 .execute(
                 named_params! {
                     ":parent_hash": meta.qc.block_hash,
                     ":block_hash": meta.hash,
                     ":block_number": meta.number,
                     ":view_number": meta.view,
+                    ":gas_used": meta.gas_used,
             },
             )?;
         }
@@ -354,11 +357,13 @@ impl Sync {
                     let block_hash = self.recent_proposals.back().unwrap().hash();
                     let block_number = self.recent_proposals.back().unwrap().number();
                     let view_number = self.recent_proposals.back().unwrap().view();
+                    let gas_used = self.recent_proposals.back().unwrap().header.gas_used;
                     let meta = BlockHeader::from_meta_data(
                         parent_hash,
                         block_hash,
                         block_number,
                         view_number,
+                        gas_used,
                     );
                     self.request_missing_metadata(Some(meta))?;
 
@@ -1283,8 +1288,10 @@ impl BlockHeader {
         block_hash: Hash,
         block_number: u64,
         view_number: u64,
+        gas_used: EvmGas,
     ) -> BlockHeader {
         let mut meta = BlockHeader {
+            gas_used,
             view: view_number,
             number: block_number,
             hash: block_hash,
