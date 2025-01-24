@@ -312,7 +312,7 @@ impl Consensus {
             }
         };
 
-        let sync = Sync::new(&config, db.clone(), message_sender.clone())?;
+        let sync = Sync::new(&config, db.clone(), &latest_block, message_sender.clone())?;
 
         let mut consensus = Consensus {
             secret_key,

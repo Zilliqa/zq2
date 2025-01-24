@@ -102,7 +102,12 @@ impl Sync {
     // Minimum of 2 peers to avoid single source of truth.
     const MIN_PEERS: usize = 2;
 
-    pub fn new(config: &NodeConfig, db: Arc<Db>, message_sender: MessageSender) -> Result<Self> {
+    pub fn new(
+        config: &NodeConfig,
+        db: Arc<Db>,
+        latest_block: &Option<Block>,
+        message_sender: MessageSender,
+    ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
         let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
         let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
@@ -139,17 +144,11 @@ impl Sync {
             SyncState::Retry1
         };
 
-        let latest_block_number = db
-            .get_finalized_view()?
-            .and_then(|view| {
-                db.get_block_hash_by_view(view)
-                    .expect("no header found at view {view}")
-            })
-            .and_then(|hash| {
-                db.get_block_by_hash(&hash)
-                    .expect("no block found for hash {hash}")
-            })
-            .map(|block| block.number());
+        let latest_block_number = latest_block
+            .as_ref()
+            .expect("Some(block) expected")
+            .number();
+        tracing::info!("latest_block_number = {latest_block_number}");
 
         Ok(Self {
             db,
@@ -165,7 +164,7 @@ impl Sync {
             state,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
-            started_at_block_number: latest_block_number.unwrap_or_default(),
+            started_at_block_number: latest_block_number,
             checkpoint_hash: Hash::ZERO,
         })
     }
