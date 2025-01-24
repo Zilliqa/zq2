@@ -430,10 +430,10 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // randomise the current epoch state and current leader
-    // let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
-    // network
-    //     .run_until_block(&wallet, blocks_to_prerun.into(), 100)
-    //     .await;
+    let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
+    network
+        .run_until_block(&wallet, blocks_to_prerun.into(), 200)
+        .await;
 
     // First test joining deposit_v2
     let index = network.add_node();
@@ -447,7 +447,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let staker_wallet = network.wallet_of_node(index).await;
     let pop_sinature = new_validator_key.pop_prove();
 
-    network.run_until_synced(index).await;
+    // This has to be done before `contract_upgrade_block_heights` which is 12, by default in the tests
     let deposit_hash = deposit_stake(
         &mut network,
         &wallet,
@@ -532,7 +532,6 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     );
 
     // Give new node time to catch up to block including deposit_v3 deployment
-    network.run_until_synced(index).await;
     network
         .run_until_block(&staker_wallet, deposit_v3_deploy_block.into(), 200)
         .await;
