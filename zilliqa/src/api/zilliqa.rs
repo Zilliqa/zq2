@@ -8,7 +8,7 @@ use std::{
 
 use alloy::{
     consensus::SignableTransaction,
-    eips::BlockId,
+    eips::{BlockId, BlockNumberOrTag},
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
@@ -32,9 +32,9 @@ use super::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
         RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, StateProofResponse,
-        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionStatusResponse,
-        TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
-        TxnsForTxBlockExResponse,
+        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionState,
+        TransactionStatusResponse, TxBlockListing, TxBlockListingResult,
+        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -1494,29 +1494,39 @@ fn get_transaction_status(
                 "Txn receipt not found".to_string(),
                 jsonrpc_error_data.clone(),
             ))?;
-    let block = node.get_block(receipt.block_hash)?;
-    let chain_tip_number = node.get_chain_tip();
 
-    let finalized = if let Some(block) = &block {
-        chain_tip_number - block.number() > 2
+    let block = node.get_block(receipt.block_hash)?;
+
+    // Determine transaction state
+    let state = if !receipt.errors.is_empty() {
+        TransactionState::Error
     } else {
-        false
+        match &block {
+            Some(block) => {
+                let newest_finalized_block =
+                    node.resolve_block_number(BlockNumberOrTag::Finalized)?;
+                if newest_finalized_block.is_some()
+                    && block.number() >= newest_finalized_block.unwrap().number()
+                {
+                    TransactionState::Finalized
+                } else {
+                    TransactionState::Pending
+                }
+            }
+            None => {
+                let mempool = node.consensus.txpool_content()?;
+                if mempool.queued.iter().any(|x| x.hash == hash) {
+                    TransactionState::Queued
+                } else if mempool.pending.iter().any(|x| x.hash == hash) {
+                    TransactionState::Pending
+                } else {
+                    TransactionState::Error
+                }
+            }
+        }
     };
 
-    let pending;
-    let queued;
-    if block.is_none() {
-        let mempool = node.consensus.txpool_content()?;
-        pending = Some(mempool.pending.iter().any(|x| x.hash == hash));
-        queued = Some(mempool.queued.iter().any(|x| x.hash == hash));
-    } else {
-        pending = None;
-        queued = None;
-    }
-
-    let res =
-        TransactionStatusResponse::new(transaction, receipt, block, finalized, pending, queued)?;
-    Ok(res)
+    TransactionStatusResponse::new(transaction, receipt, block, state)
 }
 
 #[cfg(test)]

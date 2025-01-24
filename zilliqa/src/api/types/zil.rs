@@ -679,35 +679,9 @@ pub struct TransactionReceiptResponse {
 #[derive(Serialize_repr, Deserialize_repr, Clone)]
 #[repr(u8)] // Because otherwise it's weird that 255 is a special case
 pub enum TxnStatusCode {
-    // NotPresent = 0,
     Dispatched = 1,
-    // SoftConfirmed = 2,
     Confirmed = 3,
-    // Pending
     PresentNonceHigh = 4,
-    // PresentGasExceeded = 5,
-    // PresentValidConsensusNotReached = 6,
-    // // RareDropped
-    // MathError = 10,
-    // FailScillaLib = 11,
-    // FailContractInit = 12,
-    // InvalidFromAccount = 13,
-    // HighGasLimit = 14,
-    // IncorrectTxnType = 15,
-    // IncorrectShard = 16,
-    // ContractCallWrongShard = 17,
-    // HighByteSizeCode = 18,
-    // VerifError = 19,
-    // //
-    // InsufficientGasLimit = 20,
-    // InsufficientBalance = 21,
-    // InsufficientGas = 22,
-    // MempoolAlreadyPresent = 23,
-    // MempoolSameNonceLowerGas = 24,
-    // //
-    // InvalidToAccount = 25,
-    // FailContractAccountCreation = 26,
-    // NonceTooLow = 27,
     Error = 255, // MiscError
 }
 
@@ -742,14 +716,20 @@ pub struct TransactionStatusResponse {
     pub version: String,
 }
 
+#[derive(Clone, Copy)]
+pub enum TransactionState {
+    Queued,
+    Pending,
+    Finalized,
+    Error,
+}
+
 impl TransactionStatusResponse {
     pub fn new(
         tx: VerifiedTransaction,
         receipt: TransactionReceipt,
         block: Option<Block>,
-        finalized: bool,
-        pending: Option<bool>,
-        queued: Option<bool>,
+        state: TransactionState,
     ) -> Result<Self> {
         let amount = tx.tx.zil_amount();
         let gas_price = tx.tx.gas_price_per_scilla_gas();
@@ -807,22 +787,11 @@ impl TransactionStatusResponse {
                 tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
             ),
         };
-        let status_code = if !receipt.errors.is_empty() {
-            TxnStatusCode::Error
-        } else if finalized {
-            TxnStatusCode::Confirmed
-        } else if (block.is_some() && !finalized) || (pending.is_some() && pending.unwrap()) {
-            TxnStatusCode::Dispatched
-        } else if queued.is_some() && queued.unwrap() {
-            TxnStatusCode::PresentNonceHigh
-        } else {
-            TxnStatusCode::Error
-        };
-        let modification_state = match status_code {
-            TxnStatusCode::Dispatched => 1,
-            TxnStatusCode::Confirmed => 2,
-            TxnStatusCode::PresentNonceHigh => 1,
-            TxnStatusCode::Error => 2,
+        let (status_code, modification_state) = match state {
+            TransactionState::Error => (TxnStatusCode::Error, 2),
+            TransactionState::Finalized => (TxnStatusCode::Confirmed, 2),
+            TransactionState::Pending => (TxnStatusCode::Dispatched, 1),
+            TransactionState::Queued => (TxnStatusCode::PresentNonceHigh, 1),
         };
         let epoch_inserted = if let Some(block) = &block {
             block.number().to_string()
