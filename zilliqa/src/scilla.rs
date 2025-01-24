@@ -931,7 +931,7 @@ impl ActiveCall {
             } else {
                 // Remove multiple elements from storage having the same prefix specified by `indices`
 
-                // Collect all paths of indexes up to a value that is not of a map type
+                // Collect all paths of indices up to a value that is not of a map type
                 fn collect_indices(
                     map: BTreeMap<Vec<u8>, StorageValue>,
                     path: Vec<Vec<u8>>,
