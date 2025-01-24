@@ -837,13 +837,6 @@ impl Sync {
         // Chain segment is sane
         let segment = response;
 
-        // Record landmark, including peer that has this set of blocks
-        self.push_segment(segment_peer, *meta)?;
-
-        // Record the oldest block in the chain's parent
-        self.state = SyncState::Phase1(segment.last().cloned().unwrap());
-        let last_block_hash = segment.last().as_ref().unwrap().hash;
-
         tracing::info!(
             "sync::MetadataResponse : received {} metadata segment #{} from {}",
             segment.len(),
@@ -853,6 +846,13 @@ impl Sync {
 
         // Record the constructed chain metadata
         self.insert_metadata(&segment)?;
+
+        // Record landmark(s), including peer that has this set of blocks
+        self.push_segment(segment_peer, *meta)?;
+
+        // Record the oldest block in the chain's parent
+        self.state = SyncState::Phase1(segment.last().cloned().unwrap());
+        let last_block_hash = segment.last().as_ref().unwrap().hash;
 
         // If the checkpoint is in this segment
         let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
