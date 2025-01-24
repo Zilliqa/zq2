@@ -34,10 +34,9 @@ use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
     crypto::SecretKey,
     db,
-    message::{BlockRequestV2, ExternalMessage, InternalMessage},
+    message::{ExternalMessage, InternalMessage},
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
-    time::SystemTime,
 };
 
 /// Messages are a tuple of the destination shard ID and the actual message.
@@ -313,16 +312,6 @@ impl P2pNode {
                                     debug!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "message received");
                                     let _topic = Self::shard_id_to_topic(shard_id);
                                     let _id = format!("{}", _request_id);
-
-                                    // insert local time for BlockRequestV2 - this is checked in Sync::HandleMetadataRequest
-                                    let _external_message = match _external_message {
-                                        ExternalMessage::MetaDataRequest(BlockRequestV2{from_height, to_height, ..}) => ExternalMessage::MetaDataRequest(BlockRequestV2{
-                                            from_height, to_height, request_at: SystemTime::now(),
-                                        }),
-                                        // pass-thru everything else
-                                        e => e,
-                                    };
-
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
                                             self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;

@@ -430,18 +430,20 @@ impl Sync {
     }
 
     /// Convenience function to convert a block to a proposal (add full txs)
-    /// NOTE: Includes intershard transactions. Should only be used for syncing history,
-    /// not for consensus messages regarding new blocks.
+    /// Should only be used for syncing history, not for consensus messages regarding new blocks.
     fn block_to_proposal(&self, block: Block) -> Proposal {
         // since block must be valid, unwrap(s) are safe
         let txs = block
             .transactions
             .iter()
             .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
-            .map(|tx| tx.verify().unwrap())
+            // handle verification on the client-side
+            .map(|tx| {
+                let hash = tx.calculate_hash();
+                (tx, hash)
+            })
             .collect_vec();
-
-        Proposal::from_parts(block, txs)
+        Proposal::from_parts_with_hashes(block, txs)
     }
 
     /// Phase 2: Retry Phase 1
@@ -477,6 +479,23 @@ impl Sync {
     /// This is Phase 2 in the syncing algorithm, where we receive a set of blocks and inject them into the pipeline.
     /// We also remove the blocks from the chain metadata, because they are now in the pipeline.
     pub fn handle_multiblock_response(
+        &mut self,
+        from: PeerId,
+        response: Vec<Proposal>,
+    ) -> Result<()> {
+        // Verify transactions on the client-side
+        let proposals = response
+            .into_iter()
+            .map(|p| {
+                let (b, t) = p.into_parts();
+                let txns = t.into_iter().map(|t| t.verify().unwrap()).collect_vec();
+                Proposal::from_parts(b, txns)
+            })
+            .collect_vec();
+        self.inner_handle_multiblock_response(from, proposals)
+    }
+
+    pub fn inner_handle_multiblock_response(
         &mut self,
         from: PeerId,
         response: Vec<Proposal>,
@@ -759,7 +778,7 @@ impl Sync {
                     .sorted_by(|a, b| b.number().cmp(&a.number()))
                     .collect_vec();
 
-                self.handle_multiblock_response(from, multi_blocks)?;
+                self.inner_handle_multiblock_response(from, multi_blocks)?;
             }
             _ => {
                 tracing::error!(
@@ -883,7 +902,7 @@ impl Sync {
             from
         );
 
-        // Do not respond to stale requests
+        // Do not respond to stale requests as the client has timed-out
         if request.request_at.elapsed()? > self.request_timeout {
             tracing::warn!("sync::MetadataRequest : stale request");
             return Ok(ExternalMessage::Acknowledgement);
