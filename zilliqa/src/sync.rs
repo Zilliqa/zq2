@@ -107,11 +107,10 @@ impl Sync {
         let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
         let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
 
-        // This DB could be left in-here as it is only used in this module
-        // TODO: Make this in-memory by exploiting SQLite TEMP tables i.e. CREATE TEMP TABLE
+        // This in-memory DB is placed in-here as it is only used in this module.
         db.with_sqlite_tx(|c| {
             c.execute_batch(
-                "CREATE TABLE IF NOT EXISTS sync_data (
+                "CREATE TEMP TABLE IF NOT EXISTS sync_data (
                 block_hash BLOB NOT NULL UNIQUE,
                 parent_hash BLOB NOT NULL,
                 block_number INTEGER NOT NULL PRIMARY KEY,
@@ -140,6 +139,18 @@ impl Sync {
             SyncState::Retry1
         };
 
+        let latest_block_number = db
+            .get_finalized_view()?
+            .and_then(|view| {
+                db.get_block_hash_by_view(view)
+                    .expect("no header found at view {view}")
+            })
+            .and_then(|hash| {
+                db.get_block_by_hash(&hash)
+                    .expect("no block found for hash {hash}")
+            })
+            .and_then(|block| Some(block.number()));
+
         Ok(Self {
             db,
             message_sender,
@@ -154,15 +165,9 @@ impl Sync {
             state,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
-            started_at_block_number: 0,
+            started_at_block_number: latest_block_number.unwrap_or_default(),
             checkpoint_hash: Hash::ZERO,
         })
-    }
-
-    pub fn set_checkpoint(&mut self, checkpoint: &Block) {
-        let hash = checkpoint.hash();
-        tracing::info!("sync::Checkpoint {}", hash);
-        self.checkpoint_hash = hash;
     }
 
     /// Returns the number of stored segments
@@ -847,9 +852,10 @@ impl Sync {
 
         // If the checkpoint is in this segment
         let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
-
+        let started = self.started_at_block_number <= segment.first().as_ref().unwrap().number
+            && self.started_at_block_number >= segment.last().as_ref().unwrap().number;
         // If the segment hits our history, start Phase 2.
-        if checkpointed || self.db.contains_block(&last_block_hash)? {
+        if started || checkpointed || self.db.contains_block(&last_block_hash)? {
             self.state = SyncState::Phase2(Hash::ZERO);
         } else if Self::DO_SPECULATIVE {
             self.request_missing_metadata(None)?;
@@ -1184,6 +1190,13 @@ impl Sync {
                 highest_block_number_seen,
             )))
         }
+    }
+
+    /// Sets the checkpoint, if node was started from a checkpoint.
+    pub fn set_checkpoint(&mut self, checkpoint: &Block) {
+        let hash = checkpoint.hash();
+        tracing::info!("sync::Checkpoint {}", hash);
+        self.checkpoint_hash = hash;
     }
 }
 
