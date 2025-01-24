@@ -923,10 +923,48 @@ impl ActiveCall {
         }
 
         if ignore_value {
-            // We only supporting deleting a single value of a map.
-            assert_eq!(indices.len(), depth);
-            let storage_slot = self.state.load_storage(self.sender, &name, &indices)?;
-            *storage_slot = None;
+            assert!(indices.len() <= depth);
+            // Remove single element
+            if indices.len() == depth {
+                let storage_slot = self.state.load_storage(self.sender, &name, &indices)?;
+                *storage_slot = None;
+            } else {
+                // Remove multiple elements from storage having the same prefix specified by `indices`
+
+                // Collect all paths of indexes up to a value that is not of a map type
+                fn collect_indices(
+                    map: BTreeMap<Vec<u8>, StorageValue>,
+                    path: Vec<Vec<u8>>,
+                    all_paths: &mut Vec<Vec<Vec<u8>>>,
+                ) {
+                    for (key, value) in map {
+                        let mut path = path.clone();
+                        path.push(key);
+                        match value {
+                            StorageValue::Map { map, .. } => {
+                                collect_indices(map, path, all_paths);
+                            }
+                            StorageValue::Value(_) => {
+                                all_paths.push(path.clone());
+                            }
+                        }
+                    }
+                }
+
+                let load_map_from_prefix =
+                    self.state
+                        .load_storage_by_prefix(self.sender, &name, &indices)?;
+
+                let mut all_indices = Vec::new();
+                let path = Vec::new();
+
+                collect_indices(load_map_from_prefix, path, &mut all_indices);
+
+                for path in all_indices {
+                    self.state
+                        .set_storage(self.sender, &name, &path, StorageValue::Value(None))?
+                }
+            }
         } else if indices.len() == depth {
             let Some(ValType::Bval(value)) = value.val_type else {
                 return Err(anyhow!("invalid value"));
