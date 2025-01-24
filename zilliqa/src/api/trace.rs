@@ -200,10 +200,14 @@ fn trace_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TraceResu
         .into_iter()
         .collect();
 
+    // Paging information
+    let mut txns_skipped_count = 0;
+    let mut txns_returned_count = 0;
+
     let mut all_traces = Vec::new();
 
     // Process each block in range
-    for block_num in start_block.number()..=end_block.number() {
+    'block_loop: for block_num in start_block.number()..=end_block.number() {
         let Some(block) = node.get_block(BlockNumberOrTag::Number(block_num))? else {
             continue;
         };
@@ -250,6 +254,15 @@ fn trace_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TraceResu
                 }
             }
 
+            if filter.after.is_some() && txns_skipped_count < filter.after.unwrap() {
+                txns_skipped_count += 1;
+                continue;
+            }
+            if filter.count.is_some() && txns_returned_count >= filter.count.unwrap() {
+                break 'block_loop;
+            }
+            txns_returned_count += 1;
+
             // Create inspector and trace the transaction
             let config = TracingInspectorConfig::from_parity_config(&trace_types);
             let mut inspector = TracingInspector::new(config);
@@ -267,19 +280,7 @@ fn trace_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TraceResu
         }
     }
 
-    // Apply pagination if specified
-    let traces = match (filter.after, filter.count) {
-        (Some(after), Some(count)) => all_traces
-            .into_iter()
-            .skip(after as usize)
-            .take(count as usize)
-            .collect(),
-        (Some(after), None) => all_traces.into_iter().skip(after as usize).collect(),
-        (None, Some(count)) => all_traces.into_iter().take(count as usize).collect(),
-        (None, None) => all_traces,
-    };
-
-    Ok(traces)
+    Ok(all_traces)
 }
 
 /// trace_rawTransaction
