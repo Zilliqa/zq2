@@ -84,7 +84,7 @@ contract Deposit is UUPSUpgradeable {
         uint256 atFutureBlock
     );
 
-    uint64 public constant VERSION = 3;
+    uint64 public constant VERSION = 4;
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
@@ -248,6 +248,7 @@ contract Deposit is UUPSUpgradeable {
         Committee storage currentCommittee = committee();
 
         stakerKeys = currentCommittee.stakerKeys;
+        indices = new uint256[](stakerKeys.length);
         balances = new uint256[](stakerKeys.length);
         stakers = new Staker[](stakerKeys.length);
         for (uint256 i = 0; i < stakerKeys.length; i++) {
