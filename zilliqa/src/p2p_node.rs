@@ -234,13 +234,14 @@ impl P2pNode {
 
         if let Some((peer, address)) = &self.config.bootstrap_address {
             if self.swarm.local_peer_id() != peer {
-                // Add bootstrap node's address and call Kademlia bootstrap
+                // Add bootstrap node's address to Kademlia so that we can call Kademlia bootstrap
                 self.swarm
                     .behaviour_mut()
                     .kademlia
                     .add_address(peer, address.clone());
                 self.swarm.behaviour_mut().kademlia.bootstrap()?;
 
+                self.swarm.add_peer_address(*peer, address.clone());
                 self.swarm.dial(address.clone())?;
             }
         }
