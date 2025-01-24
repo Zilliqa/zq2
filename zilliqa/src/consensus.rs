@@ -205,8 +205,6 @@ impl Consensus {
             )?;
         }
 
-        let sync = Sync::new(&config, db.clone(), message_sender.clone())?;
-
         let latest_block = db
             .get_finalized_view()?
             .and_then(|view| {
@@ -313,6 +311,8 @@ impl Consensus {
                 }
             }
         };
+
+        let sync = Sync::new(&config, db.clone(), message_sender.clone())?;
 
         let mut consensus = Consensus {
             secret_key,

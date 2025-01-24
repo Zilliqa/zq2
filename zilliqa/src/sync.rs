@@ -88,8 +88,8 @@ pub struct Sync {
     inject_at: Option<(std::time::Instant, usize)>,
     // record starting number, for eth_syncing() RPC call.
     started_at_block_number: u64,
-    // checkpoint
-    checkpoint_hash: Option<Hash>,
+    // checkpoint, if set
+    checkpoint_hash: Hash,
 }
 
 impl Sync {
@@ -155,14 +155,14 @@ impl Sync {
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
             started_at_block_number: 0,
-            checkpoint_hash: None,
+            checkpoint_hash: Hash::ZERO,
         })
     }
 
     pub fn set_checkpoint(&mut self, checkpoint: &Block) {
         let hash = checkpoint.hash();
         tracing::info!("sync::Checkpoint {}", hash);
-        self.checkpoint_hash = Some(hash);
+        self.checkpoint_hash = hash;
     }
 
     /// Returns the number of stored segments
@@ -845,12 +845,8 @@ impl Sync {
         // Record the constructed chain metadata
         self.insert_metadata(&segment)?;
 
-        // If the checkpoint is in this segment,
-        let checkpointed = if let Some(checkpoint) = self.checkpoint_hash {
-            segment.iter().any(|b| b.hash == checkpoint)
-        } else {
-            false
-        };
+        // If the checkpoint is in this segment
+        let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
 
         // If the segment hits our history, start Phase 2.
         if checkpointed || self.db.contains_block(&last_block_hash)? {
