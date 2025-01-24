@@ -585,12 +585,13 @@ contract Deposit is UUPSUpgradeable {
             revert KeyNotStaked();
         }
 
+        uint256 currentBalance = futureCommittee.stakers[blsPubKey].balance;
         require(
-            futureCommittee.stakers[blsPubKey].balance >= amount,
+            currentBalance >= amount,
             "amount is greater than staked balance"
         );
 
-        if (futureCommittee.stakers[blsPubKey].balance - amount == 0) {
+        if (currentBalance - amount == 0) {
             require(futureCommittee.stakerKeys.length > 1, "too few stakers");
 
             // Remove the staker from the future committee, because their staked amount has gone to zero.
@@ -621,7 +622,7 @@ contract Deposit is UUPSUpgradeable {
             emit StakerRemoved(blsPubKey, nextUpdate());
         } else {
             require(
-                futureCommittee.stakers[blsPubKey].balance - amount >=
+                currentBalance - amount >=
                     $.minimumStake,
                 "unstaking this amount would take the validator below the minimum stake"
             );
