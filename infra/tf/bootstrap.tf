@@ -55,7 +55,7 @@ resource "google_compute_firewall" "allow_bootstrap_external_http" {
   }
 }
 
-resource "google_compute_health_check" "bootstrap" {
+resource "google_compute_region_health_check" "bootstrap" {
   name = "${var.chain_name}-bootstrap-health"
 
   tcp_health_check {
@@ -64,39 +64,34 @@ resource "google_compute_health_check" "bootstrap" {
   }
 }
 
-resource "google_compute_backend_service" "bootstrap" {
+resource "google_compute_region_backend_service" "bootstrap" {
   name                  = "${var.chain_name}-bootstrap-nodes"
-  health_checks         = [google_compute_health_check.bootstrap.id]
+  health_checks         = [google_compute_region_health_check.bootstrap.id]
   port_name             = "peer"
-  load_balancing_scheme = "EXTERNAL_MANAGED"
+  load_balancing_scheme = "EXTERNAL"
   protocol              = "TCP"
   enable_cdn            = false
-  session_affinity      = "CLIENT_IP"
+  session_affinity      = "CLIENT_IP"  # Enables sticky sessions by client IP
+  locality_lb_policy    = "MAGLEV"
 
   dynamic "backend" {
     for_each = var.bootstrap.detach_load_balancer ? {} : google_compute_instance_group.bootstrap
     content {
       group           = backend.value.self_link
-      balancing_mode  = "UTILIZATION"
-      capacity_scaler = 1.0
+      balancing_mode  = "CONNECTION"
     }
   }
 }
 
-resource "google_compute_target_tcp_proxy" "bootstrap" {
-  name            = "${var.chain_name}-bootstrap-target-proxy"
-  backend_service = google_compute_backend_service.bootstrap.id
-}
-
-data "google_compute_global_address" "bootstrap" {
+data "google_compute_address" "bootstrap" {
   name = "bootstrap-${replace(var.subdomain, ".", "-")}"
 }
 
-resource "google_compute_global_forwarding_rule" "bootstrap" {
-  name                  = "${var.chain_name}-bootstrap-forwarding-rule-http"
+resource "google_compute_forwarding_rule" "bootstrap" {
+  name                  = "${var.chain_name}-bootstrap-nodes-forwarding-rule"
   ip_protocol           = "TCP"
-  load_balancing_scheme = "EXTERNAL_MANAGED"
+  load_balancing_scheme = "EXTERNAL"
   port_range            = "3333"
-  target                = google_compute_target_tcp_proxy.bootstrap.id
-  ip_address            = data.google_compute_global_address.bootstrap.address
+  backend_service       = google_compute_region_backend_service.bootstrap.id  # Directly reference backend service
+  ip_address            = data.google_compute_address.bootstrap.address
 }
