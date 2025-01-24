@@ -1131,8 +1131,9 @@ impl Sync {
     fn get_next_peer(&mut self) -> Option<PeerInfo> {
         if self.peers.len() >= Self::MIN_PEERS {
             let mut peer = self.peers.pop()?;
-            peer.last_used = std::time::Instant::now(); // used to determine stale requests.
-            self.max_batch_size = self.dynamic_batch_sizing(&peer);
+            peer.last_used = std::time::Instant::now();
+            // dynamic sizing should not be needed, if we're syncing recent blocks.
+            // self.max_batch_size = self.dynamic_batch_sizing(&peer);
             tracing::trace!("sync::GetNextPeer {} ({})", peer.peer_id, peer.score);
             return Some(peer);
         }
@@ -1144,7 +1145,7 @@ impl Sync {
     ///
     /// Due to a hard-coded 10MB response limit in libp2p, we may be limited in how many blocks we can request
     /// for in a single request, between 1-100 blocks.
-    fn dynamic_batch_sizing(&self, peer: &PeerInfo) -> usize {
+    fn _dynamic_batch_sizing(&self, peer: &PeerInfo) -> usize {
         match (&self.state, &peer.version, &self.in_flight_reason) {
             // V1 response may be too large, reduce request range.
             (SyncState::Phase1(_), PeerVer::V1, DownGrade::Empty) => self
