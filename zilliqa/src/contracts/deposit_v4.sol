@@ -623,8 +623,7 @@ contract Deposit is UUPSUpgradeable {
             emit StakerRemoved(blsPubKey, nextUpdate());
         } else {
             require(
-                currentBalance - amount >=
-                    $.minimumStake,
+                currentBalance - amount >= $.minimumStake,
                 "unstaking this amount would take the validator below the minimum stake"
             );
 
