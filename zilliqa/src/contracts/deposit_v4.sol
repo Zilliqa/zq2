@@ -423,18 +423,30 @@ contract Deposit is UUPSUpgradeable {
                     j++
                 ) {
                     bytes memory stakerKey = committeeToUpdate.stakerKeys[j];
-                    CommitteeStakerEntry storage stakerInLatestCommittee = latestComputedCommittee.stakers[stakerKey];
+                    CommitteeStakerEntry
+                        storage stakerInLatestCommittee = latestComputedCommittee
+                            .stakers[stakerKey];
                     // If staker exists in latest then update in new
                     if (stakerInLatestCommittee.index != 0) {
-                        CommitteeStakerEntry storage stakerInCommitteeToUpdate = committeeToUpdate.stakers[stakerKey];
-                        if (stakerInLatestCommittee.index != stakerInCommitteeToUpdate.index) {
+                        CommitteeStakerEntry
+                            storage stakerInCommitteeToUpdate = committeeToUpdate
+                                .stakers[stakerKey];
+                        if (
+                            stakerInLatestCommittee.index !=
+                            stakerInCommitteeToUpdate.index
+                        ) {
                             stakerIndexChanged = true;
-                            stakerInCommitteeToUpdate.index = stakerInLatestCommittee.index;
+                            stakerInCommitteeToUpdate
+                                .index = stakerInLatestCommittee.index;
                         }
-                        if (stakerInLatestCommittee.balance != stakerInCommitteeToUpdate.balance) {
-                            stakerInCommitteeToUpdate.balance = stakerInLatestCommittee.balance;
+                        if (
+                            stakerInLatestCommittee.balance !=
+                            stakerInCommitteeToUpdate.balance
+                        ) {
+                            stakerInCommitteeToUpdate
+                                .balance = stakerInLatestCommittee.balance;
                         }
-                    // Otherwise remove them
+                        // Otherwise remove them
                     } else {
                         delete committeeToUpdate.stakers[stakerKey];
                         stakerIndexChanged = true;
@@ -452,12 +464,15 @@ contract Deposit is UUPSUpgradeable {
                     if (committeeToUpdate.stakers[stakerKey].index == 0) {
                         committeeToUpdate.stakers[
                             stakerKey
-                        ] = latestComputedCommittee.stakers[stakerKey]; 
+                        ] = latestComputedCommittee.stakers[stakerKey];
                         stakerIndexChanged = true;
                     }
                 }
 
-                if (latestComputedCommittee.totalStake != committeeToUpdate.totalStake) {
+                if (
+                    latestComputedCommittee.totalStake !=
+                    committeeToUpdate.totalStake
+                ) {
                     committeeToUpdate.totalStake = latestComputedCommittee
                         .totalStake;
                 }
