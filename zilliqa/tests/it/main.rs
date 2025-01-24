@@ -1100,6 +1100,31 @@ impl Network {
         .unwrap();
     }
 
+    pub async fn run_until_block_finalized(
+        &mut self,
+        target_block: u64,
+        mut timeout: usize,
+    ) -> Result<()> {
+        let initial_timeout = timeout;
+        let db = self.get_node(0).db.clone();
+        loop {
+            if let Some(view) = db.get_finalized_view()? {
+                if let Some(block) = db.get_block_by_view(view)? {
+                    if block.number() >= target_block {
+                        return Ok(());
+                    }
+                }
+            }
+            if timeout == 0 {
+                return Err(anyhow!(
+                    "condition was still false after {initial_timeout} ticks"
+                ));
+            }
+            self.tick().await;
+            timeout -= 1;
+        }
+    }
+
     pub fn disconnect_node(&mut self, index: usize) {
         self.disconnected.insert(index);
     }
