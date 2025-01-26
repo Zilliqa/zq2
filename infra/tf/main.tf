@@ -84,7 +84,8 @@ resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {
     "serviceAccount:${module.apis.service_account.email}",
     "serviceAccount:${module.checkpoints.service_account.email}",
     "serviceAccount:${module.persistences.service_account.email}",
-    "serviceAccount:${module.queries.service_account.email}"
+    "serviceAccount:${module.queries.service_account.email}",
+    "serviceAccount:${module.graphs.service_account.email}"
   ]
 }
 

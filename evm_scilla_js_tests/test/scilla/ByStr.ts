@@ -1,7 +1,6 @@
 import {ScillaContract} from "hardhat-scilla-plugin";
 import {expect} from "chai";
 import hre from "hardhat";
-import {Account} from "@zilliqa-js/zilliqa";
 
 describe("Scilla ByStr Functionality #parallel", function () {
   let contract: ScillaContract;
