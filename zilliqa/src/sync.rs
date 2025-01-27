@@ -546,23 +546,25 @@ impl Sync {
     /// In phase 1, it will extract the metadata and feed it into handle_metadata_response.
     /// In phase 2, it will extract the blocks and feed it into handle_multiblock_response.
     pub fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
-        // Upgrade to V2 peer.
+        // V2 response
         if response.availability.is_none()
             && response.proposals.is_empty()
             && response.from_view == u64::MAX
         {
-            tracing::info!("sync::HandleBlockResponse : upgrading {from}",);
+            tracing::info!("sync::HandleBlockResponse : new response from {from}",);
             if let Some(mut peer) = self.in_flight.take() {
-                if peer.peer_id == from {
+                if peer.peer_id == from && peer.version == PeerVer::V1 {
+                    // upgrade to V2 peer
                     peer.version = PeerVer::V2;
-                    // retry with upgraded peer
                     self.peers.reinsert_peer(peer)?;
-                    if Self::DO_SPECULATIVE {
-                        match self.state {
-                            SyncState::Phase1(_) => self.request_missing_metadata(None)?,
-                            SyncState::Phase2(_) => self.request_missing_blocks()?,
-                            _ => {}
+                    match self.state {
+                        SyncState::Phase2(_) => {
+                            self.state = SyncState::Retry1;
                         }
+                        SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
+                            self.request_missing_metadata(None)?;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -1062,6 +1064,9 @@ impl SyncPeers {
 
     /// Reinserts the peer such that it is at the front of the queue.
     pub fn reinsert_peer(&self, peer: PeerInfo) -> Result<()> {
+        if peer.score == u32::MAX {
+            return Ok(());
+        }
         let mut peers = self.peers.lock().unwrap();
         let mut peer = peer;
         peer.last_used = peers
