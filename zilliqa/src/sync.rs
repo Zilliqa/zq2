@@ -21,8 +21,8 @@ use crate::{
     crypto::Hash,
     db::Db,
     message::{
-        Block, BlockHeader, BlockRequest, BlockRequestV2, BlockResponse, ExternalMessage,
-        InjectedProposal, Proposal, QuorumCertificate,
+        Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InjectedProposal,
+        Proposal, QuorumCertificate, RequestBlocksByHeight,
     },
     node::MessageSender,
     time::SystemTime,
@@ -99,9 +99,6 @@ impl Sync {
     const DO_SPECULATIVE: bool = true;
     #[cfg(debug_assertions)]
     const DO_SPECULATIVE: bool = false;
-
-    // Minimum of 2 peers to avoid single source of truth.
-    const MIN_PEERS: usize = 2;
 
     pub fn new(
         config: &NodeConfig,
@@ -895,7 +892,7 @@ impl Sync {
     pub fn handle_metadata_request(
         &mut self,
         from: PeerId,
-        request: BlockRequestV2,
+        request: RequestBlocksByHeight,
     ) -> Result<ExternalMessage> {
         tracing::debug!(
             "sync::MetadataRequest : received a metadata request from {}",
@@ -981,7 +978,7 @@ impl Sync {
                         ..
                     }),
                     PeerVer::V2,
-                ) => ExternalMessage::MetaDataRequest(BlockRequestV2 {
+                ) => ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                     request_at: SystemTime::now(),
                     to_height: block_number.saturating_sub(1),
                     from_height: block_number.saturating_sub(self.max_batch_size as u64),
@@ -1005,7 +1002,7 @@ impl Sync {
                     let meta = meta.unwrap();
                     let block_number = meta.number;
                     self.state = SyncState::Phase1(meta);
-                    ExternalMessage::MetaDataRequest(BlockRequestV2 {
+                    ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                         request_at: SystemTime::now(),
                         to_height: block_number.sub(1),
                         from_height: block_number.sub(self.max_batch_size as u64),
@@ -1148,16 +1145,12 @@ impl Sync {
 
     /// Get the next best peer to use
     fn get_next_peer(&mut self) -> Option<PeerInfo> {
-        if self.peers.len() >= Self::MIN_PEERS {
-            let mut peer = self.peers.pop()?;
-            peer.last_used = std::time::Instant::now();
-            // dynamic sizing should not be needed, if we're syncing recent blocks.
-            // self.max_batch_size = self.dynamic_batch_sizing(&peer);
-            tracing::trace!("sync::GetNextPeer {} ({})", peer.peer_id, peer.score);
-            return Some(peer);
-        }
-        tracing::warn!("sync::NextPeer : {} insufficient peers", self.peers.len());
-        None
+        let mut peer = self.peers.pop()?;
+        peer.last_used = std::time::Instant::now();
+        // dynamic sizing should not be needed, if we're syncing recent blocks.
+        // self.max_batch_size = self.dynamic_batch_sizing(&peer);
+        tracing::trace!("sync::GetNextPeer {} ({})", peer.peer_id, peer.score);
+        Some(peer)
     }
 
     /// Phase 1: Dynamic Batch Sizing

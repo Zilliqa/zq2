@@ -106,7 +106,6 @@ async fn block_production(mut network: Network) {
 
     info!("Adding networked node.");
     let index = network.add_node();
-    network.run_until_synced(index).await;
 
     network
         .run_until(

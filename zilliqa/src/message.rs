@@ -228,7 +228,7 @@ impl fmt::Debug for BlockResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockRequestV2 {
+pub struct RequestBlocksByHeight {
     pub request_at: SystemTime,
     pub from_height: u64,
     pub to_height: u64,
@@ -277,7 +277,7 @@ pub enum ExternalMessage {
     AddPeer,
     RemovePeer,
     InjectedProposal(InjectedProposal),
-    MetaDataRequest(BlockRequestV2),
+    MetaDataRequest(RequestBlocksByHeight),
     MetaDataResponse(Vec<BlockHeader>),
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),

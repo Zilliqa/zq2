@@ -659,10 +659,8 @@ impl Consensus {
             return Ok(None);
         }
 
-        if let Err((e, temporary)) = self.check_block(&block, during_sync) {
-            if !temporary {
-                warn!(?e, "invalid block proposal received!");
-            }
+        if let Err(e) = self.check_block(&block, during_sync) {
+            warn!(?e, "invalid block proposal received!");
             return Ok(None);
         }
 
@@ -2225,41 +2223,32 @@ impl Consensus {
 
     /// Check the validity of a block. Returns `Err(_, true)` if this block could become valid in the future and
     /// `Err(_, false)` if this block could never be valid.
-    fn check_block(&self, block: &Block, during_sync: bool) -> Result<(), (anyhow::Error, bool)> {
-        block.verify_hash().map_err(|e| (e, false))?;
+    fn check_block(&self, block: &Block, during_sync: bool) -> Result<()> {
+        block.verify_hash()?;
 
         if block.view() == 0 {
             // We only check a block if we receive it from an external source. We obviously already have the genesis
             // block, so we aren't ever expecting to receive it.
-            return Err((anyhow!("tried to check genesis block"), false));
+            return Err(anyhow!("tried to check genesis block"));
         }
 
-        let Some(parent) = self
-            .get_block(&block.parent_hash())
-            .map_err(|e| (e, false))?
-        else {
+        let Some(parent) = self.get_block(&block.parent_hash())? else {
             warn!(
                 "Missing parent block while trying to check validity of block number {}",
                 block.number()
             );
-            return Err((MissingBlockError::from(block.parent_hash()).into(), true));
+            return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
-        let finalized_view = self.get_finalized_view().map_err(|e| (e, false))?;
-        let Some(finalized_block) = self
-            .get_block_by_view(finalized_view)
-            .map_err(|e| (e, false))?
-        else {
-            return Err((MissingBlockError::from(finalized_view).into(), false));
+        let finalized_view = self.get_finalized_view()?;
+        let Some(finalized_block) = self.get_block_by_view(finalized_view)? else {
+            return Err(MissingBlockError::from(finalized_view).into());
         };
         if block.view() < finalized_block.view() {
-            return Err((
-                anyhow!(
-                    "block is too old: view is {} but we have finalized {}",
-                    block.view(),
-                    finalized_block.view()
-                ),
-                false,
+            return Err(anyhow!(
+                "block is too old: view is {} but we have finalized {}",
+                block.view(),
+                finalized_block.view()
             ));
         }
 
@@ -2274,12 +2263,11 @@ impl Consensus {
         let committee = self
             .state
             .at_root(parent.state_root_hash().into())
-            .get_stakers(block.header)
-            .map_err(|e| (e, false))?;
+            .get_stakers(block.header)?;
 
         if verified.is_err() {
             info!(?block, "Unable to verify block = ");
-            return Err((anyhow!("invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}", block.hash(), block.view(), committee.len()), false));
+            return Err(anyhow!("invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}", block.hash(), block.view(), committee.len()));
         }
 
         // Check if the co-signers of the block's QC represent the supermajority.
@@ -2288,13 +2276,11 @@ impl Consensus {
             &committee,
             parent.state_root_hash(),
             block,
-        )
-        .map_err(|e| (e, false))?;
+        )?;
 
         // Verify the block's QC signature - note the parent should be the committee the QC
         // was signed over.
-        self.verify_qc_signature(&block.header.qc, committee.clone())
-            .map_err(|e| (e, false))?;
+        self.verify_qc_signature(&block.header.qc, committee.clone())?;
         if let Some(agg) = &block.agg {
             // Check if the signers of the block's aggregate QC represent the supermajority
             self.check_quorum_in_indices(
@@ -2302,24 +2288,16 @@ impl Consensus {
                 &committee,
                 parent.state_root_hash(),
                 block,
-            )
-            .map_err(|e| (e, false))?;
+            )?;
             // Verify the aggregate QC's signature
-            self.batch_verify_agg_signature(agg, &committee)
-                .map_err(|e| (e, false))?;
+            self.batch_verify_agg_signature(agg, &committee)?;
         }
 
         // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
-        let block_high_qc = self.get_high_qc_from_block(block).map_err(|e| (e, false))?;
-        let Some(block_high_qc_block) = self
-            .get_block(&block_high_qc.block_hash)
-            .map_err(|e| (e, false))?
-        else {
+        let block_high_qc = self.get_high_qc_from_block(block)?;
+        let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else {
             warn!("missing finalized block4");
-            return Err((
-                MissingBlockError::from(block_high_qc.block_hash).into(),
-                false,
-            ));
+            return Err(MissingBlockError::from(block_high_qc.block_hash).into());
         };
         // Prevent the creation of forks from the already committed chain
         if block_high_qc_block.view() < finalized_block.view() {
@@ -2329,19 +2307,16 @@ impl Consensus {
                 finalized_block.view(),
                 self.high_qc,
                 block);
-            return Err((
-                anyhow!(
-                    "invalid block - high QC view is {} while finalized is {}",
-                    block_high_qc_block.view(),
-                    finalized_block.view()
-                ),
-                false,
+            return Err(anyhow!(
+                "invalid block - high QC view is {} while finalized is {}",
+                block_high_qc_block.view(),
+                finalized_block.view()
             ));
         }
 
         // This block's timestamp must be greater than or equal to the parent block's timestamp.
         if block.timestamp() < parent.timestamp() {
-            return Err((anyhow!("timestamp decreased from parent"), false));
+            return Err(anyhow!("timestamp decreased from parent"));
         }
 
         // This block's timestamp should be at most `self.allowed_timestamp_skew` away from the current time. Note this
@@ -2351,31 +2326,22 @@ impl Consensus {
             .elapsed()
             .unwrap_or_else(|err| err.duration());
         if !during_sync && difference > self.config.allowed_timestamp_skew {
-            return Err((
-                anyhow!(
-                    "timestamp difference for block {} greater than allowed skew: {difference:?}",
-                    block.view()
-                ),
-                false,
+            return Err(anyhow!(
+                "timestamp difference for block {} greater than allowed skew: {difference:?}",
+                block.view()
             ));
         }
 
         // Blocks must be in sequential order
         if block.header.number != parent.header.number + 1 {
-            return Err((
-                anyhow!(
-                    "block number is not sequential: {} != {} + 1",
-                    block.header.number,
-                    parent.header.number
-                ),
-                false,
+            return Err(anyhow!(
+                "block number is not sequential: {} != {} + 1",
+                block.header.number,
+                parent.header.number
             ));
         }
 
-        if !self
-            .block_extends_from(block, &finalized_block)
-            .map_err(|e| (e, false))?
-        {
+        if !self.block_extends_from(block, &finalized_block)? {
             warn!(
                 "invalid block {:?}, does not extend finalized block {:?} our head is {:?}",
                 block,
@@ -2383,9 +2349,8 @@ impl Consensus {
                 self.head_block()
             );
 
-            return Err((
-                anyhow!("invalid block, does not extend from finalized block"),
-                false,
+            return Err(anyhow!(
+                "invalid block, does not extend from finalized block"
             ));
         }
         Ok(())
