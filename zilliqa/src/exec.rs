@@ -1636,7 +1636,6 @@ fn scilla_create(
     } else {
         account.account.balance = txn.amount.get();
     }
-    account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
         init_data,

@@ -23,6 +23,7 @@ pub mod scilla;
 mod scilla_proto;
 pub mod serde_util;
 pub mod state;
+pub mod test_util;
 pub mod time;
 pub mod transaction;
 pub mod zq1_proto;

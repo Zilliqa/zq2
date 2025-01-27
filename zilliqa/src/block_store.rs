@@ -1100,6 +1100,11 @@ impl BlockStore {
 
             let fork_elems =
                 self.buffered.inc_fork_counter() * (1 + constants::EXAMINE_BLOCKS_PER_FORK_COUNT);
+
+            // Limit the number of forks to process otherwise the db query can take too long
+            const MAX_FORK_BLOCKS_TO_QUERY: usize = 512;
+            let fork_elems = cmp::min(fork_elems, MAX_FORK_BLOCKS_TO_QUERY);
+
             let parent_hashes = self.db.get_highest_block_hashes(fork_elems)?;
             let revised = self
                 .buffered
