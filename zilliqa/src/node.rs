@@ -40,6 +40,7 @@ use crate::{
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::{TxAddResult, TxPoolContent},
     state::State,
+    sync::SyncPeers,
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
@@ -170,6 +171,7 @@ impl ChainId {
 }
 
 impl Node {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: NodeConfig,
         secret_key: SecretKey,
@@ -178,6 +180,7 @@ impl Node {
         request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         reset_timeout: UnboundedSender<Duration>,
         peer_num: Arc<AtomicUsize>,
+        peers: Arc<SyncPeers>,
     ) -> Result<Node> {
         config.validate()?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
@@ -201,7 +204,14 @@ impl Node {
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
-            consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
+            consensus: Consensus::new(
+                secret_key,
+                config,
+                message_sender,
+                reset_timeout,
+                db,
+                peers,
+            )?,
             peer_num,
         };
         Ok(node)
@@ -226,12 +236,6 @@ impl Node {
                             transactions,
                         )))?;
                 }
-            }
-            ExternalMessage::AddPeer => {
-                self.consensus.sync.add_peer(from);
-            }
-            ExternalMessage::RemovePeer => {
-                self.consensus.sync.remove_peer(from);
             }
             // `Proposals` are re-routed to `handle_request()`
             _ => {

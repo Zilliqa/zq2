@@ -36,7 +36,7 @@ use crate::{
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
     state::State,
-    sync::Sync,
+    sync::{Sync, SyncPeers},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -187,6 +187,7 @@ impl Consensus {
         message_sender: MessageSender,
         reset_timeout: UnboundedSender<Duration>,
         db: Arc<Db>,
+        peers: Arc<SyncPeers>,
     ) -> Result<Self> {
         trace!(
             "Opening database in {:?} for shard {}",
@@ -312,7 +313,13 @@ impl Consensus {
             }
         };
 
-        let sync = Sync::new(&config, db.clone(), &latest_block, message_sender.clone())?;
+        let sync = Sync::new(
+            &config,
+            db.clone(),
+            &latest_block,
+            message_sender.clone(),
+            peers.clone(),
+        )?;
 
         let mut consensus = Consensus {
             secret_key,
@@ -411,7 +418,7 @@ impl Consensus {
                 })
                 .collect_vec();
 
-            consensus.sync.add_peers(recent_peer_ids);
+            peers.add_peers(recent_peer_ids);
         }
 
         Ok(consensus)

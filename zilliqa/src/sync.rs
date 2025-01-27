@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering,
     collections::{BinaryHeap, VecDeque},
     ops::Sub,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -62,11 +62,10 @@ pub struct Sync {
     db: Arc<Db>,
     // message bus
     message_sender: MessageSender,
-    // internal list of peers, maintained with add_peer/remove_peer.
-    peers: BinaryHeap<PeerInfo>,
+    // internal peers
+    peers: Arc<SyncPeers>,
     // peer handling an in-flight request
     in_flight: Option<PeerInfo>,
-    in_flight_reason: DownGrade,
     // in-flight request timeout, before retry
     request_timeout: Duration,
     // how many blocks to request at once
@@ -101,6 +100,7 @@ impl Sync {
         db: Arc<Db>,
         latest_block: &Option<Block>,
         message_sender: MessageSender,
+        peers: Arc<SyncPeers>,
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
         let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
@@ -121,13 +121,12 @@ impl Sync {
         Ok(Self {
             db,
             message_sender,
-            peers: BinaryHeap::new(),
             peer_id,
+            peers,
             request_timeout: config.consensus.consensus_timeout,
             max_batch_size,
             max_blocks_in_flight,
             in_flight: None,
-            in_flight_reason: DownGrade::None,
             in_pipeline: usize::MIN,
             state,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
@@ -364,11 +363,13 @@ impl Sync {
         if response.is_empty() {
             // Empty response, downgrade peer and retry phase 1.
             tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
-            self.done_with_peer(DownGrade::Empty);
+            self.peers
+                .done_with_peer(self.in_flight.take(), DownGrade::Empty);
             self.state = SyncState::Retry1;
             return Ok(());
         } else {
-            self.done_with_peer(DownGrade::None);
+            self.peers
+                .done_with_peer(self.in_flight.take(), DownGrade::None);
         }
 
         tracing::info!(
@@ -465,7 +466,8 @@ impl Sync {
                     "sync::RequestMissingBlocks : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
-                self.done_with_peer(DownGrade::Timeout);
+                self.peers
+                    .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
             } else {
                 return Ok(());
             }
@@ -478,9 +480,9 @@ impl Sync {
         }
 
         // will be re-inserted below
-        if let Some(peer) = self.get_next_peer() {
+        if let Some(peer) = self.peers.get_next_peer() {
             // reinsert peer, as we will use a faux peer below, to force the request to go to the original responder
-            self.peers.push(peer);
+            self.peers.reinsert_peer(peer)?;
 
             // If we have no chain_segments, we have nothing to do
             if let Some((meta, peer_info)) = self.last_segment()? {
@@ -550,19 +552,11 @@ impl Sync {
             && response.from_view == u64::MAX
         {
             tracing::info!("sync::HandleBlockResponse : upgrading {from}",);
-            if let Some(peer) = self.in_flight.as_mut() {
+            if let Some(mut peer) = self.in_flight.take() {
                 if peer.peer_id == from {
                     peer.version = PeerVer::V2;
                     // retry with upgraded peer
-                    peer.last_used = self
-                        .peers
-                        .peek()
-                        .expect("peers.len() > 1")
-                        .last_used
-                        .checked_sub(Duration::from_secs(1))
-                        .expect("time is ordinal");
-                    self.done_with_peer(DownGrade::None);
-
+                    self.peers.reinsert_peer(peer)?;
                     if Self::DO_SPECULATIVE {
                         match self.state {
                             SyncState::Phase1(_) => self.request_missing_metadata(None)?,
@@ -667,10 +661,12 @@ impl Sync {
         if response.is_empty() {
             // Empty response, downgrade peer and retry with a new peer.
             tracing::warn!("sync::MetadataResponse : empty blocks {from}",);
-            self.done_with_peer(DownGrade::Empty);
+            self.peers
+                .done_with_peer(self.in_flight.take(), DownGrade::Empty);
             return Ok(());
         } else {
-            self.done_with_peer(DownGrade::None);
+            self.peers
+                .done_with_peer(self.in_flight.take(), DownGrade::None);
         }
 
         // Check the linkage of the returned chain
@@ -801,7 +797,8 @@ impl Sync {
                     "sync::RequestMissingMetadata : in-flight request {} timed out, requesting from new peer",
                     peer.peer_id
                 );
-                self.done_with_peer(DownGrade::Timeout);
+                self.peers
+                    .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
             } else {
                 return Ok(());
             }
@@ -814,7 +811,7 @@ impl Sync {
             return Ok(());
         }
 
-        if let Some(peer) = self.get_next_peer() {
+        if let Some(peer) = self.peers.get_next_peer() {
             tracing::info!(
                 "sync::RequestMissingMetadata : requesting {} metadata of segment #{} from {}",
                 self.max_batch_size,
@@ -942,89 +939,6 @@ impl Sync {
         Ok(())
     }
 
-    /// Downgrade a peer based on the response received.
-    ///
-    /// This algorithm favours good peers that respond quickly (i.e. no timeout).
-    /// In most cases, it eventually degenerates into 2 sources - avoid a single source of truth.
-    fn done_with_peer(&mut self, downgrade: DownGrade) {
-        if let Some(mut peer) = self.in_flight.take() {
-            tracing::trace!("sync::DoneWithPeer {} {:?}", peer.peer_id, downgrade);
-            self.in_flight_reason = downgrade.clone();
-            peer.score = peer.score.saturating_add(downgrade as u32);
-            // Ensure that the next peer is equal or better
-            peer.score = peer.score.max(self.peers.peek().unwrap().score);
-            // Reinsert peers that are good
-            if peer.score < u32::MAX {
-                self.peers.push(peer);
-            }
-        }
-    }
-
-    /// Add bulk peers
-    pub fn add_peers(&mut self, peers: Vec<PeerId>) {
-        tracing::debug!("sync::AddPeers {:?}", peers);
-        for peer in peers {
-            if peer != self.peer_id {
-                self.add_peer(peer);
-            }
-        }
-    }
-
-    /// Add a peer to the list of peers.
-    pub fn add_peer(&mut self, peer: PeerId) {
-        // if the new peer is not synced, it will get downgraded to the back of heap.
-        // but by placing them at the back of the 'best' pack, we get to try them out soon.
-        let new_peer = PeerInfo {
-            version: PeerVer::V1,
-            score: self.peers.iter().map(|p| p.score).min().unwrap_or_default(),
-            peer_id: peer,
-            last_used: Instant::now(),
-        };
-        // ensure that it is unique - avoids single source of truth
-        self.peers.retain(|p: &PeerInfo| p.peer_id != peer);
-        self.peers.push(new_peer);
-
-        tracing::trace!("sync::AddPeer {peer}/{}", self.peers.len());
-    }
-
-    /// Remove a peer from the list of peers.
-    pub fn remove_peer(&mut self, peer: PeerId) {
-        tracing::trace!("sync::RemovePeer {peer}");
-        self.peers.retain(|p: &PeerInfo| p.peer_id != peer);
-    }
-
-    /// Get the next best peer to use
-    fn get_next_peer(&mut self) -> Option<PeerInfo> {
-        let mut peer = self.peers.pop()?;
-        peer.last_used = std::time::Instant::now();
-        // dynamic sizing should not be needed, if we're syncing recent blocks.
-        // self.max_batch_size = self.dynamic_batch_sizing(&peer);
-        tracing::trace!("sync::GetNextPeer {} ({})", peer.peer_id, peer.score);
-        Some(peer)
-    }
-
-    /// Phase 1: Dynamic Batch Sizing
-    ///
-    /// Due to a hard-coded 10MB response limit in libp2p, we may be limited in how many blocks we can request
-    /// for in a single request, between 1-100 blocks.
-    fn _dynamic_batch_sizing(&self, peer: &PeerInfo) -> usize {
-        match (&self.state, &peer.version, &self.in_flight_reason) {
-            // V1 response may be too large, reduce request range.
-            (SyncState::Phase1(_), PeerVer::V1, DownGrade::Empty) => self
-                .max_batch_size
-                .saturating_sub(self.max_batch_size / 3)
-                .max(1),
-            // V1 response going well, increase the request range
-            (SyncState::Phase1(_), PeerVer::V1, DownGrade::None) => self
-                .max_batch_size
-                .saturating_add(self.max_batch_size)
-                // For V1, ~100 empty blocks saturates the response payload
-                .min(100),
-            // V2 response may be too large, which can induce a timeout. Split into 10 block segments
-            _ => self.max_batch_size,
-        }
-    }
-
     /// Returns (am_syncing, current_highest_block)
     pub fn am_syncing(&self) -> Result<bool> {
         Ok(self.in_pipeline != 0
@@ -1064,6 +978,108 @@ impl Sync {
         let hash = checkpoint.hash();
         tracing::info!("sync::Checkpoint {}", hash);
         self.checkpoint_hash = hash;
+    }
+}
+
+#[derive(Debug)]
+pub struct SyncPeers {
+    peer_id: PeerId,
+    peers: Arc<Mutex<BinaryHeap<PeerInfo>>>,
+}
+
+impl SyncPeers {
+    pub fn new(peer_id: PeerId) -> Self {
+        Self {
+            peer_id,
+            peers: Arc::new(Mutex::new(BinaryHeap::<PeerInfo>::new())),
+        }
+    }
+
+    /// Downgrade a peer based on the response received.
+    ///
+    /// This algorithm favours good peers that respond quickly (i.e. no timeout).
+    /// In most cases, it eventually degenerates into 2 sources - avoid a single source of truth.
+    fn done_with_peer(&self, in_flight: Option<PeerInfo>, downgrade: DownGrade) {
+        if let Some(mut peer) = in_flight {
+            tracing::trace!("sync::DoneWithPeer {} {:?}", peer.peer_id, downgrade);
+            let mut peers = self.peers.lock().unwrap();
+            peer.score = peer.score.saturating_add(downgrade as u32);
+            if !peers.is_empty() {
+                // Ensure that the next peer is equal or better
+                peer.score = peer.score.max(peers.peek().unwrap().score);
+            }
+            // Reinsert peers that are good
+            if peer.score < u32::MAX {
+                peers.push(peer);
+            }
+        }
+    }
+
+    /// Add bulk peers
+    pub fn add_peers(&self, peers: Vec<PeerId>) {
+        tracing::debug!("sync::AddPeers {:?}", peers);
+        for peer in peers {
+            if peer != self.peer_id {
+                self.add_peer(peer);
+            }
+        }
+    }
+
+    /// Add a peer to the list of peers.
+    pub fn add_peer(&self, peer: PeerId) {
+        let mut peers = self.peers.lock().unwrap();
+        // if the new peer is not synced, it will get downgraded to the back of heap.
+        // but by placing them at the back of the 'best' pack, we get to try them out soon.
+        let new_peer = PeerInfo {
+            version: PeerVer::V1,
+            score: peers.iter().map(|p| p.score).min().unwrap_or_default(),
+            peer_id: peer,
+            last_used: Instant::now(),
+        };
+        // ensure that it is unique - avoids single source of truth
+        peers.retain(|p: &PeerInfo| p.peer_id != peer);
+        peers.push(new_peer);
+
+        tracing::trace!("sync::AddPeer {peer}/{}", peers.len());
+    }
+
+    /// Remove a peer from the list of peers.
+    pub fn remove_peer(&self, peer: PeerId) {
+        let mut peers = self.peers.lock().unwrap();
+        peers.retain(|p: &PeerInfo| p.peer_id != peer);
+        tracing::trace!("sync::RemovePeer {peer}/{}", peers.len());
+    }
+
+    /// Get the next best peer to use
+    pub fn get_next_peer(&self) -> Option<PeerInfo> {
+        let mut peer = self.peers.lock().unwrap().pop()?;
+        peer.last_used = std::time::Instant::now();
+        // dynamic sizing should not be needed, if we're syncing recent blocks.
+        // self.max_batch_size = self.dynamic_batch_sizing(&peer);
+        tracing::trace!("sync::GetNextPeer {} ({})", peer.peer_id, peer.score);
+        Some(peer)
+    }
+
+    /// Reinserts the peer such that it is at the front of the queue.
+    pub fn reinsert_peer(&self, peer: PeerInfo) -> Result<()> {
+        let mut peers = self.peers.lock().unwrap();
+        let mut peer = peer;
+        peer.last_used = peers
+            .peek()
+            .expect("peers.len() > 1")
+            .last_used
+            .checked_sub(Duration::from_secs(1))
+            .expect("time is ordinal");
+        peers.push(peer);
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.peers.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.peers.lock().unwrap().is_empty()
     }
 }
 
