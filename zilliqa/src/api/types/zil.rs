@@ -727,7 +727,7 @@ pub enum TransactionState {
 impl TransactionStatusResponse {
     pub fn new(
         tx: VerifiedTransaction,
-        receipt: TransactionReceipt,
+        success: bool,
         block: Option<Block>,
         state: TransactionState,
     ) -> Result<Self> {
@@ -830,7 +830,7 @@ impl TransactionStatusResponse {
             nonce: nonce.to_string(),
             sender_addr: sender_pub_key,
             signature,
-            success: receipt.success,
+            success,
             to_addr: to_addr.to_hex(),
             version: version.to_string(),
         })

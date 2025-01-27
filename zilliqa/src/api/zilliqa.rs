@@ -44,7 +44,7 @@ use crate::{
     exec::zil_contract_address,
     message::Block,
     node::Node,
-    pool::TxAddResult,
+    pool::{PendingOrQueued, TxAddResult},
     schnorr,
     scilla::{split_storage_key, storage_key, ParamValue},
     state::Code,
@@ -1487,18 +1487,16 @@ fn get_transaction_status(
                 "Txn Hash not found".to_string(),
                 jsonrpc_error_data.clone(),
             ))?;
-    let receipt =
-        node.get_transaction_receipt(hash)?
-            .ok_or(jsonrpsee::types::ErrorObject::owned(
-                RPCErrorCode::RpcDatabaseError as i32,
-                "Txn receipt not found".to_string(),
-                jsonrpc_error_data.clone(),
-            ))?;
+    let receipt = node.get_transaction_receipt(hash)?;
 
-    let block = node.get_block(receipt.block_hash)?;
+    let (block, success) = if let Some(receipt) = &receipt {
+        (node.get_block(receipt.block_hash)?, receipt.success)
+    } else {
+        (None, false)
+    };
 
     // Determine transaction state
-    let state = if !receipt.errors.is_empty() {
+    let state = if receipt.is_some_and(|receipt| !receipt.errors.is_empty()) {
         TransactionState::Error
     } else {
         match &block {
@@ -1513,20 +1511,15 @@ fn get_transaction_status(
                     TransactionState::Pending
                 }
             }
-            None => {
-                let mempool = node.consensus.txpool_content()?;
-                if mempool.queued.iter().any(|x| x.hash == hash) {
-                    TransactionState::Queued
-                } else if mempool.pending.iter().any(|x| x.hash == hash) {
-                    TransactionState::Pending
-                } else {
-                    TransactionState::Error
-                }
-            }
+            None => match node.consensus.get_pending_or_queued(hash)? {
+                Some(PendingOrQueued::Pending) => TransactionState::Pending,
+                Some(PendingOrQueued::Queued) => TransactionState::Queued,
+                None => panic!("Transaction not found in block or pending/queued"),
+            },
         }
     };
 
-    TransactionStatusResponse::new(transaction, receipt, block, state)
+    TransactionStatusResponse::new(transaction, success, block, state)
 }
 
 #[cfg(test)]

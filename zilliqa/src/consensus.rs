@@ -35,7 +35,7 @@ use crate::{
         Vote, MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
-    pool::{TransactionPool, TxAddResult, TxPoolContent},
+    pool::{PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent},
     range_map::RangeMap,
     state::State,
     time::SystemTime,
@@ -973,6 +973,11 @@ impl Consensus {
 
     pub fn txpool_content(&self) -> Result<TxPoolContent> {
         self.transaction_pool.preview_content(&self.state)
+    }
+
+    pub fn get_pending_or_queued(&self, tx_hash: Hash) -> Result<Option<PendingOrQueued>> {
+        self.transaction_pool
+            .get_pending_or_queued(&self.state, tx_hash)
     }
 
     pub fn pending_transaction_count(&self, account: Address) -> u64 {
