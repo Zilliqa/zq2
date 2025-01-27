@@ -77,6 +77,7 @@ use zilliqa::{
     message::{ExternalMessage, InternalMessage},
     node::{Node, RequestId},
     node_launcher::ResponseChannel,
+    sync::SyncPeers,
     transaction::EvmGas,
 };
 
@@ -165,6 +166,9 @@ fn node(
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
+    let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+    let peers = Arc::new(SyncPeers::new(peer_id));
+
     let node = Node::new(
         NodeConfig {
             data_dir: datadir
@@ -178,6 +182,7 @@ fn node(
         request_responses_sender,
         reset_timeout_sender,
         Arc::new(AtomicUsize::new(0)),
+        peers.clone(),
     )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> =
@@ -186,12 +191,13 @@ fn node(
     Ok((
         TestNode {
             index,
-            peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
+            peer_id,
             secret_key,
             onchain_key,
             inner: node,
             dir: datadir,
             rpc_module,
+            peers,
         },
         message_receiver,
         local_message_receiver,
@@ -208,6 +214,7 @@ struct TestNode {
     rpc_module: RpcModule<Arc<Mutex<Node>>>,
     inner: Arc<Mutex<Node>>,
     dir: Option<TempDir>,
+    peers: Arc<SyncPeers>,
 }
 
 struct Network {
@@ -411,12 +418,7 @@ impl Network {
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
-            node.inner
-                .lock()
-                .unwrap()
-                .consensus
-                .sync
-                .add_peers(peers.clone());
+            node.peers.add_peers(peers.clone());
         }
 
         Network {
@@ -516,7 +518,7 @@ impl Network {
 
         let mut peers = self.nodes.iter().map(|n| n.peer_id).collect_vec();
         peers.shuffle(self.rng.lock().unwrap().deref_mut());
-        node.inner.lock().unwrap().consensus.sync.add_peers(peers);
+        node.peers.add_peers(peers.clone());
 
         trace!("Node {}: {}", node.index, node.peer_id);
 
@@ -590,12 +592,7 @@ impl Network {
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
-            node.inner
-                .lock()
-                .unwrap()
-                .consensus
-                .sync
-                .add_peers(peers.clone());
+            node.peers.add_peers(peers.clone());
         }
 
         let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
