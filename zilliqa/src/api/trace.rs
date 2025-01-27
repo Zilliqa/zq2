@@ -145,7 +145,6 @@ fn trace_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TraceResul
             let trace = builder.into_trace_results_with_state(&result, &trace_types, &pre_state)?;
             traces.push(trace);
         }
-        // Skip non-EVM transactions but continue processing the block
     }
 
     Ok(traces)
@@ -313,13 +312,6 @@ fn trace_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<T
     let mut params = params.sequence();
     let txn_hash: B256 = params.next()?;
     let txn_hash: Hash = txn_hash.into();
-
-    // Get the transaction receipt first to check if it exists and was mined
-    let receipt = node.lock().unwrap().get_transaction_receipt(txn_hash)?;
-
-    if receipt.is_none() {
-        return Ok(None);
-    }
 
     // Default parity trace types for transaction tracing
     let trace_types = [TraceType::Trace, TraceType::VmTrace, TraceType::StateDiff]
