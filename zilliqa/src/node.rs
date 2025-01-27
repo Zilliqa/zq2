@@ -16,6 +16,7 @@ use alloy::{
     },
 };
 use anyhow::{anyhow, Result};
+use bitvec::{bitarr, order::Msb0};
 use libp2p::{request_response::OutboundFailure, PeerId};
 use revm::{primitives::ExecutionResult, Inspector};
 use revm_inspectors::tracing::{
@@ -34,12 +35,12 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
-        ProcessProposal, Proposal,
+        ProcessProposal, Proposal, MAX_COMMITTEE_SIZE,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::{TxAddResult, TxPoolContent},
-    state::State,
+    state::{contract_addr::DEPOSIT_PROXY, State},
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
@@ -551,6 +552,26 @@ impl Node {
         Err(anyhow!("transaction not found in block: {txn_hash}"))
     }
 
+    fn is_zq1_block(&self, block: &Block, parent: &Block) -> bool {
+        let has_account = self
+            .consensus
+            .state()
+            .at_root(parent.state_root_hash().into())
+            .has_account(DEPOSIT_PROXY);
+        info!("has_account: {:?}", has_account);
+
+        let cosigned_match = block.header.qc.cosigned == bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE];
+        info!("cosigned_match: {:?}", cosigned_match);
+
+        let header_view_match = block.header.view == block.header.number;
+        info!("header_view_match: {:?}", cosigned_match);
+
+        if cosigned_match && header_view_match {
+            return true;
+        }
+        false
+    }
+
     pub fn replay_transaction<I: Inspector<PendingState> + ScillaInspector>(
         &self,
         txn_hash: Hash,
@@ -569,6 +590,10 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+        if self.is_zq1_block(&block, &parent) {
+            return Err(anyhow!("transaction in ZQ1 block cannot be replayed"));
+        }
+
         let mut state = self
             .consensus
             .state()
