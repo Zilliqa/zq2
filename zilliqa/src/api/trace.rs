@@ -324,7 +324,7 @@ fn trace_replay_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<T
 }
 
 /// trace_transaction
-fn trace_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<TraceResults>> {
+fn trace_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<TraceResults> {
     let mut params = params.sequence();
     let txn_hash: B256 = params.next()?;
     let txn_hash: Hash = txn_hash.into();
@@ -339,5 +339,5 @@ fn trace_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<T
         .unwrap()
         .trace_evm_transaction(txn_hash, &trace_types)?;
 
-    Ok(Some(trace))
+    Ok(trace)
 }

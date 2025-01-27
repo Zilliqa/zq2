@@ -41,13 +41,12 @@ async fn trace_transaction_not_found(mut network: Network) {
         B256::from_str("0x1234567890123456789012345678901234567890123456789012345678901234")
             .unwrap();
 
-    let response: Option<Value> = wallet
+    let response: Result<TraceResults, _> = wallet
         .provider()
         .request("trace_transaction", [nonexistent_hash])
-        .await
-        .expect("Failed to call trace_transaction API");
+        .await;
 
-    assert!(response.is_none());
+    assert!(response.is_err());
 }
 
 #[zilliqa_macros::test]
