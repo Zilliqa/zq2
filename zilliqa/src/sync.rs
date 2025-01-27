@@ -10,11 +10,7 @@ use alloy::primitives::BlockNumber;
 use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
-use rusqlite::{
-    named_params,
-    types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef},
-    OptionalExtension,
-};
+use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 use crate::{
     cfg::NodeConfig,
@@ -110,37 +106,11 @@ impl Sync {
         let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
         let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
 
-        // This in-memory DB is placed here as it is only used in this module.
-        db.with_sqlite_tx(|c| {
-            c.execute_batch(
-                "CREATE TEMP TABLE IF NOT EXISTS sync_data (
-                block_hash BLOB NOT NULL UNIQUE,
-                parent_hash BLOB NOT NULL,
-                block_number INTEGER NOT NULL PRIMARY KEY,
-                view_number INTEGER NOT NULL,
-                gas_used INTEGER NOT NULL,
-                version INTEGER DEFAULT 0,
-                peer BLOB DEFAULT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_sync_data ON sync_data(block_number) WHERE peer IS NOT NULL;",
-            )?;
-            Ok(())
-        })?;
-
-        // Restore metadata/segments
-        let mut segments = 0;
-        db.with_sqlite_tx(|c| {
-            segments = c
-                .prepare_cached("SELECT COUNT(block_number) FROM sync_data WHERE peer IS NOT NULL")?
-                .query_row([], |row| row.get::<_, usize>(0))
-                .optional()?
-                .unwrap_or_default();
-            Ok(())
-        })?;
-        let state = if segments == 0 {
+        // Start from reset, or continue sync
+        let state = if db.count_sync_segments()? == 0 {
             SyncState::Phase0
         } else {
-            SyncState::Retry1
+            SyncState::Retry1 // continue sync
         };
 
         let latest_block_number = latest_block
@@ -167,156 +137,36 @@ impl Sync {
         })
     }
 
-    /// Returns the number of stored segments
     fn count_segments(&self) -> Result<usize> {
-        let mut segments = 0;
-        self.db.with_sqlite_tx(|c| {
-            segments = c
-                .prepare_cached("SELECT COUNT(block_number) FROM sync_data WHERE peer IS NOT NULL")?
-                .query_row([], |row| row.get(0))
-                .optional()?
-                .unwrap_or_default();
-            Ok(())
-        })?;
-        Ok(segments)
+        self.db.count_sync_segments()
     }
 
-    /// Checks if the stored metadata exists
     fn contains_metadata(&self, hash: &Hash) -> Result<bool> {
-        let mut result = false;
-        self.db.with_sqlite_tx(|c| {
-            result = c
-                .prepare_cached("SELECT block_number FROM sync_data WHERE block_hash = ?1")?
-                .query_row([hash], |row| row.get::<_, u64>(0))
-                .optional()?
-                .is_some();
-            Ok(())
-        })?;
-        Ok(result)
+        self.db.contains_sync_metadata(hash)
     }
 
-    /// Retrieves bulk metadata information from the given block_hash (inclusive)
     fn get_segment(&self, hash: Hash) -> Result<Vec<Hash>> {
-        let mut hashes = Vec::with_capacity(self.max_batch_size);
-        let mut block_hash = hash;
-        self.db.with_sqlite_tx(|c| {
-            while let Some(parent_hash) = c
-                .prepare_cached("SELECT parent_hash FROM sync_data WHERE block_hash = ?1")?
-                .query_row([block_hash], |row| row.get::<_, Hash>(0))
-                .optional()?
-            {
-                hashes.push(block_hash);
-                block_hash = parent_hash;
-            }
-            Ok(())
-        })?;
-        Ok(hashes)
+        self.db.get_sync_segment(hash)
     }
 
-    /// Peeks into the top of the segment stack.
     fn last_segment(&self) -> Result<Option<(BlockHeader, PeerInfo)>> {
-        let mut result = None;
-        self.db.with_sqlite_tx(|c| {
-            result = c
-                .prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, gas_used, version, peer FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
-                .query_row([], |row| Ok((
-                    BlockHeader::from_meta_data(row.get(0)?,row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?),
-                PeerInfo {
-                    last_used: Instant::now(),
-                    score:u32::MAX,
-                    version: row.get(5)?,
-                    peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(6)?.as_slice()).unwrap(),
-                },
-            )))
-                .optional()?;
-            Ok(())
-        })?;
-        Ok(result)
+        self.db.last_sync_segment()
     }
 
-    /// Pops a segment from the stack; and bulk removes all metadata associated with it.
     fn pop_segment(&self) -> Result<()> {
-        self.db.with_sqlite_tx(|c| {
-            if let Some(block_hash) = c.prepare_cached("SELECT block_hash FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
-            .query_row([], |row| row.get::<_,Hash>(0)).optional()? {
-                if let Some(parent_hash) = c.prepare_cached("SELECT parent_hash FROM sync_data WHERE block_hash = ?1")?
-                .query_row([block_hash], |row| row.get(0)).optional()? {
-
-                // update marker
-                c.prepare_cached(
-                    "UPDATE sync_data SET peer = NULL WHERE block_hash = ?1")?
-                    .execute(
-                    [block_hash]
-                )?;
-
-                // remove segment                
-                let mut hashes = Vec::with_capacity(self.max_batch_size);
-                let mut block_hash = parent_hash;
-                while let Some(parent_hash) = c
-                        .prepare_cached("SELECT parent_hash FROM sync_data WHERE block_hash = ?1")?
-                        .query_row([block_hash], |row| row.get::<_, Hash>(0))
-                        .optional()?
-                    {
-                        hashes.push(block_hash);
-                        block_hash = parent_hash;
-                    }
-
-                for hash in hashes {
-                    c.prepare_cached("DELETE FROM sync_data WHERE block_hash = ?1")?
-                    .execute([hash])?;
-                }
-                }
-            }
-            Ok(())
-        })
+        self.db.pop_sync_segment()
     }
 
-    /// Pushes a particular segment into the stack.
     fn push_segment(&self, peer: PeerInfo, meta: BlockHeader) -> Result<()> {
-        self.db.with_sqlite_tx(|c| {
-            c.prepare_cached(
-                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, gas_used, version, peer) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used, :version, :peer)")?
-                .execute(
-                named_params! {
-                    ":parent_hash": meta.qc.block_hash,
-                    ":block_hash": meta.hash,
-                    ":block_number": meta.number,
-                    ":view_number": meta.view,
-                    ":gas_used": meta.gas_used,
-                    ":peer": peer.peer_id.to_bytes(),
-                    ":version": peer.version,
-                },
-            )?;
-            Ok(())
-        })
+        self.db.push_sync_segment(peer, meta)
     }
 
-    /// Bulk inserts a bunch of metadata.
     fn insert_metadata(&self, metas: &Vec<BlockHeader>) -> Result<()> {
-        self.db.with_sqlite_tx(|c| {
-            for meta in metas {
-            c.prepare_cached(
-                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, gas_used) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used)")?
-                .execute(
-                named_params! {
-                    ":parent_hash": meta.qc.block_hash,
-                    ":block_hash": meta.hash,
-                    ":block_number": meta.number,
-                    ":view_number": meta.view,
-                    ":gas_used": meta.gas_used,
-            },
-            )?;
-        }
-            Ok(())
-        })
+        self.db.insert_sync_metadata(metas)
     }
 
-    /// Empty the metadata table.
     fn empty_metadata(&self) -> Result<()> {
-        self.db.with_sqlite_tx(|c| {
-            c.execute("DELETE FROM sync_data", [])?;
-            Ok(())
-        })
+        self.db.empty_sync_metadata()
     }
 
     /// Phase 0: Sync a block proposal.
@@ -1218,11 +1068,11 @@ impl Sync {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct PeerInfo {
-    score: u32,
-    peer_id: PeerId,
-    last_used: Instant,
-    version: PeerVer,
+pub struct PeerInfo {
+    pub score: u32,
+    pub peer_id: PeerId,
+    pub last_used: Instant,
+    pub version: PeerVer,
 }
 
 impl Ord for PeerInfo {
@@ -1274,7 +1124,7 @@ enum SyncState {
 
 /// Peer Version
 #[derive(Debug, Clone, Eq, PartialEq)]
-enum PeerVer {
+pub enum PeerVer {
     V1 = 1,
     V2 = 2,
 }

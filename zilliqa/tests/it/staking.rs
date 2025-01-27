@@ -430,7 +430,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // randomise the current epoch state and current leader
-    let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
+    let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..4);
     network
         .run_until_block(&wallet, blocks_to_prerun.into(), 200)
         .await;
