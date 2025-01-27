@@ -3,6 +3,12 @@ usage_stats:
 
 multitenancy_enabled: false
 
+memberlist:
+  bind_port: 7946
+  advertise_addr: 0.0.0.0
+  join_members:
+    - 0.0.0.0:7946
+
 blocks_storage:
   backend: filesystem
   bucket_store:
@@ -20,13 +26,13 @@ compactor:
 
 distributor:
   ring:
-    instance_addr: 127.0.0.1
+    instance_addr: 0.0.0.0
     kvstore:
       store: memberlist
 
 ingester:
   ring:
-    instance_addr: 127.0.0.1
+    instance_addr: 0.0.0.0
     kvstore:
       store: memberlist
     replication_factor: 1
