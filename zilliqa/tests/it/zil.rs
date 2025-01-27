@@ -341,7 +341,7 @@ pub fn scilla_test_contract_code() -> String {
         field welcome_map : Map Uint32 (Map Uint32 String) = Emp Uint32 (Map Uint32 String)
 
         transition removeHello()
-          delete welcome_map[one][two];
+          delete welcome_map[one];
           e = {_eventname : "removeHello"};
           event e
         end
