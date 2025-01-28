@@ -322,23 +322,6 @@ impl Sync {
         from: PeerId,
         response: Vec<Proposal>,
     ) -> Result<()> {
-        // Verify transactions on the client-side
-        let proposals = response
-            .into_iter()
-            .map(|p| {
-                let (b, t) = p.into_parts();
-                let txns = t.into_iter().map(|t| t.verify().unwrap()).collect_vec();
-                Proposal::from_parts(b, txns)
-            })
-            .collect_vec();
-        self.inner_handle_multiblock_response(from, proposals)
-    }
-
-    pub fn inner_handle_multiblock_response(
-        &mut self,
-        from: PeerId,
-        response: Vec<Proposal>,
-    ) -> Result<()> {
         if let Some((peer, _)) = self.in_flight.as_ref() {
             if peer.peer_id != from {
                 tracing::warn!(
@@ -399,7 +382,7 @@ impl Sync {
             .collect_vec();
 
         self.db.pop_sync_segment()?;
-        self.inject_proposals(proposals)?;
+        self.inject_proposals(proposals)?; // txns are verified when processing InjectedProposal.
 
         // Done with phase 2
         if self.db.count_sync_segments()? == 0 {
@@ -614,7 +597,7 @@ impl Sync {
                     .sorted_by(|a, b| b.number().cmp(&a.number()))
                     .collect_vec();
 
-                self.inner_handle_multiblock_response(from, multi_blocks)?;
+                self.handle_multiblock_response(from, multi_blocks)?;
             }
             _ => {
                 tracing::error!(
@@ -929,7 +912,6 @@ impl Sync {
     pub fn am_syncing(&self) -> Result<bool> {
         Ok(self.in_pipeline != 0
             || !matches!(self.state, SyncState::Phase0)
-            || !self.recent_proposals.is_empty()
             || self.db.count_sync_segments()? != 0)
     }
 
