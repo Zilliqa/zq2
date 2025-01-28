@@ -20,7 +20,7 @@ use crate::{
         Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InjectedProposal,
         Proposal, QuorumCertificate, RequestBlocksByHeight,
     },
-    node::MessageSender,
+    node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
     transaction::EvmGas,
 };
@@ -65,9 +65,7 @@ pub struct Sync {
     // internal peers
     peers: Arc<SyncPeers>,
     // peer handling an in-flight request
-    in_flight: Option<PeerInfo>,
-    // in-flight request timeout, before retry
-    request_timeout: Duration,
+    in_flight: Option<(PeerInfo, RequestId)>,
     // how many blocks to request at once
     max_batch_size: usize,
     // how many blocks to inject into the queue
@@ -123,7 +121,6 @@ impl Sync {
             message_sender,
             peer_id,
             peers,
-            request_timeout: config.consensus.consensus_timeout,
             max_batch_size,
             max_blocks_in_flight,
             in_flight: None,
@@ -136,36 +133,19 @@ impl Sync {
         })
     }
 
-    fn count_segments(&self) -> Result<usize> {
-        self.db.count_sync_segments()
-    }
-
-    fn contains_metadata(&self, hash: &Hash) -> Result<bool> {
-        self.db.contains_sync_metadata(hash)
-    }
-
-    fn get_segment(&self, hash: Hash) -> Result<Vec<Hash>> {
-        self.db.get_sync_segment(hash)
-    }
-
-    fn last_segment(&self) -> Result<Option<(BlockHeader, PeerInfo)>> {
-        self.db.last_sync_segment()
-    }
-
-    fn pop_segment(&self) -> Result<()> {
-        self.db.pop_sync_segment()
-    }
-
-    fn push_segment(&self, peer: PeerInfo, meta: BlockHeader) -> Result<()> {
-        self.db.push_sync_segment(peer, meta)
-    }
-
-    fn insert_metadata(&self, metas: &Vec<BlockHeader>) -> Result<()> {
-        self.db.insert_sync_metadata(metas)
-    }
-
-    fn empty_metadata(&self) -> Result<()> {
-        self.db.empty_sync_metadata()
+    pub fn handle_request_failure(&mut self, failure: OutgoingMessageFailure) -> Result<()> {
+        // chekc if the request is a sync messages
+        if let Some((peer, req_id)) = self.in_flight.as_ref() {
+            // downgrade peer due to timeout
+            if peer.peer_id == failure.peer && *req_id == failure.request_id {
+                tracing::warn!(to = %peer.peer_id, err = %failure.error,
+                    "sync::RequestFailure : in-flight request failed"
+                );
+                self.peers
+                    .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
+            }
+        }
+        Ok(())
     }
 
     /// Phase 0: Sync a block proposal.
@@ -239,14 +219,14 @@ impl Sync {
                     tracing::info!(
                         "sync::SyncProposal : finishing {} blocks for segment #{} from {}",
                         self.recent_proposals.len(),
-                        self.count_segments()?,
+                        self.db.count_sync_segments()?,
                         self.peer_id,
                     );
                     // inject the proposals
                     let proposals = self.recent_proposals.drain(..).collect_vec();
                     self.inject_proposals(proposals)?;
                 }
-                self.empty_metadata()?;
+                self.db.empty_sync_metadata()?;
                 self.state = SyncState::Phase0;
             }
             // Retry to fix sync issues e.g. peers that are now offline
@@ -301,7 +281,7 @@ impl Sync {
     /// This will rebuild history from the previous marker, with another peer.
     /// If this function is called many times, it will eventually restart from Phase 0.
     fn retry_phase1(&mut self) -> Result<()> {
-        if self.count_segments()? == 0 {
+        if self.db.count_sync_segments()? == 0 {
             tracing::error!("sync::RetryPhase1 : cannot retry phase 1 without chain segments!");
             self.state = SyncState::Phase0;
             return Ok(());
@@ -309,12 +289,12 @@ impl Sync {
 
         tracing::debug!(
             "sync::RetryPhase1 : retrying segment #{}",
-            self.count_segments()?,
+            self.db.count_sync_segments()?,
         );
 
         // remove the last segment from the chain metadata
-        let (meta, _) = self.last_segment()?.unwrap();
-        self.pop_segment()?;
+        let (meta, _) = self.db.last_sync_segment()?.unwrap();
+        self.db.pop_sync_segment()?;
         self.state = SyncState::Phase1(meta);
 
         Ok(())
@@ -346,7 +326,7 @@ impl Sync {
         from: PeerId,
         response: Vec<Proposal>,
     ) -> Result<()> {
-        if let Some(peer) = self.in_flight.as_ref() {
+        if let Some((peer, _)) = self.in_flight.as_ref() {
             if peer.peer_id != from {
                 tracing::warn!(
                     "sync::MultiBlockResponse : unexpected peer={} != {from}",
@@ -375,7 +355,7 @@ impl Sync {
         tracing::info!(
             "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
             response.len(),
-            self.count_segments()?,
+            self.db.count_sync_segments()?,
             from
         );
 
@@ -405,11 +385,11 @@ impl Sync {
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
-        self.pop_segment()?;
+        self.db.pop_sync_segment()?;
         self.inject_proposals(proposals)?;
 
         // Done with phase 2
-        if self.count_segments()? == 0 {
+        if self.db.count_sync_segments()? == 0 {
             self.state = SyncState::Phase3;
         } else if Self::DO_SPECULATIVE {
             // Speculatively request more blocks
@@ -460,21 +440,11 @@ impl Sync {
             anyhow::bail!("sync::RequestMissingBlocks : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
-        if let Some(peer) = self.in_flight.as_ref() {
-            if peer.last_used.elapsed() > self.request_timeout {
-                tracing::warn!(
-                    "sync::RequestMissingBlocks : in-flight request {} timed out, requesting from new peer",
-                    peer.peer_id
-                );
-                self.peers
-                    .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
-            } else {
-                return Ok(());
-            }
-        } else if self.in_pipeline > self.max_blocks_in_flight {
+        if self.in_flight.is_some() || self.in_pipeline > self.max_blocks_in_flight {
             tracing::warn!(
-                "sync::RequestMissingBlocks : syncing {} blocks in pipeline",
-                self.in_pipeline
+                "sync::RequestMissingBlocks : syncing {}/{} blocks in pipeline",
+                self.in_pipeline,
+                self.max_blocks_in_flight
             );
             return Ok(());
         }
@@ -485,8 +455,8 @@ impl Sync {
             self.peers.reinsert_peer(peer)?;
 
             // If we have no chain_segments, we have nothing to do
-            if let Some((meta, peer_info)) = self.last_segment()? {
-                let request_hashes = self.get_segment(meta.qc.block_hash)?;
+            if let Some((meta, peer_info)) = self.db.last_sync_segment()? {
+                let request_hashes = self.db.get_sync_segment(meta.qc.block_hash)?;
 
                 // Checksum of the request hashes
                 let checksum = request_hashes
@@ -501,35 +471,41 @@ impl Sync {
                 tracing::info!(
                     "sync::RequestMissingBlocks : requesting {} blocks of segment #{} from {}",
                     request_hashes.len(),
-                    self.count_segments()?,
+                    self.db.count_sync_segments()?,
                     peer_info.peer_id,
                 );
-                let message = match peer_info.version {
+                let (peer_info, message) = match peer_info.version {
                     PeerVer::V2 => {
-                        self.in_flight = Some(PeerInfo {
-                            version: PeerVer::V2,
-                            peer_id: peer_info.peer_id,
-                            last_used: std::time::Instant::now(),
-                            score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
-                        });
-                        ExternalMessage::MultiBlockRequest(request_hashes)
+                        (
+                            PeerInfo {
+                                version: PeerVer::V2,
+                                peer_id: peer_info.peer_id,
+                                last_used: std::time::Instant::now(),
+                                score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
+                            },
+                            ExternalMessage::MultiBlockRequest(request_hashes),
+                        )
                     }
                     PeerVer::V1 => {
-                        self.in_flight = Some(PeerInfo {
-                            version: PeerVer::V1,
-                            peer_id: peer_info.peer_id,
-                            last_used: std::time::Instant::now(),
-                            score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
-                        });
-                        // do not add VIEW_DRIFT - the stored marker is accurate!
-                        ExternalMessage::BlockRequest(BlockRequest {
-                            to_view: meta.view.saturating_sub(1),
-                            from_view: meta.view.saturating_sub(self.max_batch_size as u64),
-                        })
+                        (
+                            PeerInfo {
+                                version: PeerVer::V1,
+                                peer_id: peer_info.peer_id,
+                                last_used: std::time::Instant::now(),
+                                score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
+                            },
+                            // do not add VIEW_DRIFT - the stored marker is accurate!
+                            ExternalMessage::BlockRequest(BlockRequest {
+                                to_view: meta.view.saturating_sub(1),
+                                from_view: meta.view.saturating_sub(self.max_batch_size as u64),
+                            }),
+                        )
                     }
                 };
-                self.message_sender
+                let request_id = self
+                    .message_sender
                     .send_external_message(peer_info.peer_id, message)?;
+                self.in_flight = Some((peer_info, request_id));
             }
         } else {
             tracing::warn!(
@@ -552,7 +528,7 @@ impl Sync {
             && response.from_view == u64::MAX
         {
             tracing::info!("sync::HandleBlockResponse : new response from {from}",);
-            if let Some(mut peer) = self.in_flight.take() {
+            if let Some((mut peer, _)) = self.in_flight.take() {
                 if peer.peer_id == from && peer.version == PeerVer::V1 {
                     // upgrade to V2 peer
                     peer.version = PeerVer::V2;
@@ -617,7 +593,11 @@ impl Sync {
                     .proposals
                     .into_iter()
                     // filter any blocks that are not in the chain e.g. forks
-                    .filter(|p| self.contains_metadata(&p.hash()).unwrap_or_default())
+                    .filter(|p| {
+                        self.db
+                            .contains_sync_metadata(&p.hash())
+                            .unwrap_or_default()
+                    })
                     .sorted_by(|a, b| b.number().cmp(&a.number()))
                     .collect_vec();
 
@@ -644,7 +624,7 @@ impl Sync {
         response: Vec<BlockHeader>,
     ) -> Result<()> {
         // Check for expected response
-        let segment_peer = if let Some(peer) = self.in_flight.as_ref() {
+        let segment_peer = if let Some((peer, _)) = self.in_flight.as_ref() {
             if peer.peer_id != from {
                 tracing::warn!(
                     "sync::MetadataResponse : unexpected peer={} != {from}",
@@ -704,15 +684,15 @@ impl Sync {
         tracing::info!(
             "sync::MetadataResponse : received {} metadata segment #{} from {}",
             segment.len(),
-            self.count_segments()?,
+            self.db.count_sync_segments()?,
             from
         );
 
         // Record the constructed chain metadata
-        self.insert_metadata(&segment)?;
+        self.db.insert_sync_metadata(&segment)?;
 
         // Record landmark(s), including peer that has this set of blocks
-        self.push_segment(segment_peer, *meta)?;
+        self.db.push_sync_segment(segment_peer, *meta)?;
 
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
@@ -747,8 +727,8 @@ impl Sync {
             from
         );
 
-        // Do not respond to stale requests as the client has timed-out
-        if request.request_at.elapsed()? > self.request_timeout {
+        // Do not respond to stale requests as the client has probably timed-out
+        if request.request_at.elapsed()? > Duration::from_secs(5) {
             tracing::warn!("sync::MetadataRequest : stale request");
             return Ok(ExternalMessage::Acknowledgement);
         }
@@ -793,34 +773,24 @@ impl Sync {
             anyhow::bail!("sync::RequestMissingMetadata : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
-        if let Some(peer) = self.in_flight.as_ref() {
-            if peer.last_used.elapsed() > self.request_timeout {
-                tracing::warn!(
-                    "sync::RequestMissingMetadata : in-flight request {} timed out, requesting from new peer",
-                    peer.peer_id
-                );
-                self.peers
-                    .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
-            } else {
-                return Ok(());
-            }
-        } else if self.in_pipeline > self.max_batch_size {
+        if self.in_flight.is_some() || self.in_pipeline > self.max_batch_size {
             // anything more than this and we cannot be sure whether the segment hits history
             tracing::warn!(
-                "sync::RequestMissingMetadata :  syncing {} blocks in pipeline",
-                self.in_pipeline
+                "sync::RequestMissingMetadata : syncing {}/{} blocks in pipeline",
+                self.in_pipeline,
+                self.max_batch_size
             );
             return Ok(());
         }
 
-        if let Some(peer) = self.peers.get_next_peer() {
+        if let Some(peer_info) = self.peers.get_next_peer() {
             tracing::info!(
                 "sync::RequestMissingMetadata : requesting {} metadata of segment #{} from {}",
                 self.max_batch_size,
-                self.count_segments()? + 1,
-                peer.peer_id
+                self.db.count_sync_segments()? + 1,
+                peer_info.peer_id
             );
-            let message = match (self.state.clone(), &peer.version) {
+            let message = match (self.state.clone(), &peer_info.version) {
                 (
                     SyncState::Phase1(BlockHeader {
                         number: block_number,
@@ -869,9 +839,10 @@ impl Sync {
                 }
                 _ => anyhow::bail!("sync::MissingMetadata : invalid state"),
             };
-            self.message_sender
-                .send_external_message(peer.peer_id, message)?;
-            self.in_flight = Some(peer);
+            let request_id = self
+                .message_sender
+                .send_external_message(peer_info.peer_id, message)?;
+            self.in_flight = Some((peer_info, request_id));
         } else {
             tracing::warn!(
                 "sync::RequestMissingBlocks : {} insufficient peers to handle request",
@@ -946,7 +917,7 @@ impl Sync {
         Ok(self.in_pipeline != 0
             || !matches!(self.state, SyncState::Phase0)
             || !self.recent_proposals.is_empty()
-            || self.count_segments()? != 0)
+            || self.db.count_sync_segments()? != 0)
     }
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,
@@ -1001,8 +972,8 @@ impl SyncPeers {
     ///
     /// This algorithm favours good peers that respond quickly (i.e. no timeout).
     /// In most cases, it eventually degenerates into 2 sources - avoid a single source of truth.
-    fn done_with_peer(&self, in_flight: Option<PeerInfo>, downgrade: DownGrade) {
-        if let Some(mut peer) = in_flight {
+    fn done_with_peer(&self, in_flight: Option<(PeerInfo, RequestId)>, downgrade: DownGrade) {
+        if let Some((mut peer, _)) = in_flight {
             tracing::trace!("sync::DoneWithPeer {} {:?}", peer.peer_id, downgrade);
             let mut peers = self.peers.lock().unwrap();
             peer.score = peer.score.saturating_add(downgrade as u32);
@@ -1069,12 +1040,15 @@ impl SyncPeers {
         }
         let mut peers = self.peers.lock().unwrap();
         let mut peer = peer;
-        peer.last_used = peers
-            .peek()
-            .expect("peers.len() > 1")
-            .last_used
-            .checked_sub(Duration::from_secs(1))
-            .expect("time is ordinal");
+        if !peers.is_empty() {
+            // Ensure that it gets to the head of the line
+            peer.last_used = peers
+                .peek()
+                .expect("peers.len() > 1")
+                .last_used
+                .checked_sub(Duration::from_secs(1))
+                .expect("time is ordinal");
+        }
         peers.push(peer);
         Ok(())
     }

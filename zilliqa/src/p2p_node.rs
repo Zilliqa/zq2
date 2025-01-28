@@ -112,7 +112,8 @@ impl P2pNode {
                 Ok(Behaviour {
                     request_response: request_response::cbor::Behaviour::new(
                         iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
-                        Default::default(),
+                        request_response::Config::default()
+                            .with_request_timeout(Duration::from_secs(10)),
                     ),
                     gossipsub: gossipsub::Behaviour::new(
                         MessageAuthenticity::Signed(key_pair.clone()),

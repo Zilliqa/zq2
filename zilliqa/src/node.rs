@@ -331,7 +331,7 @@ impl Node {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
-        self.consensus.report_outgoing_message_failure(failure)?;
+        self.consensus.sync.handle_request_failure(failure)?;
         Ok(())
     }
 

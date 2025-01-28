@@ -33,7 +33,7 @@ use crate::{
         ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
         MAX_COMMITTEE_SIZE,
     },
-    node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
+    node::{MessageSender, NetworkMessage},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
     state::State,
     sync::{Sync, SyncPeers},
@@ -3123,13 +3123,6 @@ impl Consensus {
     pub fn get_num_transactions(&self) -> Result<usize> {
         let count = self.db.get_total_transaction_count()?;
         Ok(count)
-    }
-
-    pub fn report_outgoing_message_failure(
-        &mut self,
-        _failure: OutgoingMessageFailure,
-    ) -> Result<()> {
-        Ok(()) // FIXME: Stub
     }
 
     pub fn tick(&mut self) -> Result<()> {
