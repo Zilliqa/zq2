@@ -1,9 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{collections::HashSet, fmt, path::PathBuf, str::FromStr};
 
 use alloy::primitives::B256;
 use anyhow::{anyhow, Context, Result};
@@ -53,7 +48,7 @@ pub async fn run_extra_nodes(
     log_spec: &str,
     components: &HashSet<Component>,
     watch: bool,
-    checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
+    checkpoints: &utils::CheckpointConfiguration,
 ) -> Result<()> {
     println!("🎈 Loading network configuration from {config_dir} .. ");
     let mut setup_obj = setup::Setup::load(config_dir, log_spec, base_dir, watch).await?;
@@ -81,7 +76,7 @@ pub async fn run_net(
     components: &HashSet<Component>,
     keep_old_network: bool,
     watch: bool,
-    checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
+    checkpoints: &utils::CheckpointConfiguration,
     secret_key_hex: Option<String>,
 ) -> Result<()> {
     println!("RUST_LOG = {log_spec}");

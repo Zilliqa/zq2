@@ -689,7 +689,7 @@ impl Setup {
         component: &Component,
         collector: &mut Collector,
         for_nodes: &Composition,
-        checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
+        checkpoints: &utils::CheckpointConfiguration,
     ) -> Result<()> {
         match component {
             Component::Scilla => {
@@ -710,11 +710,7 @@ impl Setup {
                 for idx in for_nodes.nodes.keys() {
                     let config_file = self.get_config_path(*idx)?;
                     // Now, we need to rewrite the config file to take account of checkpoints...
-                    Self::preprocess_config_file(
-                        &config_file,
-                        checkpoints.as_ref().and_then(|x| x.get(idx)),
-                    )
-                    .await?;
+                    Self::preprocess_config_file(&config_file, checkpoints.for_node(*idx)).await?;
                     let node_data = self
                         .config
                         .node_data

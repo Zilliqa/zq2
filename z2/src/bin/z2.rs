@@ -350,6 +350,10 @@ struct RunStruct {
     /// An optional node spec - use node numbers as comma-separated ranges - <network>/<nodes> - eg. 0-3/0-3
     nodespec: Option<String>,
 
+    /// Start the network from a checkpoint in the form file_name:hash
+    #[clap(long)]
+    checkpoint: Option<String>,
+
     #[clap(long)]
     #[clap(default_value = "warn")]
     log_level: LogLevel,
@@ -688,7 +692,7 @@ async fn main() -> Result<()> {
                 &to_run,
                 keep_old_network,
                 arg.watch,
-                &None,
+                &utils::CheckpointConfiguration::None,
                 None,
             )
             .await?;
@@ -730,6 +734,11 @@ async fn main() -> Result<()> {
                 &arg.trace_modules,
             )?;
             let spec = nodespec_from_arg(&arg.nodespec)?;
+            let checkpoints = if let Some(v) = &arg.checkpoint {
+                utils::CheckpointConfiguration::All(utils::parse_checkpoint_spec(v)?)
+            } else {
+                utils::CheckpointConfiguration::None
+            };
             plumbing::run_net(
                 &plumbing::NetworkType::Local(spec),
                 &base_dir,
@@ -739,7 +748,7 @@ async fn main() -> Result<()> {
                 &to_run,
                 keep_old_network,
                 arg.watch,
-                &None,
+                &checkpoints,
                 None,
             )
             .await?;
@@ -1075,9 +1084,9 @@ async fn main() -> Result<()> {
                 for id in spec.nodes.keys() {
                     c.insert(*id, point.clone());
                 }
-                Some(c)
+                utils::CheckpointConfiguration::Selective(c)
             } else {
-                None
+                utils::CheckpointConfiguration::None
             };
             plumbing::run_extra_nodes(
                 &spec,
@@ -1126,9 +1135,9 @@ async fn main() -> Result<()> {
             let checkpoints = if let Some(v) = &arg.checkpoint {
                 let mut table = HashMap::new();
                 table.insert(0, utils::parse_checkpoint_spec(v)?);
-                Some(table)
+                utils::CheckpointConfiguration::Selective(table)
             } else {
-                None
+                utils::CheckpointConfiguration::None
             };
             plumbing::run_net(
                 &plumbing::NetworkType::Deployed(chain),
