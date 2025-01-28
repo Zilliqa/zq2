@@ -18,7 +18,7 @@ use tokio::fs;
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::{
     api,
-    cfg::{max_rpc_response_size_default, state_cache_size_default, ApiServer, ForkDeltas},
+    cfg::{max_rpc_response_size_default, state_cache_size_default, ApiServer, Fork},
     crypto::{SecretKey, TransactionPublicKey},
 };
 use zilliqa::{
@@ -537,7 +537,8 @@ impl Setup {
                     total_native_token_supply: total_native_token_supply_default(),
                     scilla_call_gas_exempt_addrs: vec![],
                     contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
-                    forks: ForkDeltas::default(),
+                    forks: vec![],
+                    genesis_fork: Fork::default(),
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
