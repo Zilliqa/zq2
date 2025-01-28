@@ -398,10 +398,10 @@ impl Default for ConsensusConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DeltaForks(Vec<DeltaFork>);
+pub struct DeltaForks(Vec<ForkDelta>);
 impl Default for DeltaForks {
     fn default() -> Self {
-        DeltaForks(vec![DeltaFork {
+        DeltaForks(vec![ForkDelta {
             at_height: 0,
             failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
             call_mode_1_sets_caller_to_parent_caller: Some(true),
@@ -507,7 +507,7 @@ pub struct Fork {
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-pub struct DeltaFork {
+pub struct ForkDelta {
     pub at_height: u64,
     /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`
     /// precompile and the inner Scilla call fails, the entire transaction will revert. If false, the normal EVM
@@ -534,7 +534,7 @@ pub struct DeltaFork {
 }
 
 impl Fork {
-    pub fn apply_delta_fork(&self, delta: &DeltaFork) -> Fork {
+    pub fn apply_delta_fork(&self, delta: &ForkDelta) -> Fork {
         Fork {
             at_height: delta.at_height,
             failed_scilla_call_from_gas_exempt_caller_causes_revert: delta
@@ -647,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_single_delta_fork() {
-        let delta_forks = DeltaForks(vec![DeltaFork {
+        let delta_forks = DeltaForks(vec![ForkDelta {
             at_height: 0,
             failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
             call_mode_1_sets_caller_to_parent_caller: Some(false),
@@ -665,21 +665,21 @@ mod tests {
     #[test]
     fn test_multiple_delta_forks() {
         let delta_forks = DeltaForks(vec![
-            DeltaFork {
+            ForkDelta {
                 at_height: 0,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
                 call_mode_1_sets_caller_to_parent_caller: Some(true),
                 scilla_messages_can_call_evm_contracts: Some(true),
                 scilla_contract_creation_increments_account_balance: Some(true),
             },
-            DeltaFork {
+            ForkDelta {
                 at_height: 100,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                 call_mode_1_sets_caller_to_parent_caller: Some(false),
                 scilla_messages_can_call_evm_contracts: None,
                 scilla_contract_creation_increments_account_balance: Some(false),
             },
-            DeltaFork {
+            ForkDelta {
                 at_height: 200,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
                 call_mode_1_sets_caller_to_parent_caller: None,
