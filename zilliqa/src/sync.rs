@@ -504,10 +504,7 @@ impl Sync {
                 self.in_flight = Some((peer_info, request_id));
             }
         } else {
-            tracing::warn!(
-                "sync::RequestMissingBlocks : {} insufficient peers to handle request",
-                self.peers.len()
-            );
+            tracing::warn!("sync::RequestMissingBlocks : insufficient peers to handle request");
         }
         Ok(())
     }
@@ -842,10 +839,7 @@ impl Sync {
                 .send_external_message(peer_info.peer_id, message)?;
             self.in_flight = Some((peer_info, request_id));
         } else {
-            tracing::warn!(
-                "sync::RequestMissingBlocks : {} insufficient peers to handle request",
-                self.peers.len()
-            );
+            tracing::warn!("sync::RequestMissingBlocks : insufficient peers to handle request",);
         }
         Ok(())
     }
@@ -996,11 +990,10 @@ impl SyncPeers {
     /// Add bulk peers
     pub fn add_peers(&self, peers: Vec<PeerId>) {
         tracing::debug!("sync::AddPeers {:?}", peers);
-        for peer in peers {
-            if peer != self.peer_id {
-                self.add_peer(peer);
-            }
-        }
+        peers
+            .into_iter()
+            .filter(|p| *p != self.peer_id)
+            .for_each(|p| self.add_peer(p));
     }
 
     /// Add a peer to the list of peers.
@@ -1014,7 +1007,7 @@ impl SyncPeers {
             peer_id: peer,
             last_used: Instant::now(),
         };
-        // ensure that it is unique - avoids single source of truth
+        // ensure that it is unique
         peers.retain(|p: &PeerInfo| p.peer_id != peer);
         peers.push(new_peer);
 
@@ -1029,17 +1022,17 @@ impl SyncPeers {
     }
 
     /// Get the next best peer to use
-    pub fn get_next_peer(&self) -> Option<PeerInfo> {
-        let mut peer = self.peers.lock().unwrap().pop()?;
-        peer.last_used = std::time::Instant::now();
-        // dynamic sizing should not be needed, if we're syncing recent blocks.
-        // self.max_batch_size = self.dynamic_batch_sizing(&peer);
-        tracing::trace!("sync::GetNextPeer {} ({})", peer.peer_id, peer.score);
-        Some(peer)
+    fn get_next_peer(&self) -> Option<PeerInfo> {
+        if let Some(mut peer) = self.peers.lock().unwrap().pop() {
+            peer.last_used = std::time::Instant::now();
+            tracing::trace!(peer = % peer.peer_id, score= %peer.score, "sync::GetNextPeer");
+            return Some(peer);
+        }
+        None
     }
 
     /// Reinserts the peer such that it is at the front of the queue.
-    pub fn reinsert_peer(&self, peer: PeerInfo) -> Result<()> {
+    fn reinsert_peer(&self, peer: PeerInfo) -> Result<()> {
         if peer.score == u32::MAX {
             return Ok(());
         }
@@ -1056,14 +1049,6 @@ impl SyncPeers {
         }
         peers.push(peer);
         Ok(())
-    }
-
-    pub fn len(&self) -> usize {
-        self.peers.lock().unwrap().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.peers.lock().unwrap().is_empty()
     }
 }
 
