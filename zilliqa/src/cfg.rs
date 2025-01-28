@@ -377,15 +377,21 @@ impl ConsensusConfig {
     /// Generates a list of forks by applying the delta forks initially to the genesis fork and then to the previous one.
     /// The genesis fork is the initial fork configuration at the genesis block.
     pub fn get_forks(&self) -> Result<Forks> {
+        if self.genesis_fork.at_height != 0 {
+            return Err(anyhow!("first fork must start at height 0"));
+        }
+
         let mut forks = vec![self.genesis_fork];
-        for delta in &self.forks {
+        let mut delta_forks = self.forks.clone();
+        delta_forks.sort_unstable_by_key(|f| f.at_height);
+        for delta in delta_forks {
             // Safe to call unwrap here because we have at least one fork in the list.
-            let fork = forks.last().unwrap().apply_delta_fork(delta);
+            let fork = forks.last().unwrap().apply_delta_fork(&delta);
             forks.push(fork);
         }
-        Ok(forks
+        forks
             .try_into()
-            .map_err(|e| anyhow!("Failed to construct forks: {}", e))?)
+            .map_err(|e| anyhow!("Failed to construct forks: {}", e))
     }
 }
 
@@ -706,7 +712,7 @@ mod tests {
             forks: vec![
                 ForkDelta {
                     at_height: 20,
-                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
@@ -727,6 +733,15 @@ mod tests {
         assert_eq!(forks.0[0].at_height, 0);
         assert_eq!(forks.0[1].at_height, 10);
         assert_eq!(forks.0[2].at_height, 20);
+
+        assert_eq!(
+            forks.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert,
+            false
+        );
+        assert_eq!(
+            forks.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert,
+            true,
+        );
     }
 
     #[test]
