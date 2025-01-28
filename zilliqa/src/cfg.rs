@@ -366,7 +366,11 @@ pub struct ConsensusConfig {
     /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
     /// difference applies.
     #[serde(default)]
-    pub forks: DeltaForks,
+    pub forks: ForkDeltas,
+
+    /// The initial fork configuration at genesis block. This provides a complete description of the execution behaviour
+    /// at the genesis block.
+    pub genesis_fork: Fork,
 }
 
 impl Default for ConsensusConfig {
@@ -393,15 +397,16 @@ impl Default for ConsensusConfig {
             scilla_call_gas_exempt_addrs: vec![],
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
             forks: Default::default(),
+            genesis_fork: Default::default(),
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DeltaForks(Vec<ForkDelta>);
-impl Default for DeltaForks {
+pub struct ForkDeltas(Vec<ForkDelta>);
+impl Default for ForkDeltas {
     fn default() -> Self {
-        DeltaForks(vec![ForkDelta {
+        ForkDeltas(vec![ForkDelta {
             at_height: 0,
             failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
             call_mode_1_sets_caller_to_parent_caller: Some(true),
@@ -411,8 +416,8 @@ impl Default for DeltaForks {
     }
 }
 
-impl From<DeltaForks> for Forks {
-    fn from(delta_forks: DeltaForks) -> Self {
+impl From<ForkDeltas> for Forks {
+    fn from(delta_forks: ForkDeltas) -> Self {
         let mut forks: Vec<Fork> = vec![];
         for delta in delta_forks.0 {
             if let Some(last_fork) = forks.last() {
@@ -504,6 +509,18 @@ pub struct Fork {
     pub call_mode_1_sets_caller_to_parent_caller: bool,
     pub scilla_messages_can_call_evm_contracts: bool,
     pub scilla_contract_creation_increments_account_balance: bool,
+}
+
+impl Default for Fork {
+    fn default() -> Self {
+        Fork {
+            at_height: 0,
+            failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+            call_mode_1_sets_caller_to_parent_caller: true,
+            scilla_messages_can_call_evm_contracts: true,
+            scilla_contract_creation_increments_account_balance: true,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -647,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_single_delta_fork() {
-        let delta_forks = DeltaForks(vec![ForkDelta {
+        let delta_forks = ForkDeltas(vec![ForkDelta {
             at_height: 0,
             failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
             call_mode_1_sets_caller_to_parent_caller: Some(false),
@@ -664,7 +681,7 @@ mod tests {
 
     #[test]
     fn test_multiple_delta_forks() {
-        let delta_forks = DeltaForks(vec![
+        let delta_forks = ForkDeltas(vec![
             ForkDelta {
                 at_height: 0,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
