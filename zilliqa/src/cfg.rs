@@ -368,13 +368,13 @@ pub struct ConsensusConfig {
     #[serde(default)]
     pub forks: Vec<ForkDelta>,
 
-    /// The initial fork configuration at genesis block. This provides a complete description of the execution behaviour
+    /// The initial fork configuration at genesis block. This provides a complete description of the execution behavior
     /// at the genesis block.
     pub genesis_fork: Fork,
 }
 
 impl ConsensusConfig {
-    /// Generates a list of forks by applying the delta forks initially to the genesis fork and then to the prevous one.
+    /// Generates a list of forks by applying the delta forks initially to the genesis fork and then to the previous one.
     /// The genesis fork is the initial fork configuration at the genesis block.
     pub fn get_forks(&self) -> Result<Forks> {
         let mut forks = vec![self.genesis_fork];
@@ -413,7 +413,7 @@ impl Default for ConsensusConfig {
             scilla_call_gas_exempt_addrs: vec![],
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
             forks: vec![],
-            genesis_fork: Default::default(),
+            genesis_fork: genesis_fork_default(),
         }
     }
 }
@@ -444,22 +444,6 @@ impl From<Forks> for Vec<Fork> {
     }
 }
 
-impl Default for Forks {
-    /// The default implementation of [Forks] returns a single fork at the genesis block, with the most up-to-date
-    /// execution logic.
-    fn default() -> Self {
-        vec![Fork {
-            at_height: 0,
-            failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
-            call_mode_1_sets_caller_to_parent_caller: true,
-            scilla_messages_can_call_evm_contracts: true,
-            scilla_contract_creation_increments_account_balance: true,
-        }]
-        .try_into()
-        .unwrap()
-    }
-}
-
 impl Forks {
     pub fn get(&self, height: u64) -> Fork {
         // Binary search to find the fork at the specified height. If an entry was not found at exactly the specified
@@ -481,18 +465,6 @@ pub struct Fork {
     pub call_mode_1_sets_caller_to_parent_caller: bool,
     pub scilla_messages_can_call_evm_contracts: bool,
     pub scilla_contract_creation_increments_account_balance: bool,
-}
-
-impl Default for Fork {
-    fn default() -> Self {
-        Fork {
-            at_height: 0,
-            failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
-            call_mode_1_sets_caller_to_parent_caller: true,
-            scilla_messages_can_call_evm_contracts: true,
-            scilla_contract_creation_increments_account_balance: true,
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -596,13 +568,23 @@ pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
 }
 
+pub fn genesis_fork_default() -> Fork {
+    Fork {
+        at_height: 0,
+        failed_scilla_call_from_gas_exempt_caller_causes_revert: false,
+        call_mode_1_sets_caller_to_parent_caller: false,
+        scilla_messages_can_call_evm_contracts: false,
+        scilla_contract_creation_increments_account_balance: false,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractUpgradesBlockHeights {
     pub deposit_v3: Option<u64>,
 }
 
 impl ContractUpgradesBlockHeights {
-    // toml doesnt like Option types. Map items in struct and remove keys for None values
+    // toml doesn't like Option types. Map items in struct and remove keys for None values
     pub fn to_toml(&self) -> toml::Value {
         toml::Value::Table(
             json!(self)
