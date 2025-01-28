@@ -381,14 +381,18 @@ impl ConsensusConfig {
             return Err(anyhow!("first fork must start at height 0"));
         }
 
-        let mut forks = vec![self.genesis_fork];
-        let mut delta_forks = self.forks.clone();
+        let mut delta_forks = self.forks.to_vec();
         delta_forks.sort_unstable_by_key(|f| f.at_height);
-        for delta in delta_forks {
-            // Safe to call unwrap here because we have at least one fork in the list.
-            let fork = forks.last().unwrap().apply_delta_fork(&delta);
-            forks.push(fork);
-        }
+
+        let forks = delta_forks
+            .into_iter()
+            .fold(vec![self.genesis_fork], |mut forks, delta| {
+                let last_fork = forks.last().unwrap(); // Safe to call unwrap because we always have genesis_fork
+                let new_fork = last_fork.apply_delta_fork(&delta);
+                forks.push(new_fork);
+                forks
+            });
+
         forks
             .try_into()
             .map_err(|e| anyhow!("Failed to construct forks: {}", e))
@@ -425,22 +429,14 @@ impl Default for ConsensusConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(try_from = "Vec<Fork>", into = "Vec<Fork>")]
+#[serde(from = "Vec<Fork>", into = "Vec<Fork>")]
 pub struct Forks(Vec<Fork>);
 
-impl TryFrom<Vec<Fork>> for Forks {
-    type Error = anyhow::Error;
-
-    fn try_from(mut forks: Vec<Fork>) -> Result<Self, Self::Error> {
+impl From<Vec<Fork>> for Forks {
+    fn from(mut forks: Vec<Fork>) -> Self {
         // Sort forks by height so we can binary search to find the current fork.
         forks.sort_unstable_by_key(|f| f.at_height);
-
-        // Assert we have a fork that starts at the genesis block.
-        if forks.first().ok_or_else(|| anyhow!("no forks"))?.at_height != 0 {
-            return Err(anyhow!("first fork must start at height 0"));
-        }
-
-        Ok(Forks(forks))
+        Forks(forks)
     }
 }
 
