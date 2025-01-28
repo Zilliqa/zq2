@@ -245,10 +245,7 @@ impl Sync {
                 }
             }
             _ => {
-                tracing::debug!(
-                    "sync::SyncProposal : syncing {} blocks in pipeline",
-                    self.in_pipeline
-                );
+                tracing::debug!("sync::SyncProposal : syncing {} blocks", self.in_pipeline);
             }
         }
 
@@ -442,7 +439,7 @@ impl Sync {
         // Early exit if there's a request in-flight; and if it has not expired.
         if self.in_flight.is_some() || self.in_pipeline > self.max_blocks_in_flight {
             tracing::warn!(
-                "sync::RequestMissingBlocks : syncing {}/{} blocks in pipeline",
+                "sync::RequestMissingBlocks : syncing {}/{} blocks",
                 self.in_pipeline,
                 self.max_blocks_in_flight
             );
@@ -776,7 +773,7 @@ impl Sync {
         if self.in_flight.is_some() || self.in_pipeline > self.max_batch_size {
             // anything more than this and we cannot be sure whether the segment hits history
             tracing::warn!(
-                "sync::RequestMissingMetadata : syncing {}/{} blocks in pipeline",
+                "sync::RequestMissingMetadata : syncing {}/{} blocks",
                 self.in_pipeline,
                 self.max_batch_size
             );

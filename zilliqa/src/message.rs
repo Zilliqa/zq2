@@ -274,8 +274,7 @@ pub enum ExternalMessage {
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
-    AddPeer,
-    RemovePeer,
+    /// The following are used for the new sync protocol
     InjectedProposal(InjectedProposal),
     MetaDataRequest(RequestBlocksByHeight),
     MetaDataResponse(Vec<BlockHeader>),
@@ -315,8 +314,6 @@ impl Display for ExternalMessage {
             ExternalMessage::InjectedProposal(p) => {
                 write!(f, "InjectedProposal {}", p.block.number())
             }
-            ExternalMessage::AddPeer => write!(f, "AddPeer"),
-            ExternalMessage::RemovePeer => write!(f, "RemovePeer"),
             ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
             ExternalMessage::Vote(v) => write!(f, "Vote({})", v.view),
             ExternalMessage::NewView(n) => write!(f, "NewView({})", n.view),

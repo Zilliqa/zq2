@@ -329,7 +329,7 @@ impl Db {
             ",
         )?;
         connection.execute_batch(
-            "CREATE TEMP TABLE IF NOT EXISTS sync_data (
+            "CREATE TEMP TABLE IF NOT EXISTS sync_metadata (
             block_hash BLOB NOT NULL UNIQUE,
             parent_hash BLOB NOT NULL,
             block_number INTEGER NOT NULL PRIMARY KEY,
@@ -338,7 +338,7 @@ impl Db {
             version INTEGER DEFAULT 0,
             peer BLOB DEFAULT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_sync_data ON sync_data(block_number) WHERE peer IS NOT NULL;",
+        CREATE INDEX IF NOT EXISTS idx_sync_metadata ON sync_metadata(block_number) WHERE peer IS NOT NULL;",
         )?;
 
         Ok(())
@@ -361,20 +361,20 @@ impl Db {
             .db
             .lock()
             .unwrap()
-            .prepare_cached("SELECT COUNT(block_number) FROM sync_data WHERE peer IS NOT NULL")?
+            .prepare_cached("SELECT COUNT(block_number) FROM sync_metadata WHERE peer IS NOT NULL")?
             .query_row([], |row| row.get(0))
             .optional()?
             .unwrap_or_default())
     }
 
     /// Checks if the stored metadata exists
-    pub fn contains_sync_metadata(&self, hash: &Hash) -> Result<bool> {
+    pub fn contains_sync_metadata(&self, block_hash: &Hash) -> Result<bool> {
         Ok(self
             .db
             .lock()
             .unwrap()
-            .prepare_cached("SELECT block_number FROM sync_data WHERE block_hash = ?1")?
-            .query_row([hash], |row| row.get::<_, u64>(0))
+            .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
+            .query_row([block_hash], |row| row.get::<_, Hash>(0))
             .optional()?
             .is_some())
     }
@@ -387,7 +387,7 @@ impl Db {
         let mut block_hash = hash;
 
         while let Some(parent_hash) = db
-            .prepare_cached("SELECT parent_hash FROM sync_data WHERE block_hash = ?1")?
+            .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
             .query_row([block_hash], |row| row.get::<_, Hash>(0))
             .optional()?
         {
@@ -400,7 +400,7 @@ impl Db {
     /// Peeks into the top of the segment stack.
     pub fn last_sync_segment(&self) -> Result<Option<(BlockHeader, PeerInfo)>> {
         let db = self.db.lock().unwrap();
-        let r = db.prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, gas_used, version, peer FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
+        let r = db.prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, gas_used, version, peer FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
         .query_row([], |row| Ok((
             BlockHeader::from_meta_data(row.get(0)?,row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?),
         PeerInfo {
@@ -416,7 +416,7 @@ impl Db {
     pub fn push_sync_segment(&self, peer: PeerInfo, meta: BlockHeader) -> Result<()> {
         let db = self.db.lock().unwrap();
         db.prepare_cached(
-                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, gas_used, version, peer) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used, :version, :peer)")?
+                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, view_number, gas_used, version, peer) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used, :version, :peer)")?
                 .execute(
                 named_params! {
                     ":parent_hash": meta.qc.block_hash,
@@ -438,7 +438,7 @@ impl Db {
 
         for meta in metas {
             tx.prepare_cached(
-                "INSERT OR REPLACE INTO sync_data (parent_hash, block_hash, block_number, view_number, gas_used) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used)")?
+                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, view_number, gas_used) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used)")?
                 .execute(
                 named_params! {
                     ":parent_hash": meta.qc.block_hash,
@@ -457,7 +457,7 @@ impl Db {
         self.db
             .lock()
             .unwrap()
-            .execute("DELETE FROM sync_data", [])?;
+            .execute("DELETE FROM sync_metadata", [])?;
         Ok(())
     }
 
@@ -466,14 +466,14 @@ impl Db {
         let mut db = self.db.lock().unwrap();
         let c = db.transaction()?;
 
-        if let Some(block_hash) = c.prepare_cached("SELECT block_hash FROM sync_data WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
+        if let Some(block_hash) = c.prepare_cached("SELECT block_hash FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
         .query_row([], |row| row.get::<_,Hash>(0)).optional()? {
-            if let Some(parent_hash) = c.prepare_cached("SELECT parent_hash FROM sync_data WHERE block_hash = ?1")?
+            if let Some(parent_hash) = c.prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
             .query_row([block_hash], |row| row.get(0)).optional()? {
 
             // update marker
             c.prepare_cached(
-                "UPDATE sync_data SET peer = NULL WHERE block_hash = ?1")?
+                "UPDATE sync_metadata SET peer = NULL WHERE block_hash = ?1")?
                 .execute(
                 [block_hash]
             )?;
@@ -482,7 +482,7 @@ impl Db {
             let mut hashes = Vec::new();
             let mut block_hash = parent_hash;
             while let Some(parent_hash) = c
-                    .prepare_cached("SELECT parent_hash FROM sync_data WHERE block_hash = ?1")?
+                    .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
                     .query_row([block_hash], |row| row.get::<_, Hash>(0))
                     .optional()?
                 {
@@ -491,7 +491,7 @@ impl Db {
                 }
 
             for hash in hashes {
-                c.prepare_cached("DELETE FROM sync_data WHERE block_hash = ?1")?
+                c.prepare_cached("DELETE FROM sync_metadata WHERE block_hash = ?1")?
                 .execute([hash])?;
             }
             }
