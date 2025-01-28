@@ -3130,8 +3130,8 @@ impl Consensus {
         trace!("request_missing_blocks from timer");
 
         // TODO: Drive passive-sync from Timeouts
-        if self.sync.am_syncing()? {
-            self.sync.sync_internal()?;
+        if !self.sync.am_syncing()? {
+            self.sync.sync_to_genesis()?;
         } else {
             trace!("not syncing ...");
         }

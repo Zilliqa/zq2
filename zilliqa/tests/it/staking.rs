@@ -532,7 +532,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
 
     // Give new node time to catch up to block including deposit_v3 deployment
     network
-        .run_until_block(&staker_wallet, 24.into(), 200)
+        .run_until_block(&staker_wallet, 24.into(), 424)
         .await;
 
     let deposit_hash = deposit_v3_stake(

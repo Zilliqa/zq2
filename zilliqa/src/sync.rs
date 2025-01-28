@@ -133,16 +133,27 @@ impl Sync {
         })
     }
 
+    /// P2P Failure
+    ///
+    /// This gets called for any libp2p request failure.
     pub fn handle_request_failure(&mut self, failure: OutgoingMessageFailure) -> Result<()> {
         // chekc if the request is a sync messages
         if let Some((peer, req_id)) = self.in_flight.as_ref() {
             // downgrade peer due to timeout
             if peer.peer_id == failure.peer && *req_id == failure.request_id {
                 tracing::warn!(to = %peer.peer_id, err = %failure.error,
-                    "sync::RequestFailure : in-flight request failed"
+                    "sync::RequestFailure : in-flight failed"
                 );
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
+                // Retry if failed in Phase 2 for whatever reason
+                match self.state {
+                    SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
+                        self.request_missing_metadata(None)?
+                    }
+                    SyncState::Phase2(_) => self.state = SyncState::Retry1,
+                    _ => {}
+                }
             }
         }
         Ok(())
@@ -156,17 +167,22 @@ impl Sync {
     /// If we find its parent in history, we inject the entire queue. Otherwise, we start syncing.
     ///
     /// We do not perform checks on the Proposal here. This is done in the consensus layer.
-    pub fn sync_proposal(&mut self, proposal: Proposal) -> Result<()> {
+    pub fn sync_from_proposal(&mut self, proposal: Proposal) -> Result<()> {
         // just stuff the latest proposal into the fixed-size queue.
         while self.recent_proposals.len() >= self.max_batch_size {
             self.recent_proposals.pop_front();
         }
         self.recent_proposals.push_back(proposal);
 
-        self.sync_internal()
+        self.internal_sync()
     }
 
-    pub fn sync_internal(&mut self) -> Result<()> {
+    // TODO: Passive-sync place-holder
+    pub fn sync_to_genesis(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn internal_sync(&mut self) -> Result<()> {
         if self.recent_proposals.is_empty() {
             // Do nothing if there's no recent proposals.
             tracing::debug!("sync::Internal : missing recent proposals");
