@@ -8,6 +8,7 @@ roles:
 - checkpoint
 - persistence
 - query
+- graph
 versions:
   zq2: 34889841
   otterscan: develop

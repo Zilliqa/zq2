@@ -13,7 +13,6 @@ use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use libp2p::PeerId;
-use once_cell::sync::Lazy;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -24,7 +23,6 @@ use crate::{
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
-    contracts,
     crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -1094,7 +1092,7 @@ impl Consensus {
 
         if supermajority_reached {
             trace!(
-                "(vote) supermajority already reached in this round {}",
+                "(vote) supermajority already reached in this view {}",
                 current_view
             );
             return Ok(None);
@@ -1230,7 +1228,10 @@ impl Consensus {
 
         if self.block_is_first_in_epoch(proposal.header.number) {
             // Update state with any contract upgrades for this block
-            self.contract_upgrade_apply_state_change(&mut state, proposal.header)?;
+            state.contract_upgrade_apply_state_change(
+                &self.config.consensus.contract_upgrade_block_heights,
+                proposal.header,
+            )?;
         }
 
         // Finalise the proposal with final QC and state.
@@ -1258,27 +1259,6 @@ impl Consensus {
 
         // Return the final proposal
         Ok(Some(proposal))
-    }
-
-    /// If there are any contract updates to be done then apply them to the state passed in
-    fn contract_upgrade_apply_state_change(
-        &mut self,
-        state: &mut State,
-        block_header: BlockHeader,
-    ) -> Result<()> {
-        if let Some(deposit_v3_deploy_height) = self
-            .config
-            .consensus
-            .contract_upgrade_block_heights
-            .deposit_v3
-        {
-            if deposit_v3_deploy_height == block_header.number {
-                let deposit_v3_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
-                state.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
-            }
-        }
-        Ok(())
     }
 
     /// Assembles the Proposal block early.
@@ -1326,8 +1306,8 @@ impl Consensus {
         };
 
         debug!(
-            "assemble early proposal {} in view {}",
-            executed_block_header.number, executed_block_header.view
+            "assemble early proposal view {} block number {}",
+            executed_block_header.view, executed_block_header.number
         );
 
         // Ensure sane state
@@ -1401,7 +1381,7 @@ impl Consensus {
 
             if milliseconds_remaining_of_block_time == 0 {
                 debug!(
-                    "stopped adding txs to block {} because block time is reached",
+                    "stopped adding txs to block number {} because block time is reached",
                     proposal.header.number,
                 );
                 break;
@@ -1791,7 +1771,7 @@ impl Consensus {
         let mut current_view = self.get_view()?;
         // if the vote is too old and does not count anymore
         if new_view.view < current_view {
-            trace!(new_view.view, "Received a vote which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
+            trace!(new_view.view, "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
             return Ok(None);
         }
 
@@ -2278,7 +2258,7 @@ impl Consensus {
             .map_err(|e| (e, false))?
         else {
             warn!(
-                "Missing parent block while trying to check validity of block {}",
+                "Missing parent block while trying to check validity of block number {}",
                 block.number()
             );
             return Err((MissingBlockError::from(block.parent_hash()).into(), true));
@@ -2960,8 +2940,8 @@ impl Consensus {
             && from.is_some_and(|peer_id| peer_id == self.peer_id())
         {
             debug!(
-                "fast-forward self-proposal {} for view {}",
-                block.header.number, block.header.view
+                "fast-forward self-proposal view {} block number {}",
+                block.header.view, block.header.number
             );
 
             let mut block_receipts = Vec::new();
@@ -3118,7 +3098,10 @@ impl Consensus {
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
             let mut state_clone = self.state.clone();
-            self.contract_upgrade_apply_state_change(&mut state_clone, block.header)?;
+            state_clone.contract_upgrade_apply_state_change(
+                &self.config.consensus.contract_upgrade_block_heights,
+                block.header,
+            )?;
             self.state = state_clone;
         }
 

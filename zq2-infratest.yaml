@@ -8,7 +8,8 @@ roles:
 - checkpoint
 - persistence
 - query
+- graph
 versions:
-  zq2: e78617c2
+  zq2: 1d146079
   otterscan: develop
   spout: main

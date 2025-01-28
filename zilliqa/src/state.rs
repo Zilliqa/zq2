@@ -14,11 +14,11 @@ use ethabi::Token;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     block_store::BlockStore,
-    cfg::{Amount, Forks, NodeConfig, ScillaExtLibsPath},
+    cfg::{Amount, ContractUpgradesBlockHeights, Forks, NodeConfig, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
     db::TrieStorage,
@@ -164,9 +164,32 @@ impl State {
         state.deploy_initial_deposit_contract(&config)?;
 
         let deposit_contract = Lazy::<contracts::Contract>::force(&contracts::deposit::CONTRACT);
-        state.upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO), deposit_contract)?;
+        let block_header = BlockHeader::genesis(Hash::ZERO);
+        state.upgrade_deposit_contract(block_header, deposit_contract)?;
+
+        // Check if any contracts are to be upgraded from genesis
+        state.contract_upgrade_apply_state_change(
+            &config.consensus.contract_upgrade_block_heights,
+            block_header,
+        )?;
 
         Ok(state)
+    }
+
+    /// If there are any contract updates to be performed then apply them to self
+    pub fn contract_upgrade_apply_state_change(
+        &mut self,
+        contract_upgrade_block_heights: &ContractUpgradesBlockHeights,
+        block_header: BlockHeader,
+    ) -> Result<()> {
+        if let Some(deposit_v3_deploy_height) = contract_upgrade_block_heights.deposit_v3 {
+            if deposit_v3_deploy_height == block_header.number {
+                let deposit_v3_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+                self.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
+            }
+        }
+        Ok(())
     }
 
     /// Deploy DepositInit contract (deposit_v1.sol)
@@ -233,11 +256,6 @@ impl State {
         contract: &Contract,
     ) -> Result<Address> {
         let current_version = self.deposit_contract_version(current_block)?;
-        debug!(
-            "Upgrading deposit contract from version {} to verion {}",
-            current_version,
-            current_version + 1
-        );
 
         // Deploy latest deposit implementation
         let new_deposit_impl_addr =
@@ -262,11 +280,12 @@ impl State {
         ensure_success(result)?;
 
         let new_version = self.deposit_contract_version(current_block)?;
-        debug!(
-            "EIP 1967 deposit contract {} updated with new deposit contract {} proxy version {}",
+        info!(
+            "EIP 1967 deposit contract proxy {} updated from version {} to new version {} with contract addr {}",
             contract_addr::DEPOSIT_PROXY,
-            new_deposit_impl_addr,
-            new_version
+            current_version,
+            new_version,
+            new_deposit_impl_addr
         );
 
         Ok(new_deposit_impl_addr)

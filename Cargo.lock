@@ -146,13 +146,30 @@ dependencies = [
 
 [[package]]
 name = "alloy-core"
-version = "0.8.18"
+version = "0.8.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0713007d14d88a6edb8e248cddab783b698dbb954a28b8eee4bab21cfb7e578"
+checksum = "c618bd382f0bc2ac26a7e4bfae01c9b015ca8f21b37ca40059ae35a7e62b3dc6"
 dependencies = [
+ "alloy-dyn-abi",
+ "alloy-json-abi",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-sol-types",
+]
+
+[[package]]
+name = "alloy-dyn-abi"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41056bde53ae10ffbbf11618efbe1e0290859e5eab0fe9ef82ebdb62f12a866f"
+dependencies = [
+ "alloy-json-abi",
+ "alloy-primitives",
+ "alloy-sol-type-parser",
+ "alloy-sol-types",
+ "const-hex",
+ "itoa",
+ "winnow",
 ]
 
 [[package]]
@@ -261,9 +278,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-primitives"
-version = "0.8.18"
+version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "788bb18e8f61d5d9340b52143f27771daf7e1dccbaf2741621d2493f9debf52e"
+checksum = "ec878088ec6283ce1e90d280316aadd3d6ce3de06ff63d68953c855e7e447e92"
 dependencies = [
  "alloy-rlp",
  "bytes",
@@ -472,6 +489,7 @@ version = "0.8.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19cc9c7f20b90f9be1a8f71a3d8e283a43745137b0837b1a1cb13159d37cad72"
 dependencies = [
+ "alloy-json-abi",
  "alloy-sol-macro-input",
  "const-hex",
  "heck",
@@ -490,20 +508,22 @@ version = "0.8.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "713b7e6dfe1cb2f55c80fb05fd22ed085a1b4e48217611365ed0ae598a74c6ac"
 dependencies = [
+ "alloy-json-abi",
  "const-hex",
  "dunce",
  "heck",
  "proc-macro2",
  "quote",
+ "serde_json",
  "syn 2.0.96",
  "syn-solidity",
 ]
 
 [[package]]
 name = "alloy-sol-type-parser"
-version = "0.8.18"
+version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1eda2711ab2e1fb517fc6e2ffa9728c9a232e296d16810810e6957b781a1b8bc"
+checksum = "74e60b084fe1aef8acecda2743ff2d93c18ff3eb67a2d3b12f62582a1e66ef5e"
 dependencies = [
  "serde",
  "winnow",
@@ -2202,7 +2222,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef552e6f588e446098f6ba40d89ac146c8c7b64aade83c051ee00bb5d2bc18d"
 dependencies = [
- "uuid 1.11.1",
+ "uuid 1.12.0",
 ]
 
 [[package]]
@@ -2638,7 +2658,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "rand",
  "rlp 0.6.1",
- "uuid 1.11.1",
+ "uuid 1.12.0",
 ]
 
 [[package]]
@@ -4368,7 +4388,6 @@ dependencies = [
  "console",
  "number_prefix",
  "portable-atomic",
- "rayon",
  "unicode-width 0.2.0",
  "web-time",
 ]
@@ -5393,9 +5412,9 @@ checksum = "9374ef4228402d4b7e403e5838cb880d9ee663314b0a900d5a6aabf0c213552e"
 
 [[package]]
 name = "log"
-version = "0.4.22"
+version = "0.4.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
+checksum = "04cbf5b083de1c7e0222a7a51dbfdba1cbe1c6ab0b15e29fff3f6c077fd9cd9f"
 
 [[package]]
 name = "lru"
@@ -5890,9 +5909,9 @@ dependencies = [
 
 [[package]]
 name = "octocrab"
-version = "0.42.1"
+version = "0.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b97f949a7cb04608441c2ddb28e15a377e8b5142c2d1835ad2686d434de8558"
+checksum = "27527d68322f4c603319f7958973db8f9fa4be62c0e3fafe084f5562cf6353df"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -7945,9 +7964,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.135"
+version = "1.0.137"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b0d7ba2887406110130a978386c4e1befb98c674b4fba677954e4db976630d9"
+checksum = "930cfb6e6abf99298aaad7d29abbef7a9999a9a8806a40088f55f0dcec03146b"
 dependencies = [
  "indexmap 2.7.0",
  "itoa",
@@ -8523,7 +8542,7 @@ dependencies = [
  "debugid",
  "memmap2",
  "stable_deref_trait",
- "uuid 1.11.1",
+ "uuid 1.12.0",
 ]
 
 [[package]]
@@ -9498,9 +9517,9 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.11.1"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b913a3b5fe84142e269d63cc62b64319ccaf89b748fc31fe025177f767a756c4"
+checksum = "744018581f9a3454a9e15beb8a33b017183f1e7c0cd170232a2d1453b23a51c4"
 dependencies = [
  "getrandom",
  "serde",
@@ -10385,7 +10404,6 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_core",
- "rayon",
  "revm",
  "revm-inspectors",
  "rusqlite",
