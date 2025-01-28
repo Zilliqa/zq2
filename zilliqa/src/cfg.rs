@@ -646,11 +646,8 @@ mod tests {
         assert_eq!(forks.0.len(), 2);
         assert_eq!(forks.0[0].at_height, 0);
         assert_eq!(forks.0[1].at_height, 10);
-        assert_eq!(forks.0[1].call_mode_1_sets_caller_to_parent_caller, true);
-        assert_eq!(
-            forks.0[1].scilla_contract_creation_increments_account_balance,
-            true
-        );
+        assert!(forks.0[1].call_mode_1_sets_caller_to_parent_caller);
+        assert!(forks.0[1].scilla_contract_creation_increments_account_balance);
     }
 
     #[test]
@@ -681,21 +678,12 @@ mod tests {
         assert_eq!(forks.0[0].at_height, 0);
         assert_eq!(forks.0[1].at_height, 10);
         assert_eq!(forks.0[2].at_height, 20);
-        assert_eq!(
-            forks.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert,
-            true
-        );
-        assert_eq!(forks.0[1].scilla_messages_can_call_evm_contracts, true);
-        assert_eq!(
-            forks.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert,
-            false
-        );
-        assert_eq!(forks.0[2].call_mode_1_sets_caller_to_parent_caller, true);
-        assert_eq!(forks.0[2].scilla_messages_can_call_evm_contracts, false);
-        assert_eq!(
-            forks.0[2].scilla_contract_creation_increments_account_balance,
-            true
-        );
+        assert!(forks.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert);
+        assert!(forks.0[1].scilla_messages_can_call_evm_contracts);
+        assert!(!forks.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert);
+        assert!(forks.0[2].call_mode_1_sets_caller_to_parent_caller);
+        assert!(!forks.0[2].scilla_messages_can_call_evm_contracts);
+        assert!(forks.0[2].scilla_contract_creation_increments_account_balance);
     }
 
     #[test]
@@ -727,14 +715,8 @@ mod tests {
         assert_eq!(forks.0[1].at_height, 10);
         assert_eq!(forks.0[2].at_height, 20);
 
-        assert_eq!(
-            forks.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert,
-            false
-        );
-        assert_eq!(
-            forks.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert,
-            true,
-        );
+        assert!(!forks.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert);
+        assert!(forks.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert);
     }
 
     #[test]
