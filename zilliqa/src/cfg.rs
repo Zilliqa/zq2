@@ -611,3 +611,139 @@ impl Default for ContractUpgradesBlockHeights {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_forks_with_no_forks() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 1);
+        assert_eq!(forks.0[0].at_height, 0);
+    }
+
+    #[test]
+    fn test_get_forks_with_one_fork() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![ForkDelta {
+                at_height: 10,
+                failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                call_mode_1_sets_caller_to_parent_caller: Some(true),
+                scilla_messages_can_call_evm_contracts: None,
+                scilla_contract_creation_increments_account_balance: Some(true),
+            }],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 2);
+        assert_eq!(forks.0[0].at_height, 0);
+        assert_eq!(forks.0[1].at_height, 10);
+        assert_eq!(forks.0[1].call_mode_1_sets_caller_to_parent_caller, true);
+        assert_eq!(
+            forks.0[1].scilla_contract_creation_increments_account_balance,
+            true
+        );
+    }
+
+    #[test]
+    fn test_get_forks_with_multiple_forks() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![
+                ForkDelta {
+                    at_height: 10,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: Some(true),
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+                ForkDelta {
+                    at_height: 20,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
+                    call_mode_1_sets_caller_to_parent_caller: Some(true),
+                    scilla_messages_can_call_evm_contracts: Some(false),
+                    scilla_contract_creation_increments_account_balance: Some(true),
+                },
+            ],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 3);
+        assert_eq!(forks.0[0].at_height, 0);
+        assert_eq!(forks.0[1].at_height, 10);
+        assert_eq!(forks.0[2].at_height, 20);
+        assert_eq!(
+            forks.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert,
+            true
+        );
+        assert_eq!(forks.0[1].scilla_messages_can_call_evm_contracts, true);
+        assert_eq!(
+            forks.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert,
+            false
+        );
+        assert_eq!(forks.0[2].call_mode_1_sets_caller_to_parent_caller, true);
+        assert_eq!(forks.0[2].scilla_messages_can_call_evm_contracts, false);
+        assert_eq!(
+            forks.0[2].scilla_contract_creation_increments_account_balance,
+            true
+        );
+    }
+
+    #[test]
+    fn test_get_forks_with_unsorted_forks() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![
+                ForkDelta {
+                    at_height: 20,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+                ForkDelta {
+                    at_height: 10,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 3);
+        assert_eq!(forks.0[0].at_height, 0);
+        assert_eq!(forks.0[1].at_height, 10);
+        assert_eq!(forks.0[2].at_height, 20);
+    }
+
+    #[test]
+    fn test_get_forks_with_missing_genesis_fork() {
+        let config = ConsensusConfig {
+            genesis_fork: Fork {
+                at_height: 1,
+                failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+                call_mode_1_sets_caller_to_parent_caller: true,
+                scilla_messages_can_call_evm_contracts: true,
+                scilla_contract_creation_increments_account_balance: true,
+            },
+            forks: vec![],
+            ..Default::default()
+        };
+
+        let result = config.get_forks();
+        assert!(result.is_err());
+    }
+}
