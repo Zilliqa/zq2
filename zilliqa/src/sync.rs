@@ -22,7 +22,7 @@ use crate::{
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
-    transaction::EvmGas,
+    transaction::{EvmGas, SignedTransaction},
 };
 
 // Syncing Algorithm
@@ -874,19 +874,27 @@ impl Sync {
 
         // Just pump the Proposals back to ourselves.
         for p in proposals {
-            tracing::trace!(
-                "sync::InjectProposals : injecting number: {} hash: {}",
-                p.number(),
-                p.hash(),
-            );
-
-            self.message_sender.send_external_message(
-                self.peer_id,
-                ExternalMessage::InjectedProposal(InjectedProposal {
-                    from: self.peer_id,
-                    block: p,
-                }),
-            )?;
+            if !p
+                .transactions
+                .iter()
+                .any(|t| matches!(t, SignedTransaction::Zilliqa { .. }))
+            {
+                tracing::trace!(
+                    number = %p.number(), hash = %p.hash(),
+                    "sync::InjectProposals : applying",
+                );
+                self.message_sender.send_external_message(
+                    self.peer_id,
+                    ExternalMessage::InjectedProposal(InjectedProposal {
+                        from: self.peer_id,
+                        block: p,
+                    }),
+                )?;
+            } else {
+                tracing::warn!(number = %p.number(), hash = %p.hash(), "sync::InjectProposals : storing");
+                // TODO: just store old ZIL blocks
+                todo!("store ZIL block");
+            }
         }
 
         self.inject_at = Some((std::time::Instant::now(), self.in_pipeline));
