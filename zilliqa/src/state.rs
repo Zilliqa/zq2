@@ -58,10 +58,14 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(trie: TrieStorage, config: &NodeConfig, block_store: Arc<BlockStore>) -> State {
+    pub fn new(
+        trie: TrieStorage,
+        config: &NodeConfig,
+        block_store: Arc<BlockStore>,
+    ) -> Result<State> {
         let db = Arc::new(trie);
         let consensus_config = &config.consensus;
-        Self {
+        Ok(Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
             scilla: Arc::new(OnceLock::new()),
@@ -73,9 +77,9 @@ impl State {
             gas_price: *consensus_config.gas_price,
             scilla_call_gas_exempt_addrs: consensus_config.scilla_call_gas_exempt_addrs.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
-            forks: consensus_config.forks.clone().into(),
+            forks: consensus_config.get_forks()?,
             block_store,
-        }
+        })
     }
 
     pub fn scilla(&self) -> MutexGuard<'_, Scilla> {
@@ -96,8 +100,8 @@ impl State {
         root_hash: B256,
         config: NodeConfig,
         block_store: Arc<BlockStore>,
-    ) -> Self {
-        Self::new(trie, &config, block_store).at_root(root_hash)
+    ) -> Result<Self> {
+        Ok(Self::new(trie, &config, block_store)?.at_root(root_hash))
     }
 
     pub fn new_with_genesis(
@@ -105,7 +109,7 @@ impl State {
         config: NodeConfig,
         block_store: Arc<BlockStore>,
     ) -> Result<State> {
-        let mut state = State::new(trie, &config, block_store);
+        let mut state = State::new(trie, &config, block_store)?;
 
         if config.consensus.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
@@ -628,7 +632,7 @@ mod tests {
         let block_store =
             Arc::new(BlockStore::new(&config, db.clone(), message_sender.clone()).unwrap());
 
-        let mut state = State::new(db.state_trie().unwrap(), &config, block_store);
+        let mut state = State::new(db.state_trie().unwrap(), &config, block_store).unwrap();
 
         let deposit_init_addr = state.deploy_initial_deposit_contract(&config).unwrap();
 

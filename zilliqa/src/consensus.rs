@@ -231,8 +231,8 @@ impl Consensus {
                 db.state_trie()?,
                 config.clone(),
                 block_store.clone_read_only(),
-            )?
-        };
+            )
+        }?;
 
         let (latest_block, latest_block_view) = match latest_block {
             Some(l) => (Some(l.clone()), l.view()),

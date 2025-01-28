@@ -366,11 +366,27 @@ pub struct ConsensusConfig {
     /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
     /// difference applies.
     #[serde(default)]
-    pub forks: ForkDeltas,
+    pub forks: Vec<ForkDelta>,
 
     /// The initial fork configuration at genesis block. This provides a complete description of the execution behaviour
     /// at the genesis block.
     pub genesis_fork: Fork,
+}
+
+impl ConsensusConfig {
+    /// Generates a list of forks by applying the delta forks initially to the genesis fork and then to the prevous one.
+    /// The genesis fork is the initial fork configuration at the genesis block.
+    pub fn get_forks(&self) -> Result<Forks> {
+        let mut forks = vec![self.genesis_fork];
+        for delta in &self.forks {
+            // Safe to call unwrap here because we have at least one fork in the list.
+            let fork = forks.last().unwrap().apply_delta_fork(delta);
+            forks.push(fork);
+        }
+        Ok(forks
+            .try_into()
+            .map_err(|e| anyhow!("Failed to construct forks: {}", e))?)
+    }
 }
 
 impl Default for ConsensusConfig {
@@ -396,53 +412,9 @@ impl Default for ConsensusConfig {
             total_native_token_supply: total_native_token_supply_default(),
             scilla_call_gas_exempt_addrs: vec![],
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
-            forks: Default::default(),
+            forks: vec![],
             genesis_fork: Default::default(),
         }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ForkDeltas(Vec<ForkDelta>);
-impl Default for ForkDeltas {
-    fn default() -> Self {
-        ForkDeltas(vec![ForkDelta {
-            at_height: 0,
-            failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
-            call_mode_1_sets_caller_to_parent_caller: Some(true),
-            scilla_messages_can_call_evm_contracts: Some(true),
-            scilla_contract_creation_increments_account_balance: Some(true),
-        }])
-    }
-}
-
-impl From<ForkDeltas> for Forks {
-    fn from(delta_forks: ForkDeltas) -> Self {
-        let mut forks: Vec<Fork> = vec![];
-        for delta in delta_forks.0 {
-            if let Some(last_fork) = forks.last() {
-                let new_fork = last_fork.apply_delta_fork(&delta);
-                forks.push(new_fork);
-            } else {
-                let base_fork = Fork {
-                    at_height: delta.at_height,
-                    failed_scilla_call_from_gas_exempt_caller_causes_revert: delta
-                        .failed_scilla_call_from_gas_exempt_caller_causes_revert
-                        .unwrap_or(true),
-                    call_mode_1_sets_caller_to_parent_caller: delta
-                        .call_mode_1_sets_caller_to_parent_caller
-                        .unwrap_or(true),
-                    scilla_messages_can_call_evm_contracts: delta
-                        .scilla_messages_can_call_evm_contracts
-                        .unwrap_or(true),
-                    scilla_contract_creation_increments_account_balance: delta
-                        .scilla_contract_creation_increments_account_balance
-                        .unwrap_or(true),
-                };
-                forks.push(base_fork);
-            }
-        }
-        Forks(forks)
     }
 }
 
@@ -655,75 +627,5 @@ impl Default for ContractUpgradesBlockHeights {
         Self {
             deposit_v3: Some(0),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_single_delta_fork() {
-        let delta_forks = ForkDeltas(vec![ForkDelta {
-            at_height: 0,
-            failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
-            call_mode_1_sets_caller_to_parent_caller: Some(false),
-            scilla_messages_can_call_evm_contracts: Some(true),
-            scilla_contract_creation_increments_account_balance: Some(false),
-        }]);
-
-        let result = Forks::from(delta_forks);
-        assert_eq!(result.0.len(), 1);
-        assert_eq!(result.0[0].at_height, 0);
-        assert!(!result.0[0].call_mode_1_sets_caller_to_parent_caller);
-        assert!(!result.0[0].scilla_contract_creation_increments_account_balance,);
-    }
-
-    #[test]
-    fn test_multiple_delta_forks() {
-        let delta_forks = ForkDeltas(vec![
-            ForkDelta {
-                at_height: 0,
-                failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
-                call_mode_1_sets_caller_to_parent_caller: Some(true),
-                scilla_messages_can_call_evm_contracts: Some(true),
-                scilla_contract_creation_increments_account_balance: Some(true),
-            },
-            ForkDelta {
-                at_height: 100,
-                failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
-                call_mode_1_sets_caller_to_parent_caller: Some(false),
-                scilla_messages_can_call_evm_contracts: None,
-                scilla_contract_creation_increments_account_balance: Some(false),
-            },
-            ForkDelta {
-                at_height: 200,
-                failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
-                call_mode_1_sets_caller_to_parent_caller: None,
-                scilla_messages_can_call_evm_contracts: Some(false),
-                scilla_contract_creation_increments_account_balance: None,
-            },
-        ]);
-
-        let result = Forks::from(delta_forks);
-        assert_eq!(result.0.len(), 3);
-
-        assert_eq!(result.0[0].at_height, 0);
-        assert!(result.0[0].failed_scilla_call_from_gas_exempt_caller_causes_revert);
-        assert!(result.0[0].call_mode_1_sets_caller_to_parent_caller);
-        assert!(result.0[0].scilla_messages_can_call_evm_contracts);
-        assert!(result.0[0].scilla_contract_creation_increments_account_balance,);
-
-        assert_eq!(result.0[1].at_height, 100);
-        assert!(result.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert,);
-        assert!(!result.0[1].call_mode_1_sets_caller_to_parent_caller);
-        assert!(result.0[1].scilla_messages_can_call_evm_contracts);
-        assert!(!result.0[1].scilla_contract_creation_increments_account_balance);
-
-        assert_eq!(result.0[2].at_height, 200);
-        assert!(!result.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert);
-        assert!(!result.0[2].call_mode_1_sets_caller_to_parent_caller);
-        assert!(!result.0[2].scilla_messages_can_call_evm_contracts);
-        assert!(!result.0[2].scilla_contract_creation_increments_account_balance,);
     }
 }
