@@ -392,9 +392,7 @@ impl ConsensusConfig {
                 forks
             });
 
-        forks
-            .try_into()
-            .map_err(|e| anyhow!("Failed to construct forks: {}", e))
+        Ok(forks.into())
     }
 }
 
