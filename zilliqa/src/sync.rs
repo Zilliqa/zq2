@@ -133,13 +133,42 @@ impl Sync {
         })
     }
 
+    /// Skip Failure
+    ///
+    /// We get a plain ACK in certain cases - treated as an empty response.
+    pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
+        if let Some((peer, _)) = self.in_flight.as_ref() {
+            // downgrade peer due to empty response
+            if peer.peer_id == from {
+                tracing::warn!(to = %peer.peer_id,
+                    "sync::Acknowledgement : empty response"
+                );
+                self.peers
+                    .done_with_peer(self.in_flight.take(), DownGrade::Empty);
+                // Retry if failed in Phase 2 for whatever reason
+                match self.state {
+                    SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
+                        self.request_missing_metadata(None)?
+                    }
+                    SyncState::Phase2(_) => self.state = SyncState::Retry1,
+                    _ => {}
+                }
+            } else {
+                tracing::warn!(to = %peer.peer_id,
+                    "sync::Acknowledgement : spurious"
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// P2P Failure
     ///
-    /// This gets called for any libp2p request failure.
+    /// This gets called for any libp2p request failure - treated as a network failure
     pub fn handle_request_failure(&mut self, failure: OutgoingMessageFailure) -> Result<()> {
-        // chekc if the request is a sync messages
+        // check if the request is a sync messages
         if let Some((peer, req_id)) = self.in_flight.as_ref() {
-            // downgrade peer due to timeout
+            // downgrade peer due to network failure
             if peer.peer_id == failure.peer && *req_id == failure.request_id {
                 tracing::warn!(to = %peer.peer_id, err = %failure.error,
                     "sync::RequestFailure : in-flight failed"
@@ -154,6 +183,10 @@ impl Sync {
                     SyncState::Phase2(_) => self.state = SyncState::Retry1,
                     _ => {}
                 }
+            } else {
+                tracing::warn!(to = %peer.peer_id,
+                    "sync::RequestFailure : spurious"
+                );
             }
         }
         Ok(())
@@ -726,8 +759,7 @@ impl Sync {
             return Ok(ExternalMessage::Acknowledgement);
         }
 
-        // TODO: Check if we should service this request
-        // Validators could respond to this request if there is nothing else to do.
+        // TODO: Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
 
         let batch_size: usize = self
             .max_batch_size

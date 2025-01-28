@@ -350,7 +350,9 @@ impl Node {
             ExternalMessage::BlockResponse(response) => {
                 self.consensus.sync.handle_block_response(from, response)?
             }
-            ExternalMessage::Acknowledgement => {}
+            ExternalMessage::Acknowledgement => {
+                self.consensus.sync.handle_acknowledgement(from)?;
+            }
             msg => {
                 warn!(%msg, "unexpected message type");
             }
