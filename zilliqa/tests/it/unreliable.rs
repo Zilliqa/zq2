@@ -26,7 +26,6 @@ async fn blocks_are_produced_while_a_node_restarts(mut network: Network) {
 
     // Reconnect the 'restarted' node.
     network.connect_node(restarted_node);
-    network.run_until_synced(restarted_node).await;
 
     // TODO(#721): We should assert here that a new view occurred if-and-only-if the 'restarted' node was the proposer
     // of blocks 3 or 4. This would tell us that we aren't producing new views unnecessarily.

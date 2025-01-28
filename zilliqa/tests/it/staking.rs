@@ -425,7 +425,7 @@ async fn rewards_are_sent_to_reward_address_of_proposer(mut network: Network) {
     check_miner_got_reward(&wallet, 1).await;
 }
 
-#[zilliqa_macros::test(blocks_per_epoch = 2, deposit_v3_upgrade_block_height = 12)]
+#[zilliqa_macros::test(blocks_per_epoch = 2, deposit_v3_upgrade_block_height = 24)]
 async fn validators_can_join_and_become_proposer(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
@@ -447,7 +447,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     let staker_wallet = network.wallet_of_node(index).await;
     let pop_sinature = new_validator_key.pop_prove();
 
-    // This has to be done before `contract_upgrade_block_heights` which is 12, by default in the tests
+    // This has to be done before `contract_upgrade_block_heights` which is 24, by default in this test
     let deposit_hash = deposit_stake(
         &mut network,
         &wallet,
@@ -514,7 +514,6 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
     check_miner_got_reward(&wallet, BlockNumber::Latest).await;
 
     // Now test joining deposit_v3
-    let deposit_v3_deploy_block = 12;
     let index = network.add_node();
     let new_validator_priv_key = network.get_node_raw(index).secret_key;
     let new_validator_pub_key = new_validator_priv_key.node_public_key();
@@ -533,7 +532,7 @@ async fn validators_can_join_and_become_proposer(mut network: Network) {
 
     // Give new node time to catch up to block including deposit_v3 deployment
     network
-        .run_until_block(&staker_wallet, deposit_v3_deploy_block.into(), 200)
+        .run_until_block(&staker_wallet, 24.into(), 200)
         .await;
 
     let deposit_hash = deposit_v3_stake(
