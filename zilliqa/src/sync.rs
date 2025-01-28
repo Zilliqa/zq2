@@ -177,7 +177,7 @@ impl Sync {
         self.internal_sync()
     }
 
-    // TODO: Passive-sync place-holder
+    // TODO: Passive-sync place-holder - https://github.com/Zilliqa/zq2/issues/2232
     pub fn sync_to_genesis(&mut self) -> Result<()> {
         Ok(())
     }
@@ -764,6 +764,8 @@ impl Sync {
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If Phase 1 is in progress, it continues requesting blocks from the last known Phase 1 block.
     /// Otherwise, it requests blocks from the given starting metadata.
+    ///
+    /// TODO: speed it up - https://github.com/Zilliqa/zq2/issues/2158
     pub fn request_missing_metadata(&mut self, meta: Option<BlockHeader>) -> Result<()> {
         if !matches!(self.state, SyncState::Phase1(_)) && !matches!(self.state, SyncState::Phase0) {
             anyhow::bail!("sync::RequestMissingMetadata : invalid state");
@@ -883,18 +885,18 @@ impl Sync {
                     number = %p.number(), hash = %p.hash(),
                     "sync::InjectProposals : applying",
                 );
-                self.message_sender.send_external_message(
-                    self.peer_id,
-                    ExternalMessage::InjectedProposal(InjectedProposal {
-                        from: self.peer_id,
-                        block: p,
-                    }),
-                )?;
             } else {
                 tracing::warn!(number = %p.number(), hash = %p.hash(), "sync::InjectProposals : storing");
-                // TODO: just store old ZIL blocks
-                todo!("store ZIL block");
+                // TODO: just store old ZIL blocks - https://github.com/Zilliqa/zq2/issues/2232
             }
+
+            self.message_sender.send_external_message(
+                self.peer_id,
+                ExternalMessage::InjectedProposal(InjectedProposal {
+                    from: self.peer_id,
+                    block: p,
+                }),
+            )?;
         }
 
         self.inject_at = Some((std::time::Instant::now(), self.in_pipeline));

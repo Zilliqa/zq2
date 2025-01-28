@@ -1061,17 +1061,12 @@ impl Network {
                 break i;
             }
         };
-        let mut debounce = 0;
-        let mut old_height = 0;
         self.run_until(
             |net| {
+                let syncing = net.get_node(index).consensus.sync.am_syncing().unwrap();
                 let height_i = net.get_node(index).get_finalized_height().unwrap();
                 let height_c = net.get_node(check).get_finalized_height().unwrap();
-                if height_c == height_i && height_i > old_height {
-                    debounce += 1;
-                    old_height = height_i;
-                }
-                debounce == 3
+                height_c == height_i && height_i > 0 && !syncing
             },
             2000,
         )
