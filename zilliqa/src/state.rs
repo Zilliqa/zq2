@@ -14,10 +14,10 @@ use ethabi::Token;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
-    cfg::{Amount, Forks, NodeConfig, ScillaExtLibsPath},
+    cfg::{Amount, ContractUpgradesBlockHeights, Forks, NodeConfig, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
     db::{Db, TrieStorage},
@@ -57,10 +57,10 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(trie: TrieStorage, config: &NodeConfig, sql: Arc<Db>) -> State {
+    pub fn new(trie: TrieStorage, config: &NodeConfig, sql: Arc<Db>) -> Result<State> {
         let db = Arc::new(trie);
         let consensus_config = &config.consensus;
-        Self {
+        Ok(Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
             scilla: Arc::new(OnceLock::new()),
@@ -72,9 +72,9 @@ impl State {
             gas_price: *consensus_config.gas_price,
             scilla_call_gas_exempt_addrs: consensus_config.scilla_call_gas_exempt_addrs.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
-            forks: consensus_config.forks.clone(),
+            forks: consensus_config.get_forks()?,
             sql,
-        }
+        })
     }
 
     pub fn scilla(&self) -> MutexGuard<'_, Scilla> {
@@ -95,12 +95,12 @@ impl State {
         root_hash: B256,
         config: NodeConfig,
         sql: Arc<Db>,
-    ) -> Self {
-        Self::new(trie, &config, sql).at_root(root_hash)
+    ) -> Result<Self> {
+        Ok(Self::new(trie, &config, sql)?.at_root(root_hash))
     }
 
     pub fn new_with_genesis(trie: TrieStorage, config: NodeConfig, sql: Arc<Db>) -> Result<State> {
-        let mut state = State::new(trie, &config, sql);
+        let mut state = State::new(trie, &config, sql)?;
 
         if config.consensus.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
@@ -159,9 +159,32 @@ impl State {
         state.deploy_initial_deposit_contract(&config)?;
 
         let deposit_contract = Lazy::<contracts::Contract>::force(&contracts::deposit::CONTRACT);
-        state.upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO), deposit_contract)?;
+        let block_header = BlockHeader::genesis(Hash::ZERO);
+        state.upgrade_deposit_contract(block_header, deposit_contract)?;
+
+        // Check if any contracts are to be upgraded from genesis
+        state.contract_upgrade_apply_state_change(
+            &config.consensus.contract_upgrade_block_heights,
+            block_header,
+        )?;
 
         Ok(state)
+    }
+
+    /// If there are any contract updates to be performed then apply them to self
+    pub fn contract_upgrade_apply_state_change(
+        &mut self,
+        contract_upgrade_block_heights: &ContractUpgradesBlockHeights,
+        block_header: BlockHeader,
+    ) -> Result<()> {
+        if let Some(deposit_v3_deploy_height) = contract_upgrade_block_heights.deposit_v3 {
+            if deposit_v3_deploy_height == block_header.number {
+                let deposit_v3_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+                self.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
+            }
+        }
+        Ok(())
     }
 
     /// Deploy DepositInit contract (deposit_v1.sol)
@@ -228,11 +251,6 @@ impl State {
         contract: &Contract,
     ) -> Result<Address> {
         let current_version = self.deposit_contract_version(current_block)?;
-        debug!(
-            "Upgrading deposit contract from version {} to verion {}",
-            current_version,
-            current_version + 1
-        );
 
         // Deploy latest deposit implementation
         let new_deposit_impl_addr =
@@ -257,11 +275,12 @@ impl State {
         ensure_success(result)?;
 
         let new_version = self.deposit_contract_version(current_block)?;
-        debug!(
-            "EIP 1967 deposit contract {} updated with new deposit contract {} proxy version {}",
+        info!(
+            "EIP 1967 deposit contract proxy {} updated from version {} to new version {} with contract addr {}",
             contract_addr::DEPOSIT_PROXY,
-            new_deposit_impl_addr,
-            new_version
+            current_version,
+            new_version,
+            new_deposit_impl_addr
         );
 
         Ok(new_deposit_impl_addr)
@@ -593,7 +612,7 @@ mod tests {
         let db = Arc::new(db);
         let config = NodeConfig::default();
 
-        let mut state = State::new(db.state_trie().unwrap(), &config, db);
+        let mut state = State::new(db.state_trie().unwrap(), &config, db).unwrap();
 
         let deposit_init_addr = state.deploy_initial_deposit_contract(&config).unwrap();
 
