@@ -1,9 +1,7 @@
-# docker-compsoe file for testing networking with static IPs
+# docker-compose file for testing networking with static IPs
 version: "3"
 services:
   node0:
-    depends_on:
-      - node3 
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
@@ -24,7 +22,7 @@ services:
 
   node1:
     depends_on:
-      - node3
+      - node0
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
@@ -40,7 +38,7 @@ services:
 
   node2:
     depends_on:
-      - node3
+      - node0
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
@@ -55,6 +53,8 @@ services:
         ipv4_address: 198.51.100.102
 
   node3:
+    depends_on:
+      - node0
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
