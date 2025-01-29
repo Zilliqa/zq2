@@ -363,16 +363,10 @@ impl Db {
         let input_filename = path.as_ref();
         let buf_reader: BufReader<File> = BufReader::new(File::open(input_filename)?);
         let mut reader = Decoder::new(buf_reader)?;
-        //let temp_filename = input_filename.with_extension("part");
-        //decompress_file(input_filename, &temp_filename)?;
-
-        // Read decompressed file
-        //let input = File::open(&temp_filename)?;
-
-        //let mut reader = BufReader::with_capacity(128 * 1024 * 1024, input); // 128 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
+        debug!("Loading compressed checkpoint {input_filename:?}...");
         // Decode and validate header
         let mut header: [u8; 21] = [0u8; 21];
         reader.read_exact(&mut header)?;
@@ -386,13 +380,17 @@ impl Db {
         let version = u32::from_be_bytes(header[8..12].try_into()?);
         // Only support a single version right now.
         if version != SUPPORTED_VERSION {
-            return Err(anyhow!("Invalid checkpoint file: unsupported version."));
+            return Err(anyhow!(
+                "Invalid checkpoint file: unsupported version {version}."
+            ));
         }
         let shard_id = u64::from_be_bytes(header[12..20].try_into()?);
-        if shard_id != our_shard_id {
-            return Err(anyhow!("Invalid checkpoint file: wrong shard ID."));
-        }
+        //if shard_id != our_shard_id {
+        //    return Err(anyhow!("Invalid checkpoint file: wrong shard ID - expecting {our_shard_id}, got {shard_id}."));
+        // }
 
+        debug!(" ... loading checkpoint block");
+        debug!(" ...   header");
         // Decode and validate checkpoint block, its transactions and parent block
         let mut block_len_buf = [0u8; std::mem::size_of::<u64>()];
         reader.read_exact(&mut block_len_buf)?;
@@ -404,6 +402,7 @@ impl Db {
         }
         block.verify_hash()?;
 
+        debug!(" ...   transactions");
         let mut transactions_len_buf = [0u8; std::mem::size_of::<u64>()];
         reader.read_exact(&mut transactions_len_buf)?;
         let mut transactions_ser =
@@ -420,6 +419,7 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
         }
 
+        debug!(" ... loading state trie");
         if state_trie.iter().next().is_some()
             || self.get_highest_canonical_block_number()?.is_some()
         {
@@ -467,8 +467,13 @@ impl Db {
         const COMPUTE_ROOT_HASH_EVERY_ACCOUNTS: usize = 10000;
         let mem_storage = Arc::new(MemoryDB::new(true));
 
+        debug!(" ... loading accounts ");
+
         // then decode state
         loop {
+            if (processed_accounts % 10_000) == 0 {
+                debug!(" ... loaded {processed_accounts} accounts");
+            }
             // Read account key and the serialised Account
             let mut account_hash = [0u8; 32];
             match reader.read_exact(&mut account_hash) {
@@ -546,6 +551,7 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
         }
 
+        debug!(" ... inserting results into db");
         let parent_ref: &Block = &parent; // for moving into the closure
         self.with_sqlite_tx(move |tx| {
             self.insert_block_with_db_tx(tx, parent_ref)?;
@@ -555,6 +561,7 @@ impl Db {
             Ok(())
         })?;
 
+        debug!(" ... checkpoint loaded");
         Ok(Some((block, transactions, parent)))
     }
 
