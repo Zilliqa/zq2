@@ -118,6 +118,8 @@ pub struct NodeConfig {
     /// Maximum allowed RPC response size
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
+    #[serde(default = "default_true")]
+    pub respect_shard_ids_in_checkpoints: bool,
 }
 
 impl Default for NodeConfig {
@@ -138,6 +140,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            respect_shard_ids_in_checkpoints: true,
         }
     }
 }
@@ -370,6 +373,10 @@ pub struct ConsensusConfig {
     /// difference applies.
     #[serde(default)]
     pub forks: Vec<ForkDelta>,
+    /// If set, we will force the committee always to be those with genesis deposits - this allows us to load
+    /// checkpoints from other committees.
+    #[serde(default)]
+    pub force_genesis_committee: bool,
 }
 
 impl ConsensusConfig {
@@ -421,6 +428,7 @@ impl Default for ConsensusConfig {
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
             forks: vec![],
             genesis_fork: genesis_fork_default(),
+            force_genesis_committee: false,
         }
     }
 }

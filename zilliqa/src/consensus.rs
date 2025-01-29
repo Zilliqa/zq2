@@ -196,12 +196,14 @@ impl Consensus {
         // Start chain from checkpoint. Load data file and initialise data in tables
         let mut checkpoint_data = None;
         if let Some(checkpoint) = &config.load_checkpoint {
+            let shard_spec = if config.respect_shard_ids_in_checkpoints {
+                Some(config.eth_chain_id)
+            } else {
+                None
+            };
             trace!("Loading state from checkpoint: {:?}", checkpoint);
-            checkpoint_data = db.load_trusted_checkpoint(
-                &checkpoint.file,
-                &checkpoint.hash,
-                config.eth_chain_id,
-            )?;
+            checkpoint_data =
+                db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, &shard_spec)?;
         }
 
         // It is important to create the `BlockStore` after the checkpoint has been loaded into the DB. The
@@ -367,10 +369,10 @@ impl Consensus {
                 None,
                 &block,
                 transactions,
-                &consensus
-                    .state
-                    .at_root(parent.state_root_hash().into())
-                    .get_stakers(block.header)?,
+                &consensus.get_stakers(
+                    &consensus.state.at_root(parent.state_root_hash().into()),
+                    block.header,
+                )?,
             )?;
         }
 
@@ -405,19 +407,38 @@ impl Consensus {
             let state_at = consensus.state.at_root(high_block.state_root_hash().into());
 
             // Grab last seen committee's peerIds in case others also went offline
-            let committee = state_at.get_stakers(executed_block)?;
-            let recent_peer_ids: Vec<_> = committee
-                .iter()
-                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
-                .filter_map(|&peer_public_key| {
-                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
-                })
-                .collect();
+            if consensus.config.consensus.force_genesis_committee {
+                let peer_ids: Vec<_> = consensus
+                    .config
+                    .consensus
+                    .genesis_deposits
+                    .iter()
+                    .filter_map(|x| {
+                        if x.public_key != consensus.public_key() {
+                            Some(x.peer_id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                consensus
+                    .block_store
+                    .set_peers_and_view(high_block.view(), &peer_ids)?;
+            } else {
+                let committee = consensus.get_stakers(&state_at, executed_block)?;
+                let recent_peer_ids: Vec<_> = committee
+                    .iter()
+                    .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
+                    .filter_map(|&peer_public_key| {
+                        state_at.get_peer_id(peer_public_key).unwrap_or(None)
+                    })
+                    .collect();
 
-            consensus
-                .block_store
-                .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
-            // It is likley that we missed the most recent proposal. Request it now
+                consensus
+                    .block_store
+                    .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
+            }
+            // It is likely that we missed the most recent proposal. Request it now
             consensus
                 .block_store
                 .request_blocks(&RangeMap::from_closed_interval(
@@ -427,6 +448,20 @@ impl Consensus {
         }
 
         Ok(consensus)
+    }
+
+    fn get_stakers(&self, state: &State, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
+        if self.config.consensus.force_genesis_committee {
+            Ok(self
+                .config
+                .consensus
+                .genesis_deposits
+                .iter()
+                .map(|x| x.public_key)
+                .collect::<Vec<NodePublicKey>>())
+        } else {
+            state.get_stakers(current_block)
+        }
     }
 
     /// Build NewView message for this view
@@ -479,7 +514,7 @@ impl Consensus {
                 number: block.number() + 1,
                 ..block.header
             };
-            let stakers = self.state.get_stakers(next_block_header)?;
+            let stakers = self.get_stakers(&self.state, next_block_header)?;
             // If we're in the genesis committee, vote again.
             if stakers.iter().any(|v| *v == self.public_key()) {
                 info!("timeout in view: {:?}, we will vote for block rather than incrementing view, block hash: {}", view, block.hash());
@@ -573,10 +608,10 @@ impl Consensus {
             number: block.number() + 1,
             ..block.header
         };
-        let stakers = self
-            .state
-            .at_root(block.state_root_hash().into())
-            .get_stakers(next_block_header)?;
+        let stakers = self.get_stakers(
+            &self.state.at_root(block.state_root_hash().into()),
+            next_block_header,
+        )?;
         if !stakers.iter().any(|v| *v == self.public_key()) {
             debug!(
                 "can't vote for new view, we aren't in the committee of length {:?}",
@@ -753,7 +788,7 @@ impl Consensus {
                 warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
                 self.state.set_to_root(parent.state_root_hash().into());
             }
-            let stakers: Vec<_> = self.state.get_stakers(block.header)?;
+            let stakers: Vec<_> = self.get_stakers(&self.state, block.header)?;
 
             // It is possible to source Proposals from own storage during sync, which alters the source of the Proposal.
             // Only allow from == self, for fast-forwarding, in normal case but not during sync
@@ -800,7 +835,7 @@ impl Consensus {
                 number: block.number() + 1,
                 ..block.header
             };
-            let stakers = self.state.get_stakers(next_block_header)?;
+            let stakers = self.get_stakers(&self.state, next_block_header)?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
                 debug!(
@@ -1065,10 +1100,10 @@ impl Consensus {
             ..Default::default()
         };
 
-        let committee = self
-            .state
-            .at_root(block.state_root_hash().into())
-            .get_stakers(executed_block)?;
+        let committee = self.get_stakers(
+            &self.state.at_root(block.state_root_hash().into()),
+            executed_block,
+        )?;
 
         // verify the sender's signature on block_hash
         let Some((index, _)) = committee
@@ -1187,9 +1222,10 @@ impl Consensus {
                     return Ok(None);
                 };
                 // Retrieve the previous leader and committee - for rewards
-                let committee = state
-                    .at_root(parent_block.state_root_hash().into())
-                    .get_stakers(proposal.header)?;
+                let committee = self.get_stakers(
+                    &self.state.at_root(parent_block.state_root_hash().into()),
+                    proposal.header,
+                )?;
                 (
                     self.qc_from_bits(
                         parent_block_hash,
@@ -1732,7 +1768,7 @@ impl Consensus {
             ..Default::default()
         };
 
-        let committee = state.get_stakers(executed_block)?;
+        let committee = self.get_stakers(&state, executed_block)?;
 
         Ok(committee)
     }
@@ -2291,9 +2327,10 @@ impl Consensus {
             .verify(block.hash().as_bytes(), block.signature());
 
         let committee = self
-            .state
-            .at_root(parent.state_root_hash().into())
-            .get_stakers(block.header)
+            .get_stakers(
+                &self.state.at_root(parent.state_root_hash().into()),
+                block.header,
+            )
             .map_err(|e| (e, false))?;
 
         if verified.is_err() {
@@ -2908,10 +2945,10 @@ impl Consensus {
             let parent = self
                 .get_block(&block_pointer.parent_hash())?
                 .ok_or_else(|| anyhow!("missing parent"))?;
-            let committee: Vec<_> = self
-                .state
-                .at_root(parent.state_root_hash().into())
-                .get_stakers(block_pointer.header)?;
+            let committee: Vec<_> = self.get_stakers(
+                &self.state.at_root(parent.state_root_hash().into()),
+                block_pointer.header,
+            )?;
             self.execute_block(None, &block_pointer, transactions, &committee)?;
         }
 

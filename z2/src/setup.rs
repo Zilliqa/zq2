@@ -591,6 +591,7 @@ impl Setup {
                     contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
+                    force_genesis_committee: false,
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -599,6 +600,7 @@ impl Setup {
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
+                respect_shard_ids_in_checkpoints: true,
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 
@@ -666,6 +668,7 @@ impl Setup {
             .await
             .context(format!("Cannot read from {0} - are you sure you are trying to start a node that actually exists?", config_file.to_string_lossy()))?;
         let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&loaded_config_str)?;
+        let mut any_checkpoints = false;
         for node in loaded_config.nodes.iter_mut() {
             if let Some(cp) = checkpoint {
                 println!(
@@ -674,8 +677,15 @@ impl Setup {
                     hex::encode(cp.hash.0)
                 );
                 node.load_checkpoint = Some(cp.clone());
+                any_checkpoints = true;
             } else {
                 node.load_checkpoint = None
+            }
+        }
+        if any_checkpoints {
+            for node in loaded_config.nodes.iter_mut() {
+                node.consensus.force_genesis_committee = true;
+                node.respect_shard_ids_in_checkpoints = false;
             }
         }
         let config_str = toml::to_string(&loaded_config)?;

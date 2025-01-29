@@ -354,7 +354,7 @@ impl Db {
         &self,
         path: P,
         hash: &Hash,
-        our_shard_id: u64,
+        our_shard_id: &Option<u64>,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
         // For now, only support a single version: you want to load the latest checkpoint, anyway.
         const SUPPORTED_VERSION: u32 = 3;
@@ -385,9 +385,12 @@ impl Db {
             ));
         }
         let shard_id = u64::from_be_bytes(header[12..20].try_into()?);
-        //if shard_id != our_shard_id {
-        //    return Err(anyhow!("Invalid checkpoint file: wrong shard ID - expecting {our_shard_id}, got {shard_id}."));
-        // }
+        if shard_id != our_shard_id.unwrap_or(shard_id) {
+            return Err(anyhow!(
+                "Invalid checkpoint file: wrong shard ID - expecting {}, got {shard_id}.",
+                our_shard_id.unwrap_or(shard_id)
+            ));
+        }
 
         debug!(" ... loading checkpoint block");
         debug!(" ...   header");
@@ -1178,26 +1181,6 @@ fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P
         encoder.write_all(&buffer[..bytes_read])?;
     }
     encoder.finish().1?;
-
-    Ok(())
-}
-
-/// Read lz4 compressed file and write into output file
-fn decompress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P) -> Result<()> {
-    let reader: BufReader<File> = BufReader::new(File::open(input_file_path)?);
-    let mut decoder = Decoder::new(reader)?;
-
-    let mut writer = BufWriter::new(File::create(output_file_path)?);
-    let mut buffer = [0u8; 1024 * 64]; // read 64KB chunks at a time
-    loop {
-        let bytes_read = decoder.read(&mut buffer)?; // Read a chunk of decompressed data
-        if bytes_read == 0 {
-            break; // End of file
-        }
-        writer.write_all(&buffer[..bytes_read])?;
-    }
-
-    writer.flush()?;
 
     Ok(())
 }
