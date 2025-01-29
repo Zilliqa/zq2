@@ -626,7 +626,7 @@ mod tests {
 
         let forks = config.get_forks().unwrap();
         assert_eq!(forks.0.len(), 1);
-        assert_eq!(forks.0[0].at_height, 0);
+        assert_eq!(forks.get(0).at_height, 0);
     }
 
     #[test]
@@ -636,19 +636,23 @@ mod tests {
             forks: vec![ForkDelta {
                 at_height: 10,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
-                call_mode_1_sets_caller_to_parent_caller: Some(true),
+                call_mode_1_sets_caller_to_parent_caller: Some(false),
                 scilla_messages_can_call_evm_contracts: None,
-                scilla_contract_creation_increments_account_balance: Some(true),
+                scilla_contract_creation_increments_account_balance: Some(false),
             }],
             ..Default::default()
         };
 
         let forks = config.get_forks().unwrap();
         assert_eq!(forks.0.len(), 2);
-        assert_eq!(forks.0[0].at_height, 0);
-        assert_eq!(forks.0[1].at_height, 10);
-        assert!(forks.0[1].call_mode_1_sets_caller_to_parent_caller);
-        assert!(forks.0[1].scilla_contract_creation_increments_account_balance);
+        assert_eq!(forks.get(0).at_height, 0);
+        assert_eq!(forks.get(11).at_height, 10);
+        assert!(!forks.get(10).call_mode_1_sets_caller_to_parent_caller);
+        assert!(
+            !forks
+                .get(10)
+                .scilla_contract_creation_increments_account_balance
+        );
     }
 
     #[test]
@@ -676,15 +680,27 @@ mod tests {
 
         let forks = config.get_forks().unwrap();
         assert_eq!(forks.0.len(), 3);
-        assert_eq!(forks.0[0].at_height, 0);
-        assert_eq!(forks.0[1].at_height, 10);
-        assert_eq!(forks.0[2].at_height, 20);
-        assert!(forks.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert);
-        assert!(forks.0[1].scilla_messages_can_call_evm_contracts);
-        assert!(!forks.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert);
-        assert!(forks.0[2].call_mode_1_sets_caller_to_parent_caller);
-        assert!(!forks.0[2].scilla_messages_can_call_evm_contracts);
-        assert!(forks.0[2].scilla_contract_creation_increments_account_balance);
+        assert_eq!(forks.get(0).at_height, 0);
+        assert_eq!(forks.get(11).at_height, 10);
+        assert_eq!(forks.get(21).at_height, 20);
+        assert!(
+            forks
+                .get(10)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+        assert!(forks.get(11).scilla_messages_can_call_evm_contracts);
+        assert!(
+            !forks
+                .get(20)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+        assert!(forks.get(20).call_mode_1_sets_caller_to_parent_caller);
+        assert!(!forks.get(20).scilla_messages_can_call_evm_contracts);
+        assert!(
+            forks
+                .get(20)
+                .scilla_contract_creation_increments_account_balance
+        );
     }
 
     #[test]
@@ -694,7 +710,7 @@ mod tests {
             forks: vec![
                 ForkDelta {
                     at_height: 20,
-                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
@@ -712,12 +728,20 @@ mod tests {
 
         let forks = config.get_forks().unwrap();
         assert_eq!(forks.0.len(), 3);
-        assert_eq!(forks.0[0].at_height, 0);
-        assert_eq!(forks.0[1].at_height, 10);
-        assert_eq!(forks.0[2].at_height, 20);
+        assert_eq!(forks.get(0).at_height, 0);
+        assert_eq!(forks.get(12).at_height, 10);
+        assert_eq!(forks.get(22).at_height, 20);
 
-        assert!(!forks.0[1].failed_scilla_call_from_gas_exempt_caller_causes_revert);
-        assert!(forks.0[2].failed_scilla_call_from_gas_exempt_caller_causes_revert);
+        assert!(
+            forks
+                .get(10)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+        assert!(
+            !forks
+                .get(20)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
     }
 
     #[test]
@@ -736,5 +760,36 @@ mod tests {
 
         let result = config.get_forks();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_forks_boundary_cases() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![
+                ForkDelta {
+                    at_height: 10,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+                ForkDelta {
+                    at_height: 20,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.get(9).at_height, 0);
+        assert_eq!(forks.get(10).at_height, 10);
+        assert_eq!(forks.get(19).at_height, 10);
+        assert_eq!(forks.get(20).at_height, 20);
+        assert_eq!(forks.get(22).at_height, 20);
     }
 }
