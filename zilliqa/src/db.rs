@@ -520,13 +520,15 @@ impl Db {
 
         // Decompress file and write to temp file
         let input_filename = path.as_ref();
-        let temp_filename = input_filename.with_extension("part");
-        decompress_file(input_filename, &temp_filename)?;
+        let buf_reader: BufReader<File> = BufReader::new(File::open(input_filename)?);
+        let mut reader = Decoder::new(buf_reader)?;
+        //let temp_filename = input_filename.with_extension("part");
+        //decompress_file(input_filename, &temp_filename)?;
 
         // Read decompressed file
-        let input = File::open(&temp_filename)?;
+        //let input = File::open(&temp_filename)?;
 
-        let mut reader = BufReader::with_capacity(128 * 1024 * 1024, input); // 128 MiB read chunks
+        //let mut reader = BufReader::with_capacity(128 * 1024 * 1024, input); // 128 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
@@ -711,8 +713,6 @@ impl Db {
             self.set_view_with_db_tx(tx, parent_ref.view() + 1)?;
             Ok(())
         })?;
-
-        fs::remove_file(temp_filename)?;
 
         Ok(Some((block, transactions, parent)))
     }
