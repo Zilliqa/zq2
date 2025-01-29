@@ -39,6 +39,10 @@ pub enum Components {
     Otterscan,
     #[serde(rename = "spout")]
     Spout,
+    #[serde(rename = "stats_dashboard")]
+    StatsDashboard,
+    #[serde(rename = "stats_agent")]
+    StatsAgent,
 }
 
 impl FromStr for Components {
@@ -49,6 +53,8 @@ impl FromStr for Components {
             "zq2" => Ok(Components::ZQ2),
             "otterscan" => Ok(Components::Otterscan),
             "spout" => Ok(Components::Spout),
+            "stats_dashboard" => Ok(Components::StatsDashboard),
+            "stats_agent" => Ok(Components::StatsAgent),
             _ => Err(anyhow!("Component not supported")),
         }
     }
@@ -76,6 +82,14 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
         }
         Components::Spout => Ok(format!(
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
+            version
+        )),
+        Components::StatsDashboard => Ok(format!(
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/ethstats-server:{}",
+            version
+        )),
+        Components::StatsAgent => Ok(format!(
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-net-intelligence-api:{}",
             version
         )),
         Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
@@ -939,6 +953,12 @@ impl ChainNode {
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
+        let stats_dashboard_image = &docker_image(
+            "stats_dashboard",
+            &self.chain.get_version("stats_dashboard"),
+        )?;
+        let stats_agent_image =
+            &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
 
         let private_key = if *role_name == NodeRole::Apps.to_string() {
             ""
@@ -960,6 +980,8 @@ impl ChainNode {
         var_map.insert("docker_image", z2_image);
         var_map.insert("otterscan_image", otterscan_image);
         var_map.insert("spout_image", spout_image);
+        var_map.insert("stats_dashboard_image", stats_dashboard_image);
+        var_map.insert("stats_agent_image", stats_agent_image);
         var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
