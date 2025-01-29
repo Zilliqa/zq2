@@ -392,7 +392,7 @@ impl ConsensusConfig {
                 forks
             });
 
-        Ok(forks.into())
+        Ok(Forks(forks))
     }
 }
 
@@ -427,20 +427,6 @@ impl Default for ConsensusConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Forks(Vec<Fork>);
-
-impl From<Vec<Fork>> for Forks {
-    fn from(mut forks: Vec<Fork>) -> Self {
-        // Sort forks by height so we can binary search to find the current fork.
-        forks.sort_unstable_by_key(|f| f.at_height);
-        Forks(forks)
-    }
-}
-
-impl From<Forks> for Vec<Fork> {
-    fn from(forks: Forks) -> Self {
-        forks.0
-    }
-}
 
 impl Forks {
     pub fn get(&self, height: u64) -> Fork {
