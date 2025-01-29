@@ -1057,13 +1057,46 @@ fn blob_base_fee(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
     Err(anyhow!("API method eth_blobBaseFee is not implemented yet"))
 }
 
+fn calculate_rewards(
+    block: &Block,
+    reward_percentiles: &Vec<f64>,
+    transactions_sorted_gas_used: Vec<u128>,
+) -> Vec<f64> {
+    let target_gas_values: Vec<f64> = reward_percentiles
+        .iter()
+        .map(|&percentile| percentile / 100.0 * (block.gas_used().0 as f64))
+        .collect();
+
+    let mut rewards = vec![0.0; reward_percentiles.len()];
+    let mut sum_gas = 0.0;
+    let mut percentile_index = 0;
+
+    for gas_used in transactions_sorted_gas_used.into_iter() {
+        let gas_used = gas_used as f64;
+        sum_gas += gas_used;
+
+        while percentile_index < reward_percentiles.len()
+            && sum_gas >= target_gas_values[percentile_index]
+        {
+            rewards[percentile_index] = gas_used;
+            percentile_index += 1;
+        }
+
+        if percentile_index >= reward_percentiles.len() {
+            break;
+        }
+    }
+
+    rewards
+}
+
 /// eth_feeHistory
 /// Returns the collection of historical gas information
 fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHistory> {
     let mut params = params.sequence();
     let block_count: u64 = params.next()?;
     let newest_block: BlockNumberOrTag = params.next()?;
-    let _reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
+    let reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
     expect_end_of_params(&mut params, 2, 3)?;
 
     let node = node.read();
@@ -1074,26 +1107,45 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHisto
     }
 
     let oldest_block = newest_block_number - block_count + 1;
-    let fee_history = eth::FeeHistory {
+    let (reward, gas_used_ratio) = (oldest_block..=newest_block_number)
+        .map(|block_number| {
+            let block = node
+                .get_block(BlockNumberOrTag::Number(block_number))?
+                .ok_or_else(|| anyhow!("block not found"))?;
+            let gas_limit = block.gas_limit().0 as f64;
+            if gas_limit == 0.0 {
+                return Err(anyhow!("gas limit is zero"));
+            }
+
+            let reward = if let Some(reward_percentiles) = reward_percentiles.as_ref() {
+                let mut gas_used = block
+                    .transactions
+                    .iter()
+                    .map(|tx_hash| {
+                        let tx = node
+                            .get_transaction_by_hash(*tx_hash)?
+                            .ok_or_else(|| anyhow!("transaction not found: {}", tx_hash))?;
+                        Ok(tx.tx.gas_price_per_evm_gas())
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                gas_used.sort_unstable();
+
+                calculate_rewards(&block, reward_percentiles, gas_used)
+            } else {
+                vec![]
+            };
+            Ok((reward, (block.gas_used().0 as f64) / gas_limit))
+        })
+        .collect::<Result<(Vec<Vec<f64>>, Vec<f64>)>>()?;
+
+    Ok(eth::FeeHistory {
         oldest_block,
+        reward: reward_percentiles.map(|_| reward),
+        gas_used_ratio,
         base_fee_per_gas: vec!["0x0".to_string(); block_count as usize],
-        gas_used_ratio: (oldest_block..=newest_block_number)
-            .map(|block_number| {
-                let block = node
-                    .get_block(BlockNumberOrTag::Number(block_number))?
-                    .ok_or_else(|| anyhow!("block not found"))?;
-                let gas_limit = block.gas_limit().0 as f64;
-                if gas_limit == 0.0 {
-                    return Err(anyhow!("gas limit is zero"));
-                }
-                Ok((block.gas_used().0 as f64) / gas_limit)
-            })
-            .collect::<Result<Vec<_>>>()?,
         base_fee_per_blob_gas: vec!["0x0".to_string(); block_count as usize],
         blob_gas_used_ratio: vec![0; block_count as usize],
-    };
-
-    Ok(fee_history)
+    })
 }
 
 /// eth_getAccount
