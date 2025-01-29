@@ -196,7 +196,7 @@ impl Db {
     where
         P: AsRef<Path>,
     {
-        let (mut connection, path) = match data_dir {
+        let (connection, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
                 fs::create_dir_all(&path).context(format!("Unable to create {path:?}"))?;
@@ -268,7 +268,14 @@ impl Db {
         );
 
         // Add tracing - logs all SQL statements
-        connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
+        connection.trace_v2(
+            rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
+            Some(|statement| {
+                if let rusqlite::trace::TraceEvent::Stmt(_, statement) = statement {
+                    tracing::trace!(statement, "sql executed");
+                }
+            }),
+        );
 
         Self::ensure_schema(&connection)?;
 

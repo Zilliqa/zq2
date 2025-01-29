@@ -93,6 +93,9 @@ contract Deposit is UUPSUpgradeable {
         Committee[3] _committee;
         // All stakers. Keys into this map are stored by the `Committee`.
         mapping(bytes => Staker) _stakersMap;
+        // Mapping from `controlAddress` to `blsPubKey` for each staker.
+        // This is legacy do not use. In upgraded contracts there may be some items still in the mapping.
+        mapping(address => bytes) _stakerKeys;
         // The latest epoch for which the committee was calculated. It is implied that no changes have (yet) occurred in
         // future epochs, either because those epochs haven't happened yet or because they have happened, but no deposits
         // or withdrawals were made.
