@@ -277,21 +277,19 @@ impl Consensus {
                     // If we have newer blocks, erase them
                     // @todo .. more elegantly :-)
                     loop {
-                        let highest_block_number = db
-                            .get_highest_canonical_block_number()?
-                            .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
                         let head_block = db
-                            .get_canonical_block_by_number(highest_block_number)?
-                            .ok_or_else(|| anyhow!("missing head block!"))?;
+                            .get_highest_recorded_block()?
+                            .ok_or_else(|| anyhow!("can't find highest block in database!"))?;
                         trace!(
-                            "recovery: highest_block_number {highest_block_number} view {0}",
+                            "recovery: highest_block_number {} view {}",
+                            head_block.number(),
                             head_block.view()
                         );
 
                         if head_block.view() > high_block.view()
                             && head_block.view() > finalized_number
                         {
-                            trace!("recovery: stored block {0} reverted", highest_block_number);
+                            trace!("recovery: stored block {0} reverted", head_block.number());
                             db.remove_transactions_executed_in_block(&head_block.hash())?;
                             db.remove_block(&head_block)?;
                         } else {

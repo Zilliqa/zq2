@@ -177,6 +177,7 @@ enum BlockFilter {
     Hash(Hash),
     View(u64),
     Height(u64),
+    MaxHeight,
 }
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -781,19 +782,6 @@ impl Db {
             .unwrap_or(None))
     }
 
-    // Deliberately not named get_highest_block_number() because there used to be one
-    // of those with unclear semantics, so changing name to force the compiler to error
-    // if it was used.
-    pub fn get_highest_recorded_block_number(&self) -> Result<Option<u64>> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT height FROM blocks ORDER BY height DESC LIMIT 1")?
-            .query_row((), |row| row.get(0))
-            .optional()?)
-    }
-
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
         Ok(self
             .db
@@ -1028,8 +1016,8 @@ impl Db {
             })
         }
         macro_rules! query_block {
-            ($cond: tt, $key: tt) => {
-                self.db.lock().unwrap().prepare_cached(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond),)?.query_row([$key], make_block).optional()?
+            ($cond: tt $(, $key:tt)*) => {
+                self.db.lock().unwrap().prepare_cached(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond),)?.query_row([$($key),*], make_block).optional()?
             };
         }
         Ok(match filter {
@@ -1041,6 +1029,9 @@ impl Db {
             }
             BlockFilter::Height(height) => {
                 query_block!("height = ?1 AND is_canonical = TRUE", height)
+            }
+            BlockFilter::MaxHeight => {
+                query_block!("TRUE ORDER BY height DESC LIMIT 1")
             }
         })
     }
@@ -1070,6 +1061,10 @@ impl Db {
 
     pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
         self.get_block(BlockFilter::Height(number))
+    }
+
+    pub fn get_highest_recorded_block(&self) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::MaxHeight)
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
