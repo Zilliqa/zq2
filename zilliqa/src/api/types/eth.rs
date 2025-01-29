@@ -516,6 +516,7 @@ pub struct GetAccountResult {
 pub struct FeeHistory {
     #[serde(serialize_with = "hex")]
     pub oldest_block: u64,
+    pub reward: Option<Vec<Vec<f64>>>,
     pub base_fee_per_gas: Vec<String>,
     pub gas_used_ratio: Vec<f64>,
     pub base_fee_per_blob_gas: Vec<String>,
