@@ -50,7 +50,7 @@ pub fn rpc_module(
 
 pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
     [
-        "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa",
+        "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa",
     ]
     .into_iter()
     .map(|ns| crate::cfg::EnabledApi::EnableAll(ns.to_owned()))
