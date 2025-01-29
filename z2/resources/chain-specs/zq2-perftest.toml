@@ -1,28 +1,12 @@
 p2p_port = 3333
-bootstrap_address = [
-    "12D3KooWS1GB4h6Et6XZmW1bkrVWo8ur7BWFyZaM9mH6dGUnuMaf",
-    "/dns/bootstrap.zq2-perftest.zilstg.dev/tcp/3333",
-]
+bootstrap_address = [ "12D3KooWS1GB4h6Et6XZmW1bkrVWo8ur7BWFyZaM9mH6dGUnuMaf", "/dns/bootstrap.zq2-perftest.zilstg.dev/tcp/3333" ]
 
 [[nodes]]
 eth_chain_id = 33469
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [
-    [
-        "0x54b15e228dddbcb562d1573651e57f160765c3d9",
-        "900_000_000_000_000_000_000_000_000",
-    ],
-]
-consensus.genesis_deposits = [
-    [
-        "a07dc730e265bdbe5f89ee86ee1ed30518d14e9d0d96218db81695cc57668dc40da97a012e396afccc9a81d4e7a3fc8f",
-        "12D3KooWS1GB4h6Et6XZmW1bkrVWo8ur7BWFyZaM9mH6dGUnuMaf",
-        "20_000_000_000_000_000_000_000_000",
-        "0x0000000000000000000000000000000000000000",
-        "0x54b15e228dddbcb562d1573651e57f160765c3d9",
-    ],
-]
+consensus.genesis_accounts = [ ["0x54b15e228dddbcb562d1573651e57f160765c3d9", "900_000_000_000_000_000_000_000_000" ] ]
+consensus.genesis_deposits = [ ["a07dc730e265bdbe5f89ee86ee1ed30518d14e9d0d96218db81695cc57668dc40da97a012e396afccc9a81d4e7a3fc8f", "12D3KooWS1GB4h6Et6XZmW1bkrVWo8ur7BWFyZaM9mH6dGUnuMaf", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "0x54b15e228dddbcb562d1573651e57f160765c3d9"] ]
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
@@ -34,22 +18,4 @@ consensus.gas_price = "4_761_904_800_000"
 consensus.scilla_call_gas_exempt_addrs = []
 consensus.contract_upgrade_block_heights = {}
 
-api_servers = [
-    { port = 4201, enabled_apis = [
-        { apis = [
-            "blockNumber",
-        ], namespace = "eth" },
-    ] },
-    { enabled_apis = [
-        "admin",
-        "debug",
-        "erigon",
-        "eth",
-        "net",
-        "ots",
-        "trace",
-        "txpool",
-        "web3",
-        "zilliqa",
-    ], port = 4202 },
-]
+api_servers = [{ port = 4201, enabled_apis = [{ apis = ["blockNumber"], namespace = "eth" }] }, { enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"], port = 4202 }]
