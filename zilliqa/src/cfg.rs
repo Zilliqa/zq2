@@ -426,7 +426,6 @@ impl Default for ConsensusConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(from = "Vec<Fork>", into = "Vec<Fork>")]
 pub struct Forks(Vec<Fork>);
 
 impl From<Vec<Fork>> for Forks {
@@ -567,13 +566,15 @@ pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
 }
 
+/// The default implementation returns a single fork at the genesis block, with the most up-to-date
+/// execution logic.
 pub fn genesis_fork_default() -> Fork {
     Fork {
         at_height: 0,
-        failed_scilla_call_from_gas_exempt_caller_causes_revert: false,
-        call_mode_1_sets_caller_to_parent_caller: false,
-        scilla_messages_can_call_evm_contracts: false,
-        scilla_contract_creation_increments_account_balance: false,
+        failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+        call_mode_1_sets_caller_to_parent_caller: true,
+        scilla_messages_can_call_evm_contracts: true,
+        scilla_contract_creation_increments_account_balance: true,
     }
 }
 
