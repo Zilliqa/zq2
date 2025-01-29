@@ -12,6 +12,7 @@ mod eth;
 mod ots;
 mod persistence;
 mod staking;
+mod trace;
 mod unreliable;
 mod web3;
 mod zil;
