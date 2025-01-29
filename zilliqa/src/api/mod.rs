@@ -1,4 +1,5 @@
 pub mod admin;
+mod debug;
 mod erigon;
 pub mod eth;
 mod net;
@@ -19,6 +20,9 @@ pub fn rpc_module(
 
     module
         .merge(admin::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(debug::rpc_module(node.clone(), enabled_apis))
         .unwrap();
     module
         .merge(erigon::rpc_module(node.clone(), enabled_apis))
@@ -50,7 +54,7 @@ pub fn rpc_module(
 
 pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
     [
-        "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa",
+        "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa",
     ]
     .into_iter()
     .map(|ns| crate::cfg::EnabledApi::EnableAll(ns.to_owned()))

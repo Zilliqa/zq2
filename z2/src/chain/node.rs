@@ -820,7 +820,7 @@ impl ChainNode {
             json!({"port": 4201, "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
         };
         // 4202 is not exposed, so enable everything for local debugging.
-        let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
+        let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
 
         // Enable Otterscan indices on API nodes.
