@@ -13,7 +13,6 @@ use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use libp2p::PeerId;
-use once_cell::sync::Lazy;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -24,7 +23,6 @@ use crate::{
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
-    contracts,
     crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -1230,7 +1228,10 @@ impl Consensus {
 
         if self.block_is_first_in_epoch(proposal.header.number) {
             // Update state with any contract upgrades for this block
-            self.contract_upgrade_apply_state_change(&mut state, proposal.header)?;
+            state.contract_upgrade_apply_state_change(
+                &self.config.consensus.contract_upgrade_block_heights,
+                proposal.header,
+            )?;
         }
 
         // Finalise the proposal with final QC and state.
@@ -1258,27 +1259,6 @@ impl Consensus {
 
         // Return the final proposal
         Ok(Some(proposal))
-    }
-
-    /// If there are any contract updates to be done then apply them to the state passed in
-    fn contract_upgrade_apply_state_change(
-        &mut self,
-        state: &mut State,
-        block_header: BlockHeader,
-    ) -> Result<()> {
-        if let Some(deposit_v3_deploy_height) = self
-            .config
-            .consensus
-            .contract_upgrade_block_heights
-            .deposit_v3
-        {
-            if deposit_v3_deploy_height == block_header.number {
-                let deposit_v3_contract =
-                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
-                state.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
-            }
-        }
-        Ok(())
     }
 
     /// Assembles the Proposal block early.
@@ -3118,7 +3098,10 @@ impl Consensus {
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
             let mut state_clone = self.state.clone();
-            self.contract_upgrade_apply_state_change(&mut state_clone, block.header)?;
+            state_clone.contract_upgrade_apply_state_change(
+                &self.config.consensus.contract_upgrade_block_heights,
+                block.header,
+            )?;
             self.state = state_clone;
         }
 

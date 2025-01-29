@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity ^0.8.20;
+pragma solidity 0.8.28;
 
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Deque, Withdrawal} from "./utils/deque.sol";
@@ -84,7 +84,7 @@ contract Deposit is UUPSUpgradeable {
         uint256 atFutureBlock
     );
 
-    uint64 public constant VERSION = 3;
+    uint64 public constant VERSION = 4;
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
@@ -93,6 +93,9 @@ contract Deposit is UUPSUpgradeable {
         Committee[3] _committee;
         // All stakers. Keys into this map are stored by the `Committee`.
         mapping(bytes => Staker) _stakersMap;
+        // Mapping from `controlAddress` to `blsPubKey` for each staker.
+        // This is legacy do not use. In upgraded contracts there may be some items still in the mapping.
+        mapping(address => bytes) _stakerKeys;
         // The latest epoch for which the committee was calculated. It is implied that no changes have (yet) occurred in
         // future epochs, either because those epochs haven't happened yet or because they have happened, but no deposits
         // or withdrawals were made.
@@ -192,7 +195,6 @@ contract Deposit is UUPSUpgradeable {
         uint256 position = randomness % currentCommittee.totalStake;
         uint256 cummulativeStake = 0;
 
-        // TODO: Consider binary search for performance. Or consider an alias method for O(1) performance.
         for (uint256 i = 0; i < currentCommittee.stakerKeys.length; i++) {
             bytes memory stakerKey = currentCommittee.stakerKeys[i];
             uint256 stakedBalance = currentCommittee.stakers[stakerKey].balance;
@@ -243,11 +245,11 @@ contract Deposit is UUPSUpgradeable {
             Staker[] memory stakers
         )
     {
-        // TODO clean up doule call to _getDepositStorage() here
         DepositStorage storage $ = _getDepositStorage();
         Committee storage currentCommittee = committee();
 
         stakerKeys = currentCommittee.stakerKeys;
+        indices = new uint256[](stakerKeys.length);
         balances = new uint256[](stakerKeys.length);
         stakers = new Staker[](stakerKeys.length);
         for (uint256 i = 0; i < stakerKeys.length; i++) {
@@ -584,12 +586,13 @@ contract Deposit is UUPSUpgradeable {
             revert KeyNotStaked();
         }
 
+        uint256 currentBalance = futureCommittee.stakers[blsPubKey].balance;
         require(
-            futureCommittee.stakers[blsPubKey].balance >= amount,
+            currentBalance >= amount,
             "amount is greater than staked balance"
         );
 
-        if (futureCommittee.stakers[blsPubKey].balance - amount == 0) {
+        if (currentBalance - amount == 0) {
             require(futureCommittee.stakerKeys.length > 1, "too few stakers");
 
             // Remove the staker from the future committee, because their staked amount has gone to zero.
@@ -620,8 +623,7 @@ contract Deposit is UUPSUpgradeable {
             emit StakerRemoved(blsPubKey, nextUpdate());
         } else {
             require(
-                futureCommittee.stakers[blsPubKey].balance - amount >=
-                    $.minimumStake,
+                currentBalance - amount >= $.minimumStake,
                 "unstaking this amount would take the validator below the minimum stake"
             );
 

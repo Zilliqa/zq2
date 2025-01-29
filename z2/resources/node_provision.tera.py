@@ -14,7 +14,6 @@ for the Zilliqa 2.0 validators running on GCP.
 templatefile() vars:
 - checkpoint_url, the ZQ2 checkpoint URL used for recover the validator nodes
 - persistence_url, the ZQ2 persistence URL used for recover the network
-- conifg, the ZQ2 validators configuration file
 - docker_image, the ZQ2 docker image (incl. version)
 - secret_key, the ZQ2 node secret key
 - role, the node role: validator or apps
@@ -121,7 +120,7 @@ WantedBy=multi-user.target
 """
 
 ZQ2_SCRIPT="""#!/bin/bash
-echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
 ZQ2_IMAGE="{{ docker_image }}"
 
@@ -256,11 +255,14 @@ WantedBy=multi-user.target
 
 OPS_AGENT_INSTALL_SCRIPT_URL="https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh"
 
-
 OPS_AGENT_CONFIG_FILE="/etc/google-cloud-ops-agent/config.yaml"
 
-
 OPS_AGENT_CONFIG="""
+combined:
+  receivers:
+    otlp:
+      type: otlp
+      metrics_mode: googlecloudmonitoring
 logging:
   receivers:
     zilliqa:
@@ -310,6 +312,13 @@ metrics:
       default_pipeline:
         receivers: [hostmetrics]
         processors: [metrics_filter]
+      otlp:
+        receivers: [otlp]
+traces:
+  service:
+    pipelines:
+      otlp:
+        receivers: [otlp]
 """
 
 LOGROTATE_CONFIG="""

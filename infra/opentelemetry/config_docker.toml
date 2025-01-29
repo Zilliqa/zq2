@@ -4,6 +4,9 @@ bootstrap_address = [
 ]
 p2p_port = 5643
 
+# OpenTelemetry parameters
+otlp_collector_endpoint = "http://otel-collector:4317"
+
 [[nodes]]
 api_servers = [
     { port = 4201, enabled_apis = [ "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] },
@@ -77,14 +80,14 @@ consensus.genesis_accounts = [
     ],
 ]
 
-# speed up local/docker epochs
+# Speed up local/docker epochs
 consensus.blocks_per_epoch = 36
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
 consensus.blocks_per_hour = 3600
 consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.contract_upgrade_block_heights = { deposit_v3 = 0 }
