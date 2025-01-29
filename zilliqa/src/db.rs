@@ -522,13 +522,6 @@ impl Db {
         let input_filename = path.as_ref();
         let buf_reader: BufReader<File> = BufReader::new(File::open(input_filename)?);
         let mut reader = Decoder::new(buf_reader)?;
-        //let temp_filename = input_filename.with_extension("part");
-        //decompress_file(input_filename, &temp_filename)?;
-
-        // Read decompressed file
-        //let input = File::open(&temp_filename)?;
-
-        //let mut reader = BufReader::with_capacity(128 * 1024 * 1024, input); // 128 MiB read chunks
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
@@ -1324,26 +1317,6 @@ fn compress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P
         encoder.write_all(&buffer[..bytes_read])?;
     }
     encoder.finish().1?;
-
-    Ok(())
-}
-
-/// Read lz4 compressed file and write into output file
-fn decompress_file<P: AsRef<Path> + Debug>(input_file_path: P, output_file_path: P) -> Result<()> {
-    let reader: BufReader<File> = BufReader::new(File::open(input_file_path)?);
-    let mut decoder = Decoder::new(reader)?;
-
-    let mut writer = BufWriter::new(File::create(output_file_path)?);
-    let mut buffer = [0u8; 1024 * 64]; // read 64KB chunks at a time
-    loop {
-        let bytes_read = decoder.read(&mut buffer)?; // Read a chunk of decompressed data
-        if bytes_read == 0 {
-            break; // End of file
-        }
-        writer.write_all(&buffer[..bytes_read])?;
-    }
-
-    writer.flush()?;
 
     Ok(())
 }
