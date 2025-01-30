@@ -270,7 +270,7 @@ start() {
     docker rm stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ &> /dev/null || echo 0
     docker run -td -p 3000:3000 --name stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
-        -e WS_SECRET="mysecret" \
+        -e WS_SECRET="{{ stats_dashboard_key }}" \
         --restart=unless-stopped --pull=always \
         ${STATS_DASHBOARD_IMAGE}
 }
@@ -318,7 +318,7 @@ start() {
         -e INSTANCE_NAME=""" + os.uname().nodename + """ \
         -e CONTACT_DETAILS="devops@zilliqa.com" \
         -e WS_SERVER="ws://stats.""" + SUBDOMAIN + """" \
-        -e WS_SECRET="mysecret" \
+        -e WS_SECRET="{{ stats_dashboard_key }}" \
         -e VERBOSITY="2" \
         --restart=unless-stopped --pull=always \
         ${STATS_AGENT_IMAGE}
@@ -577,7 +577,7 @@ def go(role):
     install_gcloud()
     login_registry()
     match role:
-        case "bootstrap" | "checkpoint" | "api" | "persistence" | "query" | "graph":
+        case "bootstrap" | "api":
             log("Configuring a not validator node")
             stop_healthcheck()
             install_healthcheck()
@@ -591,6 +591,17 @@ def go(role):
             start_zq2()
             start_healthcheck()
             start_stats_agent()
+        case "checkpoint" | "persistence" | "query" | "graph":
+            log("Configuring a not validator node")
+            stop_healthcheck()
+            install_healthcheck()
+            configure_logrotate()
+            pull_zq2_image()
+            stop_zq2()
+            install_zilliqa()
+            download_persistence()
+            start_zq2()
+            start_healthcheck()
         case "validator":
             log("Configuring a validator node")
             stop_healthcheck()
