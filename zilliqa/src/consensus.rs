@@ -389,7 +389,6 @@ impl Consensus {
                     min_view_since_high_qc_updated
                 );
                 consensus.db.set_view(min_view_since_high_qc_updated)?;
-                consensus.build_new_view()?;
             }
 
             // Remind block_store of our peers and request any potentially missing blocks
@@ -424,6 +423,9 @@ impl Consensus {
                     high_block.view(),
                     high_block.view() + 1,
                 ))?;
+
+            // Build NewView immediatley so that we can contribute to consensus moving along
+            consensus.build_new_view()?;
         }
 
         Ok(consensus)
