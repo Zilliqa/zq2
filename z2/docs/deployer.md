@@ -133,6 +133,8 @@ eth_chain_id: 33333
 roles:
 - apps
 versions:
+  stats_dashboard: v0.0.3
+  stats_agent: v0.0.1
   spout: v1.3.72
   otterscan: latest
 ```
@@ -162,6 +164,8 @@ roles:
 - apps
 versions:
   zq2: fbee9ec5
+  stats_dashboard: v0.0.3
+  stats_agent: v0.0.1
   spout: v1.3.72
   otterscan: latest
 ```

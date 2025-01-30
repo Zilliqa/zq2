@@ -13,7 +13,7 @@ module "queries" {
   network_tags = []
 
   metadata = {
-    subdomain = base64encode("")
+    subdomain = base64encode(var.subdomain)
   }
 
   node_dns_subdomain       = var.node_dns_subdomain

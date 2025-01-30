@@ -29,6 +29,14 @@ impl NetworkConfig {
                     "spout".to_string(),
                     github::get_release_or_commit("zilliqa-developer").await?,
                 );
+                versions.insert(
+                    "stats_dashboard".to_string(),
+                    github::get_release_or_commit("ethstats-server").await?,
+                );
+                versions.insert(
+                    "stats_agent".to_string(),
+                    github::get_release_or_commit("eth-net-intelligence-api").await?,
+                );
                 versions.insert("otterscan".to_string(), "latest".to_string());
             }
         }

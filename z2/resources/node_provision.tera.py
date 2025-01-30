@@ -19,6 +19,8 @@ templatefile() vars:
 - role, the node role: validator or apps
 - otterscan_image, the Otterscan docker image (incl. version)
 - spout_image, the Eth Spout docker image (incl. version)
+- stats_dashboard_image, the Stats dashboard docker image (incl. version)
+- stats_agent_image, the Stats agent docker image (incl. version)
 - subdomain, the ZQ2 network domain name
 """
 
@@ -31,6 +33,8 @@ def query_metadata_key(key: str) -> str:
 ZQ2_IMAGE="{{ docker_image }}"
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
 SPOUT_IMAGE="{{ spout_image }}"
+STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
+STATS_AGENT_IMAGE="{{ stats_agent_image }}"
 SECRET_KEY="{{ secret_key }}"
 GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
@@ -47,6 +51,8 @@ VERSIONS={
     "zilliqa": ZQ2_IMAGE.split(":")[-1] if ZQ2_IMAGE.split(":")[-1] else "latest",
     "otterscan": OTTERSCAN_IMAGE.split(":")[-1] if OTTERSCAN_IMAGE.split(":")[-1] else "latest",
     "spout": SPOUT_IMAGE.split(":")[-1] if SPOUT_IMAGE.split(":")[-1] else "latest",
+    "stats_dashboard": STATS_DASHBOARD_IMAGE.split(":")[-1] if STATS_DASHBOARD_IMAGE.split(":")[-1] else "latest",
+    "stats_agent": STATS_AGENT_IMAGE.split(":")[-1] if STATS_AGENT_IMAGE.split(":")[-1] else "latest",
 }
 
 def query_metadata_ext_ip() -> str:
@@ -128,10 +134,10 @@ start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker container prune -f
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
-    --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
-    -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
-    --restart=unless-stopped \
-    -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
+        -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
+        --restart=unless-stopped \
     """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} ${1} --log-json
 }
 
@@ -172,10 +178,11 @@ echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.d
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
 
 start() {
-     docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
+    docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
     docker run -td -p 80:80 --name otterscan-""" + VERSIONS.get('otterscan') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e ERIGON_URL=https://api.""" + SUBDOMAIN + """ \
+        --restart=unless-stopped --pull=always \
         ${OTTERSCAN_IMAGE} &> /dev/null &
 }
 
@@ -223,6 +230,7 @@ start() {
         -e EXPLORER_URL="https://explorer.""" + SUBDOMAIN + """" \
         -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
         -e BECH32_HRP="zil" \
+        --restart=unless-stopped --pull=always \
         ${SPOUT_IMAGE}
 }
 
@@ -245,6 +253,96 @@ Description=Spout app
 Type=forking
 ExecStart=/usr/local/bin/spout.sh start
 ExecStop=/usr/local/bin/spout.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+STATS_DASHBOARD_SCRIPT="""#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+
+STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
+
+start() {
+    docker rm stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ &> /dev/null || echo 0
+    docker run -td -p 3000:3000 --name stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        -e WS_SECRET="mysecret" \
+        --restart=unless-stopped --pull=always \
+        ${STATS_DASHBOARD_IMAGE}
+}
+
+stop() {
+    docker stop stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0
+"""
+
+STATS_DASHBOARD_SERVICE_DESC="""
+[Unit]
+Description=Stats dashboard app
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/stats_dashboard.sh start
+ExecStop=/usr/local/bin/stats_dashboard.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+STATS_AGENT_SCRIPT="""#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+
+STATS_AGENT_IMAGE="{{ stats_agent_image }}"
+
+start() {
+    docker rm stats-agent-""" + VERSIONS.get('stats_agent') + """ &> /dev/null || echo 0
+    docker run -td --name stats-agent-""" + VERSIONS.get('stats_agent') + """ \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        --net=host \
+        -e RPC_HOST="localhost" \
+        -e RPC_PORT="4202" \
+        -e LISTENING_PORT="3333" \
+        -e INSTANCE_NAME=""" + os.uname().nodename + """ \
+        -e CONTACT_DETAILS="devops@zilliqa.com" \
+        -e WS_SERVER="ws://stats.""" + SUBDOMAIN + """" \
+        -e WS_SECRET="mysecret" \
+        -e VERBOSITY="2" \
+        --restart=unless-stopped --pull=always \
+        ${STATS_AGENT_IMAGE}
+}
+
+stop() {
+    docker stop stats-agent-""" + VERSIONS.get('stats_agent') + """
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0
+"""
+
+STATS_AGENT_SERVICE_DESC="""
+[Unit]
+Description=Stats agent app
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/stats_agent.sh start
+ExecStop=/usr/local/bin/stats_agent.sh stop
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
@@ -483,6 +581,8 @@ def go(role):
             log("Configuring a not validator node")
             stop_healthcheck()
             install_healthcheck()
+            stop_stats_agent()
+            install_stats_agent()
             configure_logrotate()
             pull_zq2_image()
             stop_zq2()
@@ -490,10 +590,13 @@ def go(role):
             download_persistence()
             start_zq2()
             start_healthcheck()
+            start_stats_agent()
         case "validator":
             log("Configuring a validator node")
             stop_healthcheck()
             install_healthcheck()
+            stop_stats_agent()
+            install_stats_agent()
             configure_logrotate()
             pull_zq2_image()
             stop_zq2()
@@ -502,11 +605,13 @@ def go(role):
             download_checkpoint()
             start_zq2()
             start_healthcheck()
+            start_stats_agent()
         case "apps":
             log("Configuring the blockchain app node")
             stop_apps()
             install_otterscan()
             install_spout()
+            install_stats_dashboard()
             start_apps()
         case _:
             log(f"Invalide role {role}")
@@ -606,7 +711,6 @@ def install_otterscan():
     run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/otterscan.service", "/etc/systemd/system/multi-user.target.wants/otterscan.service"])
     run_or_die(["sudo", "systemctl", "enable", "otterscan.service"])
 
-
 def install_spout():
     with open("/tmp/spout.sh", "w") as f:
         f.write(SPOUT_SCRIPT)
@@ -621,15 +725,52 @@ def install_spout():
     run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/spout.service", "/etc/systemd/system/multi-user.target.wants/spout.service"])
     run_or_die(["sudo", "systemctl", "enable", "spout.service"])
 
+def install_stats_dashboard():
+    with open("/tmp/stats_dashboard.sh", "w") as f:
+        f.write(STATS_DASHBOARD_SCRIPT)
+    run_or_die(["sudo", "cp", "/tmp/stats_dashboard.sh", f"/usr/local/bin/stats_dashboard-{VERSIONS.get('stats_dashboard')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/stats_dashboard-{VERSIONS.get('stats_dashboard')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/stats_dashboard-{VERSIONS.get('stats_dashboard')}.sh", "/usr/local/bin/stats_dashboard.sh"])
+
+    with open("/tmp/stats_dashboard.service", "w") as f:
+        f.write(STATS_DASHBOARD_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/stats_dashboard.service","/etc/systemd/system/stats_dashboard.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/stats_dashboard.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/stats_dashboard.service", "/etc/systemd/system/multi-user.target.wants/stats_dashboard.service"])
+    run_or_die(["sudo", "systemctl", "enable", "stats_dashboard.service"])
 
 def start_apps():
-    run_or_die(["sudo", "systemctl", "start", "otterscan"])
-    run_or_die(["sudo", "systemctl", "start", "spout"])
+    for app in [ "otterscan", "spout", "stats_dashboard" ]:
+        if os.path.exists(f"/etc/systemd/system/{app}.service"):
+            run_or_die(["sudo", "systemctl", "start", f"{app}"])
+    pass
 
 def stop_apps():
-    for app in [ "otterscan", "spout"]:
+    for app in [ "otterscan", "spout", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
             run_or_die(["sudo", "systemctl", "stop", f"{app}"])
+    pass
+
+def start_stats_agent():
+    run_or_die(["sudo", "systemctl", "start", "stats_agent"])
+
+def install_stats_agent():
+    with open("/tmp/stats_agent.sh", "w") as f:
+        f.write(STATS_AGENT_SCRIPT)
+    run_or_die(["sudo", "cp", "/tmp/stats_agent.sh", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh", "/usr/local/bin/stats_agent.sh"])
+
+    with open("/tmp/stats_agent.service", "w") as f:
+        f.write(STATS_AGENT_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/stats_agent.service","/etc/systemd/system/stats_agent.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/stats_agent.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/stats_agent.service", "/etc/systemd/system/multi-user.target.wants/stats_agent.service"])
+    run_or_die(["sudo", "systemctl", "enable", "stats_agent.service"])
+
+def stop_stats_agent():
+    if os.path.exists("/etc/systemd/system/stats_agent.service"):
+        run_or_die(["sudo", "systemctl", "stop", "stats_agent"])
     pass
 
 def configure_logrotate():

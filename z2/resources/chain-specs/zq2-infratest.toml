@@ -1,0 +1,21 @@
+p2p_port = 3333
+bootstrap_address = [ "12D3KooWSe8gG2PYGg9qemHNZDsuZcFjkvcU2Fr49bomHGZD2k8x", "/dns/bootstrap.zq2-infratest.zilstg.dev/tcp/3333" ]
+
+[[nodes]]
+eth_chain_id = 33103
+allowed_timestamp_skew = { secs = 60, nanos = 0 }
+data_dir = "/data"
+consensus.genesis_accounts = [ ["0x5e1f6f14a75f12e055599a137229cfa012554695", "900_000_000_000_000_000_000_000_000" ] ]
+consensus.genesis_deposits = [ ["95f1b0d4d47dfdd782e5ea823c2a175098e1a1afd9525c9f7e2f9fec6da080ab654ff27210d20d81331038bd10e0b08e", "12D3KooWSe8gG2PYGg9qemHNZDsuZcFjkvcU2Fr49bomHGZD2k8x", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "0x5e1f6f14a75f12e055599a137229cfa012554695"] ]
+
+# Reward parameters
+consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+consensus.blocks_per_hour = 3600
+consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+# Gas parameters
+consensus.eth_block_gas_limit = 84000000
+consensus.gas_price = "4_761_904_800_000"
+consensus.scilla_call_gas_exempt_addrs = []
+consensus.contract_upgrade_block_heights = { deposit_v3 = 0 }
+
+api_servers = [{ port = 4201, enabled_apis = [{ apis = ["blockNumber"], namespace = "eth" }] }, { enabled_apis = ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"], port = 4202 }]
