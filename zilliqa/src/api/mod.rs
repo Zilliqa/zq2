@@ -89,6 +89,7 @@ macro_rules! declare_module {
             let enabled = $enabled_apis.iter().any(|n| n.enabled($name));
             let rpc_server_duration = meter
                 .f64_histogram(opentelemetry_semantic_conventions::metric::RPC_SERVER_DURATION)
+                .with_boundaries(vec![0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0])
                 .with_unit("s")
                 .build();
             module
