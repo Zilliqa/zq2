@@ -242,7 +242,7 @@ impl Consensus {
             }
         };
 
-        let (start_view, finalized_view, high_qc) = {
+        let (mut start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
                     let high_block = block_store
@@ -382,13 +382,14 @@ impl Consensus {
             );
             let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
             if min_view_since_high_qc_updated > start_view {
+                start_view = min_view_since_high_qc_updated;
                 info!(
                     "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
                     latest_high_qc_timestamp.elapsed()?.as_secs(),
                     view_diff,
                     min_view_since_high_qc_updated
                 );
-                consensus.db.set_view(min_view_since_high_qc_updated)?;
+                consensus.db.set_view(start_view)?;
             }
 
             // Remind block_store of our peers and request any potentially missing blocks
@@ -416,12 +417,12 @@ impl Consensus {
             consensus
                 .block_store
                 .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
-            // It is likley that we missed the most recent proposal. Request it now
+            // It is likley that we missed the most recent proposals. Request them now
             consensus
                 .block_store
                 .request_blocks(&RangeMap::from_closed_interval(
                     high_block.view(),
-                    high_block.view() + 1,
+                    start_view + 1,
                 ))?;
 
             // Build NewView immediatley so that we can contribute to consensus moving along
