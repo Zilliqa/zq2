@@ -189,6 +189,7 @@ impl State {
         trace!("contract_upgrade_apply_state_change");
         if let Some(deposit_v3_deploy_height) = contract_upgrade_block_heights.deposit_v3 {
             if deposit_v3_deploy_height == block_header.number {
+                trace!("running dposit_V3");
                 let deposit_v3_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
                 self.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
@@ -196,6 +197,7 @@ impl State {
         }
         if let Some(deposit_v4_deploy_height) = contract_upgrade_block_heights.deposit_v4 {
             if deposit_v4_deploy_height == block_header.number {
+                trace!("running dposit_V4");
                 let deposit_v4_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v4::CONTRACT);
                 self.upgrade_deposit_contract(block_header, deposit_v4_contract)?;
@@ -268,14 +270,18 @@ impl State {
         contract: &Contract,
     ) -> Result<Address> {
         trace!("upgrade_deposit_contract");
-
+        
         let current_version = self.deposit_contract_version(current_block)?;
+        trace!("current_version: {}", current_version);
 
         // Deploy latest deposit implementation
         let new_deposit_impl_addr =
             self.force_deploy_contract_evm(contract.bytecode.to_vec(), None, 0)?;
 
-        trace!("deployed latest contract veriosn to {:?}", new_deposit_impl_addr);
+        trace!(
+            "deployed latest contract veriosn to {:?}",
+            new_deposit_impl_addr
+        );
 
         let new_deposit_impl_reinitialize_data =
             contracts::deposit::REINITIALIZE.encode_input(&[])?;
@@ -284,7 +290,7 @@ impl State {
                 Token::Address(ethabi::Address::from(new_deposit_impl_addr.into_array())),
                 Token::Bytes(new_deposit_impl_reinitialize_data),
             ])?;
-        
+
         // Apply update to eip 1967 proxy
         let result = self.call_contract_apply(
             Address::ZERO,

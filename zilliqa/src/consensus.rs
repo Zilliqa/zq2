@@ -518,12 +518,16 @@ impl Consensus {
         if self.create_next_block_on_timeout {
             // Check if enough time elapsed to propose block
             if milliseconds_remaining_of_block_time == 0 {
-                if let Ok(Some((block, transactions))) = self.propose_new_block() {
-                    self.create_next_block_on_timeout = false;
-                    return Ok(Some((
-                        None,
-                        ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                    )));
+                match self.propose_new_block() {
+                    Ok(Some((block, transactions))) => {
+                        self.create_next_block_on_timeout = false;
+                        return Ok(Some((
+                            None,
+                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
+                        )));
+                    },
+                    Err(e) => info!("propose_new_block err {:?}", e),
+                    _ => info!("propose_new_block returned None")
                 };
             } else {
                 self.reset_timeout
@@ -1239,6 +1243,7 @@ impl Consensus {
                 proposal.header,
             )?;
         }
+        trace!("contract_upgrade_apply_state_change finshed. back in early_proposal_finish_at");
 
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(

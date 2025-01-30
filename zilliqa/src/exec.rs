@@ -454,7 +454,7 @@ pub enum BaseFeeCheck {
 
 impl State {
     /// Used primarily during genesis to set up contracts for chain functionality.
-    /// If override_address address is set, forces contract deployment to that addess.
+    /// If override_address is set, forces contract deployment to that addess.
     pub(crate) fn force_deploy_contract_evm(
         &mut self,
         creation_bytecode: Vec<u8>,
