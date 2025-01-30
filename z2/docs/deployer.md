@@ -24,10 +24,11 @@ Commands:
   restore                Restore a node data dir from a backup in the persistence bucket
   reset                  Reset a network stopping all the nodes and cleaning the /data folder
   restart                Restart a network stopping all the nodes and starting the service again
-  monitor                Show the network nodes specified metrics
+  monitor                Monitor the network nodes specified metrics
   api                    Perform operation over the network API nodes
   generate-private-keys  Generate the node private keys. --force to replace if already existing
   generate-genesis-key   Generate the genesis key. --force to replace if already existing
+  generate-stats-key     Generate the Stats Dashboard key. --force to replace if already existing
   help                   Print this message or the help of the given subcommand(s)
 
 Options:
