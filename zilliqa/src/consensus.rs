@@ -265,7 +265,7 @@ impl Consensus {
                         .unwrap();
 
                     trace!(
-                        "recovery: high_block view {0}, finalized_number {1}, start_view {2}",
+                        "recovery: high_block view {0}, finalized view {1}, start_view {2}",
                         high_block.view(),
                         finalized_number,
                         start_view
@@ -285,7 +285,6 @@ impl Consensus {
                         let highest_block_number = db
                             .get_highest_canonical_block_number()?
                             .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
-
                         let head_block = block_store
                             .get_canonical_block_by_number(highest_block_number)?
                             .ok_or_else(|| anyhow!("missing head block!"))?;
@@ -390,6 +389,7 @@ impl Consensus {
                     min_view_since_high_qc_updated
                 );
                 consensus.db.set_view(min_view_since_high_qc_updated)?;
+                consensus.build_new_view()?;
             }
 
             // Remind block_store of our peers and request any potentially missing blocks
@@ -1158,6 +1158,7 @@ impl Consensus {
     /// This should only run after majority QC or aggQC are available.
     /// It applies the rewards and produces the final Proposal.
     fn early_proposal_finish_at(&mut self, mut proposal: Block) -> Result<Option<Block>> {
+        trace!("early_proposal_finish_at");
         // Retrieve parent block data
         let parent_block = self
             .get_block(&proposal.parent_hash())?
@@ -1216,6 +1217,7 @@ impl Consensus {
             proposer, // Last leader
             &proposal,
         )?;
+        trace!("apply_rewards_late_at finshed");
 
         // ZIP-9: Sink gas to zero account
         state.mutate_account(Address::ZERO, |a| {
@@ -1227,6 +1229,7 @@ impl Consensus {
         })?;
 
         if self.block_is_first_in_epoch(proposal.header.number) {
+            trace!("block_is_first_in_epoch. do upgrade");
             // Update state with any contract upgrades for this block
             state.contract_upgrade_apply_state_change(
                 &self.config.consensus.contract_upgrade_block_heights,
@@ -1511,6 +1514,7 @@ impl Consensus {
     }
     /// Assembles a Pending block.
     fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
+        trace!("assemble_pending_block_at");
         // Start with highest canonical block
         let num = self
             .db
@@ -3096,6 +3100,7 @@ impl Consensus {
         })?;
 
         if self.block_is_first_in_epoch(block.header.number) {
+            trace!("is epoch boundary");
             // Update state with any contract upgrades for this block
             let mut state_clone = self.state.clone();
             state_clone.contract_upgrade_apply_state_change(
