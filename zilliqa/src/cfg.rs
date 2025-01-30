@@ -365,6 +365,7 @@ pub struct ConsensusConfig {
     pub contract_upgrade_block_heights: ContractUpgradesBlockHeights,
     /// The initial fork configuration at genesis block. This provides a complete description of the execution behavior
     /// at the genesis block.
+    #[serde(default = "genesis_fork_default")]
     pub genesis_fork: Fork,
     /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
     /// difference applies.
