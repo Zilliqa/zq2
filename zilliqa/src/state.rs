@@ -184,6 +184,13 @@ impl State {
                 self.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
             }
         }
+        if let Some(deposit_v4_deploy_height) = contract_upgrade_block_heights.deposit_v4 {
+            if deposit_v4_deploy_height == block_header.number {
+                let deposit_v4_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v4::CONTRACT);
+                self.upgrade_deposit_contract(block_header, deposit_v4_contract)?;
+            }
+        }
         Ok(())
     }
 

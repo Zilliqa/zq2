@@ -168,13 +168,17 @@ impl Chain {
         match self {
             Self::Zq2Devnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(3600),
+                // estimated: 2025-01-28T20:25:00Z
+                deposit_v4: Some(428400),
             },
             Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
                 deposit_v3: Some(5342400),
+                deposit_v4: None,
             },
             Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
+                deposit_v4: None,
             },
             _ => ContractUpgradesBlockHeights::default(),
         }
