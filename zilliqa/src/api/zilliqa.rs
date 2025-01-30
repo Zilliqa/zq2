@@ -395,33 +395,33 @@ fn get_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<GetTxRespo
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
 
-    let tx = node
-        .lock()
-        .unwrap()
-        .get_transaction_by_hash(hash)?
-        .ok_or_else(|| {
-            ErrorObject::owned(
-                RPCErrorCode::RpcDatabaseError as i32,
-                "Txn Hash not Present".to_string(),
-                jsonrpc_error_data.clone(),
-            )
-        })?;
-    let receipt = node
-        .lock()
-        .unwrap()
-        .get_transaction_receipt(hash)?
-        .ok_or_else(|| {
-            jsonrpsee::types::ErrorObject::owned(
-                RPCErrorCode::RpcDatabaseError as i32,
-                "Txn Hash not Present".to_string(),
-                jsonrpc_error_data.clone(),
-            )
-        })?;
+    let node = node.lock().unwrap();
+
+    let tx = node.get_transaction_by_hash(hash)?.ok_or_else(|| {
+        ErrorObject::owned(
+            RPCErrorCode::RpcDatabaseError as i32,
+            "Txn Hash not Present".to_string(),
+            jsonrpc_error_data.clone(),
+        )
+    })?;
+    let receipt = node.get_transaction_receipt(hash)?.ok_or_else(|| {
+        jsonrpsee::types::ErrorObject::owned(
+            RPCErrorCode::RpcDatabaseError as i32,
+            "Txn Hash not Present".to_string(),
+            jsonrpc_error_data.clone(),
+        )
+    })?;
     let block = node
-        .lock()
-        .unwrap()
         .get_block(receipt.block_hash)?
         .ok_or_else(|| anyhow!("block does not exist"))?;
+    if block.number() > node.get_finalized_height()? {
+        return Err(ErrorObject::owned(
+            RPCErrorCode::RpcDatabaseError as i32,
+            "Block not finalized".to_string(),
+            jsonrpc_error_data,
+        )
+        .into());
+    }
 
     GetTxResponse::new(tx, receipt, block.number())
 }
@@ -506,29 +506,25 @@ fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainI
     let node = node.lock().unwrap();
 
     let num_peers = node.get_peer_num();
-    let num_tx_blocks = node.get_chain_tip();
+    let num_tx_blocks = node.get_latest_finalized_block_number()?.unwrap_or(0);
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     let num_transactions = node.consensus.block_store.get_num_transactions()?;
     let ds_block_rate = tx_block_rate / TX_BLOCKS_PER_DS_BLOCK as f64;
 
     // num_txns_ds_epoch
-    let current_epoch = node.get_chain_tip() / TX_BLOCKS_PER_DS_BLOCK;
+    let current_epoch =
+        node.get_latest_finalized_block_number()?.unwrap_or(0) / TX_BLOCKS_PER_DS_BLOCK;
     let current_epoch_first = current_epoch * TX_BLOCKS_PER_DS_BLOCK;
     let mut num_txns_ds_epoch = 0;
-    for i in current_epoch_first..node.get_chain_tip() {
+    for i in current_epoch_first..node.get_latest_finalized_block_number()?.unwrap_or(0) {
         let block = node
-            .consensus
-            .block_store
-            .get_canonical_block_by_number(i)?
+            .get_block(i)?
             .ok_or_else(|| anyhow!("Block not found"))?;
         num_txns_ds_epoch += block.transactions.len();
     }
 
     // num_txns_tx_epoch
-    let latest_block = node
-        .consensus
-        .block_store
-        .get_canonical_block_by_number(node.get_chain_tip())?;
+    let latest_block = node.get_latest_finalized_block()?;
     let num_txns_tx_epoch = match latest_block {
         Some(block) => block.transactions.len(),
         None => 0,
@@ -554,7 +550,10 @@ fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainI
 fn get_num_tx_blocks(_: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
 
-    Ok(node.get_chain_tip().to_string())
+    Ok(node
+        .get_latest_finalized_block_number()?
+        .unwrap_or(0)
+        .to_string())
 }
 
 // GetSmartContractState
@@ -723,6 +722,9 @@ fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::T
     let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
+    if block.number() > node.get_finalized_height()? {
+        return Err(anyhow!("Block not finalized"));
+    }
     let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
     let block: zil::TxBlock = zil::TxBlock::new(&block, txn_fees);
 
@@ -754,6 +756,9 @@ fn get_tx_block_verbose(
     let Some(block) = node.get_block(block_number)? else {
         return Ok(None);
     };
+    if block.number() > node.get_finalized_height()? {
+        return Err(anyhow!("Block not finalized"));
+    }
     let proposer = node
         .get_proposer_reward_address(block.header)?
         .expect("No proposer");
@@ -771,7 +776,7 @@ fn get_smart_contracts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<Sm
     let block = node
         .lock()
         .unwrap()
-        .get_block(BlockId::latest())?
+        .get_latest_finalized_block()?
         .ok_or_else(|| anyhow!("Unable to get the latest block!"))?;
 
     let state = node.lock().unwrap().get_state(&block)?;
@@ -880,7 +885,7 @@ pub fn get_ds_block_verbose(params: Params, _node: &Arc<Mutex<Node>>) -> Result<
 pub fn get_latest_ds_block(_params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlock> {
     // Dummy implementation
     let node = node.lock().unwrap();
-    let num_tx_blocks = node.get_chain_tip();
+    let num_tx_blocks = node.get_latest_finalized_block_number()?.unwrap_or(0);
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     Ok(get_example_ds_block(num_ds_blocks, num_tx_blocks))
 }
@@ -892,7 +897,7 @@ pub fn get_current_ds_comm(
 ) -> Result<GetCurrentDSCommResult> {
     // Dummy implementation
     let node = node.lock().unwrap();
-    let num_tx_blocks = node.get_chain_tip();
+    let num_tx_blocks = node.get_latest_finalized_block_number()?.unwrap_or(0);
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     Ok(GetCurrentDSCommResult {
         current_dsepoch: num_ds_blocks.to_string(),
@@ -906,7 +911,7 @@ pub fn get_current_ds_comm(
 pub fn get_current_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     // Dummy implementation
     let node = node.lock().unwrap();
-    let num_tx_blocks = node.get_chain_tip();
+    let num_tx_blocks = node.get_latest_finalized_block_number()?.unwrap_or(0);
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     Ok(num_ds_blocks.to_string())
 }
@@ -915,7 +920,7 @@ pub fn get_current_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<
 pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockListingResult> {
     // Dummy implementation
     let node = node.lock().unwrap();
-    let num_tx_blocks = node.get_chain_tip();
+    let num_tx_blocks = node.get_latest_finalized_block_number()?.unwrap_or(0);
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     let max_pages = num_ds_blocks / 10;
     let page_requested: u64 = params.one()?;
@@ -940,14 +945,13 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
 pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
     let node = node.lock().unwrap();
     let max_measurement_blocks = 5;
-    let height = node.get_chain_tip();
+    let height = node.get_latest_finalized_block_number()?.unwrap_or(0);
     if height == 0 {
         return Ok(0.0);
     }
     let measurement_blocks = height.min(max_measurement_blocks);
     let start_measure_block = node
-        .consensus
-        .get_canonical_block_by_number(height - measurement_blocks + 1)?
+        .get_block(height - measurement_blocks + 1)?
         .ok_or(anyhow!("Unable to get block"))?;
     let start_measure_time = start_measure_block.header.timestamp;
     let end_measure_time = SystemTime::now();
@@ -978,7 +982,7 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
     let page_number: u64 = params.one()?;
 
     let node = node.lock().unwrap();
-    let num_tx_blocks = node.get_chain_tip();
+    let num_tx_blocks = node.get_latest_finalized_block_number()?.unwrap_or(0);
     let num_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
 
     let start_block = page_number * 10;
@@ -1014,7 +1018,7 @@ fn get_num_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<u64> {
 // Calculates transaction rate over the most recent block
 fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
     let node = node.lock().unwrap();
-    let head_block_num = node.get_chain_tip();
+    let head_block_num = node.get_latest_finalized_block_number()?.unwrap_or(0);
     if head_block_num <= 1 {
         return Ok(0.0);
     }
@@ -1025,12 +1029,12 @@ fn get_tx_rate(_params: Params, node: &Arc<Mutex<Node>>) -> Result<f64> {
     let prev_block = node
         .get_block(prev_block_num)?
         .ok_or(anyhow!("Unable to get block"))?;
-    let transactions_between = head_block.transactions.len() as f64;
+    let transactions_both = prev_block.transactions.len() + head_block.transactions.len();
     let time_between = head_block
         .header
         .timestamp
         .duration_since(prev_block.header.timestamp)?;
-    let transaction_rate = transactions_between / time_between.as_secs_f64();
+    let transaction_rate = transactions_both as f64 / time_between.as_secs_f64();
     Ok(transaction_rate)
 }
 
@@ -1049,6 +1053,9 @@ fn get_transactions_for_tx_block_ex(
     let block = node
         .get_block(block_number)?
         .ok_or_else(|| anyhow!("Block not found"))?;
+    if block.number() > node.get_finalized_height()? {
+        return Err(anyhow!("Block not finalized"));
+    }
 
     let total_transactions = block.transactions.len();
     let num_pages = (total_transactions / TRANSACTIONS_PER_PAGE)
@@ -1179,6 +1186,10 @@ fn get_txn_bodies_for_tx_block(
         .get_block(block_number)?
         .ok_or_else(|| anyhow!("Block not found"))?;
 
+    if block.number() > node.get_finalized_height()? {
+        return Err(anyhow!("Block not finalized"));
+    }
+
     extract_transaction_bodies(&block, &node)
 }
 
@@ -1195,6 +1206,10 @@ fn get_txn_bodies_for_tx_block_ex(
     let block = node
         .get_block(block_number)?
         .ok_or_else(|| anyhow!("Block not found"))?;
+
+    if block.number() > node.get_finalized_height()? {
+        return Err(anyhow!("Block not finalized"));
+    }
 
     let total_transactions = block.transactions.len();
     let num_pages = (total_transactions / TRANSACTIONS_PER_PAGE)
@@ -1232,7 +1247,7 @@ fn get_txn_bodies_for_tx_block_ex(
 // GetNumDSBlocks
 fn get_num_ds_blocks(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
-    let num_tx_blocks = node.get_chain_tip();
+    let num_tx_blocks = node.get_latest_finalized_block_number()?.unwrap_or(0);
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
     Ok(num_ds_blocks.to_string())
 }
@@ -1243,15 +1258,11 @@ fn get_recent_transactions(
     node: &Arc<Mutex<Node>>,
 ) -> Result<RecentTransactionsResponse> {
     let node = node.lock().unwrap();
-    let mut block_number = node.get_chain_tip();
+    let mut block_number = node.get_latest_finalized_block_number()?.unwrap_or(0);
     let mut txns = Vec::new();
     let mut blocks_searched = 0;
     while block_number > 0 && txns.len() < 100 && blocks_searched < 100 {
-        let block = match node
-            .consensus
-            .block_store
-            .get_canonical_block_by_number(block_number)?
-        {
+        let block = match node.get_block(block_number)? {
             Some(block) => block,
             None => continue,
         };
@@ -1281,10 +1292,7 @@ fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Stri
 // GetNumTxnsTXEpoch
 fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
-    let latest_block = node
-        .consensus
-        .block_store
-        .get_canonical_block_by_number(node.get_chain_tip())?;
+    let latest_block = node.get_latest_finalized_block()?;
     let num_transactions = match latest_block {
         Some(block) => block.transactions.len(),
         None => 0,
@@ -1296,14 +1304,12 @@ fn get_num_txns_tx_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Str
 fn get_num_txns_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
     let ds_epoch_size = TX_BLOCKS_PER_DS_BLOCK;
-    let current_epoch = node.get_chain_tip() / ds_epoch_size;
+    let current_epoch = node.get_latest_finalized_block_number()?.unwrap_or(0) / ds_epoch_size;
     let current_epoch_first = current_epoch * ds_epoch_size;
     let mut num_txns_epoch = 0;
-    for i in current_epoch_first..node.get_chain_tip() {
+    for i in current_epoch_first..node.get_latest_finalized_block_number()?.unwrap_or(0) {
         let block = node
-            .consensus
-            .block_store
-            .get_canonical_block_by_number(i)?
+            .get_block(i)?
             .ok_or_else(|| anyhow!("Block not found"))?;
         num_txns_epoch += block.transactions.len();
     }
@@ -1378,7 +1384,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
 
     // First get the account and check that its a scilla account
     let block = node
-        .get_block(BlockId::latest())?
+        .get_latest_finalized_block()?
         .ok_or_else(|| anyhow!("Unable to get latest block!"))?;
 
     let state = node.get_state(&block)?;
