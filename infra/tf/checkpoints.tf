@@ -69,6 +69,13 @@ resource "google_storage_bucket" "checkpoint" {
       send_age_if_zero           = false
     }
   }
+
+  cors {
+    origin          = ["*"]
+    method          = ["GET", "HEAD", "POST", "OPTIONS", "PUT"]
+    response_header = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable"]
+    max_age_seconds = 3600
+  }
 }
 
 resource "google_storage_bucket_iam_binding" "checkpoint_bucket_admins" {
