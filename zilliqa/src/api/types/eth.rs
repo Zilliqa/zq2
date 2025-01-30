@@ -474,6 +474,18 @@ pub enum SyncingResult {
     Struct(SyncingStruct),
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeeHistory {
+    #[serde(serialize_with = "hex")]
+    pub oldest_block: u64,
+    pub reward: Option<Vec<Vec<f64>>>,
+    pub base_fee_per_gas: Vec<String>,
+    pub gas_used_ratio: Vec<f64>,
+    pub base_fee_per_blob_gas: Vec<String>,
+    pub blob_gas_used_ratio: Vec<u8>,
+}
+
 #[cfg(test)]
 mod tests {
     use alloy::primitives::B256;

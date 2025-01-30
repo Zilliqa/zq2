@@ -1039,10 +1039,114 @@ fn blob_base_fee(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     Err(anyhow!("API method eth_blobBaseFee is not implemented yet"))
 }
 
+/// Calculates the gas rewards for a block based on specified percentiles.
+///
+/// # Parameters
+/// - `block`: The block for which the rewards are being calculated.
+/// - `reward_percentiles`: A slice of percentiles (0-100) at which to calculate the rewards.
+/// - `transactions_sorted_gas_used`: A vector of gas used by transactions, sorted in ascending order.
+///
+/// # Returns
+/// A vector of rewards corresponding to the specified percentiles.
+fn calculate_rewards(
+    block_gas_used: u64,
+    reward_percentiles: &[f64],
+    sorted_gas_prices: &[u128],
+) -> Vec<f64> {
+    let target_gas_values: Vec<f64> = reward_percentiles
+        .iter()
+        .map(|&percentile| percentile / 100.0 * (block_gas_used as f64))
+        .collect();
+
+    let mut rewards = vec![0.0; reward_percentiles.len()];
+    let mut sum_gas = 0.0;
+    let mut percentile_index = 0;
+
+    for gas_used in sorted_gas_prices.iter().map(|&g| g as f64) {
+        sum_gas += gas_used;
+
+        while percentile_index < reward_percentiles.len()
+            && sum_gas >= target_gas_values[percentile_index]
+        {
+            rewards[percentile_index] = gas_used;
+            percentile_index += 1;
+        }
+
+        if percentile_index >= reward_percentiles.len() {
+            break;
+        }
+    }
+
+    for i in percentile_index..reward_percentiles.len() {
+        rewards[i] = sorted_gas_prices.last().copied().unwrap_or(0) as f64;
+    }
+
+    rewards
+}
+
 /// eth_feeHistory
 /// Returns the collection of historical gas information
-fn fee_history(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!("API method eth_feeHistory is not implemented yet"))
+fn fee_history(params: Params, node: &Arc<Mutex<Node>>) -> Result<eth::FeeHistory> {
+    let mut params = params.sequence();
+    let block_count: u64 = params.next()?;
+    let newest_block: BlockNumberOrTag = params.next()?;
+    let reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
+    expect_end_of_params(&mut params, 2, 3)?;
+
+    let node = node.lock().unwrap();
+    let newest_block_number = node
+        .resolve_block_number(newest_block)?
+        .ok_or_else(|| anyhow!("block not found"))?
+        .number();
+
+    if newest_block_number < block_count {
+        return Err(anyhow!("block_count is greater than newest_block"));
+    }
+
+    let oldest_block = newest_block_number - block_count + 1;
+    let (reward, gas_used_ratio) = (oldest_block..=newest_block_number)
+        .map(|block_number| {
+            let block = node
+                .get_block(BlockNumberOrTag::Number(block_number))?
+                .ok_or_else(|| anyhow!("block not found"))?;
+
+            let reward = if let Some(reward_percentiles) = reward_percentiles.as_ref() {
+                let sorted_gas_prices = block
+                    .transactions
+                    .iter()
+                    .map(|tx_hash| {
+                        let tx = node
+                            .get_transaction_by_hash(*tx_hash)?
+                            .ok_or_else(|| anyhow!("transaction not found: {}", tx_hash))?;
+                        Ok(tx.tx.gas_price_per_evm_gas())
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .sorted_unstable()
+                    .collect::<Vec<_>>();
+
+                calculate_rewards(block.gas_used().0, reward_percentiles, &sorted_gas_prices)
+            } else {
+                vec![]
+            };
+
+            let gas_limit = block.gas_limit().0 as f64;
+            if gas_limit == 0.0 {
+                return Err(anyhow!("gas limit is zero"));
+            }
+
+            Ok((reward, (block.gas_used().0 as f64) / gas_limit))
+        })
+        .collect::<Result<(Vec<Vec<f64>>, Vec<f64>)>>()?;
+
+    Ok(eth::FeeHistory {
+        oldest_block,
+        reward: reward_percentiles.map(|_| reward),
+        gas_used_ratio,
+        base_fee_per_gas: vec!["0x0".to_string(); block_count as usize],
+        base_fee_per_blob_gas: vec!["0x0".to_string(); block_count as usize],
+        blob_gas_used_ratio: vec![0; block_count as usize],
+    })
 }
 
 /// eth_getAccount
@@ -1135,4 +1239,45 @@ fn uninstall_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     Err(anyhow!(
         "API method eth_uninstallFilter is not implemented yet"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_rewards_empty_transactions() {
+        let reward_percentiles = vec![10.0, 50.0, 90.0];
+        let sorted_gas_prices = vec![];
+
+        let rewards = calculate_rewards(0, &reward_percentiles, &sorted_gas_prices);
+        assert_eq!(rewards, vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_calculate_rewards_single_transaction() {
+        let reward_percentiles = vec![10.0, 50.0, 90.0];
+        let sorted_gas_prices = vec![50];
+
+        let rewards = calculate_rewards(100, &reward_percentiles, &sorted_gas_prices);
+        assert_eq!(rewards, vec![50.0, 50.0, 50.0]);
+    }
+
+    #[test]
+    fn test_calculate_rewards_multiple_transactions() {
+        let reward_percentiles = vec![10.0, 50.0, 90.0];
+        let sorted_gas_prices = vec![50, 100, 150];
+
+        let rewards = calculate_rewards(300, &reward_percentiles, &sorted_gas_prices);
+        assert_eq!(rewards, vec![50.0, 100.0, 150.0]);
+    }
+
+    #[test]
+    fn test_calculate_rewards_boundary_cases() {
+        let reward_percentiles = vec![0.0, 100.0];
+        let sorted_gas_prices = vec![50, 100, 150];
+
+        let rewards = calculate_rewards(300, &reward_percentiles, &sorted_gas_prices);
+        assert_eq!(rewards, vec![50.0, 150.0]);
+    }
 }
