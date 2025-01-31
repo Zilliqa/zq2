@@ -268,6 +268,7 @@ async fn checkpoints_test(mut network: Network) {
     assert_eq!(state["welcome_msg"], "default");
 
     // check the new node catches up and keeps up with block production
+    network.run_until_synced(new_node_idx).await;
     network
         .run_until_block(&new_node_wallet, 20.into(), 200)
         .await;

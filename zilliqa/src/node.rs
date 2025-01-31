@@ -33,13 +33,14 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockHeader, BlockResponse, ExternalMessage, InternalMessage, IntershardCall,
-        ProcessProposal, Proposal,
+        Block, BlockHeader, BlockResponse, ExternalMessage, InjectedProposal, InternalMessage,
+        IntershardCall, Proposal,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
     pool::{TxAddResult, TxPoolContent},
     state::State,
+    sync::SyncPeers,
     transaction::{
         EvmGas, SignedTransaction, TransactionReceipt, TxIntershard, VerifiedTransaction,
     },
@@ -170,6 +171,7 @@ impl ChainId {
 }
 
 impl Node {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: NodeConfig,
         secret_key: SecretKey,
@@ -178,6 +180,7 @@ impl Node {
         request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         reset_timeout: UnboundedSender<Duration>,
         peer_num: Arc<AtomicUsize>,
+        peers: Arc<SyncPeers>,
     ) -> Result<Node> {
         config.validate()?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
@@ -201,7 +204,14 @@ impl Node {
             reset_timeout: reset_timeout.clone(),
             db: db.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
-            consensus: Consensus::new(secret_key, config, message_sender, reset_timeout, db)?,
+            consensus: Consensus::new(
+                secret_key,
+                config,
+                message_sender,
+                reset_timeout,
+                db,
+                peers,
+            )?,
             peer_num,
         };
         Ok(node)
@@ -269,59 +279,33 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
-            ExternalMessage::BlockRequest(request) => {
-                if from == self.peer_id {
-                    debug!("block_store::BlockRequest : ignoring blocks request to self");
-                    return Ok(());
-                }
-
-                trace!(
-                    "block_store::BlockRequest : received a block request - {}",
-                    self.peer_id
-                );
-                // Note that it is very important that we limit this by number of blocks
-                // returned, _not_ by max view range returned. If we don't, then any
-                // view gap larger than block_request_limit will never be filliable
-                // because no node will ever be prepared to return the block after it.
-                let proposals: Vec<Proposal> = (request.from_view..=request.to_view)
-                    .take(self.config.block_request_limit)
-                    .filter_map(|view| {
-                        self.consensus
-                            .get_block_by_view(view)
-                            .transpose()
-                            .map(|block| Ok(self.block_to_proposal(block?)))
-                    })
-                    .collect::<Result<_>>()?;
-
-                let availability = self.consensus.block_store.availability()?;
-                trace!("block_store::BlockRequest - responding to new blocks request {id:?} from {from:?} of {request:?} with props {0:?} availability {availability:?}",
-                       proposals.iter().fold("".to_string(), |state, x| format!("{},{}", state, x.header.view)));
-
-                // Send the response to this block request.
-                self.request_responses.send((
-                    response_channel,
-                    ExternalMessage::BlockResponse(BlockResponse {
-                        proposals,
-                        from_view: request.from_view,
-                        availability,
-                    }),
-                ))?;
+            // RFC-161 sync algorithm, phase 2.
+            ExternalMessage::MultiBlockRequest(request) => {
+                let message = self
+                    .consensus
+                    .sync
+                    .handle_multiblock_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
             }
-            // We don't usually expect a [BlockResponse] to be received as a request, however this can occur when our
-            // [BlockStore] has re-sent a previously unusable block because we didn't (yet) have the block's parent.
-            // Having knowledge of this here breaks our abstraction boundaries slightly, but it also keeps things
-            // simple.
-            ExternalMessage::BlockResponse(m) => {
-                self.handle_block_response(from, m)?;
-                // Acknowledge this block response. This does nothing because the `BlockResponse` request was sent by
-                // us, but we keep it here for symmetry with the other handlers.
-                self.request_responses
-                    .send((response_channel, ExternalMessage::Acknowledgement))?;
+            // RFC-161 sync algorithm, phase 1.
+            ExternalMessage::MetaDataRequest(request) => {
+                let message = self.consensus.sync.handle_metadata_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
             }
             // This just breaks down group block messages into individual messages to stop them blocking threads
             // for long periods.
-            ExternalMessage::ProcessProposal(m) => {
-                self.handle_process_proposal(from, m)?;
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
+            }
+            // Respond negatively to block request from old nodes
+            ExternalMessage::BlockRequest(_) => {
+                // respond with an invalid response
+                let message = ExternalMessage::BlockResponse(BlockResponse {
+                    availability: None,
+                    proposals: vec![],
+                    from_view: u64::MAX,
+                });
+                self.request_responses.send((response_channel, message))?;
             }
             // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
             // a Request by the underlying layer, with a faux request-id. This is to mitigate issues when there are
@@ -333,8 +317,8 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
             }
-            _ => {
-                warn!("unexpected message type");
+            msg => {
+                warn!(%msg, "unexpected message type");
             }
         }
 
@@ -347,17 +331,30 @@ impl Node {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
-        self.consensus.report_outgoing_message_failure(failure)?;
+        self.consensus.sync.handle_request_failure(failure)?;
         Ok(())
     }
 
     pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
         match message {
-            ExternalMessage::BlockResponse(m) => self.handle_block_response(from, m)?,
-            ExternalMessage::Acknowledgement => {}
-            _ => {
-                warn!("unexpected message type");
+            ExternalMessage::MultiBlockResponse(response) => self
+                .consensus
+                .sync
+                .handle_multiblock_response(from, response)?,
+
+            ExternalMessage::MetaDataResponse(response) => self
+                .consensus
+                .sync
+                .handle_metadata_response(from, response)?,
+            ExternalMessage::BlockResponse(response) => {
+                self.consensus.sync.handle_block_response(from, response)?
+            }
+            ExternalMessage::Acknowledgement => {
+                self.consensus.sync.handle_acknowledgement(from)?;
+            }
+            msg => {
+                warn!(%msg, "unexpected message type");
             }
         }
 
@@ -904,26 +901,8 @@ impl Node {
         self.peer_num.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Convenience function to convert a block to a proposal (add full txs)
-    /// NOTE: Includes intershard transactions. Should only be used for syncing history,
-    /// not for consensus messages regarding new blocks.
-    fn block_to_proposal(&self, block: Block) -> Proposal {
-        let txs: Vec<_> = block
-            .transactions
-            .iter()
-            .map(|tx_hash| {
-                self.consensus
-                    .get_transaction_by_hash(*tx_hash)
-                    .unwrap()
-                    .unwrap()
-            })
-            .collect();
-
-        Proposal::from_parts(block, txs)
-    }
-
     fn handle_proposal(&mut self, from: PeerId, proposal: Proposal) -> Result<()> {
-        if let Some((to, message)) = self.consensus.proposal(from, proposal, false)? {
+        if let Some((to, message)) = self.consensus.proposal(from, proposal.clone(), false)? {
             self.reset_timeout
                 .send(self.config.consensus.consensus_timeout)?;
             if let Some(to) = to {
@@ -931,38 +910,21 @@ impl Node {
             } else {
                 self.message_sender.broadcast_proposal(message)?;
             }
+        } else {
+            self.consensus.sync.sync_from_proposal(proposal)?; // proposal is already verified
         }
 
         Ok(())
     }
 
-    fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
-        trace!(
-            "block_store::handle_block_response - received blocks response of length {}",
-            response.proposals.len()
-        );
-        self.consensus
-            .receive_block_availability(from, &response.availability)?;
-
-        self.consensus
-            .buffer_lack_of_proposals(response.from_view, &response.proposals)?;
-
-        for block in response.proposals {
-            // Buffer the block so that we know we have it - in fact, add it to the cache so
-            // that we can include it in the chain if necessary.
-            self.consensus.buffer_proposal(from, block)?;
-        }
-        trace!("block_store::handle_block_response: finished handling response");
-        Ok(())
-    }
-
-    fn handle_process_proposal(&mut self, from: PeerId, req: ProcessProposal) -> Result<()> {
+    fn handle_injected_proposal(&mut self, from: PeerId, req: InjectedProposal) -> Result<()> {
         if from != self.consensus.peer_id() {
-            warn!("Someone ({from}) sent me a ProcessProposal; illegal- ignoring");
+            warn!("Someone ({from}) sent me a InjectedProposal; illegal- ignoring");
             return Ok(());
         }
         trace!("Handling proposal for view {0}", req.block.header.view);
         let proposal = self.consensus.receive_block(from, req.block)?;
+        self.consensus.sync.mark_received_proposal(req.from)?;
         if let Some(proposal) = proposal {
             trace!(
                 " ... broadcasting proposal for view {0}",
