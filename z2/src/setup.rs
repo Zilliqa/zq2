@@ -566,6 +566,7 @@ impl Setup {
                 data_dir: None,
                 state_cache_size: state_cache_size_default(),
                 load_checkpoint: None,
+                adjust_state: None,
                 do_checkpoints: false,
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
@@ -591,7 +592,7 @@ impl Setup {
                     contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
-                    force_genesis_committee: false,
+                    reset_view_timeout_on_startup: true,
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -676,7 +677,9 @@ impl Setup {
                     cp.file,
                     hex::encode(cp.hash.0)
                 );
-                node.load_checkpoint = Some(cp.clone());
+                let mut checkpoint = cp.clone();
+                checkpoint.respect_shard_ids = false;
+                node.load_checkpoint = Some(checkpoint);
                 any_checkpoints = true;
             } else {
                 node.load_checkpoint = None
@@ -684,8 +687,9 @@ impl Setup {
         }
         if any_checkpoints {
             for node in loaded_config.nodes.iter_mut() {
-                node.consensus.force_genesis_committee = true;
-                node.respect_shard_ids_in_checkpoints = false;
+                if let Some(ref mut v) = &mut node.adjust_state {
+                    v.genesis_committee = true;
+                }
             }
         }
         let config_str = toml::to_string(&loaded_config)?;

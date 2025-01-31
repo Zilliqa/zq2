@@ -145,6 +145,7 @@ pub fn parse_checkpoint_spec(spec: &str) -> Result<Checkpoint> {
         Ok(zilliqa::cfg::Checkpoint {
             file: components[0].to_string(),
             hash: hash_from_hex(components[1])?,
+            respect_shard_ids: false,
         })
     }
 }

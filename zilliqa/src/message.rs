@@ -597,7 +597,9 @@ impl Block {
         )
     }
 
-    pub fn regenesis(
+    /// Constructs an adjustment block, used for state adjustment
+    /// see consensus.rs for details.
+    pub fn adjustment(
         view: u64,
         number: u64,
         parent_block_hash: Hash,

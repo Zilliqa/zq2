@@ -177,10 +177,11 @@ pub struct Consensus {
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
-    // This stores the block hashes of blocks we have force-executed as part of
-    // a reassignment of the committee when recovering from a foreign checkpoint,
-    // so that we can forcibly validate them later.
-    pub regenesis_block_hashes: Vec<Hash>,
+
+    /// We always trust qcs with these block hashes; this is used by the state adjustment mechanism to force
+    /// us to trust blocks which bridge the gap between a checkpoint with a committee we don't trust and
+    /// the current state of the chain which we do.
+    pub always_trust_block_hashes: Vec<Hash>,
 }
 
 impl Consensus {
@@ -200,7 +201,7 @@ impl Consensus {
         // Start chain from checkpoint. Load data file and initialise data in tables
         let mut checkpoint_data = None;
         if let Some(checkpoint) = &config.load_checkpoint {
-            let shard_spec = if config.respect_shard_ids_in_checkpoints {
+            let shard_spec = if checkpoint.respect_shard_ids {
                 Some(config.eth_chain_id)
             } else {
                 None
@@ -264,7 +265,7 @@ impl Consensus {
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
                     // If we are all starting together, start at the last finalised view else we will have very long timeouts.
-                    let start_view = if config.consensus.force_genesis_committee {
+                    let start_view = if config.consensus.reset_view_timeout_on_startup {
                         finalized_number + 1
                     } else {
                         db.get_view()?
@@ -353,7 +354,7 @@ impl Consensus {
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
-            regenesis_block_hashes: Vec::new(),
+            always_trust_block_hashes: Vec::new(),
         };
         consensus.db.set_view(start_view)?;
         consensus.set_finalized_view(finalized_view)?;
@@ -385,10 +386,10 @@ impl Consensus {
             )?;
         }
 
-        if consensus.config.consensus.force_genesis_committee {
-            trace!("Executing regenesis block .. ");
-            consensus.execute_regenesis_block()?;
-        } else {
+        consensus.insert_state_adjustment_blocks()?;
+
+        // Don't try to jump views ahead if we're resetting the timeout anyway.
+        if !consensus.config.consensus.reset_view_timeout_on_startup {
             // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
             // This is useful in scenarios in which consensus has failed since this node went down
             if let Some(latest_high_qc_timestamp) = consensus.db.get_high_qc_updated_at()? {
@@ -399,11 +400,11 @@ impl Consensus {
                 let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
                 if min_view_since_high_qc_updated > start_view {
                     info!(
-                    "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
-                    latest_high_qc_timestamp.elapsed()?.as_secs(),
-                    view_diff,
-                    min_view_since_high_qc_updated
-                );
+                        "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
+                        latest_high_qc_timestamp.elapsed()?.as_secs(),
+                        view_diff,
+                        min_view_since_high_qc_updated
+                    );
                     consensus.db.set_view(min_view_since_high_qc_updated)?;
                 }
 
@@ -2366,16 +2367,12 @@ impl Consensus {
             return Err((anyhow!("invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}", block.hash(), block.view(), committee.len()), false));
         }
 
-        // If we are configured for recovery from a foreign checkpoint, we regard any qc with the regenesis block's
-        // hash as valid.
-        let verify_qc = !(self.config.consensus.force_genesis_committee
-            && self
-                .regenesis_block_hashes
-                .iter()
-                .find(|&x| x == &block.header.qc.block_hash)
-                .is_some());
-
-        if verify_qc {
+        if self
+            .always_trust_block_hashes
+            .iter()
+            .find(|&x| x == &block.header.qc.block_hash)
+            .is_none()
+        {
             // Check if the co-signers of the block's QC represent the supermajority.
             self.check_quorum_in_bits(
                 &block.header.qc.cosigned,
@@ -2434,7 +2431,7 @@ impl Consensus {
             }
         } else {
             trace!(
-                "not validating votes for qc for block hash {}, which is a regenesis block",
+                "not validating votes for qc for block hash {}, which is an always_trust block",
                 block.header.qc.block_hash
             );
         }
@@ -3339,117 +3336,88 @@ impl Consensus {
         self.block_store.get_sync_data()
     }
 
-    // Create and execute a block which resets the deposit contract and funds genesis accounts.
-    // this is used when we construct a new network from a checkpoint from another network, to
-    // ensure that consensus can re-establish (because we changed the validator set), and to
-    // ensure that we have some tokens in known accounts.
-    fn execute_regenesis_block(&mut self) -> Result<()> {
-        // This is not safe in general, but it is here because when this function is executed,
-        // all nodes have identical state.
-        let highest_block_number = self.db.get_highest_recorded_block_number()?.unwrap_or(0);
-        let highest_block = self.db.get_canonical_block_by_number(highest_block_number)?.ok_or(
-            anyhow!("We don't have the highest block data stored and so can't construct a regenesis block based on it. Is your checkpoint OK?"))?;
+    /// Creates and executes two empty blocks.
+    /// These blocks contain no transactions; they simply adjust the state to one in which the
+    /// state adjustments from configuration have been applied. They are agreed on "by fiat"
+    /// by all validators and the qcs for them are accepted without signature checking.
+    /// This allows us to load checkpoints into networks from which they were not generated.
+    fn insert_state_adjustment_blocks(&mut self) -> Result<()> {
+        if let Some(adjust) = &self.config.adjust_state {
+            // This is not safe in general, but it is here because when this function is executed,
+            // all nodes have identical state.
+            let highest_block_number = self.db.get_highest_recorded_block_number()?.unwrap_or(0);
+            let highest_block = self.db.get_canonical_block_by_number(highest_block_number)?.ok_or(
+                anyhow!("We don't have the highest block data stored and so can't construct a state adjustment block based on it. Is your checkpoint OK?"))?;
 
-        debug!(
-            "execute_regenesis_block(): highest_block = {highest_block_number} hash = {}",
-            highest_block.hash()
-        );
-        // This is a bit horrid - we construct a new state which is the genesis state, and then brutally overwrite everything in
-        // the actual state with the genesis state, thus resetting the deposit contract account. Yuck!
-        let mut genesis_state = State::new_with_genesis(
-            self.db.state_trie()?,
-            self.config.clone(),
-            self.block_store.clone_read_only(),
-        )?;
-        debug!("constructed genesis state {:?}", genesis_state.root_hash()?);
-        // Now we build a state from the last block's state but with any accounts mentioned by the genesis state overridden.
-        debug!("Constructing regenesis state .. ");
-        let mut after_regenesis_state = self
-            .state_at(highest_block_number)?
-            .ok_or(anyhow!("Cannot get state at {highest_block_number}"))?
-            .try_clone()?;
-        after_regenesis_state.merge_from(&genesis_state)?;
-        debug!(
-            "constructed after_regenesis_state {:?}",
-            after_regenesis_state.root_hash()?
-        );
-        let magic_block_timestamp = highest_block.timestamp() + Duration::new(1, 0);
-        let second_magic_block_timestamp = highest_block.timestamp() + Duration::new(12, 0);
-        // Construct an empty next block ..
-        let magic_block = Block::regenesis(
-            highest_block.header.view + 1,
-            highest_block_number + 1,
-            highest_block.hash(),
-            after_regenesis_state.root_hash()?,
-            magic_block_timestamp,
-        );
-        debug!(
-            " .. regenesis block is view {}, number {}",
-            magic_block.header.view, magic_block.header.number
-        );
-        {
-            let stakers = genesis_state.get_stakers(magic_block.header);
-            if let Ok(some) = &stakers {
-                debug!("PPPP stakers - {}", some.len());
-                some.iter().for_each(|x| debug!("PPP staker: {}", x));
+            trace!(
+                "Constructing state adjustment blocks from blk {highest_block_number}, view {}",
+                highest_block.view()
+            );
+            // Now we build a state from the last block's state but with any accounts mentioned by the genesis state overridden.
+            let mut after_adjustment_state = self
+                .state_at(highest_block_number)?
+                .ok_or(anyhow!("Cannot get state at {highest_block_number}"))?
+                .try_clone()?;
+
+            // Construct a state containing the accounts we want to override.
+            if adjust.genesis_committee {
+                let genesis_state = State::new_with_genesis(
+                    self.db.state_trie()?,
+                    self.config.clone(),
+                    self.block_store.clone_read_only(),
+                )?;
+                after_adjustment_state.merge_from(&genesis_state)?;
             }
+            debug!(
+                " ... constructed post-adjustment state with hash {:?}",
+                after_adjustment_state.root_hash()?
+            );
+            // Now we need to construct a couple of trusted blocks in turn - one which we'll use for
+            // recovery (and is probably not strictly necessary), and its successor which will become
+            // the base for future block production.
+            //
+            // They will have 0.25s between them, so we can recognise them later.
+            const BLOCK_TIME_INCREMENT: Duration = Duration::new(0, 250);
+            let synth_block0 = Block::adjustment(
+                highest_block.view() + 1,
+                highest_block_number + 1,
+                highest_block.hash(),
+                after_adjustment_state.root_hash()?,
+                highest_block.timestamp() + BLOCK_TIME_INCREMENT,
+            );
+            trace!(
+                "  ... constructed synth_block0 with number {}, view {}, hash {}",
+                synth_block0.number(),
+                synth_block0.view(),
+                synth_block0.hash()
+            );
+            let synth_block1 = Block::adjustment(
+                synth_block0.view() + 1,
+                synth_block0.number() + 1,
+                synth_block0.hash(),
+                after_adjustment_state.root_hash()?,
+                synth_block0.timestamp() + BLOCK_TIME_INCREMENT,
+            );
+            trace!(
+                "  ... constructed synth_block1 with number {}, view {}, hash {}",
+                synth_block1.number(),
+                synth_block1.view(),
+                synth_block1.hash()
+            );
+
+            trace!("  ... assimilating adjusted state");
+            self.state
+                .set_to_root(after_adjustment_state.root_hash()?.into());
+            self.update_high_qc_and_view(false, synth_block1.header.qc)?;
+            self.db.set_high_qc(synth_block1.header.qc)?;
+            self.high_qc = synth_block1.header.qc;
+            self.db.force_view(synth_block1.view())?;
+            self.always_trust_block_hashes.push(synth_block0.hash());
+            self.always_trust_block_hashes.push(synth_block1.hash());
+            self.block_store.process_block(None, synth_block0)?;
+            self.block_store.process_block(None, synth_block1)?;
+            trace!("  ... state adjustment complete");
         }
-        let second_magic_block = Block::regenesis(
-            highest_block.header.view + 2,
-            highest_block_number + 2,
-            magic_block.hash(),
-            after_regenesis_state.root_hash()?,
-            second_magic_block_timestamp,
-        );
-        debug!(
-            " .. regenesis second block is view {}, number {}",
-            second_magic_block.header.view, second_magic_block.header.number
-        );
-        debug!("Assimilating regenesis blocks ...");
-        self.state
-            .set_to_root(second_magic_block.state_root_hash().into());
-        {
-            let stakers = self.state.get_stakers(magic_block.header);
-            if let Ok(some) = &stakers {
-                debug!("QQQQ stakers - {}", some.len());
-                some.iter().for_each(|x| debug!("QQQ staker: {}", x));
-            }
-        }
-
-        self.update_high_qc_and_view(false, second_magic_block.header.qc)?;
-        let new_high_qc = second_magic_block.header.qc;
-        self.db.set_high_qc(new_high_qc)?;
-        self.high_qc = new_high_qc;
-        debug!("high_qc = {:?}", self.high_qc);
-        self.db.force_view(highest_block.header.view + 2)?;
-        debug!(
-            "block hashes [0] = {:?} [1] = {:?}",
-            magic_block.hash(),
-            second_magic_block.hash()
-        );
-        self.regenesis_block_hashes.push(magic_block.hash());
-        self.regenesis_block_hashes.push(second_magic_block.hash());
-
-        self.block_store.process_block(None, magic_block)?;
-        self.block_store.process_block(None, second_magic_block)?;
-
-        {
-            let stakers = self.state.get_stakers(BlockHeader {
-                number: highest_block_number + 1,
-                ..Default::default()
-            });
-            if let Ok(some) = &stakers {
-                debug!("RRRR stakers - {}", some.len());
-                some.iter().for_each(|x| debug!("RRR staker: {}", x));
-            }
-        }
-
-        debug!(
-            "high_qc.view {} , our view {}",
-            self.high_qc.view,
-            self.get_view()?
-        );
-        debug!("I wonder if that will work?");
         Ok(())
     }
 }
