@@ -8,7 +8,7 @@ net,count,peers
 
 # Description
 
-Returns the number of peers currently connected to the client. In zq2, always returns `"0x0"`.
+Returns the number of peers currently connected to the client.
 
 # Curl
 
@@ -35,4 +35,3 @@ Returns the number of peers currently connected to the client. In zq2, always re
 | `jsonrpc` | string | Required | `"2.0"`           |
 | `method`  | string | Required | `"net_peerCount"` |
 | `params`  | array  | Requred  | can be anything   |
-
