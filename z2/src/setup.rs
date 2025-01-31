@@ -21,6 +21,7 @@ use zilliqa::{
     api,
     cfg::{
         genesis_fork_default, max_rpc_response_size_default, state_cache_size_default, ApiServer,
+        StateAdjustment,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
@@ -566,7 +567,7 @@ impl Setup {
                 data_dir: None,
                 state_cache_size: state_cache_size_default(),
                 load_checkpoint: None,
-                adjust_state: None,
+                adjust_state: vec![],
                 do_checkpoints: false,
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
@@ -667,7 +668,7 @@ impl Setup {
         // Load the config file, modify it and save it back.
         let loaded_config_str = fs::read_to_string(config_file)
             .await
-            .context(format!("Cannot read from {0} - are you sure you are trying to start a node that actually exists?", config_file.to_string_lossy()))?;
+            .context(format!("Cannot reacfgrom {0} - are you sure you are trying to start a node that actually exists?", config_file.to_string_lossy()))?;
         let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&loaded_config_str)?;
         let mut any_checkpoints = false;
         for node in loaded_config.nodes.iter_mut() {
@@ -687,9 +688,7 @@ impl Setup {
         }
         if any_checkpoints {
             for node in loaded_config.nodes.iter_mut() {
-                if let Some(ref mut v) = &mut node.adjust_state {
-                    v.genesis_committee = true;
-                }
+                node.adjust_state.push(StateAdjustment::GenesisCommittee);
             }
         }
         let config_str = toml::to_string(&loaded_config)?;

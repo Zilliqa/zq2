@@ -21,7 +21,7 @@ use tracing::*;
 use crate::{
     block_store::BlockStore,
     blockhooks,
-    cfg::{ConsensusConfig, NodeConfig},
+    cfg::{ConsensusConfig, NodeConfig, StateAdjustment},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
     db::{self, Db},
@@ -3302,82 +3302,92 @@ impl Consensus {
     /// by all validators and the qcs for them are accepted without signature checking.
     /// This allows us to load checkpoints into networks from which they were not generated.
     fn insert_state_adjustment_blocks(&mut self) -> Result<()> {
-        if let Some(adjust) = &self.config.adjust_state {
-            // This is not safe in general, but it is here because when this function is executed,
-            // all nodes have identical state.
-            let highest_block_number = self.db.get_highest_recorded_block_number()?.unwrap_or(0);
-            let highest_block = self.db.get_canonical_block_by_number(highest_block_number)?.ok_or(
-                anyhow!("We don't have the highest block data stored and so can't construct a state adjustment block based on it. Is your checkpoint OK?"))?;
-
-            trace!(
-                "Constructing state adjustment blocks from blk {highest_block_number}, view {}",
-                highest_block.view()
-            );
-            // Now we build a state from the last block's state but with any accounts mentioned by the genesis state overridden.
-            let mut after_adjustment_state = self
-                .state_at(highest_block_number)?
-                .ok_or(anyhow!("Cannot get state at {highest_block_number}"))?
-                .try_clone()?;
-
-            // Construct a state containing the accounts we want to override.
-            if adjust.genesis_committee {
-                let genesis_state = State::new_with_genesis(
-                    self.db.state_trie()?,
-                    self.config.clone(),
-                    self.block_store.clone_read_only(),
-                )?;
-                after_adjustment_state.merge_from(&genesis_state)?;
-            }
-            debug!(
-                " ... constructed post-adjustment state with hash {:?}",
-                after_adjustment_state.root_hash()?
-            );
-            // Now we need to construct a couple of trusted blocks in turn - one which we'll use for
-            // recovery (and is probably not strictly necessary), and its successor which will become
-            // the base for future block production.
-            //
-            // They will have 0.25s between them, so we can recognise them later.
-            const BLOCK_TIME_INCREMENT: Duration = Duration::new(0, 250);
-            let synth_block0 = Block::adjustment(
-                highest_block.view() + 1,
-                highest_block_number + 1,
-                highest_block.hash(),
-                after_adjustment_state.root_hash()?,
-                highest_block.timestamp() + BLOCK_TIME_INCREMENT,
-            );
-            trace!(
-                "  ... constructed synth_block0 with number {}, view {}, hash {}",
-                synth_block0.number(),
-                synth_block0.view(),
-                synth_block0.hash()
-            );
-            let synth_block1 = Block::adjustment(
-                synth_block0.view() + 1,
-                synth_block0.number() + 1,
-                synth_block0.hash(),
-                after_adjustment_state.root_hash()?,
-                synth_block0.timestamp() + BLOCK_TIME_INCREMENT,
-            );
-            trace!(
-                "  ... constructed synth_block1 with number {}, view {}, hash {}",
-                synth_block1.number(),
-                synth_block1.view(),
-                synth_block1.hash()
-            );
-
-            trace!("  ... assimilating adjusted state");
-            self.state
-                .set_to_root(after_adjustment_state.root_hash()?.into());
-            self.update_high_qc_and_view(false, synth_block1.header.qc)?;
-            self.db.set_high_qc(synth_block1.header.qc)?;
-            self.high_qc = synth_block1.header.qc;
-            self.db.force_view(synth_block1.view())?;
-            self.always_trust_block_hashes.push(synth_block0.hash());
-            self.always_trust_block_hashes.push(synth_block1.hash());
-            self.block_store.process_block(None, synth_block0)?;
-            self.block_store.process_block(None, synth_block1)?;
-            trace!("  ... state adjustment complete");
+        if self.config.adjust_state.is_empty() {
+            return Ok(());
         }
+        // Otherwise, we have work to do.
+        // This is not safe in general, but it is here because when this function is executed,
+        // all nodes have identical state.
+        let highest_block_number = self.db.get_highest_recorded_block_number()?.unwrap_or(0);
+        let highest_block = self.db.get_canonical_block_by_number(highest_block_number)?.ok_or(
+            anyhow!("We don't have the highest block data stored and so can't construct a state adjustment block based on it. Is your checkpoint OK?"))?;
+
+        trace!(
+            "Constructing state adjustment blocks from blk {highest_block_number}, view {}",
+            highest_block.view()
+        );
+        // Now we build a state from the last block's state but with any accounts mentioned by the genesis state overridden.
+        let mut after_adjustment_state = self
+            .state_at(highest_block_number)?
+            .ok_or(anyhow!("Cannot get state at {highest_block_number}"))?
+            .try_clone()?;
+
+        // OK. Now adjust the state according to our instructions
+        self.config.adjust_state.iter().try_for_each(|instr| {
+            match instr {
+                StateAdjustment::GenesisCommittee => {
+                    // Construct a state containing the accounts we want to override.
+                    let genesis_state = State::new_with_genesis(
+                        self.db.state_trie()?,
+                        self.config.clone(),
+                        self.block_store.clone_read_only(),
+                    )?;
+                    after_adjustment_state.merge_from(&genesis_state)?;
+                }
+                _ => (),
+            }
+            Ok::<(), anyhow::Error>(())
+        })?;
+
+        debug!(
+            " ... constructed post-adjustment state with hash {:?}",
+            after_adjustment_state.root_hash()?
+        );
+        // Now we need to construct a couple of trusted blocks in turn - one which we'll use for
+        // recovery (and is probably not strictly necessary), and its successor which will become
+        // the base for future block production.
+        //
+        // They will have 0.25s between them, so we can recognise them later.
+        const BLOCK_TIME_INCREMENT: Duration = Duration::new(0, 250);
+        let synth_block0 = Block::adjustment(
+            highest_block.view() + 1,
+            highest_block_number + 1,
+            highest_block.hash(),
+            after_adjustment_state.root_hash()?,
+            highest_block.timestamp() + BLOCK_TIME_INCREMENT,
+        );
+        trace!(
+            "  ... constructed synth_block0 with number {}, view {}, hash {}",
+            synth_block0.number(),
+            synth_block0.view(),
+            synth_block0.hash()
+        );
+        let synth_block1 = Block::adjustment(
+            synth_block0.view() + 1,
+            synth_block0.number() + 1,
+            synth_block0.hash(),
+            after_adjustment_state.root_hash()?,
+            synth_block0.timestamp() + BLOCK_TIME_INCREMENT,
+        );
+        trace!(
+            "  ... constructed synth_block1 with number {}, view {}, hash {}",
+            synth_block1.number(),
+            synth_block1.view(),
+            synth_block1.hash()
+        );
+
+        trace!("  ... assimilating adjusted state");
+        self.state
+            .set_to_root(after_adjustment_state.root_hash()?.into());
+        self.update_high_qc_and_view(false, synth_block1.header.qc)?;
+        self.db.set_high_qc(synth_block1.header.qc)?;
+        self.high_qc = synth_block1.header.qc;
+        self.db.force_view(synth_block1.view())?;
+        self.always_trust_block_hashes.push(synth_block0.hash());
+        self.always_trust_block_hashes.push(synth_block1.hash());
+        self.block_store.process_block(None, synth_block0)?;
+        self.block_store.process_block(None, synth_block1)?;
+        trace!("  ... state adjustment complete");
         Ok(())
     }
 }
