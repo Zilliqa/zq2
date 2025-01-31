@@ -388,7 +388,7 @@ impl DatabaseRef for &State {
         if !self.has_account(address)? {
             return Ok(None);
         }
-
+        
         let account = self.get_account(address)?;
         let code = Bytecode::new_raw(account.code.evm_code().unwrap_or_default().into());
         let account_info = AccountInfo {
@@ -397,6 +397,7 @@ impl DatabaseRef for &State {
             code_hash: code.hash_slow(),
             code: Some(code),
         };
+        trace!("basic_ref for addr {} account_info: {:?}", address, account_info);
 
         Ok(Some(account_info))
     }
@@ -409,6 +410,7 @@ impl DatabaseRef for &State {
         let index = B256::new(index.to_be_bytes());
 
         let result = self.get_account_storage(address, index)?;
+        trace!("storage_ref for addr {} result: {:?}", address, result);
 
         Ok(U256::from_be_bytes(result.0))
     }
@@ -461,6 +463,7 @@ impl State {
         override_address: Option<Address>,
         amount: u128,
     ) -> Result<Address> {
+        let zero_account = self.get_account(Address::ZERO)?; 
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
@@ -468,7 +471,7 @@ impl State {
             self.block_gas_limit,
             amount,
             creation_bytecode,
-            None,
+            Some(zero_account.nonce+1),
             BlockHeader::genesis(Hash::ZERO),
             inspector::noop(),
             false,
