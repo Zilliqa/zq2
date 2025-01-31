@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
     fmt::Display,
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -35,7 +36,8 @@ use crate::{
     node::{MessageSender, NetworkMessage, OutgoingMessageFailure},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
     range_map::RangeMap,
-    state::State,
+    scilla::ParamValue,
+    state::{Account, Code, State},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -3326,6 +3328,7 @@ impl Consensus {
         self.config.adjust_state.iter().try_for_each(|instr| {
             match instr {
                 StateAdjustment::GenesisCommittee => {
+                    trace!(" .. state adjustment: force genesis committee");
                     // Construct a state containing the accounts we want to override.
                     let genesis_state = State::new_with_genesis(
                         self.db.state_trie()?,
@@ -3334,7 +3337,51 @@ impl Consensus {
                     )?;
                     after_adjustment_state.merge_from(&genesis_state)?;
                 }
-                _ => (),
+                StateAdjustment::ScillaInitData(adjv) => {
+                    // Read the account
+                    let address = Address::from_str(&adjv.address)?;
+                    let replacement_value: serde_json::Value = serde_json::from_str(&adjv.value)?;
+                    let account = after_adjustment_state.get_account(address)?.clone();
+                    if let Code::Scilla {
+                        code,
+                        init_data,
+                        types,
+                        transitions,
+                    } = account.code
+                    {
+                        // Now construct some new parameter values.
+                        let new_init_data = init_data
+                            .iter()
+                            .map(|x| {
+                                if x.name == adjv.key {
+                                    trace!(
+                                        " .. adjustment: reset {:x} init_data {} :  {}",
+                                        address,
+                                        x.name,
+                                        replacement_value.to_string()
+                                    );
+                                    ParamValue {
+                                        name: x.name.clone(),
+                                        ty: x.ty.clone(),
+                                        value: replacement_value.clone(),
+                                    }
+                                } else {
+                                    x.clone()
+                                }
+                            })
+                            .collect::<Vec<ParamValue>>();
+                        let new_account: Account = Account {
+                            code: Code::Scilla {
+                                code,
+                                init_data: new_init_data,
+                                types,
+                                transitions,
+                            },
+                            ..account
+                        };
+                        after_adjustment_state.save_account(address, new_account)?;
+                    }
+                } //_ => (),
             }
             Ok::<(), anyhow::Error>(())
         })?;
