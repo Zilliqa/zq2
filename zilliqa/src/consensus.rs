@@ -242,7 +242,7 @@ impl Consensus {
             }
         };
 
-        let (start_view, finalized_view, high_qc) = {
+        let (mut start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
                     let high_block = block_store
@@ -265,7 +265,7 @@ impl Consensus {
                         .unwrap();
 
                     trace!(
-                        "recovery: high_block view {0}, finalized_number {1}, start_view {2}",
+                        "recovery: high_block view {0}, finalized view {1}, start_view {2}",
                         high_block.view(),
                         finalized_number,
                         start_view
@@ -285,7 +285,6 @@ impl Consensus {
                         let highest_block_number = db
                             .get_highest_canonical_block_number()?
                             .ok_or_else(|| anyhow!("can't find highest block num in database!"))?;
-
                         let head_block = block_store
                             .get_canonical_block_by_number(highest_block_number)?
                             .ok_or_else(|| anyhow!("missing head block!"))?;
@@ -383,13 +382,14 @@ impl Consensus {
             );
             let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
             if min_view_since_high_qc_updated > start_view {
+                start_view = min_view_since_high_qc_updated;
                 info!(
                     "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
                     latest_high_qc_timestamp.elapsed()?.as_secs(),
                     view_diff,
                     min_view_since_high_qc_updated
                 );
-                consensus.db.set_view(min_view_since_high_qc_updated)?;
+                consensus.db.set_view(start_view)?;
             }
 
             // Remind block_store of our peers and request any potentially missing blocks
@@ -417,13 +417,16 @@ impl Consensus {
             consensus
                 .block_store
                 .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
-            // It is likley that we missed the most recent proposal. Request it now
+            // It is likley that we missed the most recent proposals. Request them now
             consensus
                 .block_store
                 .request_blocks(&RangeMap::from_closed_interval(
                     high_block.view(),
-                    high_block.view() + 1,
+                    start_view + 1,
                 ))?;
+
+            // Build NewView immediatley so that we can contribute to consensus moving along
+            consensus.build_new_view()?;
         }
 
         Ok(consensus)
@@ -515,12 +518,16 @@ impl Consensus {
         if self.create_next_block_on_timeout {
             // Check if enough time elapsed to propose block
             if milliseconds_remaining_of_block_time == 0 {
-                if let Ok(Some((block, transactions))) = self.propose_new_block() {
-                    self.create_next_block_on_timeout = false;
-                    return Ok(Some((
-                        None,
-                        ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                    )));
+                match self.propose_new_block() {
+                    Ok(Some((block, transactions))) => {
+                        self.create_next_block_on_timeout = false;
+                        return Ok(Some((
+                            None,
+                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
+                        )));
+                    },
+                    Err(e) => info!("propose_new_block err {:?}", e),
+                    _ => info!("propose_new_block returned None")
                 };
             } else {
                 self.reset_timeout
@@ -1158,6 +1165,7 @@ impl Consensus {
     /// This should only run after majority QC or aggQC are available.
     /// It applies the rewards and produces the final Proposal.
     fn early_proposal_finish_at(&mut self, mut proposal: Block) -> Result<Option<Block>> {
+        trace!("early_proposal_finish_at");
         // Retrieve parent block data
         let parent_block = self
             .get_block(&proposal.parent_hash())?
@@ -1216,6 +1224,7 @@ impl Consensus {
             proposer, // Last leader
             &proposal,
         )?;
+        trace!("apply_rewards_late_at finshed");
 
         // ZIP-9: Sink gas to zero account
         state.mutate_account(Address::ZERO, |a| {
@@ -1227,12 +1236,14 @@ impl Consensus {
         })?;
 
         if self.block_is_first_in_epoch(proposal.header.number) {
+            trace!("block_is_first_in_epoch. do upgrade");
             // Update state with any contract upgrades for this block
             state.contract_upgrade_apply_state_change(
                 &self.config.consensus.contract_upgrade_block_heights,
                 proposal.header,
             )?;
         }
+        trace!("contract_upgrade_apply_state_change finshed. back in early_proposal_finish_at");
 
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
@@ -1511,6 +1522,7 @@ impl Consensus {
     }
     /// Assembles a Pending block.
     fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
+        trace!("assemble_pending_block_at");
         // Start with highest canonical block
         let num = self
             .db
@@ -3096,6 +3108,7 @@ impl Consensus {
         })?;
 
         if self.block_is_first_in_epoch(block.header.number) {
+            trace!("is epoch boundary");
             // Update state with any contract upgrades for this block
             let mut state_clone = self.state.clone();
             state_clone.contract_upgrade_apply_state_change(

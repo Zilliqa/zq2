@@ -14,7 +14,7 @@ use ethabi::Token;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use crate::{
     block_store::BlockStore,
@@ -186,11 +186,21 @@ impl State {
         contract_upgrade_block_heights: &ContractUpgradesBlockHeights,
         block_header: BlockHeader,
     ) -> Result<()> {
+        trace!("contract_upgrade_apply_state_change");
         if let Some(deposit_v3_deploy_height) = contract_upgrade_block_heights.deposit_v3 {
             if deposit_v3_deploy_height == block_header.number {
+                trace!("running dposit_V3");
                 let deposit_v3_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
                 self.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
+            }
+        }
+        if let Some(deposit_v4_deploy_height) = contract_upgrade_block_heights.deposit_v4 {
+            if deposit_v4_deploy_height == block_header.number {
+                trace!("running dposit_V4");
+                let deposit_v4_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v4::CONTRACT);
+                self.upgrade_deposit_contract(block_header, deposit_v4_contract)?;
             }
         }
         Ok(())
@@ -259,11 +269,19 @@ impl State {
         current_block: BlockHeader,
         contract: &Contract,
     ) -> Result<Address> {
+        trace!("upgrade_deposit_contract");
+        
         let current_version = self.deposit_contract_version(current_block)?;
+        trace!("current_version: {}", current_version);
 
         // Deploy latest deposit implementation
         let new_deposit_impl_addr =
             self.force_deploy_contract_evm(contract.bytecode.to_vec(), None, 0)?;
+
+        trace!(
+            "deployed latest contract veriosn to {:?}",
+            new_deposit_impl_addr
+        );
 
         let new_deposit_impl_reinitialize_data =
             contracts::deposit::REINITIALIZE.encode_input(&[])?;
@@ -281,7 +299,9 @@ impl State {
             0,
             current_block,
         )?;
-        ensure_success(result)?;
+        let temp = ensure_success(result);
+        trace!("upgradeToAndCall result {:?}", temp);
+        temp?;
 
         let new_version = self.deposit_contract_version(current_block)?;
         info!(
