@@ -22,7 +22,7 @@ use crate::{
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
-    transaction::{EvmGas, SignedTransaction},
+    transaction::SignedTransaction,
 };
 
 // Syncing Algorithm
@@ -229,17 +229,7 @@ impl Sync {
                 if !self.db.contains_block(&parent_hash)? {
                     // No parent block, trigger sync
                     tracing::warn!("sync::SyncProposal : syncing from {parent_hash}",);
-                    let block_hash = self.recent_proposals.back().unwrap().hash();
-                    let block_number = self.recent_proposals.back().unwrap().number();
-                    let view_number = self.recent_proposals.back().unwrap().view();
-                    let gas_used = self.recent_proposals.back().unwrap().header.gas_used;
-                    let meta = BlockHeader::from_meta_data(
-                        parent_hash,
-                        block_hash,
-                        block_number,
-                        view_number,
-                        gas_used,
-                    );
+                    let meta = self.recent_proposals.back().unwrap().header;
                     self.request_missing_metadata(Some(meta))?;
 
                     let highest_block = self
@@ -707,18 +697,18 @@ impl Sync {
         // Chain segment is sane
         let segment = response;
 
+        // Record the constructed chain metadata
+        self.db.insert_sync_metadata(&segment)?;
+
+        // Record landmark(s), including peer that has this set of blocks
+        self.db.push_sync_segment(segment_peer, *meta)?;
+
         tracing::info!(
             "sync::MetadataResponse : received {} metadata segment #{} from {}",
             segment.len(),
             self.db.count_sync_segments()?,
             from
         );
-
-        // Record the constructed chain metadata
-        self.db.insert_sync_metadata(&segment)?;
-
-        // Record landmark(s), including peer that has this set of blocks
-        self.db.push_sync_segment(segment_peer, *meta)?;
 
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
@@ -1159,25 +1149,5 @@ impl FromSql for PeerVer {
 impl ToSql for PeerVer {
     fn to_sql(&self) -> Result<ToSqlOutput, rusqlite::Error> {
         Ok((self.clone() as u32).into())
-    }
-}
-
-impl BlockHeader {
-    pub fn from_meta_data(
-        parent_hash: Hash,
-        block_hash: Hash,
-        block_number: u64,
-        view_number: u64,
-        gas_used: EvmGas,
-    ) -> BlockHeader {
-        let mut meta = BlockHeader {
-            gas_used,
-            view: view_number,
-            number: block_number,
-            hash: block_hash,
-            ..Default::default()
-        };
-        meta.qc.block_hash = parent_hash;
-        meta
     }
 }

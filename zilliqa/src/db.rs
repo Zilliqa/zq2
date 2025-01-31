@@ -341,10 +341,9 @@ impl Db {
             block_hash BLOB NOT NULL UNIQUE,
             parent_hash BLOB NOT NULL,
             block_number INTEGER NOT NULL PRIMARY KEY,
-            view_number INTEGER NOT NULL,
-            gas_used INTEGER NOT NULL,
             version INTEGER DEFAULT 0,
-            peer BLOB DEFAULT NULL
+            peer BLOB DEFAULT NULL,
+            rawdata BLOB NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_sync_metadata ON sync_metadata(block_number) WHERE peer IS NOT NULL;",
         )?;
@@ -408,14 +407,14 @@ impl Db {
     /// Peeks into the top of the segment stack.
     pub fn last_sync_segment(&self) -> Result<Option<(BlockHeader, PeerInfo)>> {
         let db = self.db.lock().unwrap();
-        let r = db.prepare_cached("SELECT parent_hash, block_hash, block_number, view_number, gas_used, version, peer FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
+        let r = db.prepare_cached("SELECT rawdata, version, peer FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
         .query_row([], |row| Ok((
-            BlockHeader::from_meta_data(row.get(0)?,row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?),
+            serde_json::from_slice(row.get::<_,Vec<u8>>(0)?.as_slice()).unwrap(),
         PeerInfo {
             last_used: Instant::now(),
             score: u32::MAX,
-            version: row.get(5)?,
-            peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(6)?.as_slice()).unwrap(),
+            version: row.get(1)?,
+            peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(2)?.as_slice()).unwrap(),
         }))).optional()?;
         Ok(r)
     }
@@ -424,16 +423,15 @@ impl Db {
     pub fn push_sync_segment(&self, peer: PeerInfo, meta: BlockHeader) -> Result<()> {
         let db = self.db.lock().unwrap();
         db.prepare_cached(
-                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, view_number, gas_used, version, peer) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used, :version, :peer)")?
+                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, version, peer, rawdata) VALUES (:parent_hash, :block_hash, :block_number, :version, :peer, :rawdata)")?
                 .execute(
                 named_params! {
                     ":parent_hash": meta.qc.block_hash,
                     ":block_hash": meta.hash,
                     ":block_number": meta.number,
-                    ":view_number": meta.view,
-                    ":gas_used": meta.gas_used,
                     ":peer": peer.peer_id.to_bytes(),
                     ":version": peer.version,
+                    ":rawdata": serde_json::to_vec(&meta).unwrap(),
                 },
             )?;
         Ok(())
@@ -446,14 +444,13 @@ impl Db {
 
         for meta in metas {
             tx.prepare_cached(
-                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, view_number, gas_used) VALUES (:parent_hash, :block_hash, :block_number, :view_number, :gas_used)")?
+                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, rawdata) VALUES (:parent_hash, :block_hash, :block_number, :rawdata)")?
                 .execute(
                 named_params! {
                     ":parent_hash": meta.qc.block_hash,
                     ":block_hash": meta.hash,
                     ":block_number": meta.number,
-                    ":view_number": meta.view,
-                    ":gas_used": meta.gas_used,
+                    ":rawdata": serde_json::to_vec(meta).unwrap(),
             })?;
         }
         tx.commit()?;
