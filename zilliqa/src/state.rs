@@ -405,6 +405,14 @@ impl State {
             &bincode::serialize(&account)?,
         )?)
     }
+
+    // Merge another state into this one, overriding any accounts that are already here.
+    pub fn merge_from(&mut self, other: &Self) -> Result<()> {
+        Ok(other
+            .accounts
+            .iter()
+            .try_for_each(|(key, value)| self.accounts.insert(key.as_slice(), value.as_slice()))?)
+    }
 }
 
 pub mod contract_addr {

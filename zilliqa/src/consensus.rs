@@ -177,6 +177,10 @@ pub struct Consensus {
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
+    // This stores the block hashes of blocks we have force-executed as part of
+    // a reassignment of the committee when recovering from a foreign checkpoint,
+    // so that we can forcibly validate them later.
+    pub regenesis_block_hashes: Vec<Hash>,
 }
 
 impl Consensus {
@@ -259,12 +263,16 @@ impl Consensus {
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
-                    let start_view = db
-                        .get_view()?
-                        .or_else(|| {
-                            Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
-                        })
-                        .unwrap();
+                    // If we are all starting together, start at the last finalised view else we will have very long timeouts.
+                    let start_view = if config.consensus.force_genesis_committee {
+                        finalized_number + 1
+                    } else {
+                        db.get_view()?
+                            .or_else(|| {
+                                Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
+                            })
+                            .unwrap()
+                    };
 
                     trace!(
                         "recovery: high_block view {0}, finalized_number {1}, start_view {2}",
@@ -345,6 +353,7 @@ impl Consensus {
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
+            regenesis_block_hashes: Vec::new(),
         };
         consensus.db.set_view(start_view)?;
         consensus.set_finalized_view(finalized_view)?;
@@ -376,55 +385,42 @@ impl Consensus {
             )?;
         }
 
-        // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
-        // This is useful in scenarios in which consensus has failed since this node went down
-        if let Some(latest_high_qc_timestamp) = consensus.db.get_high_qc_updated_at()? {
-            let view_diff = Consensus::minimum_views_in_time_difference(
-                latest_high_qc_timestamp.elapsed()?,
-                consensus.config.consensus.consensus_timeout,
-            );
-            let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
-            if min_view_since_high_qc_updated > start_view {
-                info!(
+        if consensus.config.consensus.force_genesis_committee {
+            trace!("Executing regenesis block .. ");
+            consensus.execute_regenesis_block()?;
+        } else {
+            // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
+            // This is useful in scenarios in which consensus has failed since this node went down
+            if let Some(latest_high_qc_timestamp) = consensus.db.get_high_qc_updated_at()? {
+                let view_diff = Consensus::minimum_views_in_time_difference(
+                    latest_high_qc_timestamp.elapsed()?,
+                    consensus.config.consensus.consensus_timeout,
+                );
+                let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
+                if min_view_since_high_qc_updated > start_view {
+                    info!(
                     "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
                     latest_high_qc_timestamp.elapsed()?.as_secs(),
                     view_diff,
                     min_view_since_high_qc_updated
                 );
-                consensus.db.set_view(min_view_since_high_qc_updated)?;
-            }
+                    consensus.db.set_view(min_view_since_high_qc_updated)?;
+                }
 
-            // Remind block_store of our peers and request any potentially missing blocks
-            let high_block = consensus
-                .block_store
-                .get_block(high_qc.block_hash)?
-                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-
-            let executed_block = BlockHeader {
-                number: high_block.header.number + 1,
-                ..Default::default()
-            };
-            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
-
-            // Grab last seen committee's peerIds in case others also went offline
-            if consensus.config.consensus.force_genesis_committee {
-                let peer_ids: Vec<_> = consensus
-                    .config
-                    .consensus
-                    .genesis_deposits
-                    .iter()
-                    .filter_map(|x| {
-                        if x.public_key != consensus.public_key() {
-                            Some(x.peer_id)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                consensus
+                // Remind block_store of our peers and request any potentially missing blocks
+                let high_block = consensus
                     .block_store
-                    .set_peers_and_view(high_block.view(), &peer_ids)?;
-            } else {
+                    .get_block(high_qc.block_hash)?
+                    .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
+
+                let executed_block = BlockHeader {
+                    number: high_block.header.number + 1,
+                    ..Default::default()
+                };
+
+                let state_at = consensus.state.at_root(high_block.state_root_hash().into());
+
+                // Grab last seen committee's peerIds in case others also went offline
                 let committee = consensus.get_stakers(&state_at, executed_block)?;
                 let recent_peer_ids: Vec<_> = committee
                     .iter()
@@ -437,31 +433,25 @@ impl Consensus {
                 consensus
                     .block_store
                     .set_peers_and_view(high_block.view(), &recent_peer_ids)?;
-            }
-            // It is likely that we missed the most recent proposal. Request it now
-            consensus
-                .block_store
-                .request_blocks(&RangeMap::from_closed_interval(
-                    high_block.view(),
-                    high_block.view() + 1,
-                ))?;
+                // It is likely that we missed the most recent proposal. Request it now
+                consensus
+                    .block_store
+                    .request_blocks(&RangeMap::from_closed_interval(
+                        high_block.view(),
+                        high_block.view() + 1,
+                    ))?;
+            };
         }
-
         Ok(consensus)
     }
 
     fn get_stakers(&self, state: &State, current_block: BlockHeader) -> Result<Vec<NodePublicKey>> {
-        if self.config.consensus.force_genesis_committee {
-            Ok(self
-                .config
-                .consensus
-                .genesis_deposits
-                .iter()
-                .map(|x| x.public_key)
-                .collect::<Vec<NodePublicKey>>())
-        } else {
-            state.get_stakers(current_block)
+        let stakers = state.get_stakers(current_block);
+        if let Ok(some) = &stakers {
+            debug!("stakers - {}", some.len());
+            some.iter().for_each(|x| debug!("staker: {}", x));
         }
+        stakers
     }
 
     /// Build NewView message for this view
@@ -470,6 +460,12 @@ impl Consensus {
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
         })?;
+        debug!(
+            "Constructing new view for view {}, block {:?} (block_hash {:?})",
+            view,
+            block.number(),
+            self.high_qc.block_hash
+        );
         let leader = self.leader_at_block(&block, view);
         let new_view_message = (
             leader.map(|leader: Validator| leader.peer_id),
@@ -581,12 +577,15 @@ impl Consensus {
                     % self.config.consensus.consensus_timeout.as_secs())
                     == 0
             {
+                debug!("Consider NewView");
                 if let Some((_, ExternalMessage::NewView(new_view))) =
                     self.new_view_message_cache.as_ref()
                 {
+                    debug!("Consider NewView[2]");
                     if new_view.view == self.get_view()? {
                         // When re-sending new view messages we broadcast them, rather than only sending them to the
                         // view leader. This speeds up network recovery when many nodes have different high QCs.
+                        debug!("Send NewView");
                         return Ok(Some((None, ExternalMessage::NewView(new_view.clone()))));
                     }
                     // If new_view message is not for this view then it must be outdated
@@ -608,10 +607,16 @@ impl Consensus {
             number: block.number() + 1,
             ..block.header
         };
+        debug!(
+            "block {} next_block_header {:?}",
+            block.number(),
+            next_block_header
+        );
         let stakers = self.get_stakers(
             &self.state.at_root(block.state_root_hash().into()),
             next_block_header,
         )?;
+        debug!("---");
         if !stakers.iter().any(|v| *v == self.public_key()) {
             debug!(
                 "can't vote for new view, we aren't in the committee of length {:?}",
@@ -1694,6 +1699,7 @@ impl Consensus {
             return Ok(None);
         };
 
+        trace!("Proposing block with qc = {:?}", final_block.header.qc);
         info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
         Ok(Some((final_block, broadcasted_transactions)))
@@ -1740,6 +1746,7 @@ impl Consensus {
     fn leader_for_view(&mut self, parent_hash: Hash, view: u64) -> Option<NodePublicKey> {
         if let Ok(Some(parent)) = self.get_block(&parent_hash) {
             let leader = self.leader_at_block(&parent, view).unwrap();
+            debug!("Leader for view {view} is {leader:?}");
             Some(leader.public_key)
         } else {
             if view > 1 {
@@ -1780,19 +1787,32 @@ impl Consensus {
         trace!("Received new view for height: {:?}", new_view.view);
 
         // Get the committee for the qc hash (should be highest?) for this view
+        trace!(
+            "Cttee {} , {:?}",
+            new_view.qc.block_hash,
+            self.committee_for_hash(new_view.qc.block_hash)
+        );
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
+        trace!("Over committee_for_hash");
         // verify the sender's signature on the block hash
         let Some((index, public_key)) = committee
             .iter()
             .enumerate()
             .find(|(_, &public_key)| public_key == new_view.public_key)
         else {
+            trace!("Ignoring new view from unknown node");
             debug!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
             return Ok(None);
         };
 
+        trace!(
+            "Verify with pk = {:?} PK {:?}",
+            *public_key,
+            new_view.verify(*public_key)
+        );
         new_view.verify(*public_key)?;
 
+        trace!("Update High QC");
         // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
 
@@ -1804,6 +1824,7 @@ impl Consensus {
             return Ok(None);
         }
 
+        trace!("Current_view");
         let mut current_view = self.get_view()?;
         // if the vote is too old and does not count anymore
         if new_view.view < current_view {
@@ -1839,6 +1860,11 @@ impl Consensus {
 
         let mut supermajority = false;
 
+        trace!(
+            "Storing NewView vote index = {} cosigned[index] = {}",
+            index,
+            cosigned[index]
+        );
         // if the vote is new, store it
         if !cosigned[index] {
             cosigned.set(index, true);
@@ -1902,6 +1928,8 @@ impl Consensus {
                 }
             }
         }
+
+        trace!("Storing NewView vote - supermajority - {}", supermajority);
         if !supermajority {
             self.new_views.insert(
                 new_view.view,
@@ -2338,61 +2366,77 @@ impl Consensus {
             return Err((anyhow!("invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}", block.hash(), block.view(), committee.len()), false));
         }
 
-        // Check if the co-signers of the block's QC represent the supermajority.
-        self.check_quorum_in_bits(
-            &block.header.qc.cosigned,
-            &committee,
-            parent.state_root_hash(),
-            block,
-        )
-        .map_err(|e| (e, false))?;
+        // If we are configured for recovery from a foreign checkpoint, we regard any qc with the regenesis block's
+        // hash as valid.
+        let verify_qc = !(self.config.consensus.force_genesis_committee
+            && self
+                .regenesis_block_hashes
+                .iter()
+                .find(|&x| x == &block.header.qc.block_hash)
+                .is_some());
 
-        // Verify the block's QC signature - note the parent should be the committee the QC
-        // was signed over.
-        self.verify_qc_signature(&block.header.qc, committee.clone())
-            .map_err(|e| (e, false))?;
-        if let Some(agg) = &block.agg {
-            // Check if the signers of the block's aggregate QC represent the supermajority
-            self.check_quorum_in_indices(
-                &agg.cosigned,
+        if verify_qc {
+            // Check if the co-signers of the block's QC represent the supermajority.
+            self.check_quorum_in_bits(
+                &block.header.qc.cosigned,
                 &committee,
                 parent.state_root_hash(),
                 block,
             )
             .map_err(|e| (e, false))?;
-            // Verify the aggregate QC's signature
-            self.batch_verify_agg_signature(agg, &committee)
-                .map_err(|e| (e, false))?;
-        }
 
-        // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
-        let block_high_qc = self.get_high_qc_from_block(block).map_err(|e| (e, false))?;
-        let Some(block_high_qc_block) = self
-            .get_block(&block_high_qc.block_hash)
-            .map_err(|e| (e, false))?
-        else {
-            warn!("missing finalized block4");
-            return Err((
-                MissingBlockError::from(block_high_qc.block_hash).into(),
-                false,
-            ));
-        };
-        // Prevent the creation of forks from the already committed chain
-        if block_high_qc_block.view() < finalized_block.view() {
-            warn!(
-                "invalid block - high QC view is {} while finalized is {}. Our High QC: {}, block: {:?}",
-                block_high_qc_block.view(),
-                finalized_block.view(),
-                self.high_qc,
-                block);
-            return Err((
-                anyhow!(
-                    "invalid block - high QC view is {} while finalized is {}",
+            // Verify the block's QC signature - note the parent should be the committee the QC
+            // was signed over.
+            self.verify_qc_signature(&block.header.qc, committee.clone())
+                .map_err(|e| (e, false))?;
+            if let Some(agg) = &block.agg {
+                // Check if the signers of the block's aggregate QC represent the supermajority
+                self.check_quorum_in_indices(
+                    &agg.cosigned,
+                    &committee,
+                    parent.state_root_hash(),
+                    block,
+                )
+                .map_err(|e| (e, false))?;
+                // Verify the aggregate QC's signature
+                self.batch_verify_agg_signature(agg, &committee)
+                    .map_err(|e| (e, false))?;
+            }
+
+            // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
+            let block_high_qc = self.get_high_qc_from_block(block).map_err(|e| (e, false))?;
+            let Some(block_high_qc_block) = self
+                .get_block(&block_high_qc.block_hash)
+                .map_err(|e| (e, false))?
+            else {
+                warn!("missing finalized block4");
+                return Err((
+                    MissingBlockError::from(block_high_qc.block_hash).into(),
+                    false,
+                ));
+            };
+            // Prevent the creation of forks from the already committed chain
+            if block_high_qc_block.view() < finalized_block.view() {
+                warn!(
+                    "invalid block - high QC view is {} while finalized is {}. Our High QC: {}, block: {:?}",
                     block_high_qc_block.view(),
-                    finalized_block.view()
-                ),
-                false,
-            ));
+                    finalized_block.view(),
+                    self.high_qc,
+                    block);
+                return Err((
+                    anyhow!(
+                        "invalid block - high QC view is {} while finalized is {}",
+                        block_high_qc_block.view(),
+                        finalized_block.view()
+                    ),
+                    false,
+                ));
+            }
+        } else {
+            trace!(
+                "not validating votes for qc for block hash {}, which is a regenesis block",
+                block.header.qc.block_hash
+            );
         }
 
         // This block's timestamp must be greater than or equal to the parent block's timestamp.
@@ -3293,6 +3337,120 @@ impl Consensus {
 
     pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
         self.block_store.get_sync_data()
+    }
+
+    // Create and execute a block which resets the deposit contract and funds genesis accounts.
+    // this is used when we construct a new network from a checkpoint from another network, to
+    // ensure that consensus can re-establish (because we changed the validator set), and to
+    // ensure that we have some tokens in known accounts.
+    fn execute_regenesis_block(&mut self) -> Result<()> {
+        // This is not safe in general, but it is here because when this function is executed,
+        // all nodes have identical state.
+        let highest_block_number = self.db.get_highest_recorded_block_number()?.unwrap_or(0);
+        let highest_block = self.db.get_canonical_block_by_number(highest_block_number)?.ok_or(
+            anyhow!("We don't have the highest block data stored and so can't construct a regenesis block based on it. Is your checkpoint OK?"))?;
+
+        debug!(
+            "execute_regenesis_block(): highest_block = {highest_block_number} hash = {}",
+            highest_block.hash()
+        );
+        // This is a bit horrid - we construct a new state which is the genesis state, and then brutally overwrite everything in
+        // the actual state with the genesis state, thus resetting the deposit contract account. Yuck!
+        let mut genesis_state = State::new_with_genesis(
+            self.db.state_trie()?,
+            self.config.clone(),
+            self.block_store.clone_read_only(),
+        )?;
+        debug!("constructed genesis state {:?}", genesis_state.root_hash()?);
+        // Now we build a state from the last block's state but with any accounts mentioned by the genesis state overridden.
+        debug!("Constructing regenesis state .. ");
+        let mut after_regenesis_state = self
+            .state_at(highest_block_number)?
+            .ok_or(anyhow!("Cannot get state at {highest_block_number}"))?
+            .try_clone()?;
+        after_regenesis_state.merge_from(&genesis_state)?;
+        debug!(
+            "constructed after_regenesis_state {:?}",
+            after_regenesis_state.root_hash()?
+        );
+        let magic_block_timestamp = highest_block.timestamp() + Duration::new(1, 0);
+        let second_magic_block_timestamp = highest_block.timestamp() + Duration::new(12, 0);
+        // Construct an empty next block ..
+        let magic_block = Block::regenesis(
+            highest_block.header.view + 1,
+            highest_block_number + 1,
+            highest_block.hash(),
+            after_regenesis_state.root_hash()?,
+            magic_block_timestamp,
+        );
+        debug!(
+            " .. regenesis block is view {}, number {}",
+            magic_block.header.view, magic_block.header.number
+        );
+        {
+            let stakers = genesis_state.get_stakers(magic_block.header);
+            if let Ok(some) = &stakers {
+                debug!("PPPP stakers - {}", some.len());
+                some.iter().for_each(|x| debug!("PPP staker: {}", x));
+            }
+        }
+        let second_magic_block = Block::regenesis(
+            highest_block.header.view + 2,
+            highest_block_number + 2,
+            magic_block.hash(),
+            after_regenesis_state.root_hash()?,
+            second_magic_block_timestamp,
+        );
+        debug!(
+            " .. regenesis second block is view {}, number {}",
+            second_magic_block.header.view, second_magic_block.header.number
+        );
+        debug!("Assimilating regenesis blocks ...");
+        self.state
+            .set_to_root(second_magic_block.state_root_hash().into());
+        {
+            let stakers = self.state.get_stakers(magic_block.header);
+            if let Ok(some) = &stakers {
+                debug!("QQQQ stakers - {}", some.len());
+                some.iter().for_each(|x| debug!("QQQ staker: {}", x));
+            }
+        }
+
+        self.update_high_qc_and_view(false, second_magic_block.header.qc)?;
+        let new_high_qc = second_magic_block.header.qc;
+        self.db.set_high_qc(new_high_qc)?;
+        self.high_qc = new_high_qc;
+        debug!("high_qc = {:?}", self.high_qc);
+        self.db.force_view(highest_block.header.view + 2)?;
+        debug!(
+            "block hashes [0] = {:?} [1] = {:?}",
+            magic_block.hash(),
+            second_magic_block.hash()
+        );
+        self.regenesis_block_hashes.push(magic_block.hash());
+        self.regenesis_block_hashes.push(second_magic_block.hash());
+
+        self.block_store.process_block(None, magic_block)?;
+        self.block_store.process_block(None, second_magic_block)?;
+
+        {
+            let stakers = self.state.get_stakers(BlockHeader {
+                number: highest_block_number + 1,
+                ..Default::default()
+            });
+            if let Ok(some) = &stakers {
+                debug!("RRRR stakers - {}", some.len());
+                some.iter().for_each(|x| debug!("RRR staker: {}", x));
+            }
+        }
+
+        debug!(
+            "high_qc.view {} , our view {}",
+            self.high_qc.view,
+            self.get_view()?
+        );
+        debug!("I wonder if that will work?");
+        Ok(())
     }
 }
 
