@@ -67,46 +67,74 @@ from time import time
 
 app = Flask(__name__)
 
+NODE_URL = "http://localhost:4202"
+HEADERS = {"Content-Type": "application/json"}
+
 latest_block_number = 0
 latest_block_number_obtained_at = 0
 
-@app.route("/health")
-def health():
+def get_rpc_response(method, params=[]):
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params
+    }
+    try:
+        response = requests.post(NODE_URL, json=payload, headers=HEADERS, timeout=3)
+        response.raise_for_status()
+        response_json = response.json()
+        return response_json.get("result")
+    except requests.exceptions.RequestException as e:
+        # Handle connection errors, timeouts, and HTTP errors
+        return (f"Failed to running {method}: {e}", 0)
+    except ValueError as e:
+        # Handle JSON decoding errors
+        return (f"Invalid JSON response: {e}", 0)
+
+def check_sync_status():
     global latest_block_number
     global latest_block_number_obtained_at
 
-    try:
-        response = requests.post(
-            "http://localhost:4201",
-            json={"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber"},
-            timeout=5  # Add a timeout to avoid hanging indefinitely
-        )
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        response_json = response.json()
-    except requests.exceptions.RequestException as e:
-        # Handle connection errors, timeouts, and HTTP errors
-        return (f"Failed to fetch block number: {e}", 500)
-    except ValueError as e:
-        # Handle JSON decoding errors
-        return (f"Invalid JSON response: {e}", 500)
-
-    block_number = int(response_json["result"], 16)
+    # Query eth_blockNumber and eth_syncing
+    block_number = get_rpc_response("eth_blockNumber")
+    sync_status = get_rpc_response("eth_syncing")
+    
+    # Convert hex block number to integer
+    block_number = int(block_number, 16)
     current_time = int(time())
     print (f"block {block_number} latest {latest_block_number}")
 
     if block_number != latest_block_number:
         latest_block_number = block_number
         latest_block_number_obtained_at = current_time
-
     
-    if latest_block_number_obtained_at + 60 < current_time:
-        # no blocks for 60 seconds
-        return ("no blocks for more than 60 seconds", 400)
-    else:
-        return (f"block {latest_block_number} since {latest_block_number_obtained_at}", 200)
+    # If fully synced response is "false"
+    if isinstance(sync_status, bool):
+        return (f"Fully synced at the block {block_number}", 200)
+    
+    # If syncing response is a JSON object
+    if isinstance(sync_status, dict):
+        current_block = int(sync_status["currentBlock"])
+        highest_block = int(sync_status["highestBlock"])
+        
+        if current_block >= highest_block - 5:
+            return (f"Node is syncing at block {block_number}  but behind the highest block {highest_block}", 200)
+
+        if latest_block_number_obtained_at + 60 < current_time:
+            # no blocks for 60 seconds
+            return ("No blocks for more than 60 seconds", 503)
+        else:
+            return (f"Syncing block {latest_block_number} since {latest_block_number_obtained_at}", 404)
+
+    return (f"Error: eth_syncing responds with a value different from a boolean or a JSON: {sync_status}", 0)
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return check_sync_status()
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8080, host="0.0.0.0")
+    app.run(host='0.0.0.0', port=8080, debug=True)
 """
 
 HEALTHCHECK_SERVICE_DESC="""
