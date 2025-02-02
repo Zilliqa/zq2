@@ -4,11 +4,24 @@ on:
   push:
   workflow_dispatch:
     inputs:
+      network:
+        description: "Network"
+        type: choice
+        options:
+          - "devnet"
+          - "infratest"
+          - "perftest"
+          - "protomainnet"
+          - "prototestnet"
+          - "richard"
+          - "uccbtest"
+        required: false
+        default: "prototestnet"
       target_host:
-        description: "Target host to test"
+        description: "Target host"
         type: string
         required: false
-        default: "query.zq2-prototestnet.zilliqa.com"
+        default: "api.zq2-prototestnet.zilliqa.com"
       target_port:
         description: "Target port"
         type: string
@@ -53,12 +66,14 @@ jobs:
     permissions:
       id-token: write
       contents: write
-    name: Performance tests
+    name: Jmeter test
     runs-on: self-hosted
     container:
       image: alpine/jmeter:5.6
     if: github.actor != 'dependabot[bot]'
     timeout-minutes: 1440
+    env:
+      TEST_ID: "jmeter-test-zq2-${{ github.run_id }}"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -76,7 +91,6 @@ jobs:
       - name: Run tests
         working-directory: infra/jmeter
         run: |
-          export TEST_ID="jmeter-test-${GITHUB_REPOSITORY##*/}-${{ github.run_id }}"
           export TARGET_HOST=${{ github.event.inputs.target_host || 'query.zq2-prototestnet.zilliqa.com' }}
           export TARGET_PORT=${{ github.event.inputs.target_port || '443' }}
           export PROTOCOL=${{ github.event.inputs.protocol || 'https' }}
@@ -97,7 +111,7 @@ jobs:
             -JRESPONSE_TIMEOUT=${RESPONSE_TIMEOUT} \
             -t jmeter-plan-template.jmx \
             -l ${TEST_ID}.jtl \
-            -o reports
+            -o ${TEST_ID}
           echo "Test results for ${TEST_ID}:"
           cat "${TEST_ID}.jtl"
 
@@ -107,11 +121,12 @@ jobs:
         with:
           token_format: "access_token"
           workload_identity_provider: ${{ secrets.GCP_PRD_GITHUB_WIF }}
-          service_account: "${{ secrets.GCP_PRD_GITHUB_SA_K8S_DEPLOY }}"
+          service_account: "${{ secrets.GCP_PRD_GITHUB_SA_TESTING }}"
           create_credentials_file: true
 
       - name: Upload reports
         uses: 'google-github-actions/upload-cloud-storage@v2'
         with:
-          path: infra/jmeter/reports
-          destination: 'zq2-infratest-checkpoint'
+          process_gcloudignore: false
+          path: "infra/jmeter/${{ env.TEST_ID }}"
+          destination: "zq2-${{ github.event.inputs.network || 'infratest' }}-performance-tests"
