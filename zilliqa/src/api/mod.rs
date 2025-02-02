@@ -1,4 +1,5 @@
 pub mod admin;
+mod debug;
 mod erigon;
 pub mod eth;
 mod net;
@@ -19,6 +20,9 @@ pub fn rpc_module(
 
     module
         .merge(admin::rpc_module(node.clone(), enabled_apis))
+        .unwrap();
+    module
+        .merge(debug::rpc_module(node.clone(), enabled_apis))
         .unwrap();
     module
         .merge(erigon::rpc_module(node.clone(), enabled_apis))
@@ -50,7 +54,7 @@ pub fn rpc_module(
 
 pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
     [
-        "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa",
+        "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa",
     ]
     .into_iter()
     .map(|ns| crate::cfg::EnabledApi::EnableAll(ns.to_owned()))
@@ -85,6 +89,7 @@ macro_rules! declare_module {
             let enabled = $enabled_apis.iter().any(|n| n.enabled($name));
             let rpc_server_duration = meter
                 .f64_histogram(opentelemetry_semantic_conventions::metric::RPC_SERVER_DURATION)
+                .with_boundaries(vec![0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0])
                 .with_unit("s")
                 .build();
             module

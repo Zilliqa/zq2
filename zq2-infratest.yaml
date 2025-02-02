@@ -13,3 +13,5 @@ versions:
   zq2: 1d146079
   otterscan: develop
   spout: main
+  stats_dashboard: v0.0.4
+  stats_agent: v0.0.2
