@@ -82,6 +82,7 @@ pub struct Sync {
     inject_at: Option<(std::time::Instant, usize)>,
     // record starting number, for eth_syncing() RPC call.
     started_at_block_number: u64,
+    highest_block_seen: u64,
     // checkpoint, if set
     checkpoint_hash: Hash,
 }
@@ -129,6 +130,7 @@ impl Sync {
             inject_at: None,
             started_at_block_number: latest_block_number,
             checkpoint_hash: latest_block_hash,
+            highest_block_seen: latest_block_number,
         })
     }
 
@@ -204,6 +206,7 @@ impl Sync {
         while self.recent_proposals.len() >= self.max_batch_size {
             self.recent_proposals.pop_front();
         }
+        self.highest_block_seen = proposal.number();
         self.recent_proposals.push_back(proposal);
 
         self.internal_sync()
@@ -941,27 +944,24 @@ impl Sync {
     // Returns (starting_block, current_block,  highest_block) if we're syncing,
     // None if we're not.
     pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
-        let flag = self.am_syncing()?;
-        if !flag {
-            Ok(None)
-        } else {
-            let highest_block = self
-                .db
-                .get_canonical_block_by_number(
-                    self.db
-                        .get_highest_canonical_block_number()?
-                        .expect("no highest block"),
-                )?
-                .expect("missing highest block");
-
-            let highest_saved_block_number = highest_block.number();
-            let highest_block_number_seen = self.recent_proposals.back().unwrap().number();
-            Ok(Some((
-                self.started_at_block_number,
-                highest_saved_block_number,
-                highest_block_number_seen,
-            )))
+        if !self.am_syncing()? {
+            return Ok(None);
         }
+
+        let highest_block = self
+            .db
+            .get_canonical_block_by_number(
+                self.db
+                    .get_highest_canonical_block_number()?
+                    .expect("no highest block"),
+            )?
+            .expect("missing highest block");
+
+        Ok(Some((
+            self.started_at_block_number,
+            highest_block.number(),
+            self.highest_block_seen,
+        )))
     }
 
     /// Sets the checkpoint, if node was started from a checkpoint.
