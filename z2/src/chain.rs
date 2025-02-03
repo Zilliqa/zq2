@@ -178,8 +178,8 @@ impl Chain {
             },
             Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
-                // estimated: 2025-01-29T11:45:00Z
-                deposit_v4: Some(10879200),
+                // estimated: 2025-02-03T13:55:00Z
+                deposit_v4: Some(10890000),
             },
             _ => ContractUpgradesBlockHeights::default(),
         }
