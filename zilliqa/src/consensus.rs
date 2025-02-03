@@ -157,6 +157,7 @@ pub struct Consensus {
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     new_views: BTreeMap<u64, NewViewVote>,
     new_view_message_cache: Option<NetworkMessage>,
+    vote_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
     state: State,
@@ -329,6 +330,7 @@ impl Consensus {
             buffered_votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
             new_view_message_cache: None,
+            vote_message_cache: None,
             high_qc,
             state,
             db,
@@ -529,6 +531,29 @@ impl Consensus {
                 self.reset_timeout
                     .send(Duration::from_millis(milliseconds_remaining_of_block_time))?;
                 return Ok(None);
+            }
+        }
+
+        // Resend Vote message for this view if timeout period is a multiple of 7
+        if (milliseconds_since_last_view_change
+            > self.config.consensus.consensus_timeout.as_millis() as u64)
+            && (Duration::from_millis(milliseconds_since_last_view_change).as_secs()
+                % 7)
+                == 0
+        {
+            trace!("potential vote resend");
+            if let Some(network_message) =
+                self.vote_message_cache.as_ref()
+            {
+                trace!("network_message: {:?}", network_message);
+                if let (_, ExternalMessage::Vote(vote)) = network_message {
+                    if vote.view + 1 == self.get_view()? {
+                        trace!("resending vote");
+                        return Ok(self.vote_message_cache.clone());
+                    }
+                    // If vote message is not for this view then it must be outdated
+                    self.vote_message_cache = None;
+                }
             }
         }
 
@@ -841,10 +866,12 @@ impl Consensus {
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
-                    return Ok(Some((
+                    let vote = Some((
                         Some(next_leader.peer_id),
                         ExternalMessage::Vote(Box::new(vote)),
-                    )));
+                    ));
+                    self.vote_message_cache = vote.clone();
+                    return Ok(vote);
                 }
             }
         } else {
