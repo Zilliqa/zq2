@@ -32,6 +32,7 @@ use crate::{
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    sync::SyncPeers,
 };
 
 pub struct NodeLauncher {
@@ -96,7 +97,7 @@ impl NodeLauncher {
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
-    ) -> Result<(Self, NodeInputChannels)> {
+    ) -> Result<(Self, NodeInputChannels, Arc<SyncPeers>)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
             let (sender, receiver) = mpsc::unbounded_channel();
@@ -110,6 +111,9 @@ impl NodeLauncher {
         let (local_messages_sender, local_messages_receiver) = sender_receiver();
         let (reset_timeout_sender, reset_timeout_receiver) = sender_receiver();
 
+        let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+        let peers: Arc<SyncPeers> = Arc::new(SyncPeers::new(peer_id));
+
         let node = Node::new(
             config.clone(),
             secret_key,
@@ -118,7 +122,9 @@ impl NodeLauncher {
             request_responses_sender,
             reset_timeout_sender.clone(),
             peer_num,
+            peers.clone(),
         )?;
+
         let node = Arc::new(Mutex::new(node));
 
         for api_server in &config.api_servers {
@@ -168,7 +174,7 @@ impl NodeLauncher {
             local_messages: local_messages_sender,
         };
 
-        Ok((launcher, input_channels))
+        Ok((launcher, input_channels, peers))
     }
 
     pub async fn start_shard_node(&mut self) -> Result<()> {
