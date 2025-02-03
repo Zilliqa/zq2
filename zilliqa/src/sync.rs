@@ -111,10 +111,9 @@ impl Sync {
             SyncState::Retry1 // continue sync
         };
 
-        let latest_block_number = latest_block
+        let (latest_block_number, latest_block_hash) = latest_block
             .as_ref()
-            .expect("Some(block) expected")
-            .number();
+            .map_or_else(|| (u64::MIN, Hash::ZERO), |b| (b.number(), b.hash()));
 
         Ok(Self {
             db,
@@ -129,7 +128,7 @@ impl Sync {
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
             started_at_block_number: latest_block_number,
-            checkpoint_hash: Hash::ZERO,
+            checkpoint_hash: latest_block_hash,
         })
     }
 
@@ -171,7 +170,7 @@ impl Sync {
             // downgrade peer due to network failure
             if peer.peer_id == failure.peer && *req_id == failure.request_id {
                 tracing::warn!(to = %peer.peer_id, err = %failure.error,
-                    "sync::RequestFailure : in-flight failed"
+                    "sync::RequestFailure : network error"
                 );
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
@@ -228,7 +227,7 @@ impl Sync {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
                 if !self.db.contains_block(&parent_hash)? {
                     // No parent block, trigger sync
-                    tracing::warn!("sync::SyncProposal : syncing from {parent_hash}",);
+                    tracing::info!("sync::SyncProposal : syncing from {parent_hash}",);
                     let meta = self.recent_proposals.back().unwrap().header;
                     self.request_missing_metadata(Some(meta))?;
 
@@ -371,6 +370,10 @@ impl Sync {
                 .done_with_peer(self.in_flight.take(), DownGrade::None);
         }
 
+        let SyncState::Phase2(check_sum) = self.state else {
+            anyhow::bail!("sync::MultiBlockResponse : invalid state");
+        };
+
         tracing::info!(
             "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
             response.len(),
@@ -379,10 +382,6 @@ impl Sync {
         );
 
         // If the checksum does not match, retry phase 1. Maybe the node has pruned the segment.
-        let SyncState::Phase2(check_sum) = self.state else {
-            anyhow::bail!("sync::MultiBlockResponse : invalid state");
-        };
-
         let checksum = response
             .iter()
             .fold(Hash::builder().with(Hash::ZERO.as_bytes()), |sum, p| {
@@ -460,7 +459,7 @@ impl Sync {
         }
         // Early exit if there's a request in-flight; and if it has not expired.
         if self.in_flight.is_some() || self.in_pipeline > self.max_blocks_in_flight {
-            tracing::warn!(
+            tracing::debug!(
                 "sync::RequestMissingBlocks : syncing {}/{} blocks",
                 self.in_pipeline,
                 self.max_blocks_in_flight
@@ -667,11 +666,11 @@ impl Sync {
                 .done_with_peer(self.in_flight.take(), DownGrade::None);
         }
 
-        // Check the linkage of the returned chain
         let SyncState::Phase1(meta) = &self.state else {
             anyhow::bail!("sync::MetadataResponse : invalid state");
         };
 
+        // Check the linkage of the returned chain
         let mut block_hash = meta.qc.block_hash;
         let mut block_num = meta.number;
         for meta in response.iter() {
@@ -712,14 +711,13 @@ impl Sync {
 
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
-        let last_block_hash = segment.last().as_ref().unwrap().hash;
 
         // If the checkpoint is in this segment
         let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
         let started = self.started_at_block_number <= segment.first().as_ref().unwrap().number
             && self.started_at_block_number >= segment.last().as_ref().unwrap().number;
         // If the segment hits our history, start Phase 2.
-        if started || checkpointed || self.db.contains_block(&last_block_hash)? {
+        if started || checkpointed {
             self.state = SyncState::Phase2(Hash::ZERO);
         } else if Self::DO_SPECULATIVE {
             self.request_missing_metadata(None)?;
@@ -792,7 +790,7 @@ impl Sync {
         // Early exit if there's a request in-flight; and if it has not expired.
         if self.in_flight.is_some() || self.in_pipeline > self.max_batch_size {
             // anything more than this and we cannot be sure whether the segment hits history
-            tracing::warn!(
+            tracing::debug!(
                 "sync::RequestMissingMetadata : syncing {}/{} blocks",
                 self.in_pipeline,
                 self.max_batch_size
@@ -905,7 +903,6 @@ impl Sync {
                 tracing::warn!(number = %p.number(), hash = %p.hash(), "sync::InjectProposals : storing");
                 // TODO: just store old ZIL blocks - https://github.com/Zilliqa/zq2/issues/2232
             }
-
             self.message_sender.send_external_message(
                 self.peer_id,
                 ExternalMessage::InjectedProposal(InjectedProposal {
