@@ -184,6 +184,23 @@ impl State {
                 self.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
             }
         }
+        if let Some(deposit_v4_deploy_height) = contract_upgrade_block_heights.deposit_v4 {
+            if deposit_v4_deploy_height == block_header.number {
+                // The below account mutation fixes the Zero account's nonce in prototestnet and protomainnet.
+                // Issue #2254 explains how the nonce was incorrect due to a bug in the ZQ1 persistence converter.
+                // This code should run once for these networks in order for the deposit_v4 contract to be deployed, then this code can be removed.
+                if self.chain_id.eth == 33103 || self.chain_id.eth == 32770 {
+                    self.mutate_account(Address::ZERO, |a| {
+                        // Nonce 5 is the next address to not have any code deployed
+                        a.nonce = 5;
+                        Ok(())
+                    })?;
+                }
+                let deposit_v4_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v4::CONTRACT);
+                self.upgrade_deposit_contract(block_header, deposit_v4_contract)?;
+            }
+        }
         Ok(())
     }
 

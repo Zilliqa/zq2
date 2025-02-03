@@ -330,6 +330,7 @@ impl Network {
 
         let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
             deposit_v3: deposit_v3_upgrade_block_height,
+            deposit_v4: None,
         };
 
         let config = NodeConfig {
@@ -467,6 +468,7 @@ impl Network {
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
         let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
             deposit_v3: self.deposit_v3_upgrade_block_height,
+            deposit_v4: None,
         };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
