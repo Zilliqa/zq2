@@ -41,7 +41,7 @@ ethabi = "18.0.0"
 futures = "0.3.31"
 hex = { version = "0.4.3", features = ["serde"] }
 http = "1.2.0"
-hyper = "1.5.2"
+hyper = "1.6.0"
 itertools = "0.14.0"
 jsonrpsee = { version = "0.24.8", features = ["jsonrpsee-http-client", "server"] }
 k256 = {version = "0.13.4", features = ["serde", "pem"] }
