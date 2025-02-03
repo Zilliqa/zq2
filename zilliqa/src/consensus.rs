@@ -417,6 +417,9 @@ impl Consensus {
             peers.add_peers(recent_peer_ids);
         }
 
+        // Build NewView so that we can immediately contribute to consensus moving along if it has halted
+        consensus.build_new_view()?;
+
         Ok(consensus)
     }
 
@@ -506,12 +509,16 @@ impl Consensus {
         if self.create_next_block_on_timeout {
             // Check if enough time elapsed to propose block
             if milliseconds_remaining_of_block_time == 0 {
-                if let Ok(Some((block, transactions))) = self.propose_new_block() {
-                    self.create_next_block_on_timeout = false;
-                    return Ok(Some((
-                        None,
-                        ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                    )));
+                match self.propose_new_block() {
+                    Ok(Some((block, transactions))) => {
+                        self.create_next_block_on_timeout = false;
+                        return Ok(Some((
+                            None,
+                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
+                        )));
+                    },
+                    Err(e) => error!("Failed to finalise proposal: {e}"),
+                    _ => {}
                 };
             } else {
                 self.reset_timeout
