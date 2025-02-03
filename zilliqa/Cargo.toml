@@ -43,7 +43,7 @@ hex = { version = "0.4.3", features = ["serde"] }
 http = "1.2.0"
 hyper = "1.5.2"
 itertools = "0.14.0"
-jsonrpsee = { version = "0.24.7", features = ["jsonrpsee-http-client", "server"] }
+jsonrpsee = { version = "0.24.8", features = ["jsonrpsee-http-client", "server"] }
 k256 = {version = "0.13.4", features = ["serde", "pem"] }
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "930118ef5a6566f058d22e1614a8e96b4c287262", features = ["cbor", "dns", "gossipsub", "macros", "tokio", "request-response", "kad", "identify", "serde", "autonat", "tcp", "noise", "yamux"] }
 lru = "0.13"
