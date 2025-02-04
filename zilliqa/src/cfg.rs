@@ -162,6 +162,10 @@ pub struct NodeConfig {
     /// The N number of historical blocks to be kept in the DB during pruning. N > 30.
     #[serde(default = "u64_max")]
     pub prune_interval: u64,
+    /// The block height at which ZQ1 converted persistence ends. After this block ZQ2 blocks begin.
+    /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks. In future converted networks all ZQ1 blocks will be distinguishable by their zeroed state root hash.  
+    #[serde(default)]
+    pub proto_network_persistence_block_height: Option<u64>,
 }
 
 impl Default for NodeConfig {
@@ -183,6 +187,7 @@ impl Default for NodeConfig {
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
             prune_interval: u64_max(),
+            proto_network_persistence_block_height: None,
         }
     }
 }

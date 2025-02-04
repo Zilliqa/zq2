@@ -436,6 +436,10 @@ impl State {
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
         self.sql.get_highest_canonical_block_number()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.accounts.iter().next().is_none()
+    }
 }
 
 pub mod contract_addr {
@@ -638,7 +642,7 @@ mod tests {
 
     #[test]
     fn deposit_contract_updateability() {
-        let db = Db::new::<PathBuf>(None, 0, 0).unwrap();
+        let db = Db::new::<PathBuf>(None, 0, 0, None).unwrap();
         let db = Arc::new(db);
         let config = NodeConfig::default();
 
