@@ -14,6 +14,8 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: bencherdev/bencher@main
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -31,7 +33,6 @@ jobs:
           --threshold-max-sample-size 64 \
           --threshold-upper-boundary 0.99 \
           --thresholds-reset \
-          --err \
           --adapter rust_criterion \
           --github-actions '${{ secrets.GITHUB_TOKEN }}' \
           cargo bench

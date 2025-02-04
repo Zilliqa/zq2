@@ -8,7 +8,10 @@ roles:
 - checkpoint
 - persistence
 - query
+- graph
 versions:
   zq2: fe0ca8fc
   otterscan: develop
   spout: main
+  stats_dashboard: v0.0.4
+  stats_agent: v0.0.2

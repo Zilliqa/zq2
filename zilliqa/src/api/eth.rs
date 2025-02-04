@@ -1036,89 +1036,103 @@ async fn subscribe(
 /// eth_blobBaseFee
 /// Returns the expected base fee for blobs in the next block
 fn blob_base_fee(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!("API method eth_blobBaseFee is not implemented yet"))
 }
 
 /// eth_feeHistory
 /// Returns the collection of historical gas information
 fn fee_history(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!("API method eth_feeHistory is not implemented yet"))
 }
 
 /// eth_getAccount
 /// Retrieve account details by specifying an address and a block number/tag.
 fn get_account(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!("API method eth_getAccount is not implemented yet"))
 }
 
 /// eth_getFilterChanges
 /// Polling method for a filter, which returns an array of events that have occurred since the last poll.
 fn get_filter_changes(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!(
+        "API method eth_getFilterChanges is not implemented yet"
+    ))
 }
 
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
 fn get_filter_logs(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!(
+        "API method eth_getFilterLogs is not implemented yet"
+    ))
 }
 
 /// eth_getProof
 /// Returns the account and storage values of the specified account including the Merkle-proof.
 fn get_proof(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!("API method eth_getProof is not implemented yet"))
 }
 
 /// eth_hashrate
 /// Returns the number of hashes per second that the node is mining with.
 fn hashrate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!("API method eth_hashrate is not implemented yet"))
 }
 
 /// eth_maxPriorityFeePerGas
 /// Get the priority fee needed to be included in a block.
 fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!(
+        "API method eth_maxPriorityFeePerGas is not implemented yet"
+    ))
 }
 
 /// eth_newBlockFilter
 /// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
 fn new_block_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!(
+        "API method eth_newBlockFilter is not implemented yet"
+    ))
 }
 
 /// eth_newFilter
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
 fn new_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!("API method eth_newFilter is not implemented yet"))
 }
 
 /// eth_newPendingTransactionFilter
 /// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
 fn new_pending_transaction_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!(
+        "API method eth_newPendingTransactionFilter is not implemented yet"
+    ))
 }
 
 /// eth_signTransaction
 /// Signs a transaction that can be submitted to the network later using eth_sendRawTransaction
 fn sign_transaction(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!(
+        "API method eth_signTransaction is not implemented yet"
+    ))
 }
 
 /// eth_simulateV1
 /// Simulates a series of transactions at a specific block height with optional state overrides. This method allows you to test transactions with custom block and state parameters without actually submitting them to the network.
 fn simulate_v1(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!("API method eth_simulateV1 is not implemented yet"))
 }
 
 /// eth_submitWork
 /// Used for submitting a proof-of-work solution.
 fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!("API method eth_submitWork is not implemented yet"))
 }
 
 /// eth_uninstallFilter
 /// It uninstalls a filter with the given filter id.
 fn uninstall_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+    Err(anyhow!(
+        "API method eth_uninstallFilter is not implemented yet"
+    ))
 }

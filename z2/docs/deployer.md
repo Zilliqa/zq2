@@ -24,10 +24,11 @@ Commands:
   restore                Restore a node data dir from a backup in the persistence bucket
   reset                  Reset a network stopping all the nodes and cleaning the /data folder
   restart                Restart a network stopping all the nodes and starting the service again
-  monitor                Show the network nodes specified metrics
+  monitor                Monitor the network nodes specified metrics
   api                    Perform operation over the network API nodes
   generate-private-keys  Generate the node private keys. --force to replace if already existing
   generate-genesis-key   Generate the genesis key. --force to replace if already existing
+  generate-stats-key     Generate the Stats Dashboard key. --force to replace if already existing
   help                   Print this message or the help of the given subcommand(s)
 
 Options:
@@ -70,6 +71,7 @@ Options:
           - checkpoint:  Virtual machine checkpoint
           - persistence: Virtual machine persistence
           - query:       Virtual machine query
+          - graph:       Virtual machine graph
           - sentry:      Virtual machine sentry
 
   -v, --verbose...
@@ -132,6 +134,8 @@ eth_chain_id: 33333
 roles:
 - apps
 versions:
+  stats_dashboard: v0.0.3
+  stats_agent: v0.0.1
   spout: v1.3.72
   otterscan: latest
 ```
@@ -161,6 +165,8 @@ roles:
 - apps
 versions:
   zq2: fbee9ec5
+  stats_dashboard: v0.0.3
+  stats_agent: v0.0.1
   spout: v1.3.72
   otterscan: latest
 ```
@@ -430,6 +436,7 @@ Options:
           - checkpoint:  Virtual machine checkpoint
           - persistence: Virtual machine persistence
           - query:       Virtual machine query
+          - graph:       Virtual machine graph
           - sentry:      Virtual machine sentry
 
   -v, --verbose...

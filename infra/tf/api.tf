@@ -2,6 +2,21 @@
 # API INSTANCES
 ################################################################################
 
+resource "google_compute_firewall" "allow_api_external_http" {
+  name    = "${var.chain_name}-api-allow-external-http"
+  network = local.network_name
+
+  direction     = "INGRESS"
+  source_ranges = concat(local.google_load_balancer_ip_ranges, [local.monitoring_ip_range])
+
+  target_tags = [format("%s-%s", var.chain_name, "api")]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["8080"]
+  }
+}
+
 module "apis" {
   source = "./modules/node"
 
@@ -13,7 +28,7 @@ module "apis" {
   network_tags = []
 
   metadata = {
-    subdomain = base64encode("")
+    subdomain = base64encode(var.subdomain)
   }
 
   node_dns_subdomain       = var.node_dns_subdomain
@@ -33,20 +48,10 @@ resource "google_compute_instance_group" "api" {
     name = "jsonrpc"
     port = "4201"
   }
-}
 
-resource "google_compute_firewall" "allow_api_external_http" {
-  name    = "${var.chain_name}-api-allow-external-http"
-  network = local.network_name
-
-  direction     = "INGRESS"
-  source_ranges = concat(local.google_load_balancer_ip_ranges, [local.monitoring_ip_range])
-
-  target_tags = [format("%s-%s", var.chain_name, "api")]
-
-  allow {
-    protocol = "tcp"
-    ports    = ["8080"]
+  named_port {
+    name = "health"
+    port = "8080"
   }
 }
 
@@ -78,16 +83,54 @@ resource "google_compute_backend_service" "api" {
   }
 }
 
+resource "google_compute_backend_service" "health" {
+  name                  = "${var.chain_name}-api-health-nodes"
+  health_checks         = [google_compute_health_check.api.id]
+  port_name             = "health"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  enable_cdn            = false
+  session_affinity      = "CLIENT_IP"
+
+  dynamic "backend" {
+    for_each = var.api.detach_load_balancer ? {} : google_compute_instance_group.api
+    content {
+      group           = backend.value.self_link
+      balancing_mode  = "UTILIZATION"
+      capacity_scaler = 1.0
+    }
+  }
+}
+
 resource "google_compute_url_map" "api" {
-  name            = var.chain_name
+  name            = format("%s-api", var.chain_name)
   default_service = google_compute_backend_service.api.id
+
+  host_rule {
+    hosts        = ["api.${var.subdomain}"]
+    path_matcher = "api"
+  }
+
+  host_rule {
+    hosts        = ["health.${var.subdomain}"]
+    path_matcher = "health"
+  }
+
+  path_matcher {
+    name            = "api"
+    default_service = google_compute_backend_service.api.id
+  }
+
+  path_matcher {
+    name            = "health"
+    default_service = google_compute_backend_service.health.id
+  }
 }
 
 resource "google_compute_managed_ssl_certificate" "api" {
   name = "${var.chain_name}-api"
 
   managed {
-    domains = ["api.${var.subdomain}"]
+    domains = ["api.${var.subdomain}", "health.${var.subdomain}"]
   }
 }
 
@@ -106,6 +149,10 @@ data "google_compute_global_address" "api" {
   name = "api-${replace(var.subdomain, ".", "-")}"
 }
 
+data "google_compute_global_address" "health" {
+  name = "health-${replace(var.subdomain, ".", "-")}"
+}
+
 resource "google_compute_global_forwarding_rule" "api_http" {
   name                  = "${var.chain_name}-forwarding-rule-http"
   ip_protocol           = "TCP"
@@ -122,4 +169,22 @@ resource "google_compute_global_forwarding_rule" "api_https" {
   port_range            = "443"
   target                = google_compute_target_https_proxy.api.id
   ip_address            = data.google_compute_global_address.api.address
+}
+
+resource "google_compute_global_forwarding_rule" "health_http" {
+  name                  = "${var.chain_name}-health-forwarding-rule-http"
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_range            = "80"
+  target                = google_compute_target_http_proxy.api.id
+  ip_address            = data.google_compute_global_address.health.address
+}
+
+resource "google_compute_global_forwarding_rule" "health_https" {
+  name                  = "${var.chain_name}-health-forwarding-rule-https"
+  ip_protocol           = "TCP"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_range            = "443"
+  target                = google_compute_target_https_proxy.api.id
+  ip_address            = data.google_compute_global_address.health.address
 }

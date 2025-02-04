@@ -14,7 +14,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tera::Tera;
 use tokio::fs;
-use zilliqa::{cfg::NodeConfig, crypto::SecretKey};
+use zilliqa::{cfg::NodeConfig, crypto::SecretKey, sync::SyncPeers};
 
 const SUPPORTED_APIS_PATH_NAME: &str = "index";
 
@@ -352,10 +352,20 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
     let (s2, _) = tokio::sync::mpsc::unbounded_channel();
     let (s3, _) = tokio::sync::mpsc::unbounded_channel();
     let (s4, _) = tokio::sync::mpsc::unbounded_channel();
-    let peers = Arc::new(AtomicUsize::new(0));
+    let peers_count = Arc::new(AtomicUsize::new(0));
+
+    let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+    let peers = Arc::new(SyncPeers::new(peer_id));
 
     let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
-        config, secret_key, s1, s2, s3, s4, peers,
+        config,
+        secret_key,
+        s1,
+        s2,
+        s3,
+        s4,
+        peers_count,
+        peers,
     )?));
     let module = zilliqa::api::rpc_module(my_node.clone(), &[]);
     for m in module.method_names() {

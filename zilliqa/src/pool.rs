@@ -426,16 +426,13 @@ mod tests {
         primitives::{Address, Bytes, PrimitiveSignature, TxKind, U256},
     };
     use anyhow::Result;
-    use libp2p::PeerId;
     use rand::{seq::SliceRandom, thread_rng};
 
     use super::TransactionPool;
     use crate::{
-        block_store::BlockStore,
         cfg::NodeConfig,
         crypto::Hash,
         db::Db,
-        node::{MessageSender, RequestId},
         state::State,
         transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
     };
@@ -491,23 +488,10 @@ mod tests {
     fn get_in_memory_state() -> Result<State> {
         let node_config = NodeConfig::default();
 
-        let (s1, _) = tokio::sync::mpsc::unbounded_channel();
-        let (s2, _) = tokio::sync::mpsc::unbounded_channel();
-
-        let message_sender = MessageSender {
-            our_shard: 0,
-            our_peer_id: PeerId::random(),
-            outbound_channel: s1,
-            local_channel: s2,
-            request_id: RequestId::default(),
-        };
-
         let db = Db::new::<PathBuf>(None, 0, 0)?;
         let db = Arc::new(db);
 
-        let block_store = BlockStore::new(&node_config, db.clone(), message_sender.clone())?;
-
-        State::new_with_genesis(db.state_trie()?, node_config, Arc::new(block_store))
+        State::new_with_genesis(db.state_trie()?, node_config, db.clone())
     }
 
     fn create_acc(state: &mut State, address: Address, balance: u128, nonce: u64) -> Result<()> {

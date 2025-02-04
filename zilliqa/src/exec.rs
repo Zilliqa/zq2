@@ -415,7 +415,6 @@ impl DatabaseRef for &State {
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         Ok(self
-            .block_store
             .get_canonical_block_by_number(number)?
             .map(|block| B256::new(block.hash().0))
             .unwrap_or_default())
@@ -1203,15 +1202,11 @@ impl PendingState {
     }
 
     pub fn get_canonical_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
-        self.pre_state
-            .block_store
-            .get_canonical_block_by_number(block_number)
+        self.pre_state.get_canonical_block_by_number(block_number)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
-        self.pre_state
-            .block_store
-            .get_highest_canonical_block_number()
+        self.pre_state.get_highest_canonical_block_number()
     }
 
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
@@ -1636,7 +1631,6 @@ fn scilla_create(
     } else {
         account.account.balance = txn.amount.get();
     }
-    account.account.balance = txn.amount.get();
     account.account.code = Code::Scilla {
         code: txn.code.clone(),
         init_data,

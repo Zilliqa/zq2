@@ -14,12 +14,13 @@ for the Zilliqa 2.0 validators running on GCP.
 templatefile() vars:
 - checkpoint_url, the ZQ2 checkpoint URL used for recover the validator nodes
 - persistence_url, the ZQ2 persistence URL used for recover the network
-- conifg, the ZQ2 validators configuration file
 - docker_image, the ZQ2 docker image (incl. version)
 - secret_key, the ZQ2 node secret key
 - role, the node role: validator or apps
 - otterscan_image, the Otterscan docker image (incl. version)
 - spout_image, the Eth Spout docker image (incl. version)
+- stats_dashboard_image, the Stats dashboard docker image (incl. version)
+- stats_agent_image, the Stats agent docker image (incl. version)
 - subdomain, the ZQ2 network domain name
 """
 
@@ -32,6 +33,8 @@ def query_metadata_key(key: str) -> str:
 ZQ2_IMAGE="{{ docker_image }}"
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
 SPOUT_IMAGE="{{ spout_image }}"
+STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
+STATS_AGENT_IMAGE="{{ stats_agent_image }}"
 SECRET_KEY="{{ secret_key }}"
 GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
@@ -48,6 +51,8 @@ VERSIONS={
     "zilliqa": ZQ2_IMAGE.split(":")[-1] if ZQ2_IMAGE.split(":")[-1] else "latest",
     "otterscan": OTTERSCAN_IMAGE.split(":")[-1] if OTTERSCAN_IMAGE.split(":")[-1] else "latest",
     "spout": SPOUT_IMAGE.split(":")[-1] if SPOUT_IMAGE.split(":")[-1] else "latest",
+    "stats_dashboard": STATS_DASHBOARD_IMAGE.split(":")[-1] if STATS_DASHBOARD_IMAGE.split(":")[-1] else "latest",
+    "stats_agent": STATS_AGENT_IMAGE.split(":")[-1] if STATS_AGENT_IMAGE.split(":")[-1] else "latest",
 }
 
 def query_metadata_ext_ip() -> str:
@@ -56,52 +61,134 @@ def query_metadata_ext_ip() -> str:
         "Metadata-Flavor" : "Google" })
     return r.text
 
-HEALTHCHECK_SCRIPT="""from flask import Flask
+HEALTHCHECK_SCRIPT="""from datetime import datetime
+from flask import Flask, jsonify
 import requests
 from time import time
 
 app = Flask(__name__)
 
-latest_block_number = 0
-latest_block_number_obtained_at = 0
+NODE_URL = "http://localhost:4202"
+HEADERS = {"Content-Type": "application/json"}
 
-@app.route("/health")
-def health():
-    global latest_block_number
-    global latest_block_number_obtained_at
+syncing_latest_block_number = 0
+syncing_latest_block_number_obtained_at = 0
 
+pace_latest_block_number = 0
+pace_latest_block_number_obtained_at = 0
+
+def get_rpc_response(method, params=[]):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     try:
-        response = requests.post(
-            "http://localhost:4201",
-            json={"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber"},
-            timeout=5  # Add a timeout to avoid hanging indefinitely
-        )
-        response.raise_for_status()  # Raise an exception for HTTP errors
+        response = requests.post(NODE_URL, json=payload, headers=HEADERS, timeout=3)
+        response.raise_for_status()
         response_json = response.json()
+        return response_json.get("result")
     except requests.exceptions.RequestException as e:
         # Handle connection errors, timeouts, and HTTP errors
-        return (f"Failed to fetch block number: {e}", 500)
+        return (f"Request error in {method}: {e}", 0)
     except ValueError as e:
         # Handle JSON decoding errors
-        return (f"Invalid JSON response: {e}", 500)
+        return (f"JSON decoding error in {method}: {e}", 0)
+    except Exception as e:
+        return (f"Unexpected error in {method}: {e}", 0)
 
-    block_number = int(response_json["result"], 16)
+def check_sync_status():
+    global syncing_latest_block_number, syncing_latest_block_number_obtained_at
+
+    # Query eth_blockNumber and eth_syncing
+    block_number_hex = get_rpc_response("eth_blockNumber")
+    sync_status = get_rpc_response("eth_syncing")
+
+    # Convert hex block number to integer
+    block_number = int(block_number_hex, 16)
     current_time = int(time())
-    print (f"block {block_number} latest {latest_block_number}")
-
-    if block_number != latest_block_number:
-        latest_block_number = block_number
-        latest_block_number_obtained_at = current_time
-
+    print(f"Current block: {block_number}, Last known block: {syncing_latest_block_number}")
     
-    if latest_block_number_obtained_at + 60 < current_time:
-        # no blocks for 60 seconds
-        return ("no blocks for more than 60 seconds", 400)
-    else:
-        return (f"block {latest_block_number} since {latest_block_number_obtained_at}", 200)
+    if block_number != syncing_latest_block_number:
+        syncing_latest_block_number = block_number
+        syncing_latest_block_number_obtained_at = current_time
+    
+    # If fully synced response is "false"
+    if isinstance(sync_status, bool) and not sync_status:
+        return jsonify({"message": f"Fully synced at block {block_number}", "code": 200})
+    
+    # If syncing response is a JSON object
+    if isinstance(sync_status, dict):
+        current_block = int(sync_status["currentBlock"])
+        highest_block = int(sync_status["highestBlock"])
+        
+        if current_block >= highest_block - 5:
+            return jsonify({"message": f"Node is syncing at block {block_number} but behind highest block {highest_block}", "code": 200})
+        
+        if syncing_latest_block_number_obtained_at + 60 < current_time:
+            # no blocks for 60 seconds
+            return jsonify({"error": "No blocks for more than 60 seconds", "code": 503}), 503
+        
+        return jsonify({"message": f"Syncing block {syncing_latest_block_number} since {syncing_latest_block_number_obtained_at}", "code": 404}), 404
+    
+    return jsonify({"error": "Invalid response format from eth_syncing", "code": 0}), 500
+
+def check_pace_status():
+    global pace_latest_block_number, pace_latest_block_number_obtained_at
+    
+    block_number_hex = get_rpc_response("eth_blockNumber")
+    block_number = int(block_number_hex, 16)
+    
+    current_time = time()
+    
+    delta_block_number = block_number - pace_latest_block_number
+    delta_time = current_time - pace_latest_block_number_obtained_at
+    
+    if delta_time <= 0:
+        return jsonify({"error": "Too many requests", "code": 429}), 429
+    
+    pace = (delta_block_number * 60) / delta_time
+    pace_latest_block_number = block_number
+    pace_latest_block_number_obtained_at = current_time
+    
+    if pace < 5:
+        return jsonify({
+            "status": "critical",
+            "message": "Block production is too low or stalled",
+            "blocks_produced_last_minute": int(pace),
+            "expected_blocks_per_minute": 60,
+            "latest_block": pace_latest_block_number,
+            "latest_block_timestamp": datetime.fromtimestamp(pace_latest_block_number_obtained_at).strftime('%Y-%m-%d %H:%M:%S'),
+            "code": 500
+        }), 500
+    
+    if 5 <= pace < 20:
+        return jsonify({
+            "status": "warning",
+            "message": "Block production is slower than expected",
+            "blocks_produced_last_minute": int(pace),
+            "expected_blocks_per_minute": 60,
+            "latest_block": pace_latest_block_number,
+            "latest_block_timestamp": datetime.fromtimestamp(pace_latest_block_number_obtained_at).strftime('%Y-%m-%d %H:%M:%S'),
+            "code": 400
+        }), 400
+    
+    return jsonify({
+        "status": "healthy",
+        "message": "Block production is as expected",
+        "blocks_produced_last_minute": int(pace),
+        "expected_blocks_per_minute": 60,
+        "latest_block": pace_latest_block_number,
+        "latest_block_timestamp": datetime.fromtimestamp(pace_latest_block_number_obtained_at).strftime('%Y-%m-%d %H:%M:%S'),
+        "code": 200
+    }), 200
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return check_sync_status()
+
+@app.route('/health/block', methods=['GET'])
+def block_production():
+    return check_pace_status()
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8080, host="0.0.0.0")
+    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
 """
 
 HEALTHCHECK_SERVICE_DESC="""
@@ -121,7 +208,7 @@ WantedBy=multi-user.target
 """
 
 ZQ2_SCRIPT="""#!/bin/bash
-echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
 ZQ2_IMAGE="{{ docker_image }}"
 
@@ -129,10 +216,10 @@ start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker container prune -f
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
-    --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
-    -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
-    --restart=unless-stopped \
-    -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
+        -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
+        --restart=unless-stopped \
     """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} ${1} --log-json
 }
 
@@ -173,10 +260,11 @@ echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.d
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
 
 start() {
-     docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
+    docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
     docker run -td -p 80:80 --name otterscan-""" + VERSIONS.get('otterscan') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e ERIGON_URL=https://api.""" + SUBDOMAIN + """ \
+        --restart=unless-stopped --pull=always \
         ${OTTERSCAN_IMAGE} &> /dev/null &
 }
 
@@ -224,6 +312,7 @@ start() {
         -e EXPLORER_URL="https://explorer.""" + SUBDOMAIN + """" \
         -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
         -e BECH32_HRP="zil" \
+        --restart=unless-stopped --pull=always \
         ${SPOUT_IMAGE}
 }
 
@@ -254,13 +343,106 @@ RestartSec=10
 WantedBy=multi-user.target
 """
 
-OPS_AGENT_INSTALL_SCRIPT_URL="https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh"
+STATS_DASHBOARD_SCRIPT="""#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
+STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
+
+start() {
+    docker rm stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ &> /dev/null || echo 0
+    docker run -td -p 3000:3000 --name stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        -e WS_SECRET="{{ stats_dashboard_key }}" \
+        --restart=unless-stopped --pull=always \
+        ${STATS_DASHBOARD_IMAGE}
+}
+
+stop() {
+    docker stop stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0
+"""
+
+STATS_DASHBOARD_SERVICE_DESC="""
+[Unit]
+Description=Stats dashboard app
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/stats_dashboard.sh start
+ExecStop=/usr/local/bin/stats_dashboard.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+STATS_AGENT_SCRIPT="""#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+
+STATS_AGENT_IMAGE="{{ stats_agent_image }}"
+
+start() {
+    docker rm stats-agent-""" + VERSIONS.get('stats_agent') + """ &> /dev/null || echo 0
+    docker run -td --name stats-agent-""" + VERSIONS.get('stats_agent') + """ \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        --net=host \
+        -e RPC_HOST="localhost" \
+        -e RPC_PORT="4202" \
+        -e LISTENING_PORT="3333" \
+        -e INSTANCE_NAME=""" + os.uname().nodename + """ \
+        -e CONTACT_DETAILS="devops@zilliqa.com" \
+        -e WS_SERVER="ws://stats.""" + SUBDOMAIN + """" \
+        -e WS_SECRET="{{ stats_dashboard_key }}" \
+        -e VERBOSITY="2" \
+        --restart=unless-stopped --pull=always \
+        ${STATS_AGENT_IMAGE}
+}
+
+stop() {
+    docker stop stats-agent-""" + VERSIONS.get('stats_agent') + """
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0
+"""
+
+STATS_AGENT_SERVICE_DESC="""
+[Unit]
+Description=Stats agent app
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/stats_agent.sh start
+ExecStop=/usr/local/bin/stats_agent.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+OPS_AGENT_INSTALL_SCRIPT_URL="https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh"
 
 OPS_AGENT_CONFIG_FILE="/etc/google-cloud-ops-agent/config.yaml"
 
-
 OPS_AGENT_CONFIG="""
+combined:
+  receivers:
+    otlp:
+      type: otlp
+      metrics_mode: googlecloudmonitoring
 logging:
   receivers:
     zilliqa:
@@ -310,6 +492,13 @@ metrics:
       default_pipeline:
         receivers: [hostmetrics]
         processors: [metrics_filter]
+      otlp:
+        receivers: [otlp]
+traces:
+  service:
+    pipelines:
+      otlp:
+        receivers: [otlp]
 """
 
 LOGROTATE_CONFIG="""
@@ -470,7 +659,21 @@ def go(role):
     install_gcloud()
     login_registry()
     match role:
-        case "bootstrap" | "checkpoint" | "api" | "persistence" | "query":
+        case "bootstrap" | "api":
+            log("Configuring a not validator node")
+            stop_healthcheck()
+            install_healthcheck()
+            stop_stats_agent()
+            install_stats_agent()
+            configure_logrotate()
+            pull_zq2_image()
+            stop_zq2()
+            install_zilliqa()
+            download_persistence()
+            start_zq2()
+            start_healthcheck()
+            start_stats_agent()
+        case "checkpoint" | "persistence" | "query" | "graph":
             log("Configuring a not validator node")
             stop_healthcheck()
             install_healthcheck()
@@ -485,6 +688,8 @@ def go(role):
             log("Configuring a validator node")
             stop_healthcheck()
             install_healthcheck()
+            stop_stats_agent()
+            install_stats_agent()
             configure_logrotate()
             pull_zq2_image()
             stop_zq2()
@@ -493,11 +698,13 @@ def go(role):
             download_checkpoint()
             start_zq2()
             start_healthcheck()
+            start_stats_agent()
         case "apps":
             log("Configuring the blockchain app node")
             stop_apps()
             install_otterscan()
             install_spout()
+            install_stats_dashboard()
             start_apps()
         case _:
             log(f"Invalide role {role}")
@@ -597,7 +804,6 @@ def install_otterscan():
     run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/otterscan.service", "/etc/systemd/system/multi-user.target.wants/otterscan.service"])
     run_or_die(["sudo", "systemctl", "enable", "otterscan.service"])
 
-
 def install_spout():
     with open("/tmp/spout.sh", "w") as f:
         f.write(SPOUT_SCRIPT)
@@ -612,15 +818,52 @@ def install_spout():
     run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/spout.service", "/etc/systemd/system/multi-user.target.wants/spout.service"])
     run_or_die(["sudo", "systemctl", "enable", "spout.service"])
 
+def install_stats_dashboard():
+    with open("/tmp/stats_dashboard.sh", "w") as f:
+        f.write(STATS_DASHBOARD_SCRIPT)
+    run_or_die(["sudo", "cp", "/tmp/stats_dashboard.sh", f"/usr/local/bin/stats_dashboard-{VERSIONS.get('stats_dashboard')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/stats_dashboard-{VERSIONS.get('stats_dashboard')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/stats_dashboard-{VERSIONS.get('stats_dashboard')}.sh", "/usr/local/bin/stats_dashboard.sh"])
+
+    with open("/tmp/stats_dashboard.service", "w") as f:
+        f.write(STATS_DASHBOARD_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/stats_dashboard.service","/etc/systemd/system/stats_dashboard.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/stats_dashboard.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/stats_dashboard.service", "/etc/systemd/system/multi-user.target.wants/stats_dashboard.service"])
+    run_or_die(["sudo", "systemctl", "enable", "stats_dashboard.service"])
 
 def start_apps():
-    run_or_die(["sudo", "systemctl", "start", "otterscan"])
-    run_or_die(["sudo", "systemctl", "start", "spout"])
+    for app in [ "otterscan", "spout", "stats_dashboard" ]:
+        if os.path.exists(f"/etc/systemd/system/{app}.service"):
+            run_or_die(["sudo", "systemctl", "start", f"{app}"])
+    pass
 
 def stop_apps():
-    for app in [ "otterscan", "spout"]:
+    for app in [ "otterscan", "spout", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
             run_or_die(["sudo", "systemctl", "stop", f"{app}"])
+    pass
+
+def start_stats_agent():
+    run_or_die(["sudo", "systemctl", "start", "stats_agent"])
+
+def install_stats_agent():
+    with open("/tmp/stats_agent.sh", "w") as f:
+        f.write(STATS_AGENT_SCRIPT)
+    run_or_die(["sudo", "cp", "/tmp/stats_agent.sh", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh", "/usr/local/bin/stats_agent.sh"])
+
+    with open("/tmp/stats_agent.service", "w") as f:
+        f.write(STATS_AGENT_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/stats_agent.service","/etc/systemd/system/stats_agent.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/stats_agent.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/stats_agent.service", "/etc/systemd/system/multi-user.target.wants/stats_agent.service"])
+    run_or_die(["sudo", "systemctl", "enable", "stats_agent.service"])
+
+def stop_stats_agent():
+    if os.path.exists("/etc/systemd/system/stats_agent.service"):
+        run_or_die(["sudo", "systemctl", "stop", "stats_agent"])
     pass
 
 def configure_logrotate():

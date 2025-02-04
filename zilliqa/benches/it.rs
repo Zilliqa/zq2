@@ -1,16 +1,23 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{env, iter, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy::{
-    consensus::TxLegacy, network::TxSignerSync, primitives::Address, signers::local::LocalSigner,
+    consensus::TxLegacy,
+    dyn_abi::JsonAbiExt,
+    network::TxSignerSync,
+    primitives::{Address, U256},
+    signers::local::LocalSigner,
 };
 use bitvec::{bitarr, order::Msb0};
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+};
 use eth_trie::{MemoryDB, Trie};
-use indicatif::{ParallelProgressIterator, ProgressBar};
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use libp2p::PeerId;
 use pprof::criterion::{Output, PProfProfiler};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use prost::Message;
 use revm::primitives::{Bytes, TxKind};
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use tokio::sync::mpsc;
 use zilliqa::{
@@ -20,26 +27,33 @@ use zilliqa::{
     db::Db,
     message::{Block, ExternalMessage, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
+    schnorr,
+    sync::SyncPeers,
+    test_util::compile_contract,
     time::{self, SystemTime},
-    transaction::{EvmGas, SignedTransaction},
+    transaction::{
+        EvmGas, ScillaGas, SignedTransaction, TxZilliqa, VerifiedTransaction, ZilAmount,
+    },
+    zq1_proto::{Nonce, ProtoTransactionCoreInfo},
 };
 
-pub fn process_empty(c: &mut Criterion) {
+fn process_empty(c: &mut Criterion) {
     tracing_subscriber::fmt::init();
 
     let mut group = c.benchmark_group("process-empty");
-    group.throughput(criterion::Throughput::Elements(1));
+    group.throughput(Throughput::Elements(1));
     group
         .sample_size(500)
         .measurement_time(Duration::from_secs(10));
 
     let secret_key = SecretKey::new().unwrap();
+    let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let (outbound_message_sender, _a) = mpsc::unbounded_channel();
     let (local_message_sender, _b) = mpsc::unbounded_channel();
     let (reset_timeout_sender, _c) = mpsc::unbounded_channel();
     let message_sender = MessageSender {
         our_shard: 0,
-        our_peer_id: PeerId::random(),
+        our_peer_id: peer_id,
         outbound_channel: outbound_message_sender,
         local_channel: local_message_sender,
         request_id: RequestId::default(),
@@ -76,6 +90,7 @@ pub fn process_empty(c: &mut Criterion) {
         message_sender,
         reset_timeout_sender,
         Arc::new(db),
+        Arc::new(SyncPeers::new(peer_id)),
     )
     .unwrap();
 
@@ -151,6 +166,7 @@ fn consensus(
     index: usize,
 ) -> Consensus {
     let secret_key = genesis_deposits[index].0;
+    let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let (outbound_message_sender, a) = mpsc::unbounded_channel();
     let (local_message_sender, b) = mpsc::unbounded_channel();
     let (reset_timeout_sender, c) = mpsc::unbounded_channel();
@@ -196,21 +212,150 @@ fn consensus(
         message_sender,
         reset_timeout_sender,
         Arc::new(db),
+        Arc::new(SyncPeers::new(peer_id)),
     )
     .unwrap()
 }
 
-pub fn produce_full(crit: &mut Criterion) {
-    let mut group = crit.benchmark_group("produce-full");
-    group.throughput(criterion::Throughput::Elements(1));
-    let sample_size = 20;
-    group
-        .sample_size(sample_size)
-        .measurement_time(Duration::from_secs(120));
-
+fn full_blocks_evm_transfers(c: &mut Criterion) {
     let signer = LocalSigner::random();
-    let genesis_accounts = vec![(signer.address(), 1_000_000_000_000_000_000_000_000_000)];
+    let to = Address::random();
+    let txns = (0..).map(|nonce| {
+        let mut tx = TxLegacy {
+            chain_id: None,
+            nonce,
+            gas_price: 1,
+            gas_limit: 21_000,
+            to: TxKind::Call(to),
+            value: U256::from(1),
+            input: Bytes::new(),
+        };
+        let sig = signer.sign_transaction_sync(&mut tx).unwrap();
+        let txn = SignedTransaction::Legacy { tx, sig };
+        txn.verify().unwrap()
+    });
 
+    full_transaction_benchmark(
+        c,
+        "full-blocks-evm-transfers",
+        signer.address(),
+        iter::empty(),
+        txns,
+        4000,
+    );
+}
+
+fn full_blocks_zil_transfers(c: &mut Criterion) {
+    let signer = schnorr::SecretKey::random(&mut rand::thread_rng());
+    let key = signer.public_key();
+    let to = Address::random();
+    let txns = (1..).map(|nonce| {
+        let chain_id = 700;
+        let amount = 1;
+        let gas_price = 1;
+        let gas_limit = 50;
+        let tx = TxZilliqa {
+            chain_id,
+            nonce,
+            gas_price: ZilAmount::from_raw(gas_price),
+            gas_limit: ScillaGas(gas_limit),
+            to_addr: to,
+            amount: ZilAmount::from_raw(amount),
+            code: String::new(),
+            data: String::new(),
+        };
+        let version = ((chain_id as u32) << 16) | 1u32;
+        let proto = ProtoTransactionCoreInfo {
+            version,
+            toaddr: to.0.to_vec(),
+            senderpubkey: Some(key.to_sec1_bytes().into()),
+            amount: Some(amount.to_be_bytes().to_vec().into()),
+            gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
+            gaslimit: gas_limit,
+            oneof2: Some(Nonce::Nonce(nonce)),
+            oneof8: None,
+            oneof9: None,
+        };
+        let txn_data = proto.encode_to_vec();
+        let sig = schnorr::sign(&txn_data, &signer);
+        let txn = SignedTransaction::Zilliqa { tx, key, sig };
+        txn.verify().unwrap()
+    });
+
+    let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
+    let address = Address::from_slice(&hashed[12..]);
+
+    full_transaction_benchmark(
+        c,
+        "full-blocks-zil-transfers",
+        address,
+        iter::empty(),
+        txns,
+        4000,
+    );
+}
+
+fn full_blocks_erc20_transfers(c: &mut Criterion) {
+    let (abi, input) = compile_contract("benches/ERC20.sol", "ERC20FixedSupply");
+    let signer = LocalSigner::random();
+
+    let mut tx = TxLegacy {
+        chain_id: None,
+        nonce: 0,
+        gas_price: 1,
+        gas_limit: 10_000_000,
+        to: TxKind::Create,
+        value: U256::ZERO,
+        input,
+    };
+    let sig = signer.sign_transaction_sync(&mut tx).unwrap();
+    let setup_txn = SignedTransaction::Legacy { tx, sig };
+    let setup_txn = setup_txn.verify().unwrap();
+
+    let to = Address::random();
+    let contract_address = signer.address().create(0);
+    let gas_limit = 51_411;
+    let transfer = abi.function("transfer").unwrap()[0].clone();
+    let input: Bytes = transfer
+        .abi_encode_input(&[to.into(), U256::from(1).into()])
+        .unwrap()
+        .into();
+
+    let txns = (1..).map(|nonce| {
+        let mut tx = TxLegacy {
+            chain_id: None,
+            nonce,
+            gas_price: 1,
+            gas_limit,
+            to: TxKind::Call(contract_address),
+            value: U256::ZERO,
+            input: input.clone(),
+        };
+        let sig = signer.sign_transaction_sync(&mut tx).unwrap();
+        let txn = SignedTransaction::Legacy { tx, sig };
+        txn.verify().unwrap()
+    });
+
+    full_transaction_benchmark(
+        c,
+        "full-blocks-erc20-transfers",
+        signer.address(),
+        iter::once(setup_txn),
+        txns,
+        (84_000_000 / gas_limit) as usize,
+    );
+}
+
+/// Run a benchmark which produces blocks full of the provided transactions. `txns` should be infinitely iterable
+/// so the benchmark can generate as many transactions as it needs.
+fn full_transaction_benchmark(
+    c: &mut Criterion,
+    name: &str,
+    genesis_address: Address,
+    setup_txns: impl Iterator<Item = VerifiedTransaction>,
+    txns: impl Iterator<Item = VerifiedTransaction>,
+    txns_per_block: usize,
+) {
     // We will create a dummy network with 2 validators - 'big' which has a large proportion of the stake and 'tiny'
     // which has a small amount of stake. The intention is that 'big' will always be the block proposer, because the
     // proposer is selected in proportion to the validators' relative stake. However, 'tiny' will still get to have a
@@ -222,7 +367,7 @@ pub fn produce_full(crit: &mut Criterion) {
     // Step 2 is important, because we want to measure the time it takes a validator to vote on a block it hasn't seen
     // before. In step 3, 'big' will skip most of the block validation logic because it knows it built the block
     // itself.
-
+    let genesis_accounts = vec![(genesis_address, 1_000_000_000_000_000_000_000_000_000)];
     let secret_key_big = SecretKey::new().unwrap();
     let secret_key_tiny = SecretKey::new().unwrap();
     let genesis_deposits = vec![
@@ -230,68 +375,85 @@ pub fn produce_full(crit: &mut Criterion) {
         (secret_key_tiny, 1),
     ];
 
-    let mut big = consensus(&genesis_accounts, &genesis_deposits, 0);
-    let mut tiny = consensus(&genesis_accounts, &genesis_deposits, 1);
+    let setup_txns: Vec<_> = setup_txns.collect();
+    let txns: Vec<_> = txns.take(txns_per_block).collect();
 
-    // Fill transaction pools with lots of basic transfers.
-    let txn_count = (sample_size as u64 * 40) * 4000;
-    let to = Address::random();
-    let progress = ProgressBar::new(txn_count).with_message("generating transactions");
-    let txns: Vec<_> = (0..txn_count)
-        .into_par_iter()
-        .progress_with(progress)
-        .map(|nonce| {
-            let mut tx = TxLegacy {
-                chain_id: None,
-                nonce,
-                gas_price: 1,
-                gas_limit: 21_000,
-                to: TxKind::Call(to),
-                value: alloy::primitives::U256::from(1),
-                input: Bytes::new(),
-            };
-            let sig = signer.sign_transaction_sync(&mut tx).unwrap();
-            let txn = SignedTransaction::Legacy { tx, sig };
-            txn.verify().unwrap()
-        })
-        .collect();
-    for txn in txns {
-        let result = big.new_transaction(txn.clone()).unwrap();
-        assert!(result.was_added());
-        let result = tiny.new_transaction(txn).unwrap();
-        assert!(result.was_added());
-    }
+    let mut group = c.benchmark_group(name);
+    group.throughput(Throughput::Elements(1));
+    group.sample_size(
+        env::var("ZQ_TRANSACTION_BENCHMARK_SAMPLES")
+            .map(|s| s.parse().unwrap())
+            .unwrap_or(10),
+    );
+    group.measurement_time(Duration::from_secs(
+        env::var("ZQ_TRANSACTION_BENCHMARK_MEASUREMENT_TIME_S")
+            .map(|s| s.parse().unwrap())
+            .unwrap_or(120),
+    ));
+    group.sampling_mode(SamplingMode::Linear);
+    group.bench_function(name, |bench| {
+        bench.iter_batched(
+            || {
+                let mut big = consensus(&genesis_accounts, &genesis_deposits, 0);
+                let mut tiny = consensus(&genesis_accounts, &genesis_deposits, 1);
 
-    // Trigger a timeout to produce the vote for the genesis block.
-    let (_, message) = big.timeout().unwrap().unwrap();
-    let ExternalMessage::Vote(vote) = message else {
-        panic!()
-    };
-    let mut vote = *vote;
-    let from = big.peer_id();
+                for txn in &setup_txns {
+                    let result = big.new_transaction(txn.clone()).unwrap();
+                    assert!(result.was_added(), "transaction not added: {result:?}");
+                    let result = tiny.new_transaction(txn.clone()).unwrap();
+                    assert!(result.was_added(), "transaction not added: {result:?}");
+                }
 
-    time::sync_with_fake_time(|| {
-        group.bench_function("produce-full", |bench| {
-            bench.iter(|| {
-                // We wrap each of these steps in a separate function call, so that they are listed separately in
-                // flamegraphs and we are able to measure the time spent in each. The function names are deliberately
-                // alphabetical, so they appear in order in the flamegraph.
+                let vote = time::sync_with_fake_time(|| {
+                    // Trigger a timeout to produce the vote for the genesis block.
+                    let (_, message) = big.timeout().unwrap().unwrap();
+                    let ExternalMessage::Vote(vote) = message else {
+                        panic!()
+                    };
+                    let from = big.peer_id();
 
-                // 1. Get 'big' to process the previous vote and propose a block.
-                let proposal = a_big_process_vote(&mut big, vote);
+                    // Produce a single block containing the setup transactions. We assume they all fit in a single
+                    // block.
+                    // 1. Get 'big' to process the previous vote and propose a block.
+                    let proposal = a_big_process_vote(&mut big, *vote, setup_txns.len());
+                    // 2. Get 'tiny' to vote on this block.
+                    b_tiny_process_block(&mut tiny, from, proposal.clone());
+                    // 3. Get 'big' to vote on this block
+                    c_big_process_block(&mut big, from, proposal)
+                });
 
-                // 2. Get 'tiny' to vote on this block.
-                b_tiny_process_block(&mut tiny, from, proposal.clone());
+                for txn in &txns {
+                    let result = big.new_transaction(txn.clone()).unwrap();
+                    assert!(result.was_added(), "transaction not added: {result:?}");
+                    let result = tiny.new_transaction(txn.clone()).unwrap();
+                    assert!(result.was_added(), "transaction not added: {result:?}");
+                }
 
-                // 3. Get 'big' to vote on this block
-                vote = c_big_process_block(&mut big, from, proposal);
-            })
-        });
+                (big, tiny, vote)
+            },
+            |(mut big, mut tiny, mut vote)| {
+                let from = big.peer_id();
+                time::sync_with_fake_time(|| {
+                    // We wrap each of these steps in a separate function call, so that they are listed separately
+                    // in flamegraphs and we are able to measure the time spent in each. The function names are
+                    // deliberately alphabetical, so they appear in order in the flamegraph.
+
+                    // 1. Get 'big' to process the previous vote and propose a block.
+                    let proposal = a_big_process_vote(&mut big, vote, txns_per_block);
+
+                    // 2. Get 'tiny' to vote on this block.
+                    b_tiny_process_block(&mut tiny, from, proposal.clone());
+
+                    // 3. Get 'big' to vote on this block
+                    vote = c_big_process_block(&mut big, from, proposal);
+                });
+            },
+            BatchSize::SmallInput,
+        );
     });
-    group.finish();
 }
 
-fn a_big_process_vote(big: &mut Consensus, vote: Vote) -> Proposal {
+fn a_big_process_vote(big: &mut Consensus, vote: Vote, txns_per_block: usize) -> Proposal {
     let proposal = big
         .vote(black_box(vote))
         .unwrap()
@@ -308,20 +470,29 @@ fn a_big_process_vote(big: &mut Consensus, vote: Vote) -> Proposal {
     });
     assert_eq!(
         proposal.transactions.len(),
-        4000,
-        "proposal {} is not full",
+        txns_per_block,
+        "proposal {} is not the expected size",
         proposal.view()
     );
+
     proposal
 }
 
 fn b_tiny_process_block(tiny: &mut Consensus, from: PeerId, proposal: Proposal) {
+    let last_txn = proposal.transactions.last().map(|t| t.calculate_hash());
     let (_, tiny_vote) = tiny
         .proposal(from, black_box(proposal), false)
         .unwrap()
         .unwrap();
     // We assert 'tiny' actually voted but don't do anything with its vote.
     assert!(matches!(tiny_vote, ExternalMessage::Vote(_)));
+
+    // Get the last transaction receipt and make sure it succeeded. We assume that all other transactions succeeded if
+    // this one did.
+    if let Some(last_txn) = last_txn {
+        let receipt = tiny.get_transaction_receipt(&last_txn).unwrap().unwrap();
+        assert!(receipt.success, "transaction failed: {receipt:?}");
+    }
 }
 
 fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) -> Vote {
@@ -338,6 +509,6 @@ fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) ->
 criterion_group!(
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = process_empty, produce_full,
+    targets = process_empty, full_blocks_evm_transfers, full_blocks_zil_transfers, full_blocks_erc20_transfers,
 );
 criterion_main!(benches);
