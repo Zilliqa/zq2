@@ -470,10 +470,10 @@ impl Node {
         self.resolve_block_number(BlockNumberOrTag::Finalized)
     }
 
-    pub fn get_latest_finalized_block_number(&self) -> Result<Option<u64>> {
+    pub fn get_latest_finalized_block_number(&self) -> Result<u64> {
         match self.resolve_block_number(BlockNumberOrTag::Finalized)? {
-            Some(block) => Ok(Some(block.number())),
-            None => Ok(None),
+            Some(block) => Ok(block.number()),
+            None => Ok(0),
         }
     }
 
