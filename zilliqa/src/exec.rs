@@ -38,7 +38,7 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{Block, BlockHeader},
     precompiles::{get_custom_precompiles, scilla_call_handle_register},
-    scilla::{self, split_storage_key, storage_key, ParamValue, Scilla},
+    scilla::{self, split_storage_key, storage_key, ParamValue, Scilla, Transition},
     state::{contract_addr, Account, Code, ContractInit, ExternalLibrary, State},
     time::SystemTime,
     transaction::{
@@ -47,7 +47,7 @@ use crate::{
     },
 };
 
-type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
+type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingScillaAccount>);
 
 /// Data returned after applying a [Transaction] to [State].
 
@@ -513,7 +513,7 @@ impl State {
         inspector: I,
         enable_inspector: bool,
         base_fee_check: BaseFeeCheck,
-    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
+    ) -> Result<(ResultAndState, HashMap<Address, PendingScillaAccount>, Box<Env>)> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
 
@@ -692,8 +692,8 @@ impl State {
             }
         }
         // If the txn doesn't fail, increment the nonce.
-        let from = new_state.load_account(from_addr)?;
-        from.account.nonce += 1;
+        let from = new_state.load_account(from_addr)?.scilla_mut()?; // TODO: This feels wrong - Can we assume Scilla sender - No it might be (actually IS) an EOA.
+        from.nonce += 1;
 
         trace!("scilla_txn completed successfully");
         Ok((result, new_state.finalize()))
@@ -752,7 +752,7 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
+    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingScillaAccount>) -> Result<()> {
         for (&address, account) in state {
             let mut storage = self.get_account_trie(address)?;
 
@@ -799,9 +799,9 @@ impl State {
             }
 
             let account = Account {
-                nonce: account.account.nonce,
-                balance: account.account.balance,
-                code: account.account.code.clone(),
+                nonce: account.nonce,
+                balance: account.balance,
+                code: account.code.clone(),
                 storage_root: storage.root_hash()?,
             };
 
@@ -1167,15 +1167,17 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 
 /// The account state during the execution of a Scilla transaction. Changes to the original state are kept in memory.
 #[derive(Debug)]
-pub struct PendingState<'a> {
+pub struct PendingState {
     /// Provider for state. This won't be updated during the execution of the transaction.
     pub pre_state: State,
     /// State changes made to Scilla contracts. Invariant: `new_state.values().all(|a| a.account.code.is_scilla())`.
-    pub new_state: HashMap<Address, PendingAccount>,
+    pub new_state: HashMap<Address, PendingScillaAccount>,
     /// State changes made to EVM contracts. `None` if this Scilla call was not made from an EVM call. Invariant:
-    /// `new_state.values().all(|a| !a.account.code.is_scilla())`. These invariants guarantee an account won't be
-    /// listed in both `new_state` and `journaled_state`.
-    pub journaled_state: Option<&'a mut JournaledState>,
+    /// `journaled_state.state.values().all(|a| !a.account.code.is_scilla())`. These invariants guarantee an account
+    /// won't be listed in both `new_state` and `journaled_state`.
+    // TODO: Consider if this is read-only - I think so? - We never use the deltas from it and we never add to it
+    // ourselves. Its just copied from the EVM context in a Scilla interop call. Comment is probably wrong.
+    pub journaled_state: Option<JournaledState>,
 }
 
 /// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
@@ -1183,17 +1185,17 @@ pub struct PendingState<'a> {
 /// `new_state` field and thus we can later use `pre_state` without an error.
 fn load_account<'a>(
     pre_state: &State,
-    new_state: &'a mut HashMap<Address, PendingAccount>,
-    journaled_state: &'a mut Option<&'a mut JournaledState>,
+    new_state: &'a mut HashMap<Address, PendingScillaAccount>,
+    journaled_state: &'a mut Option<JournaledState>,
     address: Address,
-) -> Result<&'a mut PendingAccount> {
-    match (new_state.entry(address), journaled_state.and_then(|j| j.state.get(&address))) {
+) -> Result<PendingAccount<&'a mut PendingScillaAccount, &'a mut revm::primitives::Account>> {
+    match (new_state.entry(address), journaled_state.as_mut().and_then(|j| j.state.get_mut(&address))) {
         (Entry::Occupied(_), Some(_)) => Err(anyhow!("state conflict: {address}")),
-        (Entry::Occupied(entry), None) => Ok(entry.into_mut()),
-        (Entry::Vacant(_), Some(account)) => Ok(PendingAccount),
+        (Entry::Occupied(entry), None) => Ok(PendingAccount::Scilla(entry.into_mut())),
+        (Entry::Vacant(_), Some(account)) => Ok(PendingAccount::Evm(account)),
         (Entry::Vacant(vac), _) => {
             let account = pre_state.get_account(address)?;
-            Ok(vac.insert(account.into()))
+            Ok(PendingAccount::Scilla(vac.insert(PendingScillaAccount::new(account))))
         }
     }
 }
@@ -1219,13 +1221,32 @@ impl PendingState {
         self.pre_state.get_highest_canonical_block_number()
     }
 
-    pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
+    pub fn set_scilla_code(&mut self, address: Address, code: String, init_data: Vec<ParamValue>, types: BTreeMap<String, (String, u8)>, transitions: Vec<Transition>) -> Result<()> {
+        assert_eq!(self.journaled_state, None, "interop transactions cannot deploy scilla contracts");
+        let account = self.load_account(address)?.scilla().unwrap();
+        account.code = Code::Scilla { code, init_data, types, transitions };
+        Ok(())
+    }
+
+    pub fn inc_nonce(&mut self, address: Address) {
+        // ???
+    }
+
+    pub fn inc_nonce(self) {
+        match self {
+            PendingAccount::Scilla(s) => { s.nonce += 1; },
+            PendingAccount::Evm(e) => { e.info.nonce += 1; },
+        }
+    }
+    }
+
+    pub fn load_account(&mut self, address: Address) -> Result<PendingAccount<&mut PendingScillaAccount, &mut revm::primitives::Account>> {
         load_account(&self.pre_state, &mut self.new_state, &mut self.journaled_state, address)
     }
 
     pub fn load_var_info(&mut self, address: Address, variable: &str) -> Result<(&str, u8)> {
-        let account = self.load_account(address)?;
-        let Code::Scilla { types, .. } = &account.account.code else {
+        let account = self.load_account(address)?.scilla()?;
+        let Code::Scilla { types, .. } = &account.code else {
             return Err(anyhow!("not a scilla contract"));
         };
         let (ty, depth) = types
@@ -1243,7 +1264,7 @@ impl PendingState {
         indices: &[Vec<u8>],
         value: StorageValue,
     ) -> Result<()> {
-        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+        let account = load_account(&self.pre_state, &mut self.new_state, &mut self.journaled_state, address)?.scilla()?;
 
         let mut current = account
             .storage
@@ -1278,7 +1299,7 @@ impl PendingState {
         var_name: &str,
         indices: &[Vec<u8>],
     ) -> Result<&mut Option<Bytes>> {
-        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+        let account = load_account(&self.pre_state, &mut self.new_state, &mut self.journaled_state, address)?.scilla()?;
 
         fn get_cached<'a>(
             storage: &'a mut BTreeMap<String, StorageValue>,
@@ -1335,7 +1356,7 @@ impl PendingState {
         var_name: &str,
         indices: &[Vec<u8>],
     ) -> Result<BTreeMap<Vec<u8>, StorageValue>> {
-        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+        let account = load_account(&self.pre_state, &mut self.new_state, &mut self.journaled_state, address)?.scilla()?;
 
         // Even if we have something cached for this prefix, we don't know if it is a full representation of the map.
         // It might have been the case that only a few subfields were cached. Therefore, we need to retrieve the full
@@ -1413,10 +1434,10 @@ impl PendingState {
         let account = self.load_account(address)?;
         trace!(
             "account balance = {0} sub {1}",
-            account.account.balance,
+            account.balance(),
             amount.get()
         );
-        let Some(balance) = account.account.balance.checked_sub(amount.get()) else {
+        let Some(balance) = account.balance().checked_sub(amount.get()) else {
             info!("insufficient balance: {caller}");
             return Ok(Some(ScillaResult {
                 success: false,
@@ -1431,22 +1452,104 @@ impl PendingState {
                 exceptions: vec![],
             }));
         };
-        account.account.balance = balance;
+        account.set_balance(balance);
         Ok(None)
     }
 
-    /// Return the changed state and resets the [PendingState] to its initial state in [PendingState::new].
-    pub fn finalize(&mut self) -> HashMap<Address, PendingAccount> {
+    /// Return the changed state and resets the [PendingState] to its initial state in [PendingState::new]. TODO: Do anything with EVM changes?
+    pub fn finalize(&mut self) -> HashMap<Address, PendingScillaAccount> {
         mem::take(&mut self.new_state)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct PendingAccount {
-    pub account: Account,
-    /// Cached values of updated or deleted storage. Note that deletions can happen at any level of a map.
+pub struct PendingScillaAccount {
+    pub nonce: u64,
+    pub balance: u128,
+    pub code: Code, // Invariant: matches!(code, Code::Scilla)
+    /// Cached values of updated or deleted storage.
     pub storage: BTreeMap<String, StorageValue>,
+}
+
+impl PendingScillaAccount {
+    pub fn new(account: Account) -> Self {
+        assert!(account.code.is_scilla());
+        PendingScillaAccount {
+            nonce: account.nonce,
+            balance: account.balance,
+            code: account.code,
+            storage: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum PendingAccount<S = PendingScillaAccount, E = revm::primitives::Account> {
     // TODO: mark_touch()
+    Scilla(S),
+    Evm(E),
+}
+
+impl PendingAccount {
+    pub fn balance(&self) -> u128 {
+        match self {
+            PendingAccount::Scilla(s) => s.balance,
+            PendingAccount::Evm(e) => e.info.balance.to(),
+        }
+    }
+
+    pub fn nonce(&self) -> u64 {
+        match self {
+            PendingAccount::Scilla(s) => s.nonce,
+            PendingAccount::Evm(e) => e.info.nonce,
+        }
+    }
+
+    pub fn code(&self) -> &Code {
+        match self {
+            PendingAccount::Scilla(s) => &s.code,
+            PendingAccount::Evm(e) => todo!(),
+        }
+    }
+}
+
+impl <'a> PendingAccount<&'a mut PendingScillaAccount, &'a mut revm::primitives::Account> {
+    pub fn balance(&self) -> u128 {
+        match self {
+            PendingAccount::Scilla(s) => s.balance,
+            PendingAccount::Evm(e) => e.info.balance.to(),
+        }
+    }
+
+    pub fn set_balance(self, value: u128) {
+        match self {
+            PendingAccount::Scilla(s) => { s.balance = value; },
+            PendingAccount::Evm(e) => { e.info.balance = value.try_into().unwrap(); },
+        }
+    }
+
+    pub fn nonce(&self) -> u64 {
+        match self {
+            PendingAccount::Scilla(s) => s.nonce,
+            PendingAccount::Evm(e) => e.info.nonce,
+        }
+    }
+
+    pub fn code(&self) -> &Code {
+        match self {
+            PendingAccount::Scilla(s) => &s.code,
+            PendingAccount::Evm(e) => todo!(),
+        }
+    }
+}
+
+impl <S, E> PendingAccount<S, E> {
+    pub fn scilla(self) -> Result<S> {
+        match self {
+            PendingAccount::Scilla(s) => Ok(s),
+            PendingAccount::Evm(_) => Err(anyhow!("not a scilla account")),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1471,15 +1574,6 @@ impl StorageValue {
         StorageValue::Map {
             map: BTreeMap::new(),
             complete: true,
-        }
-    }
-}
-
-impl From<Account> for PendingAccount {
-    fn from(account: Account) -> PendingAccount {
-        PendingAccount {
-            account,
-            storage: BTreeMap::new(),
         }
     }
 }
@@ -1638,16 +1732,12 @@ fn scilla_create(
 
     let account = state.load_account(contract_address)?;
     if fork.scilla_contract_creation_increments_account_balance {
-        account.account.balance += txn.amount.get();
+        account.set_balance(account.balance() + txn.amount.get());
     } else {
-        account.account.balance = txn.amount.get();
+        account.set_balance(txn.amount.get());
     }
-    account.account.code = Code::Scilla {
-        code: txn.code.clone(),
-        init_data,
-        types,
-        transitions,
-    };
+
+    state.set_scilla_code(contract_address, txn.code.clone(), init_data, types, transitions)?;
 
     let Some(gas) = gas.checked_sub(constants::SCILLA_INVOKE_RUNNER) else {
         warn!("not enough gas to invoke scilla runner");

@@ -877,12 +877,12 @@ impl ActiveCall {
         let account = self.state.load_account(addr)?;
         match name.as_str() {
             "_balance" => {
-                let balance = ZilAmount::from_amount(account.account.balance);
+                let balance = ZilAmount::from_amount(account.balance());
                 let val = scilla_val(format!("\"{balance}\"").into_bytes());
                 Ok(Some((val, "Uint128".to_owned())))
             }
             "_nonce" => {
-                let val = scilla_val(format!("\"{}\"", account.account.nonce + 1).into_bytes());
+                let val = scilla_val(format!("\"{}\"", account.nonce() + 1).into_bytes());
                 Ok(Some((val, "Uint64".to_owned())))
             }
             "_this_address" => {
@@ -890,7 +890,7 @@ impl ActiveCall {
                 Ok(Some((val, "ByStr20".to_owned())))
             }
             "_codehash" => {
-                let code_bytes = match &account.account.code {
+                let code_bytes = match &account.code() {
                     Code::Evm(bytes) => bytes.clone(),
                     Code::Scilla { code, .. } => code.clone().into_bytes(),
                 };
