@@ -936,7 +936,7 @@ impl ActiveCall {
                     complete: true,
                 };
                 self.state
-                    .set_storage(self.sender, &name, &indices, complete_empty_map)?;
+                    .set_storage(self.sender, &name, &indices, StorageValue::complete_map())?;
             }
         } else if indices.len() == depth {
             let Some(ValType::Bval(value)) = value.val_type else {
