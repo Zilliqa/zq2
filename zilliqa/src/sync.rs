@@ -205,7 +205,7 @@ impl Sync {
         while self.recent_proposals.len() >= self.max_batch_size {
             self.recent_proposals.pop_front();
         }
-        self.highest_block_seen = proposal.number();
+        self.highest_block_seen = self.highest_block_seen.max(proposal.number());
         self.recent_proposals.push_back(proposal);
 
         self.internal_sync()
@@ -703,6 +703,14 @@ impl Sync {
 
         // Record landmark(s), including peer that has this set of blocks
         self.db.push_sync_segment(&segment_peer, meta)?;
+
+        tracing::info!(
+            "sync::MetadataResponse : received {} metadata segment #{} from {}",
+            segment.len(),
+            self.db.count_sync_segments()?,
+            from
+        );
+
         // TODO: Until we implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2158
         // just prototype it
         segment
@@ -711,13 +719,6 @@ impl Sync {
             .skip(1)
             .filter(|b| b.number % (self.max_batch_size as u64) == 0)
             .for_each(|b| self.db.push_sync_segment(&segment_peer, b).unwrap());
-
-        tracing::info!(
-            "sync::MetadataResponse : received {} metadata segment #{} from {}",
-            segment.len(),
-            self.db.count_sync_segments()?,
-            from
-        );
 
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
