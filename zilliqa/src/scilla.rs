@@ -931,12 +931,12 @@ impl ActiveCall {
             } else {
                 // Remove multiple elements from storage having the same prefix specified by `indices`
 
-                let complete_empty_map = StorageValue::Map {
-                    map: BTreeMap::new(),
-                    complete: true,
-                };
-                self.state
-                    .set_storage(self.sender, &name, &indices, StorageValue::complete_map())?;
+                self.state.set_storage(
+                    self.sender,
+                    &name,
+                    &indices,
+                    StorageValue::complete_map(),
+                )?;
             }
         } else if indices.len() == depth {
             let Some(ValType::Bval(value)) = value.val_type else {
