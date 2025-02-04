@@ -928,20 +928,20 @@ impl Node {
         Ok(())
     }
 
-    fn handle_injected_proposal(&mut self, from: PeerId, req: InjectedProposal) -> Result<()> {
-        if from != self.consensus.peer_id() || req.from != self.consensus.peer_id() {
-            warn!("Someone ({from}) sent me a InjectedProposal; illegal- ignoring");
+    fn handle_injected_proposal(&mut self, peer: PeerId, req: InjectedProposal) -> Result<()> {
+        let InjectedProposal { from, block } = req;
+        if peer != from || from != self.consensus.peer_id() {
+            warn!("Someone ({peer}) sent me a InjectedProposal; illegal- ignoring");
             return Ok(());
         }
-        let block = req.block;
-
-        trace!("Handling proposal for view {}", block.header.view);
         if block
             .transactions
             .iter()
             // if any of the transactions are ZQ1, then treat this as a ZQ1 block
             .all(|t| !matches!(t, SignedTransaction::Zilliqa { .. }))
         {
+            // Execute ZQ2 blocks
+            trace!("Handling ZQ2 proposal for view {}", block.header.view);
             let proposal = self.consensus.receive_block(from, block)?;
             if let Some(proposal) = proposal {
                 trace!("Broadcasting proposal for view {}", proposal.header.view);
@@ -949,8 +949,16 @@ impl Node {
                     .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
             }
         } else {
-            // TODO: just store old ZIL blocks - https://github.com/Zilliqa/zq2/issues/2232
-            todo!("store ZQ1 block")
+            // Just store ZQ1 blocks - https://github.com/Zilliqa/zq2/issues/2232
+            trace!("Handling ZQ1 proposal for view {}", block.header.view);
+            let (blk, txns) = block.into_parts();
+            self.db.with_sqlite_tx(|sqlite_tx| {
+                self.db.insert_block_with_db_tx(sqlite_tx, &blk)?;
+                for (txh, txn) in blk.transactions.iter().zip(txns.iter()) {
+                    self.db.insert_transaction_with_db_tx(sqlite_tx, txh, txn)?;
+                }
+                Ok(())
+            })?;
         }
         self.consensus.sync.mark_received_proposal()?;
         Ok(())
