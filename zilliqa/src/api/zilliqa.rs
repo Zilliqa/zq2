@@ -508,7 +508,7 @@ fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainI
     let num_peers = node.get_peer_num();
     let num_tx_blocks = node.get_latest_finalized_block_number()?;
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
-    let num_transactions = node.consensus.block_store.get_num_transactions()?;
+    let num_transactions = node.consensus.get_num_transactions()?;
     let ds_block_rate = tx_block_rate / TX_BLOCKS_PER_DS_BLOCK as f64;
 
     // num_txns_ds_epoch
@@ -1281,7 +1281,7 @@ fn get_recent_transactions(
 // GetNumTransactions
 fn get_num_transactions(_params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     let node = node.lock().unwrap();
-    let num_transactions = node.consensus.block_store.get_num_transactions()?;
+    let num_transactions = node.consensus.get_num_transactions()?;
     Ok(num_transactions.to_string())
 }
 

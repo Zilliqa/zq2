@@ -341,6 +341,12 @@ pub fn scilla_test_contract_code() -> String {
         field welcome_msg : String = "default"
         field welcome_map : Map Uint32 (Map Uint32 String) = Emp Uint32 (Map Uint32 String)
 
+        transition removeHello()
+          delete welcome_map[one];
+          e = {_eventname : "removeHello"};
+          event e
+        end
+
         transition setHello (msg : String)
         is_owner = builtin eq owner _sender;
         match is_owner with
@@ -2955,6 +2961,109 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         "foobar"
     );
     assert!(substate2.get("welcome_msg").is_none());
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn nested_maps_insert_removal(mut network: Network) {
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+
+    // Set nested map to some value
+    {
+        let call = r#"{
+        "_tag": "setHello",
+        "params": [
+            {
+                "vname": "msg",
+                "value": "foobar",
+                "type": "String"
+            }
+        ]
+    }"#;
+
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            2,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+        .await;
+        let event = &txn["receipt"]["event_logs"][0];
+        assert_eq!(event["_eventname"], "setHello");
+    }
+
+    // Confirm the value exists in the nested map
+    {
+        let call = r#"{
+        "_tag": "getHello",
+        "params": []
+    }"#;
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            3,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+        .await;
+        for event in txn["receipt"]["event_logs"].as_array().unwrap() {
+            assert_eq!(event["_eventname"], "getHello");
+            assert_eq!(event["params"][0]["value"], "foobar");
+        }
+    }
+
+    // Remove entry from map
+    {
+        let call = r#"{
+        "_tag": "removeHello",
+        "params": []
+    }"#;
+
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            4,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+        .await;
+        let event = &txn["receipt"]["event_logs"][0];
+        assert_eq!(event["_eventname"], "removeHello");
+    }
+
+    // Check and confirm the entry does not exist anymore
+    {
+        let call = r#"{
+        "_tag": "getHello",
+        "params": []
+    }"#;
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            5,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+        .await;
+        let event = &txn["receipt"]["event_logs"][0];
+        assert_eq!(event["params"][0]["value"], "failed");
+    }
 }
 
 #[zilliqa_macros::test]

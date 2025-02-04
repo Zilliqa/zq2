@@ -302,6 +302,12 @@ pub async fn run_deployer_monitor(
     Ok(())
 }
 
+pub async fn run_deployer_generate_stats_key(config_file: &str, force: bool) -> Result<()> {
+    println!("🦆 Running generate-stats-key for {config_file} .. ");
+    deployer::run_generate_stats_key(config_file, force).await?;
+    Ok(())
+}
+
 pub async fn run_deployer_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
     println!("🦆 Running generate-genesis-key for {config_file} .. ");
     deployer::run_generate_genesis_key(config_file, force).await?;

@@ -111,6 +111,7 @@ impl Chain {
             "zq2-richard" => Ok(include_str!("../resources/chain-specs/zq2-richard.toml")),
             "zq2-uccbtest" => Ok(include_str!("../resources/chain-specs/zq2-uccbtest.toml")),
             "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
+            "zq2-infratest" => Ok(include_str!("../resources/chain-specs/zq2-infratest.toml")),
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
             "zq2-prototestnet" => Ok(include_str!(
                 "../resources/chain-specs/zq2-prototestnet.toml"
@@ -167,13 +168,18 @@ impl Chain {
         match self {
             Self::Zq2Devnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(3600),
+                // estimated: 2025-01-28T20:25:00Z
+                deposit_v4: Some(428400),
             },
             Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
                 deposit_v3: Some(5342400),
+                deposit_v4: None,
             },
             Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
+                // estimated: 2025-02-03T13:55:00Z
+                deposit_v4: Some(10890000),
             },
             _ => ContractUpgradesBlockHeights::default(),
         }

@@ -20,7 +20,7 @@ pub fn rpc_module(
 
 fn client_version(_: Params, _: &Arc<Mutex<Node>>) -> Result<&'static str> {
     // Format: "<name>/<version>"
-    Ok(concat!("zilliqa2/v", env!("CARGO_PKG_VERSION")))
+    Ok(concat!("zilliqa2/", env!("VERGEN_GIT_DESCRIBE")))
 }
 
 fn sha3(params: Params, _: &Arc<Mutex<Node>>) -> Result<String> {
