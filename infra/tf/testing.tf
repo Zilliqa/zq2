@@ -8,7 +8,7 @@ resource "google_storage_bucket" "performance_tests" {
   location = var.region
   labels   = local.labels
 
-  force_destroy               = var.persistence_bucket_force_destroy
+  force_destroy               = true
   uniform_bucket_level_access = true
   public_access_prevention    = "inherited"
 
@@ -50,5 +50,5 @@ resource "google_storage_bucket" "performance_tests" {
 resource "google_storage_bucket_iam_binding" "performance_tests_bucket_admins" {
   bucket  = google_storage_bucket.performance_tests.name
   role    = "roles/storage.objectAdmin"
-  members = ["serviceAccount:${var.testing_service_account}"]
+  members = ["serviceAccount:${var.performance_tests_service_account}"]
 }

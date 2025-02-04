@@ -1,7 +1,6 @@
 name: "Jmeter tests"
 
 on:
-  push:
   workflow_dispatch:
     inputs:
       network:
@@ -129,4 +128,4 @@ jobs:
         with:
           process_gcloudignore: false
           path: "infra/jmeter/${{ env.TEST_ID }}"
-          destination: "zq2-${{ github.event.inputs.network || 'infratest' }}-performance-tests"
+          destination: "zq2-${{ github.event.inputs.network || 'prototestnet' }}-performance-tests"
