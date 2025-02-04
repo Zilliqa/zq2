@@ -377,13 +377,6 @@ impl Sync {
             anyhow::bail!("sync::MultiBlockResponse : invalid state");
         };
 
-        tracing::info!(
-            "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
-            response.len(),
-            self.db.count_sync_segments()?,
-            from
-        );
-
         // If the checksum does not match, retry phase 1. Maybe the node has pruned the segment.
         let checksum = response
             .iter()
@@ -399,6 +392,13 @@ impl Sync {
             self.state = SyncState::Retry1;
             return Ok(());
         }
+
+        tracing::info!(
+            "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
+            response.len(),
+            self.db.count_sync_segments()?,
+            from
+        );
 
         // Response seems sane.
         let proposals = response
@@ -703,7 +703,15 @@ impl Sync {
         self.db.insert_sync_metadata(&segment)?;
 
         // Record landmark(s), including peer that has this set of blocks
-        self.db.push_sync_segment(segment_peer, *meta)?;
+        self.db.push_sync_segment(&segment_peer, meta)?;
+        // TODO: Until we implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2158
+        // just prototype it
+        segment
+            .iter()
+            .rev()
+            .skip(1)
+            .filter(|b| b.number % (self.max_batch_size as u64) == 0)
+            .for_each(|b| self.db.push_sync_segment(&segment_peer, b).unwrap());
 
         tracing::info!(
             "sync::MetadataResponse : received {} metadata segment #{} from {}",
@@ -893,26 +901,26 @@ impl Sync {
 
         // Just pump the Proposals back to ourselves.
         for p in proposals {
-            if !p
-                .transactions
+            if p.transactions
                 .iter()
-                .any(|t| matches!(t, SignedTransaction::Zilliqa { .. }))
+                .all(|t| !matches!(t, SignedTransaction::Zilliqa { .. }))
             {
                 tracing::trace!(
                     number = %p.number(), hash = %p.hash(),
                     "sync::InjectProposals : applying",
                 );
+                self.message_sender.send_external_message(
+                    self.peer_id,
+                    ExternalMessage::InjectedProposal(InjectedProposal {
+                        from: self.peer_id,
+                        block: p,
+                    }),
+                )?;
             } else {
                 tracing::warn!(number = %p.number(), hash = %p.hash(), "sync::InjectProposals : storing");
                 // TODO: just store old ZIL blocks - https://github.com/Zilliqa/zq2/issues/2232
+                todo!("store ZQ1 blocks")
             }
-            self.message_sender.send_external_message(
-                self.peer_id,
-                ExternalMessage::InjectedProposal(InjectedProposal {
-                    from: self.peer_id,
-                    block: p,
-                }),
-            )?;
         }
 
         self.inject_at = Some((std::time::Instant::now(), self.in_pipeline));
