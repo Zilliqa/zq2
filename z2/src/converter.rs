@@ -14,18 +14,14 @@ use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
-use libp2p::PeerId;
 use sha2::{Digest, Sha256};
-use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 use zilliqa::{
-    block_store::BlockStore,
     cfg::{scilla_ext_libs_path_default, Amount, Config, NodeConfig},
     crypto::{Hash, SecretKey},
     db::Db,
     exec::store_external_libraries,
     message::{Block, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
-    node::{MessageSender, RequestId},
     schnorr,
     scilla::{storage_key, CheckOutput, ParamValue, Transition},
     state::{Account, Code, ContractInit, State},
@@ -346,27 +342,15 @@ pub async fn convert_persistence(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
     )?;
 
-    let (outbound_message_sender, _a) = mpsc::unbounded_channel();
-    let (local_message_sender, _b) = mpsc::unbounded_channel();
-    let message_sender = MessageSender {
-        our_shard: 0,
-        our_peer_id: PeerId::random(),
-        outbound_channel: outbound_message_sender,
-        local_channel: local_message_sender,
-        request_id: RequestId::default(),
-    };
+    // let (outbound_message_sender, _a) = mpsc::unbounded_channel();
+    // let (local_message_sender, _b) = mpsc::unbounded_channel();
 
     let zq2_db = Arc::new(zq2_db);
     let node_config = &zq2_config.nodes[0];
-    let block_store = Arc::new(BlockStore::new(
-        node_config,
-        zq2_db.clone(),
-        message_sender.clone(),
-    )?);
     let mut state = State::new_with_genesis(
         zq2_db.clone().state_trie()?,
         node_config.clone(),
-        block_store,
+        zq2_db.clone(),
     )?;
 
     let mut scilla_docker = run_scilla_docker()?;

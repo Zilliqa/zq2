@@ -78,6 +78,10 @@ Then you can install a suitable Solc version by executing:
 svm install <solc version>
 ```
 
+### Tests with JMeter
+
+JMeter for performance and load tests is integrated in the Github Action pipelines in `.github/workflows/test_performance.yaml` and can be manually executed from the Github console with custom and default parameters. The test executions are restricted to users of the Zilliqa organization.
+
 ## Running benchmarks
 
 Benchmarks can be run with `cargo bench --package zilliqa --bench it`.
@@ -102,6 +106,23 @@ Or via individual modules using eg.
 
 ```unset
 RUST_LOG=debug,sled=info,zilliqa::scilla=trace
+```
+
+## Observability
+
+### OpenTelemetry
+
+OpenTelemetry metrics from the Zilliqa nodes container are available when the OTLP collector endpoint is defined in the configuration.
+
+```yaml
+otlp_collector_endpoint = "http://otel-collector:4317"
+```
+
+There is a docker-compose project that includes the OpenTelemetry configuration and tech stack that can be run in local environment for testing purposes:
+
+```bash
+cd infra/opentelemetry
+docker-compose up
 ```
 
 ## `rustfmt`

@@ -85,11 +85,11 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
             version
         )),
         Components::StatsDashboard => Ok(format!(
-            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/ethstats-server:{}",
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-server:{}",
             version
         )),
         Components::StatsAgent => Ok(format!(
-            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-net-intelligence-api:{}",
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:{}",
             version
         )),
         Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
@@ -972,6 +972,8 @@ impl ChainNode {
             ""
         };
 
+        let stats_dashboard_key = &self.chain.stats_dashboard_key().await?;
+
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
         let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
 
@@ -981,6 +983,7 @@ impl ChainNode {
         var_map.insert("otterscan_image", otterscan_image);
         var_map.insert("spout_image", spout_image);
         var_map.insert("stats_dashboard_image", stats_dashboard_image);
+        var_map.insert("stats_dashboard_key", stats_dashboard_key);
         var_map.insert("stats_agent_image", stats_agent_image);
         var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);

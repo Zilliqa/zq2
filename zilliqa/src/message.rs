@@ -227,7 +227,22 @@ impl fmt::Debug for BlockResponse {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBlocksByHeight {
+    pub request_at: SystemTime,
+    pub from_height: u64,
+    pub to_height: u64,
+}
+
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InjectedProposal {
+    // An encoded PeerId
+    pub from: PeerId,
+    pub block: Proposal,
+}
+
+/// TODO: Remove. Unused in RFC161 algorithm
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessProposal {
     // An encoded PeerId
@@ -259,6 +274,12 @@ pub enum ExternalMessage {
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
+    /// The following are used for the new sync protocol
+    InjectedProposal(InjectedProposal),
+    MetaDataRequest(RequestBlocksByHeight),
+    MetaDataResponse(Vec<BlockHeader>),
+    MultiBlockRequest(Vec<Hash>),
+    MultiBlockResponse(Vec<Proposal>),
 }
 
 impl ExternalMessage {
@@ -274,6 +295,25 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::MultiBlockRequest(r) => {
+                write!(f, "MultiBlockRequest({})", r.len())
+            }
+            ExternalMessage::MultiBlockResponse(r) => {
+                write!(f, "MultiBlockResponse({})", r.len())
+            }
+            ExternalMessage::MetaDataResponse(r) => {
+                write!(f, "MetaDataResponse({})", r.len())
+            }
+            ExternalMessage::MetaDataRequest(r) => {
+                write!(
+                    f,
+                    "MetaDataRequest(from={}, to={})",
+                    r.from_height, r.to_height
+                )
+            }
+            ExternalMessage::InjectedProposal(p) => {
+                write!(f, "InjectedProposal {}", p.block.number())
+            }
             ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
             ExternalMessage::Vote(v) => write!(f, "Vote({})", v.view),
             ExternalMessage::NewView(n) => write!(f, "NewView({})", n.view),

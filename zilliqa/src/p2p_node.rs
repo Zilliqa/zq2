@@ -37,6 +37,7 @@ use crate::{
     message::{ExternalMessage, InternalMessage},
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
+    sync::SyncPeers,
 };
 
 /// Messages are a tuple of the destination shard ID and the actual message.
@@ -61,6 +62,7 @@ pub type OutboundMessageTuple = (Option<(PeerId, RequestId)>, u64, ExternalMessa
 pub type LocalMessageTuple = (u64, u64, InternalMessage);
 
 pub struct P2pNode {
+    shard_peers: HashMap<TopicHash, Arc<SyncPeers>>,
     shard_nodes: HashMap<TopicHash, NodeInputChannels>,
     shard_threads: JoinSet<Result<()>>,
     task_threads: JoinSet<Result<()>>,
@@ -133,7 +135,7 @@ impl P2pNode {
                     // So, the nodes are unable to see each other directly and remain isolated, defeating kademlia and autonat.
                     identify: identify::Behaviour::new(
                         identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
-                            .with_hide_listen_addrs(!cfg!(debug_assertions)),
+                            .with_hide_listen_addrs(true),
                     ),
                 })
             })?
@@ -147,6 +149,7 @@ impl P2pNode {
             .build();
 
         Ok(Self {
+            shard_peers: HashMap::new(),
             shard_nodes: HashMap::new(),
             peer_id,
             secret_key,
@@ -193,7 +196,7 @@ impl P2pNode {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
             return Ok(());
         }
-        let (mut node, input_channels) = NodeLauncher::new(
+        let (mut node, input_channels, peers) = NodeLauncher::new(
             self.secret_key,
             config,
             self.outbound_message_sender.clone(),
@@ -202,6 +205,7 @@ impl P2pNode {
             self.peer_num.clone(),
         )
         .await?;
+        self.shard_peers.insert(topic.hash(), peers);
         self.shard_nodes.insert(topic.hash(), input_channels);
         self.shard_threads
             .spawn(async move { node.start_shard_node().await });
@@ -263,6 +267,16 @@ impl P2pNode {
                                 .behaviour_mut()
                                 .kademlia
                                 .add_address(&peer_id, address.clone());
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
+                            if let Some(peers) = self.shard_peers.get(&topic) {
+                                peers.add_peer(peer_id);
+                            }
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) => {
+                            if let Some(peers) = self.shard_peers.get(&topic) {
+                                peers.remove_peer(peer_id);
+                            }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message{
                             message_id: msg_id,

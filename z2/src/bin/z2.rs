@@ -110,6 +110,8 @@ enum DeployerCommands {
     GeneratePrivateKeys(DeployerGenerateActionsArgs),
     /// Generate the genesis key. --force to replace if already existing
     GenerateGenesisKey(DeployerGenerateGenesisArgs),
+    /// Generate the Stats Dashboard key. --force to replace if already existing
+    GenerateStatsKey(DeployerGenerateStatsArgs),
 }
 
 #[derive(Args, Debug)]
@@ -263,6 +265,15 @@ pub struct DeployerGenerateActionsArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerGenerateGenesisArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Generate and replace the existing key
+    #[clap(long)]
+    force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerGenerateStatsArgs {
     /// The network deployer config file
     config_file: Option<String>,
     /// Generate and replace the existing key
@@ -977,6 +988,22 @@ async fn main() -> Result<()> {
                     .map_err(|err| {
                         anyhow::anyhow!(
                             "Failed to run deployer generate-private-keys command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GenerateStatsKey(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_stats_key(&config_file, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer generate-stats-key command: {}",
                             err
                         )
                     })?;

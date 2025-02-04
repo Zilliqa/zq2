@@ -200,6 +200,24 @@ impl ChainInstance {
         }
     }
 
+    pub async fn stats_dashboard_key(&self) -> Result<String> {
+        let private_keys = retrieve_secret_by_role(
+            &self.config.name,
+            self.chain()?.get_project_id()?,
+            "stats-dashboard",
+        )
+        .await?;
+
+        if let Some(private_key) = private_keys.first() {
+            Ok(private_key.value().await?)
+        } else {
+            Err(anyhow!(
+                "No secrets with role stats-dashboard found in the network {}",
+                &self.name()
+            ))
+        }
+    }
+
     pub async fn run_rpc_call(
         &self,
         method: &str,

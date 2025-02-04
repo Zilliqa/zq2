@@ -375,3 +375,9 @@ variable "persistence_bucket_versioning" {
   default     = true
   nullable    = false
 }
+
+variable "performance_tests_service_account" {
+  description = "Email of the performance tests service account"
+  type        = string
+  default     = "sa-gha-testing-001@prj-p-devops-services-tvwmrf63.iam.gserviceaccount.com"
+}

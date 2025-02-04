@@ -40,21 +40,6 @@ resource "google_compute_instance_group" "bootstrap" {
   }
 }
 
-resource "google_compute_firewall" "allow_bootstrap_external_http" {
-  name    = "${var.chain_name}-bootstrap-allow-external-http"
-  network = local.network_name
-
-  direction     = "INGRESS"
-  source_ranges = concat(local.google_load_balancer_ip_ranges, [local.monitoring_ip_range])
-
-  target_tags = [format("%s-%s", var.chain_name, "bootstrap")]
-
-  allow {
-    protocol = "tcp"
-    ports    = ["8080"]
-  }
-}
-
 resource "google_compute_region_health_check" "bootstrap" {
   name = "${var.chain_name}-bootstrap-health"
 
