@@ -61,7 +61,8 @@ def query_metadata_ext_ip() -> str:
         "Metadata-Flavor" : "Google" })
     return r.text
 
-HEALTHCHECK_SCRIPT="""from flask import Flask
+HEALTHCHECK_SCRIPT="""from datetime import datetime
+from flask import Flask, jsonify
 import requests
 from time import time
 
@@ -70,16 +71,14 @@ app = Flask(__name__)
 NODE_URL = "http://localhost:4202"
 HEADERS = {"Content-Type": "application/json"}
 
-latest_block_number = 0
-latest_block_number_obtained_at = 0
+syncing_latest_block_number = 0
+syncing_latest_block_number_obtained_at = 0
+
+pace_latest_block_number = 0
+pace_latest_block_number_obtained_at = 0
 
 def get_rpc_response(method, params=[]):
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": method,
-        "params": params
-    }
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     try:
         response = requests.post(NODE_URL, json=payload, headers=HEADERS, timeout=3)
         response.raise_for_status()
@@ -87,31 +86,32 @@ def get_rpc_response(method, params=[]):
         return response_json.get("result")
     except requests.exceptions.RequestException as e:
         # Handle connection errors, timeouts, and HTTP errors
-        return (f"Failed to running {method}: {e}", 0)
+        return (f"Request error in {method}: {e}", 0)
     except ValueError as e:
         # Handle JSON decoding errors
-        return (f"Invalid JSON response: {e}", 0)
+        return (f"JSON decoding error in {method}: {e}", 0)
+    except Exception as e:
+        return (f"Unexpected error in {method}: {e}", 0)
 
 def check_sync_status():
-    global latest_block_number
-    global latest_block_number_obtained_at
+    global syncing_latest_block_number, syncing_latest_block_number_obtained_at
 
     # Query eth_blockNumber and eth_syncing
-    block_number = get_rpc_response("eth_blockNumber")
+    block_number_hex = get_rpc_response("eth_blockNumber")
     sync_status = get_rpc_response("eth_syncing")
-    
-    # Convert hex block number to integer
-    block_number = int(block_number, 16)
-    current_time = int(time())
-    print (f"block {block_number} latest {latest_block_number}")
 
-    if block_number != latest_block_number:
-        latest_block_number = block_number
-        latest_block_number_obtained_at = current_time
+    # Convert hex block number to integer
+    block_number = int(block_number_hex, 16)
+    current_time = int(time())
+    print(f"Current block: {block_number}, Last known block: {syncing_latest_block_number}")
+    
+    if block_number != syncing_latest_block_number:
+        syncing_latest_block_number = block_number
+        syncing_latest_block_number_obtained_at = current_time
     
     # If fully synced response is "false"
-    if isinstance(sync_status, bool):
-        return (f"Fully synced at the block {block_number}", 200)
+    if isinstance(sync_status, bool) and not sync_status:
+        return jsonify({"message": f"Fully synced at block {block_number}", "code": 200})
     
     # If syncing response is a JSON object
     if isinstance(sync_status, dict):
@@ -119,22 +119,76 @@ def check_sync_status():
         highest_block = int(sync_status["highestBlock"])
         
         if current_block >= highest_block - 5:
-            return (f"Node is syncing at block {block_number}  but behind the highest block {highest_block}", 200)
-
-        if latest_block_number_obtained_at + 60 < current_time:
+            return jsonify({"message": f"Node is syncing at block {block_number} but behind highest block {highest_block}", "code": 200})
+        
+        if syncing_latest_block_number_obtained_at + 60 < current_time:
             # no blocks for 60 seconds
-            return ("No blocks for more than 60 seconds", 503)
-        else:
-            return (f"Syncing block {latest_block_number} since {latest_block_number_obtained_at}", 404)
+            return jsonify({"error": "No blocks for more than 60 seconds", "code": 503}), 503
+        
+        return jsonify({"message": f"Syncing block {syncing_latest_block_number} since {syncing_latest_block_number_obtained_at}", "code": 404}), 404
+    
+    return jsonify({"error": "Invalid response format from eth_syncing", "code": 0}), 500
 
-    return (f"Error: eth_syncing responds with a value different from a boolean or a JSON: {sync_status}", 0)
+def check_pace_status():
+    global pace_latest_block_number, pace_latest_block_number_obtained_at
+    
+    block_number_hex = get_rpc_response("eth_blockNumber")
+    block_number = int(block_number_hex, 16)
+    
+    current_time = time()
+    
+    delta_block_number = block_number - pace_latest_block_number
+    delta_time = current_time - pace_latest_block_number_obtained_at
+    
+    if delta_time <= 0:
+        return jsonify({"error": "Too many requests", "code": 429}), 429
+    
+    pace = (delta_block_number * 60) / delta_time
+    pace_latest_block_number = block_number
+    pace_latest_block_number_obtained_at = current_time
+    
+    if pace < 5:
+        return jsonify({
+            "status": "critical",
+            "message": "Block production is too low or stalled",
+            "blocks_produced_last_minute": int(pace),
+            "expected_blocks_per_minute": 60,
+            "latest_block": pace_latest_block_number,
+            "latest_block_timestamp": datetime.fromtimestamp(pace_latest_block_number_obtained_at).strftime('%Y-%m-%d %H:%M:%S'),
+            "code": 500
+        }), 500
+    
+    if 5 <= pace < 20:
+        return jsonify({
+            "status": "warning",
+            "message": "Block production is slower than expected",
+            "blocks_produced_last_minute": int(pace),
+            "expected_blocks_per_minute": 60,
+            "latest_block": pace_latest_block_number,
+            "latest_block_timestamp": datetime.fromtimestamp(pace_latest_block_number_obtained_at).strftime('%Y-%m-%d %H:%M:%S'),
+            "code": 400
+        }), 400
+    
+    return jsonify({
+        "status": "healthy",
+        "message": "Block production is as expected",
+        "blocks_produced_last_minute": int(pace),
+        "expected_blocks_per_minute": 60,
+        "latest_block": pace_latest_block_number,
+        "latest_block_timestamp": datetime.fromtimestamp(pace_latest_block_number_obtained_at).strftime('%Y-%m-%d %H:%M:%S'),
+        "code": 200
+    }), 200
 
 @app.route('/health', methods=['GET'])
 def health_check():
     return check_sync_status()
 
+@app.route('/health/block', methods=['GET'])
+def block_production():
+    return check_pace_status()
+
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
 """
 
 HEALTHCHECK_SERVICE_DESC="""

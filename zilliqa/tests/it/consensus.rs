@@ -169,6 +169,7 @@ async fn handle_forking_correctly(mut network: Network) {
     let original_receipt = first.unwrap();
 
     trace!("Running until the network has reverted the block");
+    network.run_until_synced(0).await;
     // Now we should be able to run the network until we get a different tx receipt from the first
     // node, which indicates that it has reverted the block
     network
