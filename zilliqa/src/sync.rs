@@ -22,7 +22,6 @@ use crate::{
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
-    transaction::SignedTransaction,
 };
 
 // Syncing Algorithm
@@ -901,26 +900,17 @@ impl Sync {
 
         // Just pump the Proposals back to ourselves.
         for p in proposals {
-            if p.transactions
-                .iter()
-                .all(|t| !matches!(t, SignedTransaction::Zilliqa { .. }))
-            {
-                tracing::trace!(
-                    number = %p.number(), hash = %p.hash(),
-                    "sync::InjectProposals : applying",
-                );
-                self.message_sender.send_external_message(
-                    self.peer_id,
-                    ExternalMessage::InjectedProposal(InjectedProposal {
-                        from: self.peer_id,
-                        block: p,
-                    }),
-                )?;
-            } else {
-                tracing::warn!(number = %p.number(), hash = %p.hash(), "sync::InjectProposals : storing");
-                // TODO: just store old ZIL blocks - https://github.com/Zilliqa/zq2/issues/2232
-                todo!("store ZQ1 blocks")
-            }
+            tracing::trace!(
+                number = %p.number(), hash = %p.hash(),
+                "sync::InjectProposals : applying",
+            );
+            self.message_sender.send_external_message(
+                self.peer_id,
+                ExternalMessage::InjectedProposal(InjectedProposal {
+                    from: self.peer_id,
+                    block: p,
+                }),
+            )?;
         }
 
         self.inject_at = Some((std::time::Instant::now(), self.in_pipeline));
@@ -931,13 +921,7 @@ impl Sync {
     /// Mark a received proposal
     ///
     /// Mark a proposal as received, and remove it from the chain.
-    pub fn mark_received_proposal(&mut self, from: PeerId) -> Result<()> {
-        if from != self.peer_id {
-            tracing::error!(
-                "sync::MarkReceivedProposal : foreign InjectedProposal from {}",
-                from
-            );
-        }
+    pub fn mark_received_proposal(&mut self) -> Result<()> {
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
         Ok(())
     }

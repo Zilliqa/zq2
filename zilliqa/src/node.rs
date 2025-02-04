@@ -929,21 +929,30 @@ impl Node {
     }
 
     fn handle_injected_proposal(&mut self, from: PeerId, req: InjectedProposal) -> Result<()> {
-        if from != self.consensus.peer_id() {
+        if from != self.consensus.peer_id() || req.from != self.consensus.peer_id() {
             warn!("Someone ({from}) sent me a InjectedProposal; illegal- ignoring");
             return Ok(());
         }
-        trace!("Handling proposal for view {0}", req.block.header.view);
-        let proposal = self.consensus.receive_block(from, req.block)?;
-        self.consensus.sync.mark_received_proposal(req.from)?;
-        if let Some(proposal) = proposal {
-            trace!(
-                " ... broadcasting proposal for view {0}",
-                proposal.header.view
-            );
-            self.message_sender
-                .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
+        let block = req.block;
+
+        trace!("Handling proposal for view {}", block.header.view);
+        if block
+            .transactions
+            .iter()
+            // if any of the transactions are ZQ1, then treat this as a ZQ1 block
+            .all(|t| !matches!(t, SignedTransaction::Zilliqa { .. }))
+        {
+            let proposal = self.consensus.receive_block(from, block)?;
+            if let Some(proposal) = proposal {
+                trace!("Broadcasting proposal for view {}", proposal.header.view);
+                self.message_sender
+                    .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
+            }
+        } else {
+            // TODO: just store old ZIL blocks - https://github.com/Zilliqa/zq2/issues/2232
+            todo!("store ZQ1 block")
         }
+        self.consensus.sync.mark_received_proposal()?;
         Ok(())
     }
 }
