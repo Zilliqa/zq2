@@ -1511,7 +1511,7 @@ fn get_transaction_status(
                     TransactionState::Pending
                 }
             }
-            None => match node.consensus.get_pending_or_queued(hash)? {
+            None => match node.consensus.get_pending_or_queued(&transaction)? {
                 Some(PendingOrQueued::Pending) => TransactionState::Pending,
                 Some(PendingOrQueued::Queued) => TransactionState::Queued,
                 None => panic!("Transaction not found in block or pending/queued"),

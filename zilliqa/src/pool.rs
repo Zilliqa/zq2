@@ -173,12 +173,13 @@ impl TransactionPool {
     pub fn get_pending_or_queued(
         &self,
         state: &State,
-        tx_hash: Hash,
+        txn: &VerifiedTransaction,
     ) -> Result<Option<PendingOrQueued>> {
-        let pending_txns = self.pending_transactions(state)?;
-        if pending_txns.iter().any(|txn| txn.hash == tx_hash) {
+        if txn.tx.nonce().ok_or(anyhow!("Transaction missing nonce"))?
+            == state.get_account(txn.signer)?.nonce
+        {
             Ok(Some(PendingOrQueued::Pending))
-        } else if self.hash_to_index.contains_key(&tx_hash) {
+        } else if self.hash_to_index.contains_key(&txn.hash) {
             Ok(Some(PendingOrQueued::Queued))
         } else {
             Ok(None)
