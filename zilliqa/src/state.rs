@@ -14,16 +14,15 @@ use ethabi::Token;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
-    block_store::BlockStore,
-    cfg::{Amount, Forks, NodeConfig, ScillaExtLibsPath},
+    cfg::{Amount, ContractUpgradesBlockHeights, Forks, NodeConfig, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
-    db::TrieStorage,
+    db::{Db, TrieStorage},
     error::ensure_success,
-    message::{BlockHeader, MAX_COMMITTEE_SIZE},
+    message::{Block, BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
     scilla::{ParamValue, Scilla, Transition},
     serde_util::vec_param_value,
@@ -40,6 +39,7 @@ use crate::{
 /// the storage root is used to index into the state
 /// all the keys are hashed and stored in the same sled tree
 pub struct State {
+    sql: Arc<Db>,
     db: Arc<TrieStorage>,
     accounts: PatriciaTrie<TrieStorage>,
     /// The Scilla interpreter interface. Note that it is lazily initialized - This is a bit of a hack to ensure that
@@ -54,14 +54,13 @@ pub struct State {
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
     pub chain_id: ChainId,
     pub forks: Forks,
-    pub block_store: Arc<BlockStore>,
 }
 
 impl State {
-    pub fn new(trie: TrieStorage, config: &NodeConfig, block_store: Arc<BlockStore>) -> State {
+    pub fn new(trie: TrieStorage, config: &NodeConfig, sql: Arc<Db>) -> Result<State> {
         let db = Arc::new(trie);
         let consensus_config = &config.consensus;
-        Self {
+        Ok(Self {
             db: db.clone(),
             accounts: PatriciaTrie::new(db),
             scilla: Arc::new(OnceLock::new()),
@@ -73,9 +72,9 @@ impl State {
             gas_price: *consensus_config.gas_price,
             scilla_call_gas_exempt_addrs: consensus_config.scilla_call_gas_exempt_addrs.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
-            forks: consensus_config.forks.clone(),
-            block_store,
-        }
+            forks: consensus_config.get_forks()?,
+            sql,
+        })
     }
 
     pub fn scilla(&self) -> MutexGuard<'_, Scilla> {
@@ -95,17 +94,13 @@ impl State {
         trie: TrieStorage,
         root_hash: B256,
         config: NodeConfig,
-        block_store: Arc<BlockStore>,
-    ) -> Self {
-        Self::new(trie, &config, block_store).at_root(root_hash)
+        sql: Arc<Db>,
+    ) -> Result<Self> {
+        Ok(Self::new(trie, &config, sql)?.at_root(root_hash))
     }
 
-    pub fn new_with_genesis(
-        trie: TrieStorage,
-        config: NodeConfig,
-        block_store: Arc<BlockStore>,
-    ) -> Result<State> {
-        let mut state = State::new(trie, &config, block_store);
+    pub fn new_with_genesis(trie: TrieStorage, config: NodeConfig, sql: Arc<Db>) -> Result<State> {
+        let mut state = State::new(trie, &config, sql)?;
 
         if config.consensus.is_main {
             let shard_data = contracts::shard_registry::CONSTRUCTOR.encode_input(
@@ -164,9 +159,49 @@ impl State {
         state.deploy_initial_deposit_contract(&config)?;
 
         let deposit_contract = Lazy::<contracts::Contract>::force(&contracts::deposit::CONTRACT);
-        state.upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO), deposit_contract)?;
+        let block_header = BlockHeader::genesis(Hash::ZERO);
+        state.upgrade_deposit_contract(block_header, deposit_contract)?;
+
+        // Check if any contracts are to be upgraded from genesis
+        state.contract_upgrade_apply_state_change(
+            &config.consensus.contract_upgrade_block_heights,
+            block_header,
+        )?;
 
         Ok(state)
+    }
+
+    /// If there are any contract updates to be performed then apply them to self
+    pub fn contract_upgrade_apply_state_change(
+        &mut self,
+        contract_upgrade_block_heights: &ContractUpgradesBlockHeights,
+        block_header: BlockHeader,
+    ) -> Result<()> {
+        if let Some(deposit_v3_deploy_height) = contract_upgrade_block_heights.deposit_v3 {
+            if deposit_v3_deploy_height == block_header.number {
+                let deposit_v3_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
+                self.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
+            }
+        }
+        if let Some(deposit_v4_deploy_height) = contract_upgrade_block_heights.deposit_v4 {
+            if deposit_v4_deploy_height == block_header.number {
+                // The below account mutation fixes the Zero account's nonce in prototestnet and protomainnet.
+                // Issue #2254 explains how the nonce was incorrect due to a bug in the ZQ1 persistence converter.
+                // This code should run once for these networks in order for the deposit_v4 contract to be deployed, then this code can be removed.
+                if self.chain_id.eth == 33103 || self.chain_id.eth == 32770 {
+                    self.mutate_account(Address::ZERO, |a| {
+                        // Nonce 5 is the next address to not have any code deployed
+                        a.nonce = 5;
+                        Ok(())
+                    })?;
+                }
+                let deposit_v4_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v4::CONTRACT);
+                self.upgrade_deposit_contract(block_header, deposit_v4_contract)?;
+            }
+        }
+        Ok(())
     }
 
     /// Deploy DepositInit contract (deposit_v1.sol)
@@ -233,11 +268,6 @@ impl State {
         contract: &Contract,
     ) -> Result<Address> {
         let current_version = self.deposit_contract_version(current_block)?;
-        debug!(
-            "Upgrading deposit contract from version {} to verion {}",
-            current_version,
-            current_version + 1
-        );
 
         // Deploy latest deposit implementation
         let new_deposit_impl_addr =
@@ -262,11 +292,12 @@ impl State {
         ensure_success(result)?;
 
         let new_version = self.deposit_contract_version(current_block)?;
-        debug!(
-            "EIP 1967 deposit contract {} updated with new deposit contract {} proxy version {}",
+        info!(
+            "EIP 1967 deposit contract proxy {} updated from version {} to new version {} with contract addr {}",
             contract_addr::DEPOSIT_PROXY,
-            new_deposit_impl_addr,
-            new_version
+            current_version,
+            new_version,
+            new_deposit_impl_addr
         );
 
         Ok(new_deposit_impl_addr)
@@ -285,8 +316,8 @@ impl State {
             gas_price: self.gas_price,
             scilla_call_gas_exempt_addrs: self.scilla_call_gas_exempt_addrs.clone(),
             chain_id: self.chain_id,
-            block_store: self.block_store.clone(),
             forks: self.forks.clone(),
+            sql: self.sql.clone(),
         }
     }
 
@@ -381,6 +412,14 @@ impl State {
             &Self::account_key(address).0,
             &bincode::serialize(&account)?,
         )?)
+    }
+
+    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+        self.sql.get_canonical_block_by_number(number)
+    }
+
+    pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
+        self.sql.get_highest_canonical_block_number()
     }
 }
 
@@ -579,37 +618,18 @@ mod tests {
     use std::{path::PathBuf, sync::Arc};
 
     use crypto::Hash;
-    use libp2p::PeerId;
     use revm::primitives::FixedBytes;
 
     use super::*;
-    use crate::{
-        api::to_hex::ToHex,
-        block_store::BlockStore,
-        cfg::NodeConfig,
-        db::Db,
-        message::BlockHeader,
-        node::{MessageSender, RequestId},
-    };
+    use crate::{api::to_hex::ToHex, cfg::NodeConfig, db::Db, message::BlockHeader};
 
     #[test]
     fn deposit_contract_updateability() {
-        let (s1, _) = tokio::sync::mpsc::unbounded_channel();
-        let (s2, _) = tokio::sync::mpsc::unbounded_channel();
-        let message_sender = MessageSender {
-            our_shard: 0,
-            our_peer_id: PeerId::random(),
-            outbound_channel: s1,
-            local_channel: s2,
-            request_id: RequestId::default(),
-        };
         let db = Db::new::<PathBuf>(None, 0, 0).unwrap();
         let db = Arc::new(db);
         let config = NodeConfig::default();
-        let block_store =
-            Arc::new(BlockStore::new(&config, db.clone(), message_sender.clone()).unwrap());
 
-        let mut state = State::new(db.state_trie().unwrap(), &config, block_store);
+        let mut state = State::new(db.state_trie().unwrap(), &config, db).unwrap();
 
         let deposit_init_addr = state.deploy_initial_deposit_contract(&config).unwrap();
 

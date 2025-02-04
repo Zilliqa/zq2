@@ -28,6 +28,7 @@ use zilliqa::{
     message::{Block, ExternalMessage, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
     node::{MessageSender, RequestId},
     schnorr,
+    sync::SyncPeers,
     test_util::compile_contract,
     time::{self, SystemTime},
     transaction::{
@@ -46,12 +47,13 @@ fn process_empty(c: &mut Criterion) {
         .measurement_time(Duration::from_secs(10));
 
     let secret_key = SecretKey::new().unwrap();
+    let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let (outbound_message_sender, _a) = mpsc::unbounded_channel();
     let (local_message_sender, _b) = mpsc::unbounded_channel();
     let (reset_timeout_sender, _c) = mpsc::unbounded_channel();
     let message_sender = MessageSender {
         our_shard: 0,
-        our_peer_id: PeerId::random(),
+        our_peer_id: peer_id,
         outbound_channel: outbound_message_sender,
         local_channel: local_message_sender,
         request_id: RequestId::default(),
@@ -88,6 +90,7 @@ fn process_empty(c: &mut Criterion) {
         message_sender,
         reset_timeout_sender,
         Arc::new(db),
+        Arc::new(SyncPeers::new(peer_id)),
     )
     .unwrap();
 
@@ -163,6 +166,7 @@ fn consensus(
     index: usize,
 ) -> Consensus {
     let secret_key = genesis_deposits[index].0;
+    let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
     let (outbound_message_sender, a) = mpsc::unbounded_channel();
     let (local_message_sender, b) = mpsc::unbounded_channel();
     let (reset_timeout_sender, c) = mpsc::unbounded_channel();
@@ -208,6 +212,7 @@ fn consensus(
         message_sender,
         reset_timeout_sender,
         Arc::new(db),
+        Arc::new(SyncPeers::new(peer_id)),
     )
     .unwrap()
 }

@@ -13,7 +13,7 @@ module "checkpoints" {
   network_tags = []
 
   metadata = {
-    subdomain = base64encode("")
+    subdomain = base64encode(var.subdomain)
   }
 
   node_dns_subdomain       = var.node_dns_subdomain
@@ -68,6 +68,13 @@ resource "google_storage_bucket" "checkpoint" {
       days_since_noncurrent_time = 7
       send_age_if_zero           = false
     }
+  }
+
+  cors {
+    origin          = ["*"]
+    method          = ["GET", "HEAD", "POST", "OPTIONS", "PUT"]
+    response_header = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable"]
+    max_age_seconds = 3600
   }
 }
 

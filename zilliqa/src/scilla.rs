@@ -923,10 +923,21 @@ impl ActiveCall {
         }
 
         if ignore_value {
-            // We only supporting deleting a single value of a map.
-            assert_eq!(indices.len(), depth);
-            let storage_slot = self.state.load_storage(self.sender, &name, &indices)?;
-            *storage_slot = None;
+            assert!(indices.len() <= depth);
+            // Remove single element
+            if indices.len() == depth {
+                let storage_slot = self.state.load_storage(self.sender, &name, &indices)?;
+                *storage_slot = None;
+            } else {
+                // Remove multiple elements from storage having the same prefix specified by `indices`
+
+                self.state.set_storage(
+                    self.sender,
+                    &name,
+                    &indices,
+                    StorageValue::complete_map(),
+                )?;
+            }
         } else if indices.len() == depth {
             let Some(ValType::Bval(value)) = value.val_type else {
                 return Err(anyhow!("invalid value"));
