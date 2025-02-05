@@ -1,8 +1,6 @@
 p2p_port = 3333
 bootstrap_address = [ "12D3KooWAcATh49oLnRmftLHuydAu3ufWGDyuGAsqwwcKCS7BAxi", "/dns/bootstrap.zq2-prototestnet.zilliqa.com/tcp/3333" ]
 
-otlp_collector_endpoint = "http://localhost:4317"
-
 [[nodes]]
 eth_chain_id = 33103
 allowed_timestamp_skew = { secs = 60, nanos = 0 }

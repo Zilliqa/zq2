@@ -475,6 +475,9 @@ struct JoinStruct {
     /// Specify the tag of the image to run
     #[clap(long)]
     image_tag: Option<String>,
+    /// Endpoint of OTLP collector
+    #[clap(long)]
+    otlp_endpoint: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -1061,8 +1064,13 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Join(ref args) => {
-            let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain, &args.image_tag).await?;
+            let mut chain = validators::ChainConfig::new(&args.chain_name).await?;
+            validators::gen_validator_startup_script(
+                &mut chain,
+                &args.image_tag,
+                &args.otlp_endpoint,
+            )
+            .await?;
             Ok(())
         }
         Commands::Deposit(ref args) => {
