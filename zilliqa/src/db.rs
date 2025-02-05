@@ -420,7 +420,7 @@ impl Db {
     }
 
     /// Pushes a particular segment into the stack.
-    pub fn push_sync_segment(&self, peer: PeerInfo, meta: BlockHeader) -> Result<()> {
+    pub fn push_sync_segment(&self, peer: &PeerInfo, meta: &BlockHeader) -> Result<()> {
         let db = self.db.lock().unwrap();
         db.prepare_cached(
                 "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, version, peer, rawdata) VALUES (:parent_hash, :block_hash, :block_number, :version, :peer, :rawdata)")?
