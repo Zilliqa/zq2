@@ -462,7 +462,7 @@ pub struct TxPoolContent {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncingMeta {
-    pub current_phase: u8,
+    pub current_phase: String,
     pub peer_count: usize,
     pub header_downloads: u64,
     pub block_downloads: u64,

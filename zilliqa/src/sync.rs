@@ -1152,8 +1152,14 @@ enum SyncState {
 }
 
 impl SyncState {
-    fn discriminant(&self) -> u8 {
-        unsafe { *<*const _>::from(self).cast::<u8>() }
+    fn discriminant(&self) -> String {
+        match self {
+            SyncState::Phase0 => "phase0".to_string(),
+            SyncState::Phase1(_) => "phase1".to_string(),
+            SyncState::Phase2(_) => "phase2".to_string(),
+            SyncState::Phase3 => "phase3".to_string(),
+            SyncState::Retry1 => "retry1".to_string(),
+        }
     }
 }
 
