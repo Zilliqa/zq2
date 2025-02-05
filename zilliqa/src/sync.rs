@@ -718,14 +718,7 @@ impl Sync {
         );
         self.headers_downloaded = self.headers_downloaded.saturating_add(segment.len() as u64);
 
-        // TODO: Until we implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2158
-        // just prototype it
-        segment
-            .iter()
-            .rev()
-            .skip(1)
-            .filter(|b| b.number % (self.max_batch_size as u64) == 0)
-            .for_each(|b| self.db.push_sync_segment(&segment_peer, b).unwrap());
+        // TODO: Implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2158
 
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
