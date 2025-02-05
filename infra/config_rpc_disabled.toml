@@ -1,3 +1,7 @@
+bootstrap_address = [
+    "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU",
+    "/ip4/198.51.100.1/tcp/5643",
+]
 otlp_collector_endpoint = "http://otel-collector:4317"
 
 [[nodes]]
@@ -20,6 +24,9 @@ consensus.genesis_accounts = [
     ["AcE5F1e883d3e02A1b2C78F6909a8C0430C6Fb12", "5000000000000000000000"],
     ["1958b2f7b5c476F5e8FeBdEFeba5EC39E2f20288", "5000000000000000000000"],
 ]
+
+# speed up local/docker epochs
+consensus.blocks_per_epoch = 36
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
