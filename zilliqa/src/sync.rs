@@ -1,7 +1,6 @@
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, VecDeque},
-    ops::Sub,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -849,8 +848,8 @@ impl Sync {
                     self.state = SyncState::Phase1(meta);
                     ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                         request_at: SystemTime::now(),
-                        to_height: block_number.sub(1),
-                        from_height: block_number.sub(self.max_batch_size as u64),
+                        to_height: block_number.saturating_sub(1),
+                        from_height: block_number.saturating_sub(self.max_batch_size as u64),
                     })
                 }
                 (SyncState::Phase0, PeerVer::V1) if meta.is_some() => {
