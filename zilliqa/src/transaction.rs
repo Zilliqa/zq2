@@ -307,6 +307,15 @@ impl SignedTransaction {
         }
     }
 
+    pub fn effective_priority_fee(&self, base_fee_per_gas: u128) -> u128 {
+        match self {
+            SignedTransaction::Eip1559 { tx, .. } => tx
+                .max_priority_fee_per_gas
+                .min(tx.max_fee_per_gas - base_fee_per_gas),
+            _ => 0,
+        }
+    }
+
     // ZilAmount / EvmGas
     // EvmGas / ScillaGas
 
