@@ -105,8 +105,8 @@ impl Sync {
         peers: Arc<SyncPeers>,
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
-        let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
-        let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
+        let max_batch_size = config.block_request_batch_size.clamp(10, 100);
+        let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1000);
 
         // Start from reset, or continue sync
         let state = if db.count_sync_segments()? == 0 {
