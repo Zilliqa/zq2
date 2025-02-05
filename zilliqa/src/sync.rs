@@ -81,7 +81,9 @@ pub struct Sync {
     // record data for eth_syncing() RPC call.
     started_at_block_number: u64,
     highest_block_seen: u64,
-    retries: u64,
+    retry_count: u64,
+    timeout_count: u64,
+    empty_count: u64,
     headers_downloaded: u64,
     blocks_downloaded: u64,
     // checkpoint, if set
@@ -132,7 +134,9 @@ impl Sync {
             started_at_block_number: latest_block_number,
             checkpoint_hash: latest_block_hash,
             highest_block_seen: latest_block_number,
-            retries: 0,
+            retry_count: 0,
+            timeout_count: 0,
+            empty_count: 0,
             headers_downloaded: 0,
             blocks_downloaded: 0,
         })
@@ -148,6 +152,8 @@ impl Sync {
                 tracing::warn!(to = %peer.peer_id,
                     "sync::Acknowledgement : empty response"
                 );
+                self.empty_count = self.empty_count.saturating_add(1);
+
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Empty);
                 // Retry if failed in Phase 2 for whatever reason
@@ -178,6 +184,8 @@ impl Sync {
                 tracing::warn!(to = %peer.peer_id, err = %failure.error,
                     "sync::RequestFailure : network error"
                 );
+                self.timeout_count = self.timeout_count.saturating_add(1);
+
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
                 // Retry if failed in Phase 2 for whatever reason
@@ -322,12 +330,12 @@ impl Sync {
             "sync::RetryPhase1 : retrying segment #{}",
             self.db.count_sync_segments()?,
         );
+        self.retry_count = self.retry_count.saturating_add(1);
 
         // remove the last segment from the chain metadata
         let (meta, _) = self.db.last_sync_segment()?.unwrap();
         self.db.pop_sync_segment()?;
         self.state = SyncState::Phase1(meta);
-        self.retries = self.retries.saturating_add(1);
         Ok(())
     }
 
@@ -959,7 +967,9 @@ impl Sync {
             status: SyncingMeta {
                 peer_count: peers,
                 current_phase: self.state.discriminant(),
-                retry_count: self.retries,
+                retry_count: self.retry_count,
+                timeout_count: self.timeout_count,
+                empty_count: self.empty_count,
                 header_downloads: self.headers_downloaded,
                 block_downloads: self.blocks_downloaded,
                 buffered_blocks: self.in_pipeline,
