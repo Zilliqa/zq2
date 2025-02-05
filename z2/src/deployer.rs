@@ -307,13 +307,13 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
             &chain.chain()?.get_api_endpoint()?,
             &genesis_private_key,
         )?;
-        let stake = validators::StakeDeposit::new(
+        let deposit_params = validators::DepositParams::new(
             VALIDATOR_DEPOSIT_IN_MILLIONS,
             ZERO_ACCOUNT,
             ZERO_ACCOUNT,
         )?;
 
-        let result = validators::deposit_stake(&validator, &client_config, &stake).await;
+        let result = validators::deposit(&validator, &client_config, &deposit_params).await;
 
         match result {
             Ok(()) => successes.push(node.name()),

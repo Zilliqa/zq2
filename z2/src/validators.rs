@@ -99,13 +99,13 @@ impl ChainConfig {
 }
 
 #[derive(Debug)]
-pub struct StakeDeposit {
+pub struct DepositParams {
     amount: u8,
     reward_address: H160,
     signing_address: H160,
 }
 
-impl StakeDeposit {
+impl DepositParams {
     pub fn new(amount: u8, reward_address: &str, signing_address: &str) -> Result<Self> {
         Ok(Self {
             amount,
@@ -198,14 +198,14 @@ async fn build_client(
     Ok(SignerMiddleware::new(provider, wallet))
 }
 
-pub async fn deposit_stake(
+pub async fn deposit(
     validator: &Validator,
     client_config: &ClientConfig,
-    stake: &StakeDeposit,
+    params: &DepositParams,
 ) -> Result<()> {
     println!(
         "Deposit: add {} M $ZIL to {}",
-        stake.amount, validator.peer_id
+        params.amount, validator.peer_id
     );
 
     let client = build_client(&client_config).await?;
@@ -213,15 +213,15 @@ pub async fn deposit_stake(
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-        .value(stake.amount as u128 * 1_000_000u128 * 10u128.pow(18))
+        .value(params.amount as u128 * 1_000_000u128 * 10u128.pow(18))
         .data(
             contracts::deposit_v4::DEPOSIT
                 .encode_input(&[
                     Token::Bytes(validator.public_key.as_bytes()),
                     Token::Bytes(validator.peer_id.to_bytes()),
                     Token::Bytes(validator.deposit_auth_signature.to_bytes()),
-                    Token::Address(stake.reward_address),
-                    Token::Address(stake.signing_address),
+                    Token::Address(params.reward_address),
+                    Token::Address(params.signing_address),
                 ])
                 .unwrap(),
         );
@@ -242,13 +242,13 @@ pub async fn deposit_stake(
 }
 
 pub async fn deposit_top_up(
-    validator: Validator,
     client_config: &ClientConfig,
+    bls_public_key: &NodePublicKey,
     amount: u8,
 ) -> Result<()> {
     println!(
-        "DepositTopUp: add {} M $ZIL stake to {}",
-        amount, validator.peer_id
+        "DepositTopUp: add {} M $ZIL stake",
+        amount,
     );
 
     let client = build_client(&client_config).await?;
@@ -259,7 +259,7 @@ pub async fn deposit_top_up(
         .value(amount as u128 * 1_000_000u128 * 10u128.pow(18))
         .data(
             contracts::deposit_v4::DEPOSIT_TOPUP
-                .encode_input(&[Token::Bytes(validator.public_key.as_bytes())])
+                .encode_input(&[Token::Bytes(bls_public_key.as_bytes())])
                 .unwrap(),
         );
 
@@ -278,10 +278,10 @@ pub async fn deposit_top_up(
     Ok(())
 }
 
-pub async fn unstake(validator: Validator, client_config: &ClientConfig, amount: u8) -> Result<()> {
+pub async fn unstake(client_config: &ClientConfig, bls_public_key: &NodePublicKey, amount: u8) -> Result<()> {
     println!(
-        "Unstake: {} M $ZIL unstaked from {}",
-        amount, validator.peer_id
+        "Unstake: {} M $ZIL unstaked",
+        amount,
     );
 
     let client = build_client(&client_config).await?;
@@ -291,7 +291,7 @@ pub async fn unstake(validator: Validator, client_config: &ClientConfig, amount:
         .data(
             contracts::deposit_v4::UNSTAKE
                 .encode_input(&[
-                    Token::Bytes(validator.public_key.as_bytes()),
+                    Token::Bytes(bls_public_key.as_bytes()),
                     Token::Uint((amount as u128 * 1_000_000u128 * 10u128.pow(18)).into()),
                 ])
                 .unwrap(),
@@ -312,8 +312,8 @@ pub async fn unstake(validator: Validator, client_config: &ClientConfig, amount:
     Ok(())
 }
 
-pub async fn withdraw(validator: Validator, client_config: &ClientConfig, count: u8) -> Result<()> {
-    println!("Withdraw: pull available funds from {}", validator.peer_id);
+pub async fn withdraw(client_config: &ClientConfig, bls_public_key: &NodePublicKey, count: u8) -> Result<()> {
+    println!("Withdraw: pull available funds from staker");
 
     let client = build_client(&client_config).await?;
     // Withdraw the validator's funds.
@@ -322,7 +322,7 @@ pub async fn withdraw(validator: Validator, client_config: &ClientConfig, count:
         .data(
             contracts::deposit_v4::UNSTAKE
                 .encode_input(&[
-                    Token::Bytes(validator.public_key.as_bytes()),
+                    Token::Bytes(bls_public_key.as_bytes()),
                     Token::Uint((count as u128).into()),
                 ])
                 .unwrap(),
