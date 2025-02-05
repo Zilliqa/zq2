@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::{Address, BlockNumber, U256};
+use alloy::primitives::{Address, U256};
 use anyhow::{anyhow, Context, Result};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
@@ -19,6 +19,7 @@ use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
+    api::types::eth::SyncingStruct,
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
@@ -3119,7 +3120,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
+    pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
         self.sync.get_sync_data()
     }
 }
