@@ -467,7 +467,9 @@ pub struct SyncingMeta {
     pub header_downloads: u64,
     pub block_downloads: u64,
     pub buffered_blocks: usize,
+    pub empty_count: u64,
     pub retry_count: u64,
+    pub timeout_count: u64,
 }
 
 #[derive(Clone, Serialize)]
