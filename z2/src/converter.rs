@@ -588,7 +588,8 @@ pub async fn convert_persistence(
     let highest_block = zq2_db.get_block_by_view(highest_block)?.unwrap();
 
     zq2_db.with_sqlite_tx(|sqlite_tx| {
-        let empty_high_qc_block = create_empty_block_from_parent(&highest_block, secret_key);
+        let empty_high_qc_block =
+            create_empty_block_from_parent(&highest_block, secret_key, state.root_hash()?);
         zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
         zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.header.qc)?;
         Ok(())
@@ -602,7 +603,11 @@ pub async fn convert_persistence(
     Ok(())
 }
 
-fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -> Block {
+fn create_empty_block_from_parent(
+    parent_block: &Block,
+    secret_key: SecretKey,
+    state_root_hash: Hash,
+) -> Block {
     let vote = Vote::new(
         secret_key,
         parent_block.hash(),
@@ -623,7 +628,7 @@ fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -
         parent_block.header.number + 1,
         qc,
         None,
-        parent_block.header.state_root_hash,
+        state_root_hash,
         parent_block.transactions_root_hash(),
         parent_block.header.receipts_root_hash,
         vec![],
