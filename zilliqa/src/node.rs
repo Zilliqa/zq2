@@ -934,12 +934,8 @@ impl Node {
             warn!("Someone ({peer}) sent me a InjectedProposal; illegal- ignoring");
             return Ok(());
         }
-        if block
-            .transactions
-            .iter()
-            // if any of the transactions are ZQ1, then treat this as a ZQ1 block
-            .all(|t| !matches!(t, SignedTransaction::Zilliqa { .. }))
-        {
+        // ZQ1 blocks have zero state root hash - https://github.com/Zilliqa/zq2/issues/2054
+        if block.header.state_root_hash != Hash::ZERO {
             // Execute ZQ2 blocks
             trace!("Handling ZQ2 proposal for view {}", block.header.view);
             let proposal = self.consensus.receive_block(from, block)?;
@@ -949,7 +945,7 @@ impl Node {
                     .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
             }
         } else {
-            // Just store ZQ1 blocks - https://github.com/Zilliqa/zq2/issues/2232
+            // Store ZQ1 blocks - https://github.com/Zilliqa/zq2/issues/2232
             trace!("Handling ZQ1 proposal for view {}", block.header.view);
             let (blk, txns) = block.into_parts();
             self.db.with_sqlite_tx(|sqlite_tx| {
