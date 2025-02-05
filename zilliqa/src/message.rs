@@ -584,6 +584,7 @@ pub struct BlockHeader {
     pub timestamp: SystemTime,
     pub gas_used: EvmGas,
     pub gas_limit: EvmGas,
+    pub base_fee_per_gas: u128,
 }
 
 impl BlockHeader {
@@ -607,6 +608,7 @@ impl BlockHeader {
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
+            base_fee_per_gas: 0,
         }
     }
 
@@ -640,6 +642,7 @@ impl Default for BlockHeader {
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
+            base_fee_per_gas: 0,
         }
     }
 }
@@ -730,6 +733,7 @@ impl Block {
                 timestamp,
                 gas_used,
                 gas_limit,
+                base_fee_per_gas: 0,
             },
             agg,
             transactions,
