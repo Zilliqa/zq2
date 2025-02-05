@@ -244,7 +244,6 @@ impl Sync {
                     // No parent block, trigger sync
                     tracing::info!("sync::SyncProposal : syncing from {parent_hash}",);
                     let meta = self.recent_proposals.back().unwrap().header;
-                    self.request_missing_metadata(Some(meta))?;
 
                     let highest_block = self
                         .db
@@ -255,6 +254,10 @@ impl Sync {
                         )?
                         .expect("missing highest block");
                     self.started_at_block_number = highest_block.number();
+
+                    // Ensure started_at_block_number is set before running this.
+                    // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
+                    self.request_missing_metadata(Some(meta))?;
                 }
             }
             // Continue phase 1, until we hit history/genesis.
@@ -727,11 +730,15 @@ impl Sync {
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
 
-        // If the checkpoint is in this segment
+        // If the check-point/starting-point is in this segment
         let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
-        let started = self.started_at_block_number <= segment.first().as_ref().unwrap().number
-            && self.started_at_block_number >= segment.last().as_ref().unwrap().number;
-        // If the segment hits our history, start Phase 2.
+        let range = std::ops::RangeInclusive::new(
+            segment.last().as_ref().unwrap().number,
+            segment.first().as_ref().unwrap().number,
+        );
+        let started = range.contains(&self.started_at_block_number);
+
+        // If the segment hits our history, turnaround to Phase 2.
         if started || checkpointed {
             self.state = SyncState::Phase2(Hash::ZERO);
         } else if Self::DO_SPECULATIVE {
