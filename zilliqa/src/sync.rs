@@ -973,7 +973,7 @@ impl Sync {
             highest_block: self.highest_block_seen,
             status: SyncingMeta {
                 peer_count: peers,
-                current_phase: self.state.discriminant(),
+                current_phase: self.state.to_string(),
                 retry_count: self.retry_count,
                 timeout_count: self.timeout_count,
                 empty_count: self.empty_count,
@@ -1142,7 +1142,6 @@ impl PartialOrd for DownGrade {
 /// Sync state
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
-#[repr(u8)]
 enum SyncState {
     Phase0,
     Phase1(BlockHeader),
@@ -1151,14 +1150,14 @@ enum SyncState {
     Retry1,
 }
 
-impl SyncState {
-    fn discriminant(&self) -> String {
+impl std::fmt::Display for SyncState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SyncState::Phase0 => "phase0".to_string(),
-            SyncState::Phase1(_) => "phase1".to_string(),
-            SyncState::Phase2(_) => "phase2".to_string(),
-            SyncState::Phase3 => "phase3".to_string(),
-            SyncState::Retry1 => "retry1".to_string(),
+            SyncState::Phase0 => write!(f, "phase0"),
+            SyncState::Phase1(_) => write!(f, "phase1"),
+            SyncState::Phase2(_) => write!(f, "phase2"),
+            SyncState::Phase3 => write!(f, "phase3"),
+            SyncState::Retry1 => write!(f, "retry1"),
         }
     }
 }
