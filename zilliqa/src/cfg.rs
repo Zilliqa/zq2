@@ -32,10 +32,51 @@ pub struct Config {
     /// The address of another node to dial when this node starts. To join the network, a node must know about at least
     /// one other existing node in the network.
     #[serde(default)]
-    pub bootstrap_address: Option<(PeerId, Multiaddr)>,
+    pub bootstrap_address: OneOrMany<(PeerId, Multiaddr)>,
     /// The base address of the OTLP collector. If not set, metrics will not be exported.
     #[serde(default)]
     pub otlp_collector_endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OneOrMany<T>(pub Vec<T>);
+
+impl<T> Default for OneOrMany<T> {
+    fn default() -> Self {
+        Self(vec![])
+    }
+}
+
+impl<T: Serialize> Serialize for OneOrMany<T> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self.0.len() == 1 {
+            self.0[0].serialize(serializer)
+        } else {
+            self.0.serialize(serializer)
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for OneOrMany<T> {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Inner<T> {
+            One(T),
+            Many(Vec<T>),
+        }
+
+        match Inner::deserialize(deserializer)? {
+            Inner::One(t) => Ok(OneOrMany(vec![t])),
+            Inner::Many(t) => Ok(OneOrMany(t)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -568,6 +609,7 @@ pub fn genesis_fork_default() -> Fork {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractUpgradesBlockHeights {
     pub deposit_v3: Option<u64>,
+    pub deposit_v4: Option<u64>,
 }
 
 impl ContractUpgradesBlockHeights {
@@ -594,7 +636,8 @@ impl ContractUpgradesBlockHeights {
 impl Default for ContractUpgradesBlockHeights {
     fn default() -> Self {
         Self {
-            deposit_v3: Some(0),
+            deposit_v3: None,
+            deposit_v4: Some(0),
         }
     }
 }

@@ -12,6 +12,7 @@ mod eth;
 mod ots;
 mod persistence;
 mod staking;
+mod trace;
 mod unreliable;
 mod web3;
 mod zil;
@@ -330,6 +331,7 @@ impl Network {
 
         let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
             deposit_v3: deposit_v3_upgrade_block_height,
+            deposit_v4: None,
         };
 
         let config = NodeConfig {
@@ -467,6 +469,7 @@ impl Network {
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
         let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
             deposit_v3: self.deposit_v3_upgrade_block_height,
+            deposit_v4: None,
         };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
@@ -1145,6 +1148,31 @@ impl Network {
         )
         .await
         .unwrap();
+    }
+
+    pub async fn run_until_block_finalized(
+        &mut self,
+        target_block: u64,
+        mut timeout: usize,
+    ) -> Result<()> {
+        let initial_timeout = timeout;
+        let db = self.get_node(0).db.clone();
+        loop {
+            if let Some(view) = db.get_finalized_view()? {
+                if let Some(block) = db.get_block_by_view(view)? {
+                    if block.number() >= target_block {
+                        return Ok(());
+                    }
+                }
+            }
+            if timeout == 0 {
+                return Err(anyhow!(
+                    "condition was still false after {initial_timeout} ticks"
+                ));
+            }
+            self.tick().await;
+            timeout -= 1;
+        }
     }
 
     pub fn disconnect_node(&mut self, index: usize) {
