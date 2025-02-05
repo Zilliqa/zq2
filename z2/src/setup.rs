@@ -500,7 +500,7 @@ impl Setup {
             println!("🎱 Generating configuration for node {node_index}...");
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
-                bootstrap_address: None,
+                bootstrap_address: Default::default(),
                 nodes: Vec::new(),
                 p2p_port: 0,
                 external_address: None,

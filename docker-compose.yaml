@@ -3,6 +3,7 @@ version: "3"
 services:
   node0:
     depends_on:
+      - node2
       - node3 
     environment:
       RUST_BACKTRACE: 1
@@ -24,6 +25,7 @@ services:
 
   node1:
     depends_on:
+      - node2
       - node3
     environment:
       RUST_BACKTRACE: 1

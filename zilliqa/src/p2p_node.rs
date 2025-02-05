@@ -236,7 +236,7 @@ impl P2pNode {
             self.swarm.add_external_address(external_address.clone());
         }
 
-        if let Some((peer, address)) = &self.config.bootstrap_address {
+        for (peer, address) in &self.config.bootstrap_address.0 {
             if self.swarm.local_peer_id() != peer {
                 self.swarm.dial(address.clone())?;
                 self.swarm.add_peer_address(*peer, address.clone());
@@ -253,20 +253,6 @@ impl P2pNode {
                     match event {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
-                        }
-                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info: identify::Info{ listen_addrs, observed_addr, protocols, .. }, .. })) => {
-                            self.swarm.add_external_address(observed_addr);
-                            if protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
-                                for addr in listen_addrs {
-                                    self.swarm.add_peer_address(peer_id, addr);
-                                }
-                            }
-                        }
-                        SwarmEvent::NewExternalAddrOfPeer { peer_id, address } => {
-                            self.swarm
-                                .behaviour_mut()
-                                .kademlia
-                                .add_address(&peer_id, address.clone());
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
                             if let Some(peers) = self.shard_peers.get(&topic) {
