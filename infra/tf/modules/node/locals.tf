@@ -3,9 +3,8 @@
 ################################################################################
 
 locals {
-  node_dns_zone_name = replace(var.node_dns_subdomain, ".", "-")
-  resource_name      = format("%s-%s-%s", var.chain_name, local.role_short_name, random_id.name_suffix.hex)
-  role_short_name    = var.node_role_mappings[var.role]
+  resource_name   = format("%s-%s-%s", var.chain_name, local.role_short_name, random_id.name_suffix.hex)
+  role_short_name = var.node_role_mappings[var.role]
 
   regions = flatten([
     for instance in local.instances : instance.region
