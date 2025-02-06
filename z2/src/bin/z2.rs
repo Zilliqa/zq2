@@ -54,7 +54,7 @@ enum Commands {
     Deposit(DepositStruct),
     /// Top up stake
     DepositTopUp(DepositTopUpStruct),
-    /// Unstake funds 
+    /// Unstake funds
     Unstake(UnstakeStruct),
     /// Withdraw unstaked funds
     Withdraw(WithdrawStruct),
@@ -1149,8 +1149,9 @@ async fn main() -> Result<()> {
             validators::deposit(&node, &client_config, &deposit_params).await
         }
         Commands::DepositTopUp(ref args) => {
-            let bls_public_key = NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
-                .unwrap();
+            let bls_public_key =
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap();
             let client_config = validators::ClientConfig::new(
                 args.chain_name.get_api_endpoint()?,
                 &args.private_key,
@@ -1158,8 +1159,9 @@ async fn main() -> Result<()> {
             validators::deposit_top_up(&client_config, &bls_public_key, args.amount).await
         }
         Commands::Unstake(ref args) => {
-            let bls_public_key = NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
-                .unwrap();
+            let bls_public_key =
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap();
             let client_config = validators::ClientConfig::new(
                 args.chain_name.get_api_endpoint()?,
                 &args.private_key,
@@ -1167,8 +1169,9 @@ async fn main() -> Result<()> {
             validators::unstake(&client_config, &bls_public_key, args.amount).await
         }
         Commands::Withdraw(ref args) => {
-            let bls_public_key = NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
-                .unwrap();
+            let bls_public_key =
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap();
             let client_config = validators::ClientConfig::new(
                 args.chain_name.get_api_endpoint()?,
                 &args.private_key,

@@ -246,10 +246,7 @@ pub async fn deposit_top_up(
     bls_public_key: &NodePublicKey,
     amount: u8,
 ) -> Result<()> {
-    println!(
-        "DepositTopUp: add {} M $ZIL stake",
-        amount,
-    );
+    println!("DepositTopUp: add {} M $ZIL stake", amount,);
 
     let client = build_client(&client_config).await?;
 
@@ -278,11 +275,12 @@ pub async fn deposit_top_up(
     Ok(())
 }
 
-pub async fn unstake(client_config: &ClientConfig, bls_public_key: &NodePublicKey, amount: u8) -> Result<()> {
-    println!(
-        "Unstake: {} M $ZIL unstaked",
-        amount,
-    );
+pub async fn unstake(
+    client_config: &ClientConfig,
+    bls_public_key: &NodePublicKey,
+    amount: u8,
+) -> Result<()> {
+    println!("Unstake: {} M $ZIL unstaked", amount,);
 
     let client = build_client(&client_config).await?;
     // Unstake the validator's funds.
@@ -312,8 +310,12 @@ pub async fn unstake(client_config: &ClientConfig, bls_public_key: &NodePublicKe
     Ok(())
 }
 
-pub async fn withdraw(client_config: &ClientConfig, bls_public_key: &NodePublicKey, count: u8) -> Result<()> {
-    println!("Withdraw: pull available funds from staker");
+pub async fn withdraw(
+    client_config: &ClientConfig,
+    bls_public_key: &NodePublicKey,
+    count: u8,
+) -> Result<()> {
+    println!("Withdraw: pulling available unstaked funds from deposit contract");
 
     let client = build_client(&client_config).await?;
     // Withdraw the validator's funds.
