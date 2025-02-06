@@ -97,18 +97,6 @@ variable "network_tags" {
   nullable    = false
 }
 
-variable "node_dns_subdomain" {
-  description = "Nodes DNS zone name (ie. zq2.dev)"
-  type        = string
-  nullable    = false
-}
-
-variable "node_dns_zone_project_id" {
-  description = "The id of the Google project that hosts the DNS zone."
-  type        = string
-  nullable    = false
-}
-
 variable "service_account_iam" {
   description = "(Optional) Roles to associate to the instances service account"
   type        = list(string)
