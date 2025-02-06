@@ -20,7 +20,9 @@ use tokio::fs;
 use zilliqa::{
     api,
     cfg::{
-        ApiServer, genesis_fork_default, max_rpc_response_size_default, state_cache_size_default,
+        ApiServer, StateAdjustment, genesis_fork_default, max_rpc_response_size_default,
+        max_rpc_response_size_default, staker_withdrawal_period_default, state_cache_size_default,
+        state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
@@ -573,6 +575,7 @@ impl Setup {
                 data_dir: None,
                 state_cache_size: state_cache_size_default(),
                 load_checkpoint: None,
+                adjust_state: vec![],
                 do_checkpoints: false,
                 eth_chain_id: eth_chain_id_default(),
                 consensus: ConsensusConfig {
@@ -597,6 +600,7 @@ impl Setup {
                     contract_upgrades: ContractUpgrades::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
+                    reset_view_timeout_on_startup: true,
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -606,6 +610,7 @@ impl Setup {
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
                 prune_interval: cfg::u64_max(),
+                respect_shard_ids_in_checkpoints: true,
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 
@@ -673,6 +678,7 @@ impl Setup {
             .await
             .context(format!("Cannot read from {0} - are you sure you are trying to start a node that actually exists?", config_file.to_string_lossy()))?;
         let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&loaded_config_str)?;
+        let mut any_checkpoints = false;
         for node in loaded_config.nodes.iter_mut() {
             if let Some(cp) = checkpoint {
                 println!(
@@ -680,9 +686,17 @@ impl Setup {
                     cp.file,
                     hex::encode(cp.hash.0)
                 );
-                node.load_checkpoint = Some(cp.clone());
+                let mut checkpoint = cp.clone();
+                checkpoint.respect_shard_ids = false;
+                node.load_checkpoint = Some(checkpoint);
+                any_checkpoints = true;
             } else {
                 node.load_checkpoint = None
+            }
+        }
+        if any_checkpoints {
+            for node in loaded_config.nodes.iter_mut() {
+                node.adjust_state.push(StateAdjustment::GenesisCommittee);
             }
         }
         let config_str = toml::to_string(&loaded_config)?;
@@ -696,7 +710,7 @@ impl Setup {
         component: &Component,
         collector: &mut Collector,
         for_nodes: &Composition,
-        checkpoints: &Option<HashMap<u64, zilliqa::cfg::Checkpoint>>,
+        checkpoints: &utils::CheckpointConfiguration,
     ) -> Result<()> {
         match component {
             Component::Scilla => {
@@ -717,11 +731,7 @@ impl Setup {
                 for idx in for_nodes.nodes.keys() {
                     let config_file = self.get_config_path(*idx)?;
                     // Now, we need to rewrite the config file to take account of checkpoints...
-                    Self::preprocess_config_file(
-                        &config_file,
-                        checkpoints.as_ref().and_then(|x| x.get(idx)),
-                    )
-                    .await?;
+                    Self::preprocess_config_file(&config_file, checkpoints.for_node(*idx)).await?;
                     let node_data = self
                         .config
                         .node_data

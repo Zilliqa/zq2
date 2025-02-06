@@ -451,20 +451,19 @@ impl P2pNode {
                     trace!("p2p_node tick {0} / {1} ", net_info.num_peers(), net_info.connection_counters().num_connections() );
                     if net_info.num_peers() == 0 && net_info.connection_counters().num_connections() == 0 {
                         // We have no peers and no connections. Try bootstrapping..
-                        if let Some((peer, address)) = &self.config.bootstrap_address {
+                        for (peer, address) in &self.config.bootstrap_address.0 {
                             if self.swarm.local_peer_id() == peer {
                                 debug!("p2p_node: can't bootstrap against myself");
                             } else {
-                                debug!("p2p_node: no peers and no connections - bootstrapping!");
+                                debug!("p2p_node: re-bootstrapping with bootstrap {peer:?} {address:?}");
                                 self.swarm
                                     .behaviour_mut()
                                     .kademlia
                                     .add_address(peer, address.clone());
-                                self.swarm.behaviour_mut().kademlia.bootstrap()?;
                             }
-                        } else {
-                            debug!("p2p_node: no peers and no connections, but no bootstrap either! We may be stuck");
                         }
+                        debug!("p2p_node: no peers and no connections - bootstrapping!");
+                        self.swarm.behaviour_mut().kademlia.bootstrap()?;
                     }
                     sleep.as_mut().reset(Instant::now() + Duration::from_millis(10000));
                 },
