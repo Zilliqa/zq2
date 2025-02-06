@@ -1013,8 +1013,8 @@ fn blob_base_fee(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHistory> {
     let mut params = params.sequence();
     let block_count: String = params.next()?;
-    let block_count = if block_count.starts_with("0x") {
-        u64::from_str_radix(&block_count[2..], 16)?
+    let block_count = if let Some(block_count) = block_count.strip_prefix("0x") {
+        u64::from_str_radix(block_count, 16)?
     } else {
         block_count.parse::<u64>()?
     };
@@ -1029,7 +1029,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHisto
     let reward_percentiles: Option<Vec<f64>> = params.optional_next()?.unwrap_or_default();
     if let Some(ref percentiles) = reward_percentiles {
         if !percentiles.windows(2).all(|w| w[0] <= w[1])
-            || percentiles.iter().any(|&p| p > 100.0 || p < 0.0)
+            || percentiles.iter().any(|&p| !(0.0..=100.0).contains(&p))
         {
             return Err(anyhow!(
                 "reward_percentiles must be in ascending order and within the range [0, 100]"
