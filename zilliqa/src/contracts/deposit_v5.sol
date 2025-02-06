@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.28;
+pragma solidity ^0.8.20;
 
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Deque, Withdrawal} from "./utils/deque.sol";
@@ -29,6 +29,7 @@ struct CommitteeStakerEntry {
     // The index of the value in the `stakers` array plus 1.
     // Index 0 is used to mean a value is not present.
     uint256 index;
+    // Currently active balance
     // Invariant: `balance >= minimumStake`
     uint256 balance;
 }
@@ -37,7 +38,17 @@ struct Committee {
     // Invariant: Equal to the sum of `balances` in `stakers`.
     uint256 totalStake;
     bytes[] stakerKeys;
-    mapping(bytes => CommitteeStakerEntry) stakers;
+}
+
+struct BalanceUpdate {
+    int256 amount;
+    // The epoch in which this balance update becomes active
+    uint256 epoch;
+}
+
+struct Balance {
+    uint256 active;
+    BalanceUpdate[] pending;
 }
 
 struct Staker {
@@ -52,6 +63,11 @@ struct Staker {
     Deque.Withdrawals withdrawals;
     // The address whose key with which validators sign cross-chain events
     address signingAddress;
+    // Balance including pending updates in upcoming epochs
+    Balance balance;
+    // The index of the value in the `stakers` array plus 1.
+    // Index 0 is used to mean a value is not present.
+    uint256 index;
 }
 
 contract Deposit is UUPSUpgradeable {
@@ -84,7 +100,7 @@ contract Deposit is UUPSUpgradeable {
         uint256 atFutureBlock
     );
 
-    uint64 public constant VERSION = 4;
+    uint64 public constant VERSION = 3;
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
@@ -93,9 +109,8 @@ contract Deposit is UUPSUpgradeable {
         Committee[3] _committee;
         // All stakers. Keys into this map are stored by the `Committee`.
         mapping(bytes => Staker) _stakersMap;
-        // Mapping from `controlAddress` to `blsPubKey` for each staker.
-        // This is legacy do not use. In upgraded contracts there may be some items still in the mapping.
-        mapping(address => bytes) _stakerKeys;
+        // Keys of items in _stakersMap
+        bytes[] _stakersKeys;
         // The latest epoch for which the committee was calculated. It is implied that no changes have (yet) occurred in
         // future epochs, either because those epochs haven't happened yet or because they have happened, but no deposits
         // or withdrawals were made.
@@ -158,17 +173,109 @@ contract Deposit is UUPSUpgradeable {
         return uint64(block.number / $.blocksPerEpoch);
     }
 
-    function committee() private view returns (Committee storage) {
+    function committee(
+        bool includeAll
+    ) private view returns (Committee memory) {
         DepositStorage storage $ = _getDepositStorage();
-        if ($.latestComputedEpoch <= currentEpoch()) {
-            // If the current epoch is after the latest computed epoch, it is implied that no changes have happened to
-            // the committee since the latest computed epoch. Therefore, it suffices to return the committee at that
-            // latest computed epoch.
-            return $._committee[$.latestComputedEpoch % 3];
-        } else {
-            // Otherwise, the committee has been changed. The caller who made the change will have pre-computed the
-            // result for us, so we can just return it.
-            return $._committee[currentEpoch() % 3];
+        Committee memory currentCommittee;
+        uint256 currentEpochVal = currentEpoch();
+        uint8 numAdditions = 0;
+
+        for (uint256 i = 0; i < $._stakersKeys.length; i++) {
+            bytes memory stakerKey = $._stakersKeys[i];
+            uint256 balance = getStakersBalance(stakerKey, includeAll);
+            // If staker has active balance then add them to the committee
+            if (balance > 0) {
+                numAdditions += 1;
+                currentCommittee.totalStake += uint256(balance);
+            }
+        }
+
+        currentCommittee.stakerKeys = new bytes[](numAdditions);
+        uint8 numAdded = 0;
+        for (uint256 i = 0; i < $._stakersKeys.length; i++) {
+            bytes memory stakerKey = $._stakersKeys[i];
+            uint256 balance = getStakersBalance(stakerKey, includeAll);
+            // If staker has active balance then add them to the committee
+            if (balance > 0) {
+                currentCommittee.stakerKeys[numAdded] = stakerKey;
+                numAdded += 1;
+            }
+        }
+
+        return currentCommittee;
+    }
+
+    function getStakersBalance(
+        bytes memory stakerKey,
+        bool includeAll
+    ) private view returns (uint256) {
+        DepositStorage storage $ = _getDepositStorage();
+        uint256 currentEpochVal = currentEpoch();
+
+        Staker memory staker = $._stakersMap[stakerKey];
+        if (staker.controlAddress == address(0)) {
+            return uint256(0);
+        }
+
+        uint256 balance = staker.balance.active;
+
+        // Add any pending balance updates which may now be considered active
+        for (uint256 i = 0; i < staker.balance.pending.length; i++) {
+            // Include all balance updates or only those currenlty active
+            if (
+                includeAll || staker.balance.pending[i].epoch <= currentEpochVal
+            ) {
+                if (staker.balance.pending[i].amount > 0) {
+                    balance += uint256(staker.balance.pending[i].amount);
+                } else {
+                    // we ensure balance never goes below 0 in unstake()
+                    balance -= uint256(-staker.balance.pending[i].amount);
+                }
+            }
+        }
+        return balance;
+    }
+
+    function foldStakersBalance(bytes memory stakerKey) private {
+        DepositStorage storage $ = _getDepositStorage();
+        uint256 currentEpochVal = currentEpoch();
+
+        Staker memory staker = $._stakersMap[stakerKey];
+        uint256 balance = staker.balance.active;
+        uint256 removePendingBalancesUptoIndex;
+        // Add any pending balance updates which may now be considered active
+        for (uint256 i = 0; i < staker.balance.pending.length; i++) {
+            // Include all balance updates or only those currently active
+            if (staker.balance.pending[i].epoch <= currentEpochVal) {
+                if (staker.balance.pending[i].amount > 0) {
+                    balance += uint256(staker.balance.pending[i].amount);
+                } else {
+                    // we ensure balance never goes below 0 in unstake()
+                    balance -= uint256(-staker.balance.pending[i].amount);
+                }
+                removePendingBalancesUptoIndex = i + 1;
+            }
+        }
+        // Pending balance array is in order of epochs. Ie all items in epoch x will be before items in epoch x+1
+        // Therefore to remove items we can take a slice of the array and copy the result back into storage
+        if (removePendingBalancesUptoIndex > 0) {
+            BalanceUpdate[] memory slice = new BalanceUpdate[](
+                staker.balance.pending.length - removePendingBalancesUptoIndex
+            );
+            for (
+                uint256 i = removePendingBalancesUptoIndex;
+                i < staker.balance.pending.length;
+                i++
+            ) {
+                slice[i - removePendingBalancesUptoIndex] = staker
+                    .balance
+                    .pending[i];
+            }
+
+            // Write pending values to balance if they are now active
+            staker.balance.active = balance;
+            staker.balance.pending = slice;
         }
     }
 
@@ -190,14 +297,16 @@ contract Deposit is UUPSUpgradeable {
     function leaderFromRandomness(
         uint256 randomness
     ) private view returns (bytes memory) {
-        Committee storage currentCommittee = committee();
+        DepositStorage storage $ = _getDepositStorage();
+        Committee memory currentCommittee = committee(false);
         // Get a random number in the inclusive range of 0 to (totalStake - 1)
         uint256 position = randomness % currentCommittee.totalStake;
         uint256 cummulativeStake = 0;
 
+        // TODO: Consider binary search for performance. Or consider an alias method for O(1) performance.
         for (uint256 i = 0; i < currentCommittee.stakerKeys.length; i++) {
             bytes memory stakerKey = currentCommittee.stakerKeys[i];
-            uint256 stakedBalance = currentCommittee.stakers[stakerKey].balance;
+            uint256 stakedBalance = getStakersBalance(stakerKey, false);
 
             cummulativeStake += stakedBalance;
 
@@ -219,20 +328,15 @@ contract Deposit is UUPSUpgradeable {
     }
 
     function getStakers() public view returns (bytes[] memory) {
-        return committee().stakerKeys;
+        return committee(false).stakerKeys;
     }
 
     function getTotalStake() public view returns (uint256) {
-        return committee().totalStake;
+        return committee(false).totalStake;
     }
 
     function getFutureTotalStake() public view returns (uint256) {
-        DepositStorage storage $ = _getDepositStorage();
-        // if `latestComputedEpoch > currentEpoch()`
-        // then `latestComputedEpoch` determines the future committee we need
-        // otherwise there are no committee changes after `currentEpoch()`
-        // i.e. `latestComputedEpoch` determines the most recent committee
-        return $._committee[$.latestComputedEpoch % 3].totalStake;
+        return committee(true).totalStake;
     }
 
     function getStakersData()
@@ -245,11 +349,11 @@ contract Deposit is UUPSUpgradeable {
             Staker[] memory stakers
         )
     {
+        // TODO clean up double call to _getDepositStorage() here
         DepositStorage storage $ = _getDepositStorage();
-        Committee storage currentCommittee = committee();
+        Committee memory currentCommittee = committee(false);
 
         stakerKeys = currentCommittee.stakerKeys;
-        indices = new uint256[](stakerKeys.length);
         balances = new uint256[](stakerKeys.length);
         stakers = new Staker[](stakerKeys.length);
         for (uint256 i = 0; i < stakerKeys.length; i++) {
@@ -259,8 +363,8 @@ contract Deposit is UUPSUpgradeable {
             // return the indices too, to help identify the
             // stakers in the bit vectors stored along with
             // BLS aggregate signatures
-            indices[i] = currentCommittee.stakers[key].index;
-            balances[i] = currentCommittee.stakers[key].balance;
+            indices[i] = i + 1;
+            balances[i] = getStakersBalance(key, false);
             stakers[i] = $._stakersMap[key];
         }
     }
@@ -272,11 +376,34 @@ contract Deposit is UUPSUpgradeable {
         view
         returns (uint256 index, uint256 balance, Staker memory staker)
     {
+        if (blsPubKey.length != 48) {
+            revert UnexpectedArgumentLength("bls public key", 48);
+        }
         DepositStorage storage $ = _getDepositStorage();
-        Committee storage currentCommittee = committee();
-        index = currentCommittee.stakers[blsPubKey].index;
-        balance = currentCommittee.stakers[blsPubKey].balance;
+        Committee memory currentCommittee = committee(false);
+
+        for (uint256 i = 0; i < currentCommittee.stakerKeys.length; i++) {
+            if (compareBytes(blsPubKey, currentCommittee.stakerKeys[i])) {
+                index = i;
+            }
+        }
+        balance = getStakersBalance(blsPubKey, false);
         staker = $._stakersMap[blsPubKey];
+    }
+
+    function compareBytes(
+        bytes memory bytes_1,
+        bytes memory bytes_2
+    ) private view returns (bool) {
+        if (bytes_1.length != bytes_2.length) {
+            return false;
+        }
+        for (uint256 i = 0; i < bytes_1.length; i++) {
+            if (bytes_1[i] != bytes_2[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
@@ -286,7 +413,7 @@ contract Deposit is UUPSUpgradeable {
 
         // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
         // balance will default to zero.
-        return committee().stakers[blsPubKey].balance;
+        return getStakersBalance(blsPubKey, false);
     }
 
     function getFutureStake(
@@ -295,19 +422,10 @@ contract Deposit is UUPSUpgradeable {
         if (blsPubKey.length != 48) {
             revert UnexpectedArgumentLength("bls public key", 48);
         }
-        DepositStorage storage $ = _getDepositStorage();
-
-        // if `latestComputedEpoch > currentEpoch()`
-        // then `latestComputedEpoch` determines the future committee we need
-        // otherwise there are no committee changes after `currentEpoch()`
-        // i.e. `latestComputedEpoch` determines the most recent committee
-        Committee storage latestCommittee = $._committee[
-            $.latestComputedEpoch % 3
-        ];
 
         // We don't need to check if `blsPubKey` is in `stakerKeys` here. If the `blsPubKey` is not a staker, the
         // balance will default to zero.
-        return latestCommittee.stakers[blsPubKey].balance;
+        return getStakersBalance(blsPubKey, true);
     }
 
     function getRewardAddress(
@@ -395,97 +513,6 @@ contract Deposit is UUPSUpgradeable {
         return $._stakersMap[blsPubKey].peerId;
     }
 
-    function updateLatestComputedEpoch() internal {
-        DepositStorage storage $ = _getDepositStorage();
-        // If the latest computed epoch is less than two epochs ahead of the current one, we must fill in the missing
-        // epochs. This just involves copying the committee from the previous epoch to the next one. It is assumed that
-        // the caller will then want to update the future epochs.
-        if ($.latestComputedEpoch < currentEpoch() + 2) {
-            Committee storage latestComputedCommittee = $._committee[
-                $.latestComputedEpoch % 3
-            ];
-            // Note the early exit condition if `latestComputedEpoch + 3` which ensures this loop will not run more
-            // than twice. This is acceptable because we only store 3 committees at a time, so once we have updated two
-            // of them to the latest computed committee, there is no more work to do.
-            for (
-                uint64 i = $.latestComputedEpoch + 1;
-                i <= currentEpoch() + 2 && i < $.latestComputedEpoch + 3;
-                i++
-            ) {
-                // The operation we want to do is: `_committee[i % 3] = latestComputedCommittee` but we are careful to write only when necessary
-                Committee storage committeeToUpdate = $._committee[i % 3];
-                bool stakerIndexChanged = false;
-
-                // Overwrite existing staker's data
-                for (
-                    uint256 j = 0;
-                    j < committeeToUpdate.stakerKeys.length;
-                    j++
-                ) {
-                    bytes memory stakerKey = committeeToUpdate.stakerKeys[j];
-                    CommitteeStakerEntry
-                        storage stakerInLatestCommittee = latestComputedCommittee
-                            .stakers[stakerKey];
-                    // If staker exists in latest then update in new
-                    if (stakerInLatestCommittee.index != 0) {
-                        CommitteeStakerEntry
-                            storage stakerInCommitteeToUpdate = committeeToUpdate
-                                .stakers[stakerKey];
-                        if (
-                            stakerInLatestCommittee.index !=
-                            stakerInCommitteeToUpdate.index
-                        ) {
-                            stakerIndexChanged = true;
-                            stakerInCommitteeToUpdate
-                                .index = stakerInLatestCommittee.index;
-                        }
-                        if (
-                            stakerInLatestCommittee.balance !=
-                            stakerInCommitteeToUpdate.balance
-                        ) {
-                            stakerInCommitteeToUpdate
-                                .balance = stakerInLatestCommittee.balance;
-                        }
-                        // Otherwise remove them
-                    } else {
-                        delete committeeToUpdate.stakers[stakerKey];
-                        stakerIndexChanged = true;
-                    }
-                }
-
-                // Now add any new stakers
-                for (
-                    uint256 j = 0;
-                    j < latestComputedCommittee.stakerKeys.length;
-                    j++
-                ) {
-                    bytes storage stakerKey = latestComputedCommittee
-                        .stakerKeys[j];
-                    if (committeeToUpdate.stakers[stakerKey].index == 0) {
-                        committeeToUpdate.stakers[
-                            stakerKey
-                        ] = latestComputedCommittee.stakers[stakerKey];
-                        stakerIndexChanged = true;
-                    }
-                }
-
-                if (
-                    latestComputedCommittee.totalStake !=
-                    committeeToUpdate.totalStake
-                ) {
-                    committeeToUpdate.totalStake = latestComputedCommittee
-                        .totalStake;
-                }
-                if (stakerIndexChanged) {
-                    committeeToUpdate.stakerKeys = latestComputedCommittee
-                        .stakerKeys;
-                }
-            }
-
-            $.latestComputedEpoch = currentEpoch() + 2;
-        }
-    }
-
     // Returns the next block number at which new stakers are added,
     // existing ones removed and/or deposits of existing stakers change
     function nextUpdate() public view returns (uint256 blockNumber) {
@@ -557,31 +584,29 @@ contract Deposit is UUPSUpgradeable {
             revert StakeAmountTooLow();
         }
 
+        if (getStakersBalance(blsPubKey, true) != 0) {
+            revert KeyAlreadyStaked();
+        }
+
         Staker storage staker = $._stakersMap[blsPubKey];
         staker.peerId = peerId;
         staker.rewardAddress = rewardAddress;
         staker.signingAddress = signingAddress;
         staker.controlAddress = msg.sender;
+        staker.balance.pending.push(
+            BalanceUpdate({
+                amount: int256(msg.value),
+                epoch: currentEpoch() + 2
+            })
+        );
 
-        updateLatestComputedEpoch();
-
-        Committee storage futureCommittee = $._committee[
-            (currentEpoch() + 2) % 3
-        ];
-
+        Committee memory futureCommittee = committee(true);
         if (futureCommittee.stakerKeys.length >= $.maximumStakers) {
             revert TooManyStakers();
         }
-        if (futureCommittee.stakers[blsPubKey].index != 0) {
-            revert KeyAlreadyStaked();
-        }
 
-        futureCommittee.totalStake += msg.value;
-        futureCommittee.stakers[blsPubKey].balance = msg.value;
-        futureCommittee.stakers[blsPubKey].index =
-            futureCommittee.stakerKeys.length +
-            1;
-        futureCommittee.stakerKeys.push(blsPubKey);
+        $.latestComputedEpoch = currentEpoch() + 2;
+        $._stakersKeys.push(blsPubKey);
 
         emit StakerAdded(blsPubKey, nextUpdate(), msg.value);
     }
@@ -590,24 +615,23 @@ contract Deposit is UUPSUpgradeable {
         bytes calldata blsPubKey
     ) public payable onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
+        foldStakersBalance(blsPubKey);
 
-        updateLatestComputedEpoch();
-
-        Committee storage futureCommittee = $._committee[
-            (currentEpoch() + 2) % 3
-        ];
-        if (futureCommittee.stakers[blsPubKey].index == 0) {
+        uint256 currentBalance = getStakersBalance(blsPubKey, true);
+        if (currentBalance == 0) {
             revert KeyNotStaked();
         }
 
-        futureCommittee.totalStake += msg.value;
-        futureCommittee.stakers[blsPubKey].balance += msg.value;
-
-        emit StakeChanged(
-            blsPubKey,
-            nextUpdate(),
-            futureCommittee.stakers[blsPubKey].balance
+        Staker storage staker = $._stakersMap[blsPubKey];
+        staker.balance.pending.push(
+            BalanceUpdate({
+                amount: int256(msg.value),
+                epoch: currentEpoch() + 2
+            })
         );
+        $.latestComputedEpoch = currentEpoch() + 2;
+
+        emit StakeChanged(blsPubKey, nextUpdate(), currentBalance + msg.value);
     }
 
     function unstake(
@@ -615,47 +639,53 @@ contract Deposit is UUPSUpgradeable {
         uint256 amount
     ) public onlyControlAddress(blsPubKey) {
         DepositStorage storage $ = _getDepositStorage();
+        foldStakersBalance(blsPubKey);
 
-        updateLatestComputedEpoch();
+        Staker storage staker = $._stakersMap[blsPubKey];
+        uint256 currentBalance = getStakersBalance(blsPubKey, true);
 
-        Committee storage futureCommittee = $._committee[
-            (currentEpoch() + 2) % 3
-        ];
-        if (futureCommittee.stakers[blsPubKey].index == 0) {
+        if (currentBalance == 0) {
             revert KeyNotStaked();
         }
 
-        uint256 currentBalance = futureCommittee.stakers[blsPubKey].balance;
         require(
             currentBalance >= amount,
             "amount is greater than staked balance"
         );
 
+        staker.balance.pending.push(
+            BalanceUpdate({amount: -int256(amount), epoch: currentEpoch() + 2})
+        );
+        $.latestComputedEpoch = currentEpoch() + 2;
+
+        Committee memory futureCommittee = committee(true);
+
         if (currentBalance - amount == 0) {
             require(futureCommittee.stakerKeys.length > 1, "too few stakers");
 
-            // Remove the staker from the future committee, because their staked amount has gone to zero.
-            futureCommittee.totalStake -= amount;
+            // // Remove the staker from the future committee, because their staked amount has gone to zero.
+            // futureCommittee.totalStake -= amount;
 
-            uint256 deleteIndex = futureCommittee.stakers[blsPubKey].index - 1;
-            uint256 lastIndex = futureCommittee.stakerKeys.length - 1;
+            // uint256 deleteIndex = futureCommittee.stakers[blsPubKey].index - 1;
+            // uint256 lastIndex = futureCommittee.stakerKeys.length - 1;
 
-            if (deleteIndex != lastIndex) {
-                // Move the last staker in `stakerKeys` to the position of the staker we want to delete.
-                bytes storage lastStakerKey = futureCommittee.stakerKeys[
-                    lastIndex
-                ];
-                futureCommittee.stakerKeys[deleteIndex] = lastStakerKey;
-                // We need to remember to update the moved staker's `index` too.
-                futureCommittee.stakers[lastStakerKey].index = futureCommittee
-                    .stakers[blsPubKey]
-                    .index;
-                emit StakerMoved(lastStakerKey, deleteIndex, nextUpdate());
-            }
+            // if (deleteIndex != lastIndex) {
+            //     // Move the last staker in `stakerKeys` to the position of the staker we want to delete.
+            //     bytes storage lastStakerKey = futureCommittee.stakerKeys[
+            //         lastIndex
+            //     ];
+            //     futureCommittee.stakerKeys[deleteIndex] = lastStakerKey;
+            //     // We need to remember to update the moved staker's `index` too.
+            //     futureCommittee.stakers[lastStakerKey].index = futureCommittee
+            //         .stakers[blsPubKey]
+            //         .index;
+            // TODO deal with this. Indices different now
+            //     emit StakerMoved(lastStakerKey, deleteIndex, nextUpdate());
+            // }
 
-            // It is now safe to delete the final staker in the list.
-            futureCommittee.stakerKeys.pop();
-            delete futureCommittee.stakers[blsPubKey];
+            // // It is now safe to delete the final staker in the list.
+            // futureCommittee.stakerKeys.pop();
+            // delete futureCommittee.stakers[blsPubKey];
 
             // Note that we leave the staker in `_stakersMap` forever.
 
@@ -666,15 +696,11 @@ contract Deposit is UUPSUpgradeable {
                 "unstaking this amount would take the validator below the minimum stake"
             );
 
-            // Partial unstake. The staker stays in the committee, but with a reduced stake.
-            futureCommittee.totalStake -= amount;
-            futureCommittee.stakers[blsPubKey].balance -= amount;
+            // // Partial unstake. The staker stays in the committee, but with a reduced stake.
+            // futureCommittee.totalStake -= amount;
+            // futureCommittee.stakers[blsPubKey].balance -= amount;
 
-            emit StakeChanged(
-                blsPubKey,
-                nextUpdate(),
-                futureCommittee.stakers[blsPubKey].balance
-            );
+            emit StakeChanged(blsPubKey, nextUpdate(), currentBalance - amount);
         }
 
         // Enqueue the withdrawal for this staker.
