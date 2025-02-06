@@ -162,7 +162,7 @@ pub async fn gen_validator_startup_script(
 
     if let Some(v) = otlp_collector_endpoint {
         let _ = config.spec.as_table_mut().unwrap().insert(
-            String::from("otlp_collector_endpoints"),
+            String::from("otlp_collector_endpoint"),
             toml::Value::String(v.to_string()),
         );
     }
