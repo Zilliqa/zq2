@@ -391,6 +391,8 @@ impl Consensus {
                     min_view_since_high_qc_updated
                 );
                 consensus.db.set_view(min_view_since_high_qc_updated)?;
+                // Build NewView so that we can immediately contribute to consensus moving along if it has halted
+                consensus.build_new_view()?;
             }
 
             // Remind block_store of our peers and request any potentially missing blocks
@@ -507,12 +509,16 @@ impl Consensus {
         if self.create_next_block_on_timeout {
             // Check if enough time elapsed to propose block
             if milliseconds_remaining_of_block_time == 0 {
-                if let Ok(Some((block, transactions))) = self.propose_new_block() {
-                    self.create_next_block_on_timeout = false;
-                    return Ok(Some((
-                        None,
-                        ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                    )));
+                match self.propose_new_block() {
+                    Ok(Some((block, transactions))) => {
+                        self.create_next_block_on_timeout = false;
+                        return Ok(Some((
+                            None,
+                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
+                        )));
+                    }
+                    Err(e) => error!("Failed to finalise proposal: {e}"),
+                    _ => {}
                 };
             } else {
                 self.reset_timeout
