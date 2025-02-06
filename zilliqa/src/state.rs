@@ -435,6 +435,14 @@ impl State {
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
         self.sql.get_highest_canonical_block_number()
     }
+
+    // Merge another state into this one, overriding any accounts that are already here.
+    pub fn merge_from(&mut self, other: &Self) -> Result<()> {
+        Ok(other
+            .accounts
+            .iter()
+            .try_for_each(|(key, value)| self.accounts.insert(key.as_slice(), value.as_slice()))?)
+    }
 }
 
 pub mod contract_addr {

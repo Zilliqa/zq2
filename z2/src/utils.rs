@@ -1,11 +1,38 @@
 use core::convert::AsRef;
-use std::{env, fs, os::unix::fs::PermissionsExt, path::Path};
+use std::{env, fmt, fs, os::unix::fs::PermissionsExt, path::Path};
 
 use anyhow::{Result, anyhow};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use zilliqa::{cfg::Checkpoint, crypto::Hash};
+
+pub enum CheckpointConfiguration {
+    None,
+    All(zilliqa::cfg::Checkpoint),
+    Selective(HashMap<u64, zilliqa::cfg::Checkpoint>),
+}
+
+impl fmt::Display for CheckpointConfiguration {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CheckpointConfiguration::None => write!(f, "None"),
+            CheckpointConfiguration::All(v) => write!(f, "All({:?})", &v),
+            CheckpointConfiguration::Selective(v) => write!(f, "Selective({:?})", &v),
+        }
+    }
+}
+
+impl CheckpointConfiguration {
+    pub fn for_node(&self, num: u64) -> Option<&zilliqa::cfg::Checkpoint> {
+        match self {
+            CheckpointConfiguration::None => None,
+            CheckpointConfiguration::All(v) => Some(v),
+            CheckpointConfiguration::Selective(v) => v.get(&num),
+        }
+    }
+}
 
 pub async fn file_exists(file_name: impl AsRef<Path>) -> Result<bool> {
     Ok(tokio::fs::metadata(file_name).await.is_ok())
@@ -114,6 +141,7 @@ pub fn parse_checkpoint_spec(spec: &str) -> Result<Checkpoint> {
         Ok(zilliqa::cfg::Checkpoint {
             file: components[0].to_string(),
             hash: hash_from_hex(components[1])?,
+            respect_shard_ids: false,
         })
     }
 }

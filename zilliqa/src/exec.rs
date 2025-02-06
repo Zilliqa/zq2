@@ -752,7 +752,8 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
+    // Public because consensus swizzling relies on it.
+    pub fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
         for (&address, account) in state {
             if !account.touched {
                 continue;

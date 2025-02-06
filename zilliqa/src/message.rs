@@ -722,6 +722,36 @@ impl Block {
         }
     }
 
+    /// Constructs an adjustment block, used for state adjustment
+    /// see consensus.rs for details.
+    pub fn adjustment(
+        view: u64,
+        number: u64,
+        parent_block_hash: Hash,
+        state_hash: Hash,
+        when: SystemTime,
+    ) -> Block {
+        Self::new(
+            view,
+            number,
+            QuorumCertificate::new(
+                &[BlsSignature::identity()],
+                bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
+                parent_block_hash,
+                view - 1,
+            ),
+            None,
+            state_hash,
+            Hash::ZERO,
+            Hash::ZERO,
+            vec![],
+            when,
+            EvmGas(0),
+            EvmGas(0),
+            Either::Right(BlsSignature::identity()),
+        )
+    }
+
     pub fn verify_hash(&self) -> Result<()> {
         if self.compute_hash() != self.hash() {
             return Err(anyhow!("invalid hash"));
