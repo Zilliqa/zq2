@@ -1153,7 +1153,7 @@ async fn main() -> Result<()> {
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
                     .unwrap();
             let client_config = validators::ClientConfig::new(
-                args.chain_name.get_api_endpoint()?,
+                &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
             )?;
             validators::deposit_top_up(&client_config, &bls_public_key, args.amount).await
@@ -1163,7 +1163,7 @@ async fn main() -> Result<()> {
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
                     .unwrap();
             let client_config = validators::ClientConfig::new(
-                args.chain_name.get_api_endpoint()?,
+                &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
             )?;
             validators::unstake(&client_config, &bls_public_key, args.amount).await
@@ -1173,7 +1173,7 @@ async fn main() -> Result<()> {
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
                     .unwrap();
             let client_config = validators::ClientConfig::new(
-                args.chain_name.get_api_endpoint()?,
+                &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
             )?;
             validators::withdraw(&client_config, &bls_public_key, args.count).await
