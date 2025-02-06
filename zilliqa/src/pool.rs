@@ -311,12 +311,11 @@ impl TransactionPool {
             if self.transactions.len() + 1 > self.config.maximum_global_size as usize {
                 return ValidationFailed(ValidationOutcome::GlobalTransactionCountExceeded);
             }
-            // Check future nonce
-            if txn.tx.nonce().is_some_and(|n| n > account_nonce + self.config.max_future_nonce) {
-                return ValidationFailed(ValidationOutcome::NonceTooHigh(txn.tx.nonce().unwrap(), account_nonce + self.config.max_future_nonce));
-            }
             // Check total number of slots for senders
-            if !self.sender_txn_counter.contains_key(&txn.signer) && self.sender_txn_counter.len() + 1 > self.config.total_slots_for_all_senders as usize {
+            if !self.sender_txn_counter.contains_key(&txn.signer)
+                && self.sender_txn_counter.len() + 1
+                    > self.config.total_slots_for_all_senders as usize
+            {
                 return ValidationFailed(ValidationOutcome::TotalNumberOfSlotsExceeded);
             }
             // Check per sender counter
@@ -426,7 +425,6 @@ impl TransactionPool {
         self.transactions.remove(&tx_index);
         self.hash_to_index.remove(&txn.hash);
         Self::remove_from_gas_index(&mut self.gas_index, txn);
-
 
         self.decrease_counter_for_user(txn.signer);
         if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
@@ -547,7 +545,6 @@ mod tests {
             maximum_txn_count_per_sender: 5,
             maximum_global_size: 10,
             total_slots_for_all_senders: 5,
-            max_future_nonce: 7,
         };
         TransactionPool::new(config)
     }
@@ -881,10 +878,10 @@ mod tests {
 
         for address in addresses.iter() {
             create_acc(&mut state, *address, 100, 0)?;
-                assert_eq!(
-                    TxAddResult::AddedToMempool,
-                    pool.insert_transaction(transaction(*address, 0, 1), 0)
-                );
+            assert_eq!(
+                TxAddResult::AddedToMempool,
+                pool.insert_transaction(transaction(*address, 0, 1), 0)
+            );
         }
 
         // Can't add the following one due to total number of slots per all senders being exceeded
@@ -901,22 +898,6 @@ mod tests {
         assert_eq!(
             TxAddResult::AddedToMempool,
             pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn max_future_nonce() -> Result<()> {
-        let mut pool = get_pool();
-        let from = "0x0000000000000000000000000000000000001234".parse()?;
-
-        let mut state = get_in_memory_state()?;
-        create_acc(&mut state, from, 100, 0)?;
-
-        assert_eq!(
-            TxAddResult::ValidationFailed(ValidationOutcome::NonceTooHigh(8, 7)),
-            pool.insert_transaction(transaction(from, 8, 1), 0)
         );
 
         Ok(())

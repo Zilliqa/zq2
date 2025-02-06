@@ -75,8 +75,6 @@ pub enum ValidationOutcome {
     TransactionCountExceededForSender,
     /// Total nunber of sender slots exceeded
     TotalNumberOfSlotsExceeded,
-    /// Nonce to high - arg is txn nonce and max future nonce - (nonce, max nonce)
-    NonceTooHigh(u64, u64)
 }
 
 impl ValidationOutcome {
@@ -135,9 +133,6 @@ impl ValidationOutcome {
             }
             Self::TotalNumberOfSlotsExceeded => {
                 "Total number of slots for all senders has been exceeded".to_string()
-            }
-            Self::NonceTooHigh(txn_nonce, maximum) => {
-                format!("Txn nonce ({txn_nonce}) is too high for account ({maximum})")
             }
         }
     }

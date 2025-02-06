@@ -21,4 +21,5 @@ consensus.contract_upgrade_block_heights = { deposit_v3 = 3600, deposit_v4 = 428
 api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
 
 txn_pool.maximum_global_size = 100000
-txn_pool.maximum_txn_count_per_sender = 500
+txn_pool.maximum_txn_count_per_sender = 200
+txn_pool.total_slots_for_all_senders = 50000

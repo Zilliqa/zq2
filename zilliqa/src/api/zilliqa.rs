@@ -337,7 +337,6 @@ fn create_transaction(
                 ValidationOutcome::InsufficientGasZil(_, _)
                 | ValidationOutcome::InsufficientGasEvm(_, _)
                 | ValidationOutcome::NonceTooLow(_, _)
-                | ValidationOutcome::NonceTooHigh(_, _)
                 | ValidationOutcome::InsufficientFunds(_, _)
                 | ValidationOutcome::BlockGasLimitExceeded(_, _)
                 | ValidationOutcome::TotalNumberOfSlotsExceeded

@@ -26,4 +26,5 @@ consensus.forks = [
 ]
 
 txn_pool.maximum_global_size = 100000
-txn_pool.maximum_txn_count_per_sender = 500
+txn_pool.maximum_txn_count_per_sender = 200
+txn_pool.total_slots_for_all_senders = 50000

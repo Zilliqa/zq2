@@ -30,11 +30,11 @@ use zilliqa::{
         eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
         max_blocks_in_flight_default, scilla_address_default, scilla_ext_libs_path_default,
         scilla_stdlib_dir_default, state_rpc_limit_default, total_native_token_supply_default,
-        Amount, ConsensusConfig, ContractUpgradesBlockHeights, GenesisDeposit,
+        Amount, ConsensusConfig, ContractUpgradesBlockHeights, GenesisDeposit, TxnPoolConfig,
     },
     transaction::EvmGas,
 };
-use zilliqa::cfg::TxnPoolConfig;
+
 use crate::{
     chain,
     collector::{self, Collector},
