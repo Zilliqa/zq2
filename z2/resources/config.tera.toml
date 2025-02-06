@@ -4,8 +4,6 @@ p2p_port = 3333
 bootstrap_address = [ "{{ bootstrap_peer_id }}", "/dns/{{ bootstrap_endpoint }}/tcp/3333" ]
 {%- endif %}
 
-otlp_collector_endpoint = "http://localhost:4317"
-
 [[nodes]]
 eth_chain_id = {{ eth_chain_id }}
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
@@ -47,6 +45,14 @@ file = "{{ checkpoint_file }}"
 hash = "{{ checkpoint_hash }}"
 {%- endif %}
 
+{%- if genesis_fork %}
+consensus.genesis_fork = {{ genesis_fork }}
+{%- endif %}
+
 {%- if forks %}
-consensus.forks = {{ forks }}
+consensus.forks = [
+    {%- for fork in forks %}
+    {{ fork }},
+    {%- endfor %}
+]
 {%- endif %}

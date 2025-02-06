@@ -210,9 +210,13 @@ pub async fn run_deployer_upgrade(
     Ok(())
 }
 
-pub async fn run_deployer_get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
+pub async fn run_deployer_get_config_file(
+    config_file: &str,
+    role: NodeRole,
+    out: Option<&str>,
+) -> Result<()> {
     println!("🦆 Getting nodes config file for {config_file} .. ");
-    deployer::get_config_file(config_file, role).await?;
+    deployer::get_config_file(config_file, role, out).await?;
     Ok(())
 }
 

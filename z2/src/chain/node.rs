@@ -868,6 +868,12 @@ impl ChainNode {
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
         ctx.insert("api_servers", &toml_servers.to_string());
         ctx.insert("enable_ots_indices", &enable_ots_indices);
+        if let Some(genesis_fork) = self.chain()?.genesis_fork() {
+            ctx.insert(
+                "genesis_fork",
+                &serde_json::from_value::<toml::Value>(genesis_fork)?.to_string(),
+            );
+        }
         if let Some(forks) = self.chain()?.get_forks() {
             ctx.insert(
                 "forks",
