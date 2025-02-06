@@ -393,15 +393,7 @@ fn get_contract_address_from_transaction_id(
 
     let contract_address = match signed_transaction.tx {
         SignedTransaction::Zilliqa { tx, .. } => {
-            let mut hasher = Sha256::new();
-            hasher.update(signed_transaction.signer.as_slice());
-            if tx.nonce > 0 {
-                hasher.update((tx.nonce - 1).to_be_bytes());
-            } else {
-                return Err(anyhow!("Nonce must be greater than 0"));
-            }
-            let hashed = hasher.finalize();
-            Address::from_slice(&hashed[12..])
+            tx.get_contract_address(signed_transaction.signer)?
         }
         _ => contract_address,
     };

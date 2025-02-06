@@ -24,7 +24,6 @@ use jsonrpsee::{
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use tracing::*;
 
 use super::{
@@ -756,26 +755,18 @@ pub(super) fn get_transaction_receipt_inner(
         })
         .collect();
 
-    let is_zilliqa_txn = matches!(signed_transaction.tx, SignedTransaction::Zilliqa { .. });
+    let contract_address = match signed_transaction.tx {
+        SignedTransaction::Zilliqa { ref tx, .. } => {
+            Some(tx.get_contract_address(signed_transaction.signer)?)
+        }
+        _ => receipt.contract_address,
+    };
 
     let from = signed_transaction.signer;
     let v = signed_transaction.tx.sig_v();
     let r = signed_transaction.tx.sig_r();
     let s = signed_transaction.tx.sig_s();
     let transaction = signed_transaction.tx.into_transaction();
-
-    // Temporary on-the-fly fix for returning proper contract address for deployments from zil transactions
-    let contract_address = {
-        if is_zilliqa_txn && transaction.to_addr().is_none() {
-            let mut hasher = Sha256::new();
-            hasher.update(signed_transaction.signer.as_slice());
-            hasher.update(transaction.nonce().unwrap().to_be_bytes());
-            let hashed = hasher.finalize();
-            Some(Address::from_slice(&hashed[12..]))
-        } else {
-            receipt.contract_address
-        }
-    };
 
     let receipt = eth::TransactionReceipt {
         transaction_hash: hash.into(),
@@ -787,7 +778,7 @@ pub(super) fn get_transaction_receipt_inner(
         cumulative_gas_used: receipt.cumulative_gas_used,
         effective_gas_price: transaction.max_fee_per_gas(),
         gas_used: receipt.gas_used,
-        contract_address,
+        contract_address: transaction.to_addr().and(contract_address), // Only set contract address if `to` is not empty
         logs,
         logs_bloom,
         ty: 0,
