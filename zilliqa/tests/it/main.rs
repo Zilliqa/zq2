@@ -12,6 +12,7 @@ mod eth;
 mod ots;
 mod persistence;
 mod staking;
+mod trace;
 mod unreliable;
 mod web3;
 mod zil;
@@ -67,16 +68,18 @@ use zilliqa::{
     cfg::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        max_blocks_in_flight_default, max_rpc_response_size_default, scilla_address_default,
-        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_cache_size_default,
-        state_rpc_limit_default, total_native_token_supply_default, Amount, ApiServer, Checkpoint,
-        ConsensusConfig, ContractUpgradesBlockHeights, Forks, GenesisDeposit, NodeConfig,
+        genesis_fork_default, max_blocks_in_flight_default, max_rpc_response_size_default,
+        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
+        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
+        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights,
+        GenesisDeposit, NodeConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
     message::{ExternalMessage, InternalMessage},
     node::{Node, RequestId},
     node_launcher::ResponseChannel,
+    sync::SyncPeers,
     transaction::EvmGas,
 };
 
@@ -165,6 +168,9 @@ fn node(
     let (reset_timeout_sender, reset_timeout_receiver) = mpsc::unbounded_channel();
     std::mem::forget(reset_timeout_receiver);
 
+    let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
+    let peers = Arc::new(SyncPeers::new(peer_id));
+
     let node = Node::new(
         NodeConfig {
             data_dir: datadir
@@ -178,6 +184,7 @@ fn node(
         request_responses_sender,
         reset_timeout_sender,
         Arc::new(AtomicUsize::new(0)),
+        peers.clone(),
     )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> =
@@ -186,12 +193,13 @@ fn node(
     Ok((
         TestNode {
             index,
-            peer_id: secret_key.to_libp2p_keypair().public().to_peer_id(),
+            peer_id,
             secret_key,
             onchain_key,
             inner: node,
             dir: datadir,
             rpc_module,
+            peers,
         },
         message_receiver,
         local_message_receiver,
@@ -208,6 +216,7 @@ struct TestNode {
     rpc_module: RpcModule<Arc<Mutex<Node>>>,
     inner: Arc<Mutex<Node>>,
     dir: Option<TempDir>,
+    peers: Arc<SyncPeers>,
 }
 
 struct Network {
@@ -322,6 +331,7 @@ impl Network {
 
         let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
             deposit_v3: deposit_v3_upgrade_block_height,
+            deposit_v4: None,
         };
 
         let config = NodeConfig {
@@ -351,7 +361,8 @@ impl Network {
                     Address::new(get_contract_address(secret_key_to_address(&genesis_key).0, 2).0),
                 ],
                 contract_upgrade_block_heights,
-                forks: Forks::default(),
+                forks: vec![],
+                genesis_fork: genesis_fork_default(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -401,6 +412,9 @@ impl Network {
         let receive_resend_message = UnboundedReceiverStream::new(receive_resend_message).boxed();
         receivers.push(receive_resend_message);
 
+        let mut peers = nodes.iter().map(|n| n.peer_id).collect_vec();
+        peers.shuffle(rng.lock().unwrap().deref_mut());
+
         for node in &nodes {
             trace!(
                 "Node {}: {} (dir: {})",
@@ -408,6 +422,7 @@ impl Network {
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
+            node.peers.add_peers(peers.clone());
         }
 
         Network {
@@ -454,6 +469,7 @@ impl Network {
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
         let contract_upgrade_block_heights = ContractUpgradesBlockHeights {
             deposit_v3: self.deposit_v3_upgrade_block_height,
+            deposit_v4: None,
         };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
@@ -489,7 +505,8 @@ impl Network {
                     get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
                 )],
                 contract_upgrade_block_heights,
-                forks: Forks::default(),
+                forks: vec![],
+                genesis_fork: genesis_fork_default(),
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -504,6 +521,10 @@ impl Network {
         let onchain_key = options.onchain_key_or_random(self.rng.clone());
         let (node, receiver, local_receiver, request_responses) =
             node(config, secret_key, onchain_key, self.nodes.len(), None).unwrap();
+
+        let mut peers = self.nodes.iter().map(|n| n.peer_id).collect_vec();
+        peers.shuffle(self.rng.lock().unwrap().deref_mut());
+        node.peers.add_peers(peers.clone());
 
         trace!("Node {}: {}", node.index, node.peer_id);
 
@@ -567,6 +588,9 @@ impl Network {
             .chain(request_response_receivers)
             .collect();
 
+        let mut peers = nodes.iter().map(|n| n.peer_id).collect_vec();
+        peers.shuffle(self.rng.lock().unwrap().deref_mut());
+
         for node in &nodes {
             trace!(
                 "Node {}: {} (dir: {})",
@@ -574,6 +598,7 @@ impl Network {
                 node.peer_id,
                 node.dir.as_ref().unwrap().path().to_string_lossy(),
             );
+            node.peers.add_peers(peers.clone());
         }
 
         let (resend_message, receive_resend_message) = mpsc::unbounded_channel::<StreamMessage>();
@@ -817,23 +842,28 @@ impl Network {
                     true
                 }
             }
+            AnyMessage::External(ExternalMessage::InjectedProposal(_)) => {
+                self.handle_message(m.clone());
+                false
+            }
             _ => true,
         });
 
         // Pick a random message
-        let index = self.rng.lock().unwrap().gen_range(0..messages.len());
-        let (source, destination, message) = messages.swap_remove(index);
-        // Requeue the other messages
-        for message in messages {
-            self.resend_message.send(message).unwrap();
+        if !messages.is_empty() {
+            let index = self.rng.lock().unwrap().gen_range(0..messages.len());
+            let (source, destination, message) = messages.swap_remove(index);
+            // Requeue the other messages
+            for message in messages {
+                self.resend_message.send(message).unwrap();
+            }
+            trace!(
+                "{}",
+                format_message(&self.nodes, source, destination, &message)
+            );
+
+            self.handle_message((source, destination, message))
         }
-
-        trace!(
-            "{}",
-            format_message(&self.nodes, source, destination, &message)
-        );
-
-        self.handle_message((source, destination, message))
     }
 
     fn handle_message(&mut self, message: StreamMessage) {
@@ -1030,6 +1060,26 @@ impl Network {
         }
     }
 
+    async fn run_until_synced(&mut self, index: usize) {
+        let check = loop {
+            let i = self.random_index();
+            if i != index {
+                break i;
+            }
+        };
+        self.run_until(
+            |net| {
+                let syncing = net.get_node(index).consensus.sync.am_syncing().unwrap();
+                let height_i = net.get_node(index).get_finalized_height().unwrap();
+                let height_c = net.get_node(check).get_finalized_height().unwrap();
+                height_c == height_i && height_i > 0 && !syncing
+            },
+            2000,
+        )
+        .await
+        .unwrap();
+    }
+
     async fn run_until(
         &mut self,
         mut condition: impl FnMut(&mut Network) -> bool,
@@ -1098,6 +1148,31 @@ impl Network {
         )
         .await
         .unwrap();
+    }
+
+    pub async fn run_until_block_finalized(
+        &mut self,
+        target_block: u64,
+        mut timeout: usize,
+    ) -> Result<()> {
+        let initial_timeout = timeout;
+        let db = self.get_node(0).db.clone();
+        loop {
+            if let Some(view) = db.get_finalized_view()? {
+                if let Some(block) = db.get_block_by_view(view)? {
+                    if block.number() >= target_block {
+                        return Ok(());
+                    }
+                }
+            }
+            if timeout == 0 {
+                return Err(anyhow!(
+                    "condition was still false after {initial_timeout} ticks"
+                ));
+            }
+            self.tick().await;
+            timeout -= 1;
+        }
     }
 
     pub fn disconnect_node(&mut self, index: usize) {

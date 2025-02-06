@@ -45,6 +45,14 @@ file = "{{ checkpoint_file }}"
 hash = "{{ checkpoint_hash }}"
 {%- endif %}
 
+{%- if genesis_fork %}
+consensus.genesis_fork = {{ genesis_fork }}
+{%- endif %}
+
 {%- if forks %}
-consensus.forks = {{ forks }}
+consensus.forks = [
+    {%- for fork in forks %}
+    {{ fork }},
+    {%- endfor %}
+]
 {%- endif %}

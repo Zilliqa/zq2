@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zilliqa::{
+    api::types::zil::GetTxResponse,
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
@@ -200,13 +201,13 @@ async fn send_transaction(
     network
         .run_until_async(
             || async {
-                wallet
-                    .get_transaction_receipt(txn_hash)
-                    .await
-                    .unwrap()
-                    .is_some()
+                let response: Result<GetTxResponse, _> = wallet
+                    .provider()
+                    .request("GetTransaction", [txn_hash])
+                    .await;
+                response.is_ok()
             },
-            50,
+            100,
         )
         .await
         .unwrap();
@@ -295,13 +296,13 @@ async fn send_transaction_for_status(
     network
         .run_until_async(
             || async {
-                wallet
-                    .get_transaction_receipt(txn_hash)
-                    .await
-                    .unwrap()
-                    .is_some()
+                let response: Result<GetTxResponse, _> = wallet
+                    .provider()
+                    .request("GetTransaction", [txn_hash])
+                    .await;
+                response.is_ok()
             },
-            50,
+            100,
         )
         .await
         .unwrap();
@@ -339,6 +340,12 @@ pub fn scilla_test_contract_code() -> String {
 
         field welcome_msg : String = "default"
         field welcome_map : Map Uint32 (Map Uint32 String) = Emp Uint32 (Map Uint32 String)
+
+        transition removeHello()
+          delete welcome_map[one];
+          e = {_eventname : "removeHello"};
+          event e
+        end
 
         transition setHello (msg : String)
         is_owner = builtin eq owner _sender;
@@ -770,7 +777,7 @@ async fn get_transaction(mut network: Network) {
         .expect("Failed to get ID from response");
 
     // Wait for the transaction to be mined
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
 
     // Use the GetTransaction API to retrieve the transaction details
     let response: Value = wallet
@@ -1398,7 +1405,7 @@ async fn get_tx_block(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Ensure there is at least one block in the chain
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
 
     // Request the first block
     let block_number = "1";
@@ -1490,7 +1497,7 @@ async fn get_tx_block_verbose(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Ensure there is at least one block in the chain
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
 
     // Request the first block
     let block_number = "1";
@@ -1803,6 +1810,8 @@ async fn get_tx_block_rate_1(mut network: Network) {
     )
     .await;
 
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
+
     let response: Value = wallet
         .provider()
         .request("GetTxBlockRate", [""])
@@ -1818,7 +1827,7 @@ async fn get_tx_block_rate_1(mut network: Network) {
 async fn tx_block_listing(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 100).await.unwrap();
 
     let response: Value = wallet
         .provider()
@@ -1829,7 +1838,6 @@ async fn tx_block_listing(mut network: Network) {
     let tx_block_listing: zilliqa::api::types::zil::TxBlockListingResult =
         serde_json::from_value(response).expect("Failed to deserialize response");
 
-    assert_eq!(wallet.get_block_number().await.unwrap(), 2.into());
     assert_eq!(
         tx_block_listing.data.len(),
         2,
@@ -1878,6 +1886,8 @@ async fn get_num_peers(mut network: Network) {
 async fn get_tx_rate_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
+
     let response: Value = wallet
         .provider()
         .request("GetTransactionRate", [""])
@@ -1888,7 +1898,7 @@ async fn get_tx_rate_0(mut network: Network) {
 
     assert!(tx_rate >= 0.0, "Transaction rate should be non-negative");
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let response: Value = wallet
         .provider()
@@ -1907,6 +1917,8 @@ async fn get_tx_rate_1(mut network: Network) {
 
     let (secret_key, _address) = zilliqa_account(&mut network).await;
 
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
+
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
@@ -1922,6 +1934,8 @@ async fn get_tx_rate_1(mut network: Network) {
     )
     .await;
 
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
+
     let response: Value = wallet
         .provider()
         .request("GetTransactionRate", [""])
@@ -1931,24 +1945,12 @@ async fn get_tx_rate_1(mut network: Network) {
     let tx_rate: f64 = serde_json::from_value(response).expect("Failed to deserialize response");
 
     assert!(tx_rate > 0.0, "Transaction block rate should be positive");
-
-    network.run_until_block(&wallet, 2.into(), 50).await;
-
-    let response: Value = wallet
-        .provider()
-        .request("GetTransactionRate", [""])
-        .await
-        .expect("Failed to call GetTxRate API");
-
-    let tx_rate: f64 = serde_json::from_value(response).expect("Failed to deserialize response");
-
-    assert!(tx_rate > 0.0, "Transaction rate should be non-negative");
 }
 
 #[zilliqa_macros::test]
 async fn get_txns_for_tx_block_ex_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
 
     let block_number = "1";
     let page_number = "1";
@@ -2040,7 +2042,7 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let block_number = "1";
     let page_number = "0";
@@ -2086,7 +2088,7 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let block_number = "1";
 
@@ -2141,7 +2143,7 @@ async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let block_number = "1";
 
@@ -2181,7 +2183,7 @@ async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let block_number = "1";
 
@@ -2225,7 +2227,7 @@ async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let block_number = "1";
     let page_number = "2";
@@ -2271,7 +2273,7 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let block_number = "1";
     let page_number = "0";
@@ -2374,7 +2376,7 @@ async fn get_recent_transactions_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
 
     let (secret_key, _address) = zilliqa_account(&mut network).await;
 
@@ -2393,7 +2395,7 @@ async fn get_recent_transactions_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let response: Value = wallet
         .provider()
@@ -2456,7 +2458,7 @@ async fn get_recent_transactions_1(mut network: Network) {
 //     )
 //     .await;
 
-//     network.run_until_block(&wallet, 1.into(), 50).await;
+//     network.run_until_block_finalized(1u64, 50).await.unwrap();
 
 //     let (secret_key, _address) = zilliqa_account(&mut network).await;
 
@@ -2475,7 +2477,7 @@ async fn get_recent_transactions_1(mut network: Network) {
 //     )
 //     .await;
 
-//     network.run_until_block(&wallet, 2.into(), 50).await;
+//     network.run_until_block_finalized(2u64, 50).await.unwrap();
 
 //     let response: Value = wallet
 //         .provider()
@@ -2536,7 +2538,7 @@ async fn get_num_txns_ds_epoch_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
 
     let (secret_key, _address) = zilliqa_account(&mut network).await;
 
@@ -2555,7 +2557,7 @@ async fn get_num_txns_ds_epoch_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let response: Value = wallet
         .provider()
@@ -2616,7 +2618,7 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
 
     let (secret_key, _address) = zilliqa_account(&mut network).await;
 
@@ -2635,7 +2637,7 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block(&wallet, 2.into(), 50).await;
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let response: Value = wallet
         .provider()
@@ -2911,6 +2913,8 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         assert_eq!(event["params"][0]["value"], "foobar");
     }
 
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
+
     let state: serde_json::Value = network
         .random_wallet()
         .await
@@ -2959,6 +2963,109 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     assert!(substate2.get("welcome_msg").is_none());
 }
 
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn nested_maps_insert_removal(mut network: Network) {
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+
+    // Set nested map to some value
+    {
+        let call = r#"{
+        "_tag": "setHello",
+        "params": [
+            {
+                "vname": "msg",
+                "value": "foobar",
+                "type": "String"
+            }
+        ]
+    }"#;
+
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            2,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+        .await;
+        let event = &txn["receipt"]["event_logs"][0];
+        assert_eq!(event["_eventname"], "setHello");
+    }
+
+    // Confirm the value exists in the nested map
+    {
+        let call = r#"{
+        "_tag": "getHello",
+        "params": []
+    }"#;
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            3,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+        .await;
+        for event in txn["receipt"]["event_logs"].as_array().unwrap() {
+            assert_eq!(event["_eventname"], "getHello");
+            assert_eq!(event["params"][0]["value"], "foobar");
+        }
+    }
+
+    // Remove entry from map
+    {
+        let call = r#"{
+        "_tag": "removeHello",
+        "params": []
+    }"#;
+
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            4,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+        .await;
+        let event = &txn["receipt"]["event_logs"][0];
+        assert_eq!(event["_eventname"], "removeHello");
+    }
+
+    // Check and confirm the entry does not exist anymore
+    {
+        let call = r#"{
+        "_tag": "getHello",
+        "params": []
+    }"#;
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            5,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+        .await;
+        let event = &txn["receipt"]["event_logs"][0];
+        assert_eq!(event["params"][0]["value"], "failed");
+    }
+}
+
 #[zilliqa_macros::test]
 async fn get_state_proof(mut network: Network) {
     let wallet = network.genesis_wallet().await;
@@ -3002,7 +3109,7 @@ async fn get_transaction_status(mut network: Network) {
         .as_str()
         .expect("Failed to get ID from response");
 
-    network.run_until_block(&wallet, 1.into(), 50).await;
+    network.run_until_block_finalized(1u64, 50).await.unwrap();
 
     let (secret_key, _address) = zilliqa_account(&mut network).await;
 
@@ -3025,7 +3132,7 @@ async fn get_transaction_status(mut network: Network) {
         .as_str()
         .expect("Failed to get ID from response");
 
-    //    network.run_until_block(&wallet, 2.into(), 50).await;
+    //    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let response_1: Value = wallet
         .provider()

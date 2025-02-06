@@ -39,6 +39,10 @@ pub enum Components {
     Otterscan,
     #[serde(rename = "spout")]
     Spout,
+    #[serde(rename = "stats_dashboard")]
+    StatsDashboard,
+    #[serde(rename = "stats_agent")]
+    StatsAgent,
 }
 
 impl FromStr for Components {
@@ -49,6 +53,8 @@ impl FromStr for Components {
             "zq2" => Ok(Components::ZQ2),
             "otterscan" => Ok(Components::Otterscan),
             "spout" => Ok(Components::Spout),
+            "stats_dashboard" => Ok(Components::StatsDashboard),
+            "stats_agent" => Ok(Components::StatsAgent),
             _ => Err(anyhow!("Component not supported")),
         }
     }
@@ -76,6 +82,14 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
         }
         Components::Spout => Ok(format!(
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
+            version
+        )),
+        Components::StatsDashboard => Ok(format!(
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-server:{}",
+            version
+        )),
+        Components::StatsAgent => Ok(format!(
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:{}",
             version
         )),
         Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
@@ -820,7 +834,7 @@ impl ChainNode {
             json!({"port": 4201, "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
         };
         // 4202 is not exposed, so enable everything for local debugging.
-        let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
+        let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
 
         // Enable Otterscan indices on API nodes.
@@ -854,6 +868,12 @@ impl ChainNode {
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
         ctx.insert("api_servers", &toml_servers.to_string());
         ctx.insert("enable_ots_indices", &enable_ots_indices);
+        if let Some(genesis_fork) = self.chain()?.genesis_fork() {
+            ctx.insert(
+                "genesis_fork",
+                &serde_json::from_value::<toml::Value>(genesis_fork)?.to_string(),
+            );
+        }
         if let Some(forks) = self.chain()?.get_forks() {
             ctx.insert(
                 "forks",
@@ -939,6 +959,12 @@ impl ChainNode {
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
+        let stats_dashboard_image = &docker_image(
+            "stats_dashboard",
+            &self.chain.get_version("stats_dashboard"),
+        )?;
+        let stats_agent_image =
+            &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
 
         let private_key = if *role_name == NodeRole::Apps.to_string() {
             ""
@@ -952,6 +978,8 @@ impl ChainNode {
             ""
         };
 
+        let stats_dashboard_key = &self.chain.stats_dashboard_key().await?;
+
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
         let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
 
@@ -960,6 +988,9 @@ impl ChainNode {
         var_map.insert("docker_image", z2_image);
         var_map.insert("otterscan_image", otterscan_image);
         var_map.insert("spout_image", spout_image);
+        var_map.insert("stats_dashboard_image", stats_dashboard_image);
+        var_map.insert("stats_dashboard_key", stats_dashboard_key);
+        var_map.insert("stats_agent_image", stats_agent_image);
         var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);

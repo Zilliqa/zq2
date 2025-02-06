@@ -10,6 +10,8 @@ roles:
 - query
 - graph
 versions:
-  zq2: 9c2e6fa9
+  zq2: v0.6.0
   otterscan: develop
   spout: main
+  stats_dashboard: v0.0.4
+  stats_agent: v0.0.2

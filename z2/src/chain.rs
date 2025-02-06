@@ -111,6 +111,7 @@ impl Chain {
             "zq2-richard" => Ok(include_str!("../resources/chain-specs/zq2-richard.toml")),
             "zq2-uccbtest" => Ok(include_str!("../resources/chain-specs/zq2-uccbtest.toml")),
             "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
+            "zq2-infratest" => Ok(include_str!("../resources/chain-specs/zq2-infratest.toml")),
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
             "zq2-prototestnet" => Ok(include_str!(
                 "../resources/chain-specs/zq2-prototestnet.toml"
@@ -167,31 +168,52 @@ impl Chain {
         match self {
             Self::Zq2Devnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(3600),
+                // estimated: 2025-01-28T20:25:00Z
+                deposit_v4: Some(428400),
             },
             Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
                 deposit_v3: Some(5342400),
+                // estimated: 2025-02-12T13:25:00Z
+                deposit_v4: Some(7966800),
             },
             Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
+                // estimated: 2025-02-03T13:55:00Z
+                deposit_v4: Some(10890000),
             },
             _ => ContractUpgradesBlockHeights::default(),
+        }
+    }
+
+    pub fn genesis_fork(&self) -> Option<Value> {
+        match self {
+            Chain::Zq2ProtoTestnet | Chain::Zq2ProtoMainnet => Some(json!({
+                "at_height": 0,
+                "call_mode_1_sets_caller_to_parent_caller": false,
+                "failed_scilla_call_from_gas_exempt_caller_causes_revert": false,
+                "scilla_messages_can_call_evm_contracts": false,
+                "scilla_contract_creation_increments_account_balance": false,
+            })),
+            _ => None,
         }
     }
 
     pub fn get_forks(&self) -> Option<Vec<Value>> {
         match self {
             Chain::Zq2ProtoTestnet => Some(vec![
-                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false, "scilla_messages_can_call_evm_contracts": false, "scilla_contract_creation_increments_account_balance": false }),
                 // estimated: 2024-12-18T14:57:53Z
-                json!({ "at_height": 8404000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true, "scilla_messages_can_call_evm_contracts": false, "scilla_contract_creation_increments_account_balance": false }),
+                json!({ "at_height": 8404000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
                 // estimated: 2025-01-15T09:10:37Z
-                json!({ "at_height": 10200000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": false }),
+                json!({ "at_height": 10200000, "scilla_messages_can_call_evm_contracts": true }),
+                // estimated: 2025-02-12T12:08:37Z
+                json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
-                json!({ "at_height": 0, "failed_scilla_call_from_gas_exempt_caller_causes_revert": false, "call_mode_1_sets_caller_to_parent_caller": false, "scilla_messages_can_call_evm_contracts": false, "scilla_contract_creation_increments_account_balance": false }),
                 // estimated: 2024-12-20T23:33:12Z
-                json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true, "scilla_messages_can_call_evm_contracts": false, "scilla_contract_creation_increments_account_balance": false }),
+                json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
+                // estimated: 2025-02-12T13:25:00Z
+                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true }),
             ]),
             _ => None,
         }

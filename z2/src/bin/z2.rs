@@ -110,6 +110,8 @@ enum DeployerCommands {
     GeneratePrivateKeys(DeployerGenerateActionsArgs),
     /// Generate the genesis key. --force to replace if already existing
     GenerateGenesisKey(DeployerGenerateGenesisArgs),
+    /// Generate the Stats Dashboard key. --force to replace if already existing
+    GenerateStatsKey(DeployerGenerateStatsArgs),
 }
 
 #[derive(Args, Debug)]
@@ -132,6 +134,9 @@ pub struct DeployerConfigArgs {
     /// Node role. Default: validator
     #[clap(long, value_enum)]
     role: Option<chain::node::NodeRole>,
+    /// File to output to.
+    #[clap(long)]
+    out: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -263,6 +268,15 @@ pub struct DeployerGenerateActionsArgs {
 
 #[derive(Args, Debug)]
 pub struct DeployerGenerateGenesisArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Generate and replace the existing key
+    #[clap(long)]
+    force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerGenerateStatsArgs {
     /// The network deployer config file
     config_file: Option<String>,
     /// Generate and replace the existing key
@@ -464,6 +478,9 @@ struct JoinStruct {
     /// Specify the tag of the image to run
     #[clap(long)]
     image_tag: Option<String>,
+    /// Endpoint of OTLP collector
+    #[clap(long)]
+    otlp_endpoint: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -818,7 +835,7 @@ async fn main() -> Result<()> {
                     )
                 })?;
                 let role = arg.role.clone().unwrap_or(chain::node::NodeRole::Validator);
-                plumbing::run_deployer_get_config_file(&config_file, role)
+                plumbing::run_deployer_get_config_file(&config_file, role, arg.out.as_deref())
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer get-config-file command: {}", err)
@@ -982,6 +999,22 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
+            DeployerCommands::GenerateStatsKey(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_stats_key(&config_file, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer generate-stats-key command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
             DeployerCommands::Api(ref arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
@@ -1034,8 +1067,13 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Join(ref args) => {
-            let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain, &args.image_tag).await?;
+            let mut chain = validators::ChainConfig::new(&args.chain_name).await?;
+            validators::gen_validator_startup_script(
+                &mut chain,
+                &args.image_tag,
+                &args.otlp_endpoint,
+            )
+            .await?;
             Ok(())
         }
         Commands::Deposit(ref args) => {

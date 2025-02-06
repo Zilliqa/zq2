@@ -8,11 +8,12 @@ Join a ZQ2 network
 Usage: z2 join [OPTIONS] --chain <CHAIN_NAME>
 
 Options:
-      --chain <CHAIN_NAME>     Specify the ZQ2 chain you want join [possible values: zq2-richard, zq2-uccbtest, zq2-infratest, zq2-perftest, zq2-devnet, zq2-prototestnet, zq2-protomainnet]
-      --image-tag <IMAGE_TAG>  Specify the tag of the image to run
-  -v, --verbose...             Increase logging verbosity
-  -q, --quiet...               Decrease logging verbosity
-  -h, --help                   Print help
+      --chain <CHAIN_NAME>              Specify the ZQ2 chain you want join [possible values: zq2-richard, zq2-uccbtest, zq2-infratest, zq2-perftest, zq2-devnet, zq2-prototestnet, zq2-protomainnet]
+      --image-tag <IMAGE_TAG>           Specify the tag of the image to run
+      --otlp-endpoint <OTLP_ENDPOINT>   Endpoint of OTLP collector
+  -v, --verbose...                      Increase logging verbosity
+  -q, --quiet...                        Decrease logging verbosity
+  -h, --help                            Print help
 ```
 
 ## Create a startup script and configuration file to join the prototestnet

@@ -32,10 +32,51 @@ pub struct Config {
     /// The address of another node to dial when this node starts. To join the network, a node must know about at least
     /// one other existing node in the network.
     #[serde(default)]
-    pub bootstrap_address: Option<(PeerId, Multiaddr)>,
+    pub bootstrap_address: OneOrMany<(PeerId, Multiaddr)>,
     /// The base address of the OTLP collector. If not set, metrics will not be exported.
     #[serde(default)]
     pub otlp_collector_endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OneOrMany<T>(pub Vec<T>);
+
+impl<T> Default for OneOrMany<T> {
+    fn default() -> Self {
+        Self(vec![])
+    }
+}
+
+impl<T: Serialize> Serialize for OneOrMany<T> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self.0.len() == 1 {
+            self.0[0].serialize(serializer)
+        } else {
+            self.0.serialize(serializer)
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for OneOrMany<T> {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Inner<T> {
+            One(T),
+            Many(Vec<T>),
+        }
+
+        match Inner::deserialize(deserializer)? {
+            Inner::One(t) => Ok(OneOrMany(vec![t])),
+            Inner::Many(t) => Ok(OneOrMany(t)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,10 +142,10 @@ pub struct NodeConfig {
     pub block_request_limit: usize,
     /// The maximum number of blocks to have outstanding requests for at a time when syncing.
     #[serde(default = "max_blocks_in_flight_default")]
-    pub max_blocks_in_flight: u64,
+    pub max_blocks_in_flight: usize,
     /// The maximum number of blocks to request in a single message when syncing.
     #[serde(default = "block_request_batch_size_default")]
-    pub block_request_batch_size: u64,
+    pub block_request_batch_size: usize,
     /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC. Defaults to no limit.
     #[serde(default = "state_rpc_limit_default")]
     pub state_rpc_limit: usize,
@@ -204,11 +245,11 @@ pub fn block_request_limit_default() -> usize {
     100
 }
 
-pub fn max_blocks_in_flight_default() -> u64 {
+pub fn max_blocks_in_flight_default() -> usize {
     1000
 }
 
-pub fn block_request_batch_size_default() -> u64 {
+pub fn block_request_batch_size_default() -> usize {
     100
 }
 
@@ -363,10 +404,38 @@ pub struct ConsensusConfig {
     /// Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
     #[serde(default)]
     pub contract_upgrade_block_heights: ContractUpgradesBlockHeights,
+    /// The initial fork configuration at genesis block. This provides a complete description of the execution behavior
+    /// at the genesis block.
+    #[serde(default = "genesis_fork_default")]
+    pub genesis_fork: Fork,
     /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
     /// difference applies.
     #[serde(default)]
-    pub forks: Forks,
+    pub forks: Vec<ForkDelta>,
+}
+
+impl ConsensusConfig {
+    /// Generates a list of forks by applying the delta forks initially to the genesis fork and then to the previous one.
+    /// The genesis fork is the initial fork configuration at the genesis block.
+    pub fn get_forks(&self) -> Result<Forks> {
+        if self.genesis_fork.at_height != 0 {
+            return Err(anyhow!("first fork must start at height 0"));
+        }
+
+        let mut delta_forks = self.forks.to_vec();
+        delta_forks.sort_unstable_by_key(|f| f.at_height);
+
+        let forks = delta_forks
+            .into_iter()
+            .fold(vec![self.genesis_fork], |mut forks, delta| {
+                let last_fork = forks.last().unwrap(); // Safe to call unwrap because we always have genesis_fork
+                let new_fork = last_fork.apply_delta_fork(&delta);
+                forks.push(new_fork);
+                forks
+            });
+
+        Ok(Forks(forks))
+    }
 }
 
 impl Default for ConsensusConfig {
@@ -392,52 +461,14 @@ impl Default for ConsensusConfig {
             total_native_token_supply: total_native_token_supply_default(),
             scilla_call_gas_exempt_addrs: vec![],
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
-            forks: Default::default(),
+            forks: vec![],
+            genesis_fork: genesis_fork_default(),
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(try_from = "Vec<Fork>", into = "Vec<Fork>")]
 pub struct Forks(Vec<Fork>);
-
-impl TryFrom<Vec<Fork>> for Forks {
-    type Error = anyhow::Error;
-
-    fn try_from(mut forks: Vec<Fork>) -> Result<Self, Self::Error> {
-        // Sort forks by height so we can binary search to find the current fork.
-        forks.sort_unstable_by_key(|f| f.at_height);
-
-        // Assert we have a fork that starts at the genesis block.
-        if forks.first().ok_or_else(|| anyhow!("no forks"))?.at_height != 0 {
-            return Err(anyhow!("first fork must start at height 0"));
-        }
-
-        Ok(Forks(forks))
-    }
-}
-
-impl From<Forks> for Vec<Fork> {
-    fn from(forks: Forks) -> Self {
-        forks.0
-    }
-}
-
-impl Default for Forks {
-    /// The default implementation of [Forks] returns a single fork at the genesis block, with the most up-to-date
-    /// execution logic.
-    fn default() -> Self {
-        vec![Fork {
-            at_height: 0,
-            failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
-            call_mode_1_sets_caller_to_parent_caller: true,
-            scilla_messages_can_call_evm_contracts: true,
-            scilla_contract_creation_increments_account_balance: true,
-        }]
-        .try_into()
-        .unwrap()
-    }
-}
 
 impl Forks {
     pub fn get(&self, height: u64) -> Fork {
@@ -456,10 +487,19 @@ impl Forks {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct Fork {
     pub at_height: u64,
+    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
+    pub call_mode_1_sets_caller_to_parent_caller: bool,
+    pub scilla_messages_can_call_evm_contracts: bool,
+    pub scilla_contract_creation_increments_account_balance: bool,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct ForkDelta {
+    pub at_height: u64,
     /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`
     /// precompile and the inner Scilla call fails, the entire transaction will revert. If false, the normal EVM
     /// semantics apply where the caller can decide how to act based on the success of the inner call.
-    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
+    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: Option<bool>,
     /// If true, if a call is made to the `scilla_call` precompile with `call_mode` / `keep_origin` set to `1`, the
     /// `_sender` of the inner Scilla call will be set to the caller of the current call-stack. If false, the `_sender`
     /// will be set to the original transaction signer.
@@ -469,16 +509,35 @@ pub struct Fork {
     ///
     /// When this flag is true, `D` will see the `_sender` as `B`. When this flag is false, `D` will see the `_sender`
     /// as `A`.
-    pub call_mode_1_sets_caller_to_parent_caller: bool,
+    pub call_mode_1_sets_caller_to_parent_caller: Option<bool>,
     /// If true, when a Scilla message is sent to an EVM contract, the EVM contract will be treated as if it was an
     /// EOA (i.e. any ZIL passed will be transferred to the contract and execution will continue). If false, sending a
     /// Scilla message to an EVM contract will cause the Scilla transaction to fail.
-    pub scilla_messages_can_call_evm_contracts: bool,
-    /// If true, if a Scilla contract is deployed to an address with a non-zero balance, the contract balance will be equal
-    /// to the account's existing balance plus the amount sent in the deployment transaction. If false, the contract
-    /// balance will be equal to the amount sent in the deployment transaction. The account's existing balance is wiped
-    /// out (meaning the total supply of the network is not preserved).
-    pub scilla_contract_creation_increments_account_balance: bool,
+    pub scilla_messages_can_call_evm_contracts: Option<bool>,
+    /// If true, when a contract is deployed, if the contract address is already funded,
+    /// the contract balance will be sum of the existing balance and the amount sent in the deployment transaction.
+    /// If false, the contract balance will be the amount sent in the deployment transaction.
+    pub scilla_contract_creation_increments_account_balance: Option<bool>,
+}
+
+impl Fork {
+    pub fn apply_delta_fork(&self, delta: &ForkDelta) -> Fork {
+        Fork {
+            at_height: delta.at_height,
+            failed_scilla_call_from_gas_exempt_caller_causes_revert: delta
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+                .unwrap_or(self.failed_scilla_call_from_gas_exempt_caller_causes_revert),
+            call_mode_1_sets_caller_to_parent_caller: delta
+                .call_mode_1_sets_caller_to_parent_caller
+                .unwrap_or(self.call_mode_1_sets_caller_to_parent_caller),
+            scilla_messages_can_call_evm_contracts: delta
+                .scilla_messages_can_call_evm_contracts
+                .unwrap_or(self.scilla_messages_can_call_evm_contracts),
+            scilla_contract_creation_increments_account_balance: delta
+                .scilla_contract_creation_increments_account_balance
+                .unwrap_or(self.scilla_contract_creation_increments_account_balance),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -535,13 +594,26 @@ pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// The default implementation returns a single fork at the genesis block, with the most up-to-date
+/// execution logic.
+pub fn genesis_fork_default() -> Fork {
+    Fork {
+        at_height: 0,
+        failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+        call_mode_1_sets_caller_to_parent_caller: true,
+        scilla_messages_can_call_evm_contracts: true,
+        scilla_contract_creation_increments_account_balance: true,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractUpgradesBlockHeights {
     pub deposit_v3: Option<u64>,
+    pub deposit_v4: Option<u64>,
 }
 
 impl ContractUpgradesBlockHeights {
-    // toml doesnt like Option types. Map items in struct and remove keys for None values
+    // toml doesn't like Option types. Map items in struct and remove keys for None values
     pub fn to_toml(&self) -> toml::Value {
         toml::Value::Table(
             json!(self)
@@ -558,5 +630,196 @@ impl ContractUpgradesBlockHeights {
                 })
                 .collect(),
         )
+    }
+}
+
+impl Default for ContractUpgradesBlockHeights {
+    fn default() -> Self {
+        Self {
+            deposit_v3: None,
+            deposit_v4: Some(0),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_forks_with_no_forks() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 1);
+        assert_eq!(forks.get(0).at_height, 0);
+    }
+
+    #[test]
+    fn test_get_forks_with_one_fork() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![ForkDelta {
+                at_height: 10,
+                failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                call_mode_1_sets_caller_to_parent_caller: Some(false),
+                scilla_messages_can_call_evm_contracts: None,
+                scilla_contract_creation_increments_account_balance: Some(false),
+            }],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 2);
+        assert_eq!(forks.get(0).at_height, 0);
+        assert_eq!(forks.get(11).at_height, 10);
+        assert!(!forks.get(10).call_mode_1_sets_caller_to_parent_caller);
+        assert!(
+            !forks
+                .get(10)
+                .scilla_contract_creation_increments_account_balance
+        );
+    }
+
+    #[test]
+    fn test_get_forks_with_multiple_forks() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![
+                ForkDelta {
+                    at_height: 10,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: Some(true),
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+                ForkDelta {
+                    at_height: 20,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
+                    call_mode_1_sets_caller_to_parent_caller: Some(true),
+                    scilla_messages_can_call_evm_contracts: Some(false),
+                    scilla_contract_creation_increments_account_balance: Some(true),
+                },
+            ],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 3);
+        assert_eq!(forks.get(0).at_height, 0);
+        assert_eq!(forks.get(11).at_height, 10);
+        assert_eq!(forks.get(21).at_height, 20);
+        assert!(
+            forks
+                .get(10)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+        assert!(forks.get(11).scilla_messages_can_call_evm_contracts);
+        assert!(
+            !forks
+                .get(20)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+        assert!(forks.get(20).call_mode_1_sets_caller_to_parent_caller);
+        assert!(!forks.get(20).scilla_messages_can_call_evm_contracts);
+        assert!(
+            forks
+                .get(20)
+                .scilla_contract_creation_increments_account_balance
+        );
+    }
+
+    #[test]
+    fn test_get_forks_with_unsorted_forks() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![
+                ForkDelta {
+                    at_height: 20,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+                ForkDelta {
+                    at_height: 10,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 3);
+        assert_eq!(forks.get(0).at_height, 0);
+        assert_eq!(forks.get(12).at_height, 10);
+        assert_eq!(forks.get(22).at_height, 20);
+
+        assert!(
+            forks
+                .get(10)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+        assert!(
+            !forks
+                .get(20)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+    }
+
+    #[test]
+    fn test_get_forks_with_missing_genesis_fork() {
+        let config = ConsensusConfig {
+            genesis_fork: Fork {
+                at_height: 1,
+                failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+                call_mode_1_sets_caller_to_parent_caller: true,
+                scilla_messages_can_call_evm_contracts: true,
+                scilla_contract_creation_increments_account_balance: true,
+            },
+            forks: vec![],
+            ..Default::default()
+        };
+
+        let result = config.get_forks();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_forks_boundary_cases() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![
+                ForkDelta {
+                    at_height: 10,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+                ForkDelta {
+                    at_height: 20,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.get(9).at_height, 0);
+        assert_eq!(forks.get(10).at_height, 10);
+        assert_eq!(forks.get(19).at_height, 10);
+        assert_eq!(forks.get(20).at_height, 20);
+        assert_eq!(forks.get(22).at_height, 20);
     }
 }

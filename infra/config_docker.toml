@@ -1,12 +1,18 @@
 bootstrap_address = [
-    "12D3KooWPXw2dXBRH1bT4vcNos9f6W2KoFTiarqptBuTzxaXg7zu",
-    "/ip4/198.51.100.103/tcp/5643",
+    [
+        "12D3KooWLA4xVjiGszqmYJmt8E1NTurVeCujDi17FoSzSDDDKUjT",
+        "/ip4/198.51.100.102/tcp/5643",
+    ],
+    [
+        "12D3KooWPXw2dXBRH1bT4vcNos9f6W2KoFTiarqptBuTzxaXg7zu",
+        "/ip4/198.51.100.103/tcp/5643",
+    ],
 ]
 p2p_port = 5643
 
 [[nodes]]
 api_servers = [
-    { port = 4201, enabled_apis = [ "admin", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] },
+    { port = 4201, enabled_apis = [ "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] },
 ]
 
 # These (public key, peerId, stake, rewardAddress) tuples correspond to the private keys of all four nodes in `docker-compose.yaml`.
@@ -87,3 +93,4 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
+consensus.contract_upgrade_block_heights = { deposit_v4 = 0 }

@@ -140,7 +140,7 @@ async fn execute_install_or_upgrade(
     Ok(())
 }
 
-pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
+pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str>) -> Result<()> {
     if role == NodeRole::Apps {
         log::info!(
             "Config file is not present for nodes with role {}",
@@ -157,10 +157,14 @@ pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
 
     if let Some(node) = chain_nodes.first() {
         let content = node.get_config_toml().await?;
-        println!("Config file for a node role {} in {}", role, chain.name());
-        println!("---");
-        println!("{}", content);
-        println!("---");
+        if let Some(out) = out {
+            std::fs::write(out, content)?;
+        } else {
+            println!("Config file for a node role {} in {}", role, chain.name());
+            println!("---");
+            println!("{}", content);
+            println!("---");
+        }
     } else {
         log::error!(
             "No nodes available in {} for the role {}",
@@ -716,6 +720,30 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
     }
 
     Ok(())
+}
+
+pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config).await?;
+
+    let multi_progress = cliclack::multi_progress("Generating the Stats Dashboard key".yellow());
+
+    let secret_name = &format!("{}-stats-dashboard-key", chain.name());
+    let mut labels = BTreeMap::<String, String>::new();
+    labels.insert("role".to_string(), "stats-dashboard".to_owned());
+    labels.insert("zq2-network".to_string(), chain.name());
+    let result = generate_secret(
+        &multi_progress,
+        secret_name,
+        labels,
+        chain.chain()?.get_project_id()?,
+        force,
+    )
+    .await;
+
+    multi_progress.stop();
+
+    result
 }
 
 pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {

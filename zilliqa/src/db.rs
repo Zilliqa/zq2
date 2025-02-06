@@ -6,13 +6,14 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy::primitives::Address;
 use anyhow::{anyhow, Context, Result};
 use eth_trie::{EthTrie, MemoryDB, Trie, DB};
 use itertools::Itertools;
+use libp2p::PeerId;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
 use rusqlite::{
@@ -28,6 +29,7 @@ use crate::{
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     state::Account,
+    sync::PeerInfo,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
@@ -175,6 +177,7 @@ enum BlockFilter {
     Hash(Hash),
     View(u64),
     Height(u64),
+    MaxHeight,
 }
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -196,7 +199,7 @@ impl Db {
     where
         P: AsRef<Path>,
     {
-        let (mut connection, path) = match data_dir {
+        let (connection, path) = match data_dir {
             Some(path) => {
                 let path = path.as_ref().join(shard_id.to_string());
                 fs::create_dir_all(&path).context(format!("Unable to create {path:?}"))?;
@@ -268,7 +271,14 @@ impl Db {
         );
 
         // Add tracing - logs all SQL statements
-        connection.trace(Some(|statement| tracing::trace!(statement, "sql executed")));
+        connection.trace_v2(
+            rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
+            Some(|statement| {
+                if let rusqlite::trace::TraceEvent::Stmt(_, statement) = statement {
+                    tracing::trace!(statement, "sql executed");
+                }
+            }),
+        );
 
         Self::ensure_schema(&connection)?;
 
@@ -326,6 +336,18 @@ impl Db {
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
             ",
         )?;
+        connection.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS sync_metadata (
+            block_hash BLOB NOT NULL UNIQUE,
+            parent_hash BLOB NOT NULL,
+            block_number INTEGER NOT NULL PRIMARY KEY,
+            version INTEGER DEFAULT 0,
+            peer BLOB DEFAULT NULL,
+            rawdata BLOB NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_metadata ON sync_metadata(block_number) WHERE peer IS NOT NULL;",
+        )?;
+
         Ok(())
     }
 
@@ -338,6 +360,150 @@ impl Db {
             return Ok(None);
         };
         Ok(Some(base_path.join("checkpoints").into_boxed_path()))
+    }
+
+    /// Returns the number of stored sync segments
+    pub fn count_sync_segments(&self) -> Result<usize> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT COUNT(block_number) FROM sync_metadata WHERE peer IS NOT NULL")?
+            .query_row([], |row| row.get(0))
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    /// Checks if the stored metadata exists
+    pub fn contains_sync_metadata(&self, block_hash: &Hash) -> Result<bool> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
+            .query_row([block_hash], |row| row.get::<_, Hash>(0))
+            .optional()?
+            .is_some())
+    }
+
+    /// Retrieves bulk metadata information from the given block_hash (inclusive)
+    pub fn get_sync_segment(&self, hash: Hash) -> Result<Vec<Hash>> {
+        let db = self.db.lock().unwrap();
+
+        let mut hashes = Vec::new();
+        let mut block_hash = hash;
+
+        while let Some(parent_hash) = db
+            .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
+            .query_row([block_hash], |row| row.get::<_, Hash>(0))
+            .optional()?
+        {
+            hashes.push(block_hash);
+            block_hash = parent_hash;
+        }
+        Ok(hashes)
+    }
+
+    /// Peeks into the top of the segment stack.
+    pub fn last_sync_segment(&self) -> Result<Option<(BlockHeader, PeerInfo)>> {
+        let db = self.db.lock().unwrap();
+        let r = db.prepare_cached("SELECT rawdata, version, peer FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
+        .query_row([], |row| Ok((
+            serde_json::from_slice(row.get::<_,Vec<u8>>(0)?.as_slice()).unwrap(),
+        PeerInfo {
+            last_used: Instant::now(),
+            score: u32::MAX,
+            version: row.get(1)?,
+            peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(2)?.as_slice()).unwrap(),
+        }))).optional()?;
+        Ok(r)
+    }
+
+    /// Pushes a particular segment into the stack.
+    pub fn push_sync_segment(&self, peer: &PeerInfo, meta: &BlockHeader) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        db.prepare_cached(
+                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, version, peer, rawdata) VALUES (:parent_hash, :block_hash, :block_number, :version, :peer, :rawdata)")?
+                .execute(
+                named_params! {
+                    ":parent_hash": meta.qc.block_hash,
+                    ":block_hash": meta.hash,
+                    ":block_number": meta.number,
+                    ":peer": peer.peer_id.to_bytes(),
+                    ":version": peer.version,
+                    ":rawdata": serde_json::to_vec(&meta).unwrap(),
+                },
+            )?;
+        Ok(())
+    }
+
+    /// Bulk inserts a bunch of metadata.
+    pub fn insert_sync_metadata(&self, metas: &Vec<BlockHeader>) -> Result<()> {
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+
+        for meta in metas {
+            tx.prepare_cached(
+                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, rawdata) VALUES (:parent_hash, :block_hash, :block_number, :rawdata)")?
+                .execute(
+                named_params! {
+                    ":parent_hash": meta.qc.block_hash,
+                    ":block_hash": meta.hash,
+                    ":block_number": meta.number,
+                    ":rawdata": serde_json::to_vec(meta).unwrap(),
+            })?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Empty the metadata table.
+    pub fn empty_sync_metadata(&self) -> Result<()> {
+        self.db
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM sync_metadata", [])?;
+        Ok(())
+    }
+
+    /// Pops a segment from the stack; and bulk removes all metadata associated with it.
+    pub fn pop_sync_segment(&self) -> Result<()> {
+        let mut db = self.db.lock().unwrap();
+        let c = db.transaction()?;
+
+        if let Some(block_hash) = c.prepare_cached("SELECT block_hash FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
+        .query_row([], |row| row.get::<_,Hash>(0)).optional()? {
+            if let Some(parent_hash) = c.prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
+            .query_row([block_hash], |row| row.get(0)).optional()? {
+
+            // update marker
+            c.prepare_cached(
+                "UPDATE sync_metadata SET peer = NULL WHERE block_hash = ?1")?
+                .execute(
+                [block_hash]
+            )?;
+
+            // remove segment                
+            let mut hashes = Vec::new();
+            let mut block_hash = parent_hash;
+            while let Some(parent_hash) = c
+                    .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
+                    .query_row([block_hash], |row| row.get::<_, Hash>(0))
+                    .optional()?
+                {
+                    hashes.push(block_hash);
+                    block_hash = parent_hash;
+                }
+
+            for hash in hashes {
+                c.prepare_cached("DELETE FROM sync_metadata WHERE block_hash = ?1")?
+                .execute([hash])?;
+            }
+            }
+        }
+
+        c.commit()?;
+        Ok(())
     }
 
     /// Fetch checkpoint data from file and initialise db state
@@ -620,19 +786,6 @@ impl Db {
             .unwrap_or(None))
     }
 
-    // Deliberately not named get_highest_block_number() because there used to be one
-    // of those with unclear semantics, so changing name to force the compiler to error
-    // if it was used.
-    pub fn get_highest_recorded_block_number(&self) -> Result<Option<u64>> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT height FROM blocks ORDER BY height DESC LIMIT 1")?
-            .query_row((), |row| row.get(0))
-            .optional()?)
-    }
-
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
         Ok(self
             .db
@@ -867,8 +1020,8 @@ impl Db {
             })
         }
         macro_rules! query_block {
-            ($cond: tt, $key: tt) => {
-                self.db.lock().unwrap().prepare_cached(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond),)?.query_row([$key], make_block).optional()?
+            ($cond: tt $(, $key:tt)*) => {
+                self.db.lock().unwrap().prepare_cached(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond),)?.query_row([$($key),*], make_block).optional()?
             };
         }
         Ok(match filter {
@@ -880,6 +1033,9 @@ impl Db {
             }
             BlockFilter::Height(height) => {
                 query_block!("height = ?1 AND is_canonical = TRUE", height)
+            }
+            BlockFilter::MaxHeight => {
+                query_block!("TRUE ORDER BY height DESC LIMIT 1")
             }
         })
     }
@@ -909,6 +1065,10 @@ impl Db {
 
     pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
         self.get_block(BlockFilter::Height(number))
+    }
+
+    pub fn get_highest_recorded_block(&self) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::MaxHeight)
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {

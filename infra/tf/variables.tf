@@ -135,7 +135,6 @@ variable "bootstrap" {
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, true)
-    detach_load_balancer = optional(bool, false)
     nodes = list(object({
       count  = number
       region = optional(string)
@@ -318,18 +317,6 @@ variable "graph" {
   }
 }
 
-variable "node_dns_subdomain" {
-  description = "Nodes DNS zone name"
-  type        = string
-  nullable    = false
-}
-
-variable "node_dns_zone_project_id" {
-  description = "The id of the Google project that hosts the DNS zone."
-  type        = string
-  nullable    = false
-}
-
 variable "subdomain" {
   description = "The subdomain for the public endpoints"
   type        = string
@@ -374,4 +361,10 @@ variable "persistence_bucket_versioning" {
   type        = bool
   default     = true
   nullable    = false
+}
+
+variable "performance_tests_service_account" {
+  description = "Email of the performance tests service account"
+  type        = string
+  default     = "sa-gha-testing-001@prj-p-devops-services-tvwmrf63.iam.gserviceaccount.com"
 }
