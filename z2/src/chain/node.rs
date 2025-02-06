@@ -941,7 +941,10 @@ impl ChainNode {
 
         // Adding the OpenTelemetry collector endpoint to all nodes configurations
         let otlp_collector_endpoint = "http://localhost:4317";
-        let config_file_with_otlp = format!("otlp_collector_endpoint = \"{otlp_collector_endpoint}\"\n{}", config_file);
+        let config_file_with_otlp = format!(
+            "otlp_collector_endpoint = \"{otlp_collector_endpoint}\"\n{}",
+            config_file
+        );
 
         let mut fh = File::create(filename).await?;
         fh.write_all(config_file_with_otlp.as_bytes()).await?;
