@@ -380,6 +380,7 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            validator_ignore_sync_chance: f64::default(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -515,6 +516,7 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            validator_ignore_sync_chance: f64::default(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
