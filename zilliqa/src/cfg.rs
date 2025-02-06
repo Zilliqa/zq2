@@ -134,6 +134,9 @@ pub struct NodeConfig {
     /// Persistence checkpoint to load.
     #[serde(default)]
     pub load_checkpoint: Option<Checkpoint>,
+    /// Adjust state before starting (but after loading checkpoints)
+    #[serde(default)]
+    pub adjust_state: Vec<StateAdjustment>,
     /// Whether to enable exporting checkpoint state checkpoint files.
     #[serde(default)]
     pub do_checkpoints: bool,
@@ -159,6 +162,8 @@ pub struct NodeConfig {
     /// Maximum allowed RPC response size
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
+    #[serde(default = "default_true")]
+    pub respect_shard_ids_in_checkpoints: bool,
 }
 
 impl Default for NodeConfig {
@@ -179,6 +184,8 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            respect_shard_ids_in_checkpoints: true,
+            adjust_state: vec![],
         }
     }
 }
@@ -214,6 +221,27 @@ pub struct Checkpoint {
         deserialize_with = "deserialize_hash_hex"
     )]
     pub hash: Hash,
+    /// Respect shard ids in checkpoints - set false to load a checkpoint from a different chain_id
+    #[serde(default = "default_true")]
+    pub respect_shard_ids: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(tag = "type", content = "args")]
+pub enum StateAdjustment {
+    GenesisCommittee,
+    ScillaInitData(StateAdjustmentScilla),
+    ScillaState(StateAdjustmentScilla),
+}
+
+/// A Scilla state adjustment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateAdjustmentScilla {
+    pub address: String,
+    pub key: String,
+    pub value: String,
 }
 
 fn serialize_hash_hex<S>(hash: &Hash, serializer: S) -> Result<S::Ok, S::Error>
@@ -414,6 +442,11 @@ pub struct ConsensusConfig {
     /// difference applies.
     #[serde(default)]
     pub forks: Vec<ForkDelta>,
+    /// Force a restart of the consensus view timeout on startup - otherwise if you're restoring from an old checkpoint,
+    /// startup can be very slow. Only set to true if you're restarting all the validators at the same time, otherwise
+    /// they will get out of sync.
+    #[serde(default)]
+    pub reset_view_timeout_on_startup: bool,
 }
 
 impl ConsensusConfig {
@@ -466,6 +499,7 @@ impl Default for ConsensusConfig {
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
             forks: vec![],
             genesis_fork: genesis_fork_default(),
+            reset_view_timeout_on_startup: false,
         }
     }
 }

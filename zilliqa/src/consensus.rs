@@ -3,11 +3,12 @@ use std::{
     collections::{BTreeMap, HashMap},
     error::Error,
     fmt::Display,
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
@@ -21,11 +22,11 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
-    cfg::{ConsensusConfig, NodeConfig},
+    cfg::{ConsensusConfig, NodeConfig, StateAdjustment},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
-    exec::{PendingState, TransactionApplyResult},
+    exec::{PendingState, StorageValue, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
@@ -34,7 +35,8 @@ use crate::{
     },
     node::{MessageSender, NetworkMessage},
     pool::{PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent},
-    state::State,
+    scilla::ParamValue,
+    state::{Account, Code, State},
     sync::{Sync, SyncPeers},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -177,6 +179,11 @@ pub struct Consensus {
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
+
+    /// We always trust qcs with these block hashes; this is used by the state adjustment mechanism to force
+    /// us to trust blocks which bridge the gap between a checkpoint with a committee we don't trust and
+    /// the current state of the chain which we do.
+    pub always_trust_block_hashes: Vec<Hash>,
 }
 
 impl Consensus {
@@ -196,12 +203,14 @@ impl Consensus {
         // Start chain from checkpoint. Load data file and initialise data in tables
         let mut checkpoint_data = None;
         if let Some(checkpoint) = &config.load_checkpoint {
+            let shard_spec = if checkpoint.respect_shard_ids {
+                Some(config.eth_chain_id)
+            } else {
+                None
+            };
             trace!("Loading state from checkpoint: {:?}", checkpoint);
-            checkpoint_data = db.load_trusted_checkpoint(
-                &checkpoint.file,
-                &checkpoint.hash,
-                config.eth_chain_id,
-            )?;
+            checkpoint_data =
+                db.load_trusted_checkpoint(&checkpoint.file, &checkpoint.hash, &shard_spec)?;
         }
 
         let latest_block = db
@@ -239,9 +248,12 @@ impl Consensus {
         let (start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
-                    let high_block = db
-                        .get_block_by_hash(&qc.block_hash)?
-                        .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
+                    let high_block = db.get_block_by_hash(&qc.block_hash)?.ok_or_else(|| {
+                        anyhow!(
+                            "missing block ({:?}) that high QC points to!",
+                            &qc.block_hash
+                        )
+                    })?;
                     let finalized_number = db
                         .get_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
@@ -250,12 +262,16 @@ impl Consensus {
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
-                    let start_view = db
-                        .get_view()?
-                        .or_else(|| {
-                            Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
-                        })
-                        .unwrap();
+                    // If we are all starting together, start at the last finalised view else we will have very long timeouts.
+                    let start_view = if config.consensus.reset_view_timeout_on_startup {
+                        finalized_number + 1
+                    } else {
+                        db.get_view()?
+                            .or_else(|| {
+                                Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
+                            })
+                            .unwrap()
+                    };
 
                     trace!(
                         "recovery: high_block view {0}, finalized_number {1}, start_view {2}",
@@ -341,6 +357,7 @@ impl Consensus {
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
+            always_trust_block_hashes: Vec::new(),
         };
         consensus.db.set_view(start_view)?;
         consensus.set_finalized_view(finalized_view)?;
@@ -374,49 +391,54 @@ impl Consensus {
             consensus.sync.set_checkpoint(&block);
         }
 
-        // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
-        // This is useful in scenarios in which consensus has failed since this node went down
-        if let Some(latest_high_qc_timestamp) = consensus.db.get_high_qc_updated_at()? {
-            let view_diff = Consensus::minimum_views_in_time_difference(
-                latest_high_qc_timestamp.elapsed()?,
-                consensus.config.consensus.consensus_timeout,
-            );
-            let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
-            if min_view_since_high_qc_updated > start_view {
-                info!(
-                    "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
-                    latest_high_qc_timestamp.elapsed()?.as_secs(),
-                    view_diff,
-                    min_view_since_high_qc_updated
+        consensus.insert_state_adjustment_blocks()?;
+
+        // Don't try to jump views ahead if we're resetting the timeout anyway.
+        if !consensus.config.consensus.reset_view_timeout_on_startup {
+            // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
+            // This is useful in scenarios in which consensus has failed since this node went down
+            if let Some(latest_high_qc_timestamp) = consensus.db.get_high_qc_updated_at()? {
+                let view_diff = Consensus::minimum_views_in_time_difference(
+                    latest_high_qc_timestamp.elapsed()?,
+                    consensus.config.consensus.consensus_timeout,
                 );
-                consensus.db.set_view(min_view_since_high_qc_updated)?;
-                // Build NewView so that we can immediately contribute to consensus moving along if it has halted
-                consensus.build_new_view()?;
+                let min_view_since_high_qc_updated = high_qc.view + 1 + view_diff;
+                if min_view_since_high_qc_updated > start_view {
+                    info!(
+                        "Based on elapsed clock time of {} seconds since lastest high_qc update, we are atleast {} views above our current high_qc view. This is larger than our stored view so jump to new start_view {}",
+                        latest_high_qc_timestamp.elapsed()?.as_secs(),
+                        view_diff,
+                        min_view_since_high_qc_updated
+                    );
+                    consensus.db.set_view(min_view_since_high_qc_updated)?;
+                    // Build NewView so that we can immediately contribute to consensus moving along if it has halted
+                    consensus.build_new_view()?;
+                }
+
+                // Remind block_store of our peers and request any potentially missing blocks
+                let high_block = consensus
+                    .db
+                    .get_block_by_hash(&high_qc.block_hash)?
+                    .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
+
+                let executed_block = BlockHeader {
+                    number: high_block.header.number + 1,
+                    ..Default::default()
+                };
+                let state_at = consensus.state.at_root(high_block.state_root_hash().into());
+
+                // Grab last seen committee's peerIds in case others also went offline
+                let committee = state_at.get_stakers(executed_block)?;
+                let recent_peer_ids = committee
+                    .iter()
+                    .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
+                    .filter_map(|&peer_public_key| {
+                        state_at.get_peer_id(peer_public_key).unwrap_or(None)
+                    })
+                    .collect_vec();
+
+                peers.add_peers(recent_peer_ids);
             }
-
-            // Remind block_store of our peers and request any potentially missing blocks
-            let high_block = consensus
-                .db
-                .get_block_by_hash(&high_qc.block_hash)?
-                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-
-            let executed_block = BlockHeader {
-                number: high_block.header.number + 1,
-                ..Default::default()
-            };
-            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
-
-            // Grab last seen committee's peerIds in case others also went offline
-            let committee = state_at.get_stakers(executed_block)?;
-            let recent_peer_ids = committee
-                .iter()
-                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
-                .filter_map(|&peer_public_key| {
-                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
-                })
-                .collect_vec();
-
-            peers.add_peers(recent_peer_ids);
         }
 
         Ok(consensus)
@@ -2310,49 +2332,62 @@ impl Consensus {
             ));
         }
 
-        // Check if the co-signers of the block's QC represent the supermajority.
-        self.check_quorum_in_bits(
-            &block.header.qc.cosigned,
-            &committee,
-            parent.state_root_hash(),
-            block,
-        )?;
-
-        // Verify the block's QC signature - note the parent should be the committee the QC
-        // was signed over.
-        self.verify_qc_signature(&block.header.qc, committee.clone())?;
-        if let Some(agg) = &block.agg {
-            // Check if the signers of the block's aggregate QC represent the supermajority
-            self.check_quorum_in_indices(
-                &agg.cosigned,
+        // Always trust blocks that we always trust
+        if self
+            .always_trust_block_hashes
+            .iter()
+            .find(|&x| x == &block.header.qc.block_hash)
+            .is_none()
+        {
+            // Check if the co-signers of the block's QC represent the supermajority.
+            self.check_quorum_in_bits(
+                &block.header.qc.cosigned,
                 &committee,
                 parent.state_root_hash(),
                 block,
             )?;
-            // Verify the aggregate QC's signature
-            self.batch_verify_agg_signature(agg, &committee)?;
-        }
 
-        // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
-        let block_high_qc = self.get_high_qc_from_block(block)?;
-        let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else {
-            warn!("missing finalized block4");
-            return Err(MissingBlockError::from(block_high_qc.block_hash).into());
-        };
-        // Prevent the creation of forks from the already committed chain
-        if block_high_qc_block.view() < finalized_block.view() {
-            warn!(
-                "invalid block - high QC view is {} while finalized is {}. Our High QC: {}, block: {:?}",
-                block_high_qc_block.view(),
-                finalized_block.view(),
-                self.high_qc,
-                block
+            // Verify the block's QC signature - note the parent should be the committee the QC
+            // was signed over.
+            self.verify_qc_signature(&block.header.qc, committee.clone())?;
+            if let Some(agg) = &block.agg {
+                // Check if the signers of the block's aggregate QC represent the supermajority
+                self.check_quorum_in_indices(
+                    &agg.cosigned,
+                    &committee,
+                    parent.state_root_hash(),
+                    block,
+                )?;
+                // Verify the aggregate QC's signature
+                self.batch_verify_agg_signature(agg, &committee)?;
+            }
+
+            // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
+            let block_high_qc = self.get_high_qc_from_block(block)?;
+            let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else {
+                warn!("missing finalized block4");
+                return Err(MissingBlockError::from(block_high_qc.block_hash).into());
+            };
+            // Prevent the creation of forks from the already committed chain
+            if block_high_qc_block.view() < finalized_block.view() {
+                warn!(
+                    "invalid block - high QC view is {} while finalized is {}. Our High QC: {}, block: {:?}",
+                    block_high_qc_block.view(),
+                    finalized_block.view(),
+                    self.high_qc,
+                    block
+                );
+                return Err(anyhow!(
+                    "invalid block - high QC view is {} while finalized is {}",
+                    block_high_qc_block.view(),
+                    finalized_block.view()
+                ));
+            }
+        } else {
+            trace!(
+                "not validating votes for qc for block hash {}, which is an always_trust block",
+                block.header.qc.block_hash
             );
-            return Err(anyhow!(
-                "invalid block - high QC view is {} while finalized is {}",
-                block_high_qc_block.view(),
-                finalized_block.view()
-            ));
         }
 
         // This block's timestamp must be greater than or equal to the parent block's timestamp.
@@ -3183,6 +3218,202 @@ impl Consensus {
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
         self.sync.get_sync_data()
+    }
+
+    /// Creates and executes two empty blocks.
+    /// These blocks contain no transactions; they simply adjust the state to one in which the
+    /// state adjustments from configuration have been applied. They are agreed on "by fiat"
+    /// by all validators and the qcs for them are accepted without signature checking.
+    /// This allows us to load checkpoints into networks from which they were not generated.
+    fn insert_state_adjustment_blocks(&mut self) -> Result<()> {
+        if self.config.adjust_state.is_empty() {
+            return Ok(());
+        }
+        // Otherwise, we have work to do.
+        // This is not safe in general, but it is here because when this function is executed,
+        // all nodes have identical state.
+        let highest_block = self.db.get_highest_recorded_block()?.ok_or(
+            anyhow!("We don't have the highest block data stored and so can't construct a state adjustment block based on it. Is your checkpoint OK?"))?;
+        let highest_block_number = highest_block.number();
+
+        trace!(
+            "Constructing state adjustment blocks from blk {highest_block_number}, view {}",
+            highest_block.view()
+        );
+        // Now we build a state from the last block's state but with any accounts mentioned by the genesis state overridden.
+        let mut after_adjustment_state = self
+            .state_at(highest_block_number)?
+            .ok_or(anyhow!("Cannot get state at {highest_block_number}"))?
+            .try_clone()?;
+
+        // OK. Now adjust the state according to our instructions
+        self.config.adjust_state.iter().try_for_each(|instr| {
+            match instr {
+                StateAdjustment::GenesisCommittee => {
+                    trace!(" .. state adjustment: force genesis committee");
+                    // Construct a state containing the accounts we want to override.
+                    let genesis_state = State::new_with_genesis(
+                        self.db.state_trie()?,
+                        self.config.clone(),
+                        self.db.clone(),
+                    )?;
+                    after_adjustment_state.merge_from(&genesis_state)?;
+                }
+                StateAdjustment::ScillaState(adjv) => {
+                    let address = Address::from_str(&adjv.address)?;
+                    let mut pending_state = PendingState::new(after_adjustment_state.clone());
+                    trace!("Parsing |{}|", adjv.value);
+                    let json_val: serde_json::Value = serde_json::from_str(&adjv.value)?;
+                    match json_val {
+                        serde_json::Value::Object(_) => {
+                            fn convert(val: &serde_json::Value) -> Result<StorageValue> {
+                                match val {
+                                    serde_json::Value::Object(m) => {
+                                        let map = m
+                                            .iter()
+                                            .map(|(k, v)| {
+                                                Ok((
+                                                    serde_json::to_string(k)?.into_bytes(),
+                                                    convert(v)?,
+                                                ))
+                                            })
+                                            .collect::<Result<_>>()?;
+                                        trace!("  ... storing state[0] {map:?}");
+                                        Ok(StorageValue::Map {
+                                            map,
+                                            complete: true,
+                                        })
+                                    }
+                                    _ => {
+                                        let byte_val = match val {
+                                            serde_json::Value::String(s) => s.as_bytes().to_vec(),
+                                            _ => serde_json::to_string(val)?.as_bytes().to_vec(),
+                                        };
+                                        trace!("  ... storing state[1] {byte_val:?}");
+                                        Ok(StorageValue::Value(Some(Bytes::from(byte_val))))
+                                    }
+                                }
+                            }
+                            let val = convert(&json_val)?;
+
+                            trace!(
+                                "Set storage for {address:x} with key {} to {val:?}",
+                                adjv.key
+                            );
+                            pending_state.set_storage(address, &adjv.key, &[], val)?;
+                        }
+                        _ => {
+                            let byte_val = serde_json::to_string(&json_val)?.as_bytes().to_vec();
+                            let slot = pending_state.load_storage(address, &adjv.key, &[])?;
+                            *slot = Some(byte_val.into());
+                        }
+                    }
+                    let final_state = pending_state.finalize();
+                    trace!(" ... finalized state {final_state:?}");
+                    after_adjustment_state.apply_delta_scilla(&final_state)?;
+                }
+                StateAdjustment::ScillaInitData(adjv) => {
+                    // Read the account
+                    let address = Address::from_str(&adjv.address)?;
+                    // Init data is always represented by strings, apparently
+                    let replacement_value: String = adjv.value.to_string();
+                    let account = after_adjustment_state.get_account(address)?.clone();
+                    if let Code::Scilla {
+                        code,
+                        init_data,
+                        types,
+                        transitions,
+                    } = account.code
+                    {
+                        // Now construct some new parameter values.
+                        let new_init_data = init_data
+                            .iter()
+                            .map(|x| {
+                                if x.name == adjv.key {
+                                    trace!(
+                                        " .. adjustment: reset {:x} init_data {} :  {}",
+                                        address,
+                                        x.name,
+                                        replacement_value.to_string()
+                                    );
+                                    ParamValue {
+                                        name: x.name.clone(),
+                                        ty: x.ty.clone(),
+                                        value: serde_json::Value::String(replacement_value.clone()),
+                                    }
+                                } else {
+                                    x.clone()
+                                }
+                            })
+                            .collect::<Vec<ParamValue>>();
+                        let new_account: Account = Account {
+                            code: Code::Scilla {
+                                code,
+                                init_data: new_init_data,
+                                types,
+                                transitions,
+                            },
+                            ..account
+                        };
+                        after_adjustment_state.save_account(address, new_account)?;
+                    }
+                } //_ => (),
+            }
+            Ok::<(), anyhow::Error>(())
+        })?;
+
+        debug!(
+            " ... constructed post-adjustment state with hash {:?}",
+            after_adjustment_state.root_hash()?
+        );
+        // Now we need to construct a couple of trusted blocks in turn - one which we'll use for
+        // recovery (and is probably not strictly necessary), and its successor which will become
+        // the base for future block production.
+        //
+        // They will have 0.25s between them, so we can recognise them later.
+        const BLOCK_TIME_INCREMENT: Duration = Duration::new(0, 250);
+        let synth_block0 = Block::adjustment(
+            highest_block.view() + 1,
+            highest_block_number + 1,
+            highest_block.hash(),
+            after_adjustment_state.root_hash()?,
+            highest_block.timestamp() + BLOCK_TIME_INCREMENT,
+        );
+        trace!(
+            "  ... constructed synth_block0 with number {}, view {}, hash {}",
+            synth_block0.number(),
+            synth_block0.view(),
+            synth_block0.hash()
+        );
+        let synth_block1 = Block::adjustment(
+            synth_block0.view() + 1,
+            synth_block0.number() + 1,
+            synth_block0.hash(),
+            after_adjustment_state.root_hash()?,
+            synth_block0.timestamp() + BLOCK_TIME_INCREMENT,
+        );
+        trace!(
+            "  ... constructed synth_block1 with number {}, view {}, hash {}",
+            synth_block1.number(),
+            synth_block1.view(),
+            synth_block1.hash()
+        );
+
+        trace!("  ... assimilating adjusted state");
+        self.state
+            .set_to_root(after_adjustment_state.root_hash()?.into());
+        self.update_high_qc_and_view(false, synth_block1.header.qc)?;
+        self.db.set_high_qc(synth_block1.header.qc)?;
+        self.high_qc = synth_block1.header.qc;
+        self.db.force_view(synth_block1.view())?;
+        self.always_trust_block_hashes.push(synth_block0.hash());
+        self.always_trust_block_hashes.push(synth_block1.hash());
+        self.add_block(None, synth_block0.clone())?;
+        self.add_block(None, synth_block1.clone())?;
+        //self.finalize_block(synth_block0)?;
+        //self.finalize_block(synth_block1)?;
+        trace!("  ... state adjustment complete");
+        Ok(())
     }
 }
 

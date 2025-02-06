@@ -525,7 +525,7 @@ impl Db {
         &self,
         path: P,
         hash: &Hash,
-        our_shard_id: u64,
+        our_shard_id: &Option<u64>,
     ) -> Result<Option<(Block, Vec<SignedTransaction>, Block)>> {
         // For now, only support a single version: you want to load the latest checkpoint, anyway.
         const SUPPORTED_VERSION: u32 = 3;
@@ -533,10 +533,12 @@ impl Db {
         // Decompress file and write to temp file
         let input_file = File::open(path.as_ref())?;
         let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
+
         let mut reader = Decoder::new(buf_reader)?;
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
 
+        debug!("Loading compressed checkpoint {0:?}...", path.as_ref());
         // Decode and validate header
         let mut header: [u8; 21] = [0u8; 21];
         reader.read_exact(&mut header)?;
@@ -550,13 +552,20 @@ impl Db {
         let version = u32::from_be_bytes(header[8..12].try_into()?);
         // Only support a single version right now.
         if version != SUPPORTED_VERSION {
-            return Err(anyhow!("Invalid checkpoint file: unsupported version."));
+            return Err(anyhow!(
+                "Invalid checkpoint file: unsupported version {version}."
+            ));
         }
         let shard_id = u64::from_be_bytes(header[12..20].try_into()?);
-        if shard_id != our_shard_id {
-            return Err(anyhow!("Invalid checkpoint file: wrong shard ID."));
+        if shard_id != our_shard_id.unwrap_or(shard_id) {
+            return Err(anyhow!(
+                "Invalid checkpoint file: wrong shard ID - expecting {}, got {shard_id}.",
+                our_shard_id.unwrap_or(shard_id)
+            ));
         }
 
+        debug!(" ... loading checkpoint block");
+        debug!(" ...   header");
         // Decode and validate checkpoint block, its transactions and parent block
         let mut block_len_buf = [0u8; std::mem::size_of::<u64>()];
         reader.read_exact(&mut block_len_buf)?;
@@ -568,6 +577,7 @@ impl Db {
         }
         block.verify_hash()?;
 
+        debug!(" ...   transactions");
         let mut transactions_len_buf = [0u8; std::mem::size_of::<u64>()];
         reader.read_exact(&mut transactions_len_buf)?;
         let mut transactions_ser =
@@ -586,6 +596,7 @@ impl Db {
             ));
         }
 
+        debug!(" ... loading state trie");
         if state_trie.iter().next().is_some()
             || self.get_highest_canonical_block_number()?.is_some()
         {
@@ -637,8 +648,13 @@ impl Db {
         const COMPUTE_ROOT_HASH_EVERY_ACCOUNTS: usize = 10000;
         let mem_storage = Arc::new(MemoryDB::new(true));
 
+        debug!(" ... loading accounts ");
         // then decode state
         loop {
+            if (processed_accounts % 10_000) == 0 {
+                debug!(" ... loaded {processed_accounts} accounts");
+            }
+
             // Read account key and the serialised Account
             let mut account_hash = [0u8; 32];
             match reader.read_exact(&mut account_hash) {
@@ -718,6 +734,7 @@ impl Db {
             return Err(anyhow!("Invalid checkpoint file: state root hash mismatch"));
         }
 
+        debug!(" ... inserting results into db");
         let parent_ref: &Block = &parent; // for moving into the closure
         self.with_sqlite_tx(move |tx| {
             self.insert_block_with_db_tx(tx, parent_ref)?;
@@ -727,6 +744,7 @@ impl Db {
             Ok(())
         })?;
 
+        debug!(" ... checkpoint loaded");
         Ok(Some((block, transactions, parent)))
     }
 
@@ -774,6 +792,17 @@ impl Db {
             .query_row((), |row| row.get(0))
             .optional()
             .unwrap_or(None))
+    }
+    /// Write view and timestamp to table if view is larger than current. Return true if write was successful
+    pub fn force_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
+        let res = sqlite_tx
+            .prepare_cached("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1",)?
+            .execute([view])?;
+        Ok(res != 0)
+    }
+
+    pub fn force_view(&self, view: u64) -> Result<bool> {
+        self.force_view_with_db_tx(&self.db.lock().unwrap(), view)
     }
 
     /// Write view and timestamp to table if view is larger than current. Return true if write was successful
