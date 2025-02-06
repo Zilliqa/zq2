@@ -35,7 +35,7 @@ bitvec = { version = "1.0.1", features = ["serde"] }
 bs58 = "0.5.1"
 bytes = "1.9.0"
 clap = { version = "4.5.27", features = ["derive"] }
-crypto-bigint = "=0.5.5"
+crypto-bigint = "=0.6.0"
 eth_trie = {path =  "../eth-trie.rs"}
 ethabi = "18.0.0"
 futures = "0.3.31"
