@@ -757,7 +757,7 @@ pub(super) fn get_transaction_receipt_inner(
 
     let contract_address = match signed_transaction.tx {
         SignedTransaction::Zilliqa { ref tx, .. } => {
-            Some(tx.get_contract_address(signed_transaction.signer)?)
+            Some(tx.get_contract_address(&signed_transaction.signer)?)
         }
         _ => receipt.contract_address,
     };

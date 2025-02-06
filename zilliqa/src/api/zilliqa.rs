@@ -393,7 +393,7 @@ fn get_contract_address_from_transaction_id(
 
     let contract_address = match signed_transaction.tx {
         SignedTransaction::Zilliqa { tx, .. } => {
-            tx.get_contract_address(signed_transaction.signer)?
+            tx.get_contract_address(&signed_transaction.signer)?
         }
         _ => contract_address,
     };

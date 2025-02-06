@@ -812,7 +812,7 @@ impl TxZilliqa {
         }
     }
 
-    pub fn get_contract_address(&self, signer: Address) -> Result<Address> {
+    pub fn get_contract_address(&self, signer: &Address) -> Result<Address> {
         let mut hasher = Sha256::new();
         hasher.update(signer.as_slice());
         if self.nonce > 0 {
