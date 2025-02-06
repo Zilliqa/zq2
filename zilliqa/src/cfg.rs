@@ -477,6 +477,10 @@ pub struct TxnPoolConfig {
     pub maximum_global_size: u64,
     /// Maximum number of transactions per single sender
     pub maximum_txn_count_per_sender: u64,
+    /// total slots for all senders
+    pub total_slots_for_all_senders: u64,
+    /// maximum future nonce
+    pub max_future_nonce: u64
 }
 
 pub fn maximum_txn_pool_global_size() -> u64 {
@@ -487,11 +491,17 @@ pub fn maximum_txn_pool_txn_count_per_user() -> u64 {
     500
 }
 
+pub fn total_slots_for_all_senders() -> u64 { 1_000_000}
+
+pub fn max_future_nonce() -> u64 { 20 }
+
 impl Default for TxnPoolConfig {
     fn default() -> Self {
         Self {
             maximum_global_size: maximum_txn_pool_global_size(),
             maximum_txn_count_per_sender: maximum_txn_pool_txn_count_per_user(),
+            total_slots_for_all_senders: total_slots_for_all_senders(),
+            max_future_nonce: max_future_nonce(),
         }
     }
 }

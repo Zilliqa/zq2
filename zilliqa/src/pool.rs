@@ -299,9 +299,7 @@ impl TransactionPool {
             // Remove the existing transaction from `hash_to_index` if we're about to replace it.
             self.hash_to_index.remove(&existing_txn.hash);
             // Decrease the count of transactions tracked by this sender
-            if let Some(counter) = self.sender_txn_counter.get_mut(&txn.signer) {
-                *counter = counter.saturating_sub(1);
-            }
+            self.decrease_counter_for_user(existing_txn.signer);
             true
         } else {
             false
@@ -312,6 +310,14 @@ impl TransactionPool {
             // Check global counter
             if self.transactions.len() + 1 > self.config.maximum_global_size as usize {
                 return ValidationFailed(ValidationOutcome::GlobalTransactionCountExceeded);
+            }
+            // Check future nonce
+            if txn.tx.nonce().is_some_and(|n| n > account_nonce + self.config.max_future_nonce) {
+                return ValidationFailed(ValidationOutcome::NonceTooHigh(txn.tx.nonce().unwrap(), account_nonce + self.config.max_future_nonce));
+            }
+            // Check total number of slots for senders
+            if !self.sender_txn_counter.contains_key(&txn.signer) && self.sender_txn_counter.len() + 1 > self.config.total_slots_for_all_senders as usize {
+                return ValidationFailed(ValidationOutcome::TotalNumberOfSlotsExceeded);
             }
             // Check per sender counter
             let sender_counter = self
@@ -421,12 +427,19 @@ impl TransactionPool {
         self.hash_to_index.remove(&txn.hash);
         Self::remove_from_gas_index(&mut self.gas_index, txn);
 
-        if let Some(counter) = self.sender_txn_counter.get_mut(&txn.signer) {
-            *counter -= counter.saturating_sub(1);
-        }
 
+        self.decrease_counter_for_user(txn.signer);
         if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
             Self::add_to_gas_index(&mut self.gas_index, next);
+        }
+    }
+
+    fn decrease_counter_for_user(&mut self, sender: Address) {
+        if let Some(counter) = self.sender_txn_counter.get_mut(&sender) {
+            *counter = counter.saturating_sub(1);
+            if *counter == 0 {
+                self.sender_txn_counter.remove(&sender);
+            }
         }
     }
 
@@ -533,6 +546,8 @@ mod tests {
         let config = TxnPoolConfig {
             maximum_txn_count_per_sender: 5,
             maximum_global_size: 10,
+            total_slots_for_all_senders: 5,
+            max_future_nonce: 7,
         };
         TransactionPool::new(config)
     }
@@ -748,18 +763,20 @@ mod tests {
 
         let mut state = get_in_memory_state()?;
 
-        const COUNT: usize = 10;
+        const COUNT: usize = 5;
 
         let addresses = std::iter::repeat_with(|| Address::random())
             .take(COUNT)
             .collect::<Vec<_>>();
 
-        for idx in 0..COUNT {
-            create_acc(&mut state, addresses[idx], 100, 0)?;
-            assert_eq!(
-                TxAddResult::AddedToMempool,
-                pool.insert_transaction(transaction(addresses[idx], 0, 1), 0)
-            );
+        for address in addresses.iter() {
+            create_acc(&mut state, *address, 100, 0)?;
+            for nonce in 0..2 {
+                assert_eq!(
+                    TxAddResult::AddedToMempool,
+                    pool.insert_transaction(transaction(*address, nonce, 1), 0)
+                );
+            }
         }
 
         // Can't add the following one due to global limit being exceeded
@@ -770,8 +787,9 @@ mod tests {
             pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
         );
 
-        // Remove a single txn
+        // Remove all txns sent by one sender
         pool.mark_executed(&transaction(addresses[0], 0, 1));
+        pool.mark_executed(&transaction(addresses[0], 1, 1));
         // And try to insert again - it should succeed
         assert_eq!(
             TxAddResult::AddedToMempool,
@@ -844,6 +862,61 @@ mod tests {
         assert_eq!(
             TxAddResult::AddedToMempool,
             pool.insert_transaction(transaction(address, 0, 2), 0)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn total_slots_per_senders_exceeded() -> Result<()> {
+        let mut pool = get_pool();
+
+        let mut state = get_in_memory_state()?;
+
+        const COUNT: usize = 5;
+
+        let addresses = std::iter::repeat_with(|| Address::random())
+            .take(COUNT)
+            .collect::<Vec<_>>();
+
+        for address in addresses.iter() {
+            create_acc(&mut state, *address, 100, 0)?;
+                assert_eq!(
+                    TxAddResult::AddedToMempool,
+                    pool.insert_transaction(transaction(*address, 0, 1), 0)
+                );
+        }
+
+        // Can't add the following one due to total number of slots per all senders being exceeded
+        let rand_addr = Address::random();
+        create_acc(&mut state, rand_addr, 100, 0)?;
+        assert_eq!(
+            TxAddResult::ValidationFailed(ValidationOutcome::TotalNumberOfSlotsExceeded),
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+        );
+
+        // Remove a single txn
+        pool.mark_executed(&transaction(addresses[0], 0, 1));
+        // And try to insert again - it should succeed
+        assert_eq!(
+            TxAddResult::AddedToMempool,
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn max_future_nonce() -> Result<()> {
+        let mut pool = get_pool();
+        let from = "0x0000000000000000000000000000000000001234".parse()?;
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 100, 0)?;
+
+        assert_eq!(
+            TxAddResult::ValidationFailed(ValidationOutcome::NonceTooHigh(8, 7)),
+            pool.insert_transaction(transaction(from, 8, 1), 0)
         );
 
         Ok(())
