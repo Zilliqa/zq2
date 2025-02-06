@@ -25,3 +25,6 @@ consensus.forks = [
     { at_height = 8404000, call_mode_1_sets_caller_to_parent_caller = true, failed_scilla_call_from_gas_exempt_caller_causes_revert = true },
     { at_height = 10200000, scilla_messages_can_call_evm_contracts = true }
 ]
+
+txn_pool.maximum_global_size = 100000
+txn_pool.maximum_txn_count_per_sender = 500

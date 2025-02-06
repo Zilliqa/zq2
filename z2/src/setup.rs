@@ -34,7 +34,7 @@ use zilliqa::{
     },
     transaction::EvmGas,
 };
-
+use zilliqa::cfg::TxnPoolConfig;
 use crate::{
     chain,
     collector::{self, Collector},
@@ -542,6 +542,7 @@ impl Setup {
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
                 },
+                txn_pool: TxnPoolConfig::default(),
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),

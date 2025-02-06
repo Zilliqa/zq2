@@ -19,3 +19,6 @@ consensus.scilla_call_gas_exempt_addrs = []
 consensus.contract_upgrade_block_heights = { deposit_v3 = 3600 }
 
 api_servers = [{ port = 4201, enabled_apis = [{ apis = ["blockNumber"], namespace = "eth" }] }, { enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"], port = 4202 }]
+
+txn_pool.maximum_global_size = 100000
+txn_pool.maximum_txn_count_per_sender = 500
