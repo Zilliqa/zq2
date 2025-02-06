@@ -938,22 +938,35 @@ impl Node {
         Ok(())
     }
 
-    fn handle_injected_proposal(&mut self, from: PeerId, req: InjectedProposal) -> Result<()> {
-        if from != self.consensus.peer_id() {
-            warn!("Someone ({from}) sent me a InjectedProposal; illegal- ignoring");
+    fn handle_injected_proposal(&mut self, peer: PeerId, req: InjectedProposal) -> Result<()> {
+        let InjectedProposal { from, block } = req;
+        if peer != from || from != self.consensus.peer_id() {
+            warn!("Someone ({peer}) sent me a InjectedProposal; illegal- ignoring");
             return Ok(());
         }
-        trace!("Handling proposal for view {0}", req.block.header.view);
-        let proposal = self.consensus.receive_block(from, req.block)?;
-        self.consensus.sync.mark_received_proposal()?;
-        if let Some(proposal) = proposal {
-            trace!(
-                " ... broadcasting proposal for view {0}",
-                proposal.header.view
-            );
-            self.message_sender
-                .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
+        // ZQ1 blocks have zero state root hash - https://github.com/Zilliqa/zq2/issues/2054
+        if block.header.state_root_hash != Hash::ZERO {
+            // Execute ZQ2 blocks
+            trace!("Handling ZQ2 proposal for view {}", block.header.view);
+            let proposal = self.consensus.receive_block(from, block)?;
+            if let Some(proposal) = proposal {
+                trace!("Broadcasting proposal for view {}", proposal.header.view);
+                self.message_sender
+                    .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
+            }
+        } else {
+            // Store ZQ1 blocks - https://github.com/Zilliqa/zq2/issues/2232
+            trace!("Handling ZQ1 proposal for view {}", block.header.view);
+            let (blk, txns) = block.into_parts();
+            self.db.with_sqlite_tx(|sqlite_tx| {
+                self.db.insert_block_with_db_tx(sqlite_tx, &blk)?;
+                for (txh, txn) in blk.transactions.iter().zip(txns.iter()) {
+                    self.db.insert_transaction_with_db_tx(sqlite_tx, txh, txn)?;
+                }
+                Ok(())
+            })?;
         }
+        self.consensus.sync.mark_received_proposal()?;
         Ok(())
     }
 }
