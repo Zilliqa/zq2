@@ -767,14 +767,14 @@ impl Sync {
 
         // Do not respond to stale requests as the client has timed-out - default 10s in libp2p
         if request.request_at.elapsed()? > Duration::from_secs(10) {
-            tracing::warn!("sync::MetadataRequest : stale request");
+            tracing::debug!("sync::MetadataRequest : stale request");
             return Ok(ExternalMessage::Acknowledgement);
         }
 
         // Validators should service only some requests - https://github.com/Zilliqa/zq2/issues/1878
         if self.is_validator && rand::thread_rng().gen_bool(self.validator_ignore_sync_chance) {
             // Overall = 1 - P ^ N.
-            tracing::warn!(%from, "sync::MetadataRequest : ignoring request from {from}");
+            tracing::debug!(%from, "sync::MetadataRequest : ignoring request from {from}");
             return Ok(ExternalMessage::Acknowledgement);
         }
 
@@ -784,7 +784,7 @@ impl Sync {
             .min(request.to_height.saturating_sub(request.from_height) as usize); // mitigate DOS by limiting the number of blocks we return
         let mut metas = Vec::with_capacity(batch_size);
         let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
-            tracing::warn!("sync::MetadataRequest : unknown block height");
+            tracing::debug!("sync::MetadataRequest : unknown block height");
             return Ok(ExternalMessage::Acknowledgement);
         };
         metas.push(block.header);
