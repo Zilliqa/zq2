@@ -4,7 +4,6 @@ use anyhow::{anyhow, Ok, Result};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
-use rand::seq::SliceRandom;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -791,38 +790,28 @@ impl ChainNode {
 
     pub async fn get_config_toml(&self) -> Result<String> {
         let spec_config = include_str!("../../resources/config.tera.toml");
-        let mut bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
+        let bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
+        let subdomain = self.chain()?.get_subdomain()?;
 
-        let set_bootstrap_address = if self.role != NodeRole::Bootstrap || bootstrap_nodes.len() > 1
-        {
-            "true"
-        } else {
-            "false"
+        if bootstrap_nodes.is_empty() {
+            return Err(anyhow!(
+                "No bootstrap instances found in the network {}",
+                &self.chain.name()
+            ));
         };
 
-        if bootstrap_nodes.len() > 1 {
-            bootstrap_nodes.retain(|node| node.name() != self.name());
+        let mut bootstrap_addresses = Vec::new();
+        for (idx, n) in bootstrap_nodes.into_iter().enumerate() {
+            let private_key = n.get_private_key().await?;
+            let eth_address = EthereumAddress::from_private_key(&private_key)?;
+            let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/tcp/3333");
+            bootstrap_addresses.push((endpoint, eth_address));
         }
-
-        // Pick a random element among the bootstrap nodes
-        let selected_bootstrap =
-            if let Some(random_item) = bootstrap_nodes.choose(&mut rand::thread_rng()) {
-                println!("Bootstrap picked: {}", random_item.name().bold());
-                random_item.to_owned()
-            } else {
-                return Err(anyhow!(
-                    "No bootstrap instances found in the network {}",
-                    &self.chain.name()
-                ));
-            };
 
         let genesis_account =
             EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
-        let bootstrap_node =
-            EthereumAddress::from_private_key(&selected_bootstrap.get_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
-        let bootstrap_endpoint = self.chain()?.get_bootstrap_endpoint()?;
         let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
@@ -849,10 +838,30 @@ impl ChainNode {
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
         ctx.insert("eth_chain_id", &eth_chain_id);
-        ctx.insert("bootstrap_endpoint", bootstrap_endpoint);
-        ctx.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
-        ctx.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
-        ctx.insert("set_bootstrap_address", set_bootstrap_address);
+
+        let bootstrap_address = if bootstrap_addresses.len() > 1 {
+            serde_json::to_value(
+                bootstrap_addresses
+                    .iter()
+                    .map(|(e, a)| (a.peer_id, e))
+                    .collect::<Vec<_>>(),
+            )?
+        } else {
+            serde_json::to_value((
+                bootstrap_addresses[0].1.peer_id,
+                format!("/dns/bootstrap.{subdomain}/tcp/3333"),
+            ))?
+        };
+
+        ctx.insert(
+            "bootstrap_address",
+            &serde_json::to_string_pretty(&bootstrap_address)?,
+        );
+        ctx.insert("bootstrap_peer_id", &bootstrap_addresses[0].1.peer_id);
+        ctx.insert(
+            "bootstrap_bls_public_key",
+            &bootstrap_addresses[0].1.bls_public_key,
+        );
         ctx.insert("genesis_address", &genesis_account.address);
         ctx.insert("max_rpc_response_size", &max_rpc_response_size);
         ctx.insert(
