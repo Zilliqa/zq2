@@ -75,6 +75,7 @@ pub struct Sync {
     peer_id: PeerId,
     // is node a validator
     is_validator: bool,
+    validator_ignore_sync_chance: f64,
     // internal sync state
     state: SyncState,
     // fixed-size queue of the most recent proposals
@@ -143,6 +144,7 @@ impl Sync {
             headers_downloaded: 0,
             blocks_downloaded: 0,
             is_validator: false,
+            validator_ignore_sync_chance: config.validator_ignore_sync_chance.clamp(0.0, 1.0),
         })
     }
 
@@ -770,8 +772,8 @@ impl Sync {
         }
 
         // Validators should service only some requests - https://github.com/Zilliqa/zq2/issues/1878
-        if self.is_validator && !rand::thread_rng().gen_bool(0.05) {
-            // Overall = 1 - (1 - P) ^ N.
+        if self.is_validator && rand::thread_rng().gen_bool(self.validator_ignore_sync_chance) {
+            // Overall = 1 - P ^ N.
             tracing::warn!(%from, "sync::MetadataRequest : ignoring request from {from}");
             return Ok(ExternalMessage::Acknowledgement);
         }
