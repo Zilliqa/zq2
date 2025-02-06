@@ -763,7 +763,10 @@ impl Consensus {
             };
             let stakers = self.state.get_stakers(next_block_header)?;
 
-            if !stakers.iter().any(|v| *v == self.public_key()) {
+            let is_validator = stakers.iter().any(|v| *v == self.public_key());
+            self.sync.set_validator(is_validator);
+
+            if !is_validator {
                 debug!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()

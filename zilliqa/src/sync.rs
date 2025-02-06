@@ -8,6 +8,7 @@ use std::{
 use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
+use rand::Rng;
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 use crate::{
@@ -72,6 +73,8 @@ pub struct Sync {
     in_pipeline: usize,
     // our peer id
     peer_id: PeerId,
+    // is node a validator
+    is_validator: bool,
     // internal sync state
     state: SyncState,
     // fixed-size queue of the most recent proposals
@@ -139,6 +142,7 @@ impl Sync {
             empty_count: 0,
             headers_downloaded: 0,
             blocks_downloaded: 0,
+            is_validator: false,
         })
     }
 
@@ -203,6 +207,13 @@ impl Sync {
             }
         }
         Ok(())
+    }
+
+    /// Set the validator status
+    ///
+    /// This is only used to determine if we should respond to a metadata request.
+    pub fn set_validator(&mut self, is_validator: bool) {
+        self.is_validator = is_validator;
     }
 
     /// Phase 0: Sync a block proposal.
@@ -725,11 +736,7 @@ impl Sync {
 
         // If the check-point/starting-point is in this segment
         let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
-        let range = std::ops::RangeInclusive::new(
-            segment.last().as_ref().unwrap().number,
-            segment.first().as_ref().unwrap().number,
-        );
-        let started = range.contains(&self.started_at_block_number);
+        let started = self.started_at_block_number >= segment.last().as_ref().unwrap().number;
 
         // If the segment hits our history, turnaround to Phase 2.
         if started || checkpointed {
@@ -756,14 +763,20 @@ impl Sync {
             from
         );
 
-        // Do not respond to stale requests as the client has probably timed-out
-        if request.request_at.elapsed()? > Duration::from_secs(5) {
+        // Do not respond to stale requests as the client has timed-out - default 10s in libp2p
+        if request.request_at.elapsed()? > Duration::from_secs(10) {
             tracing::warn!("sync::MetadataRequest : stale request");
             return Ok(ExternalMessage::Acknowledgement);
         }
 
-        // TODO: Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
+        // Validators should service only some requests - https://github.com/Zilliqa/zq2/issues/1878
+        if self.is_validator && !rand::thread_rng().gen_bool(0.05) {
+            // Overall = 1 - (1 - P) ^ N.
+            tracing::warn!(%from, "sync::MetadataRequest : ignoring request from {from}");
+            return Ok(ExternalMessage::Acknowledgement);
+        }
 
+        // Service the request
         let batch_size: usize = self
             .max_batch_size
             .min(request.to_height.saturating_sub(request.from_height) as usize); // mitigate DOS by limiting the number of blocks we return
@@ -783,11 +796,11 @@ impl Sync {
             metas.push(block.header);
         }
 
-        let message = ExternalMessage::MetaDataResponse(metas);
         tracing::trace!(
-            ?message,
-            "sync::MetadataFromHash : responding to block request"
+            "sync::MetadataRequest : responding to {from} with {} headers",
+            metas.len()
         );
+        let message = ExternalMessage::MetaDataResponse(metas);
         Ok(message)
     }
 
