@@ -519,8 +519,8 @@ impl Db {
         const SUPPORTED_VERSION: u32 = 3;
 
         // Decompress file and write to temp file
-        let input_filename = path.as_ref();
-        let buf_reader: BufReader<File> = BufReader::new(File::open(input_filename)?);
+        let input_file = File::open(path.as_ref())?;
+        let buf_reader: BufReader<File> = BufReader::with_capacity(128 * 1024 * 1024, input_file);
         let mut reader = Decoder::new(buf_reader)?;
         let trie_storage = Arc::new(self.state_trie()?);
         let mut state_trie = EthTrie::new(trie_storage.clone());
