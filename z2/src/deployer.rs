@@ -140,7 +140,7 @@ async fn execute_install_or_upgrade(
     Ok(())
 }
 
-pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
+pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str>) -> Result<()> {
     if role == NodeRole::Apps {
         log::info!(
             "Config file is not present for nodes with role {}",
@@ -157,10 +157,14 @@ pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
 
     if let Some(node) = chain_nodes.first() {
         let content = node.get_config_toml().await?;
-        println!("Config file for a node role {} in {}", role, chain.name());
-        println!("---");
-        println!("{}", content);
-        println!("---");
+        if let Some(out) = out {
+            std::fs::write(out, content)?;
+        } else {
+            println!("Config file for a node role {} in {}", role, chain.name());
+            println!("---");
+            println!("{}", content);
+            println!("---");
+        }
     } else {
         log::error!(
             "No nodes available in {} for the role {}",

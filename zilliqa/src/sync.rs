@@ -5,13 +5,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy::primitives::BlockNumber;
 use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 use crate::{
+    api::types::eth::{SyncingMeta, SyncingStruct},
     cfg::NodeConfig,
     crypto::Hash,
     db::Db,
@@ -78,9 +78,14 @@ pub struct Sync {
     recent_proposals: VecDeque<Proposal>,
     // for statistics only
     inject_at: Option<(std::time::Instant, usize)>,
-    // record starting number, for eth_syncing() RPC call.
+    // record data for eth_syncing() RPC call.
     started_at_block_number: u64,
     highest_block_seen: u64,
+    retry_count: u64,
+    timeout_count: u64,
+    empty_count: u64,
+    headers_downloaded: u64,
+    blocks_downloaded: u64,
     // checkpoint, if set
     checkpoint_hash: Hash,
 }
@@ -100,8 +105,8 @@ impl Sync {
         peers: Arc<SyncPeers>,
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
-        let max_batch_size = config.block_request_batch_size.clamp(30, 180); // up to 180 sec of blocks at a time.
-        let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1800); // up to 30-mins worth of blocks in-pipeline.
+        let max_batch_size = config.block_request_batch_size.clamp(10, 100);
+        let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1000);
 
         // Start from reset, or continue sync
         let state = if db.count_sync_segments()? == 0 {
@@ -129,6 +134,11 @@ impl Sync {
             started_at_block_number: latest_block_number,
             checkpoint_hash: latest_block_hash,
             highest_block_seen: latest_block_number,
+            retry_count: 0,
+            timeout_count: 0,
+            empty_count: 0,
+            headers_downloaded: 0,
+            blocks_downloaded: 0,
         })
     }
 
@@ -142,6 +152,8 @@ impl Sync {
                 tracing::warn!(to = %peer.peer_id,
                     "sync::Acknowledgement : empty response"
                 );
+                self.empty_count = self.empty_count.saturating_add(1);
+
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Empty);
                 // Retry if failed in Phase 2 for whatever reason
@@ -172,6 +184,8 @@ impl Sync {
                 tracing::warn!(to = %peer.peer_id, err = %failure.error,
                     "sync::RequestFailure : network error"
                 );
+                self.timeout_count = self.timeout_count.saturating_add(1);
+
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
                 // Retry if failed in Phase 2 for whatever reason
@@ -230,7 +244,6 @@ impl Sync {
                     // No parent block, trigger sync
                     tracing::info!("sync::SyncProposal : syncing from {parent_hash}",);
                     let meta = self.recent_proposals.back().unwrap().header;
-                    self.request_missing_metadata(Some(meta))?;
 
                     let highest_block = self
                         .db
@@ -241,6 +254,10 @@ impl Sync {
                         )?
                         .expect("missing highest block");
                     self.started_at_block_number = highest_block.number();
+
+                    // Ensure started_at_block_number is set before running this.
+                    // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
+                    self.request_missing_metadata(Some(meta))?;
                 }
             }
             // Continue phase 1, until we hit history/genesis.
@@ -271,17 +288,6 @@ impl Sync {
             // Retry to fix sync issues e.g. peers that are now offline
             SyncState::Retry1 if self.in_pipeline == 0 => {
                 self.retry_phase1()?;
-                if self.started_at_block_number == 0 {
-                    let highest_block = self
-                        .db
-                        .get_canonical_block_by_number(
-                            self.db
-                                .get_highest_canonical_block_number()?
-                                .expect("no highest block"),
-                        )?
-                        .expect("missing highest block");
-                    self.started_at_block_number = highest_block.number();
-                }
             }
             _ => {
                 tracing::debug!("sync::SyncProposal : syncing {} blocks", self.in_pipeline);
@@ -327,12 +333,12 @@ impl Sync {
             "sync::RetryPhase1 : retrying segment #{}",
             self.db.count_sync_segments()?,
         );
+        self.retry_count = self.retry_count.saturating_add(1);
 
         // remove the last segment from the chain metadata
         let (meta, _) = self.db.last_sync_segment()?.unwrap();
         self.db.pop_sync_segment()?;
         self.state = SyncState::Phase1(meta);
-
         Ok(())
     }
 
@@ -397,6 +403,7 @@ impl Sync {
             self.db.count_sync_segments()?,
             from
         );
+        self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len() as u64);
 
         // Response seems sane.
         let proposals = response
@@ -709,6 +716,9 @@ impl Sync {
             self.db.count_sync_segments()?,
             from
         );
+        self.headers_downloaded = self.headers_downloaded.saturating_add(segment.len() as u64);
+
+        // TODO: Implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2158
 
         // TODO: Until we implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2158
         // just prototype it
@@ -722,11 +732,15 @@ impl Sync {
         // Record the oldest block in the chain's parent
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
 
-        // If the checkpoint is in this segment
+        // If the check-point/starting-point is in this segment
         let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
-        let started = self.started_at_block_number <= segment.first().as_ref().unwrap().number
-            && self.started_at_block_number >= segment.last().as_ref().unwrap().number;
-        // If the segment hits our history, start Phase 2.
+        let range = std::ops::RangeInclusive::new(
+            segment.last().as_ref().unwrap().number,
+            segment.first().as_ref().unwrap().number,
+        );
+        let started = range.contains(&self.started_at_block_number);
+
+        // If the segment hits our history, turnaround to Phase 2.
         if started || checkpointed {
             self.state = SyncState::Phase2(Hash::ZERO);
         } else if Self::DO_SPECULATIVE {
@@ -935,7 +949,7 @@ impl Sync {
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,
     // None if we're not.
-    pub fn get_sync_data(&self) -> Result<Option<(BlockNumber, BlockNumber, BlockNumber)>> {
+    pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
         if !self.am_syncing()? {
             return Ok(None);
         }
@@ -949,11 +963,27 @@ impl Sync {
             )?
             .expect("missing highest block");
 
-        Ok(Some((
-            self.started_at_block_number,
-            highest_block.number(),
-            self.highest_block_seen,
-        )))
+        let peers = if self.in_flight.is_some() {
+            self.peers.count().saturating_add(1)
+        } else {
+            self.peers.count()
+        };
+
+        Ok(Some(SyncingStruct {
+            starting_block: self.started_at_block_number,
+            current_block: highest_block.number(),
+            highest_block: self.highest_block_seen,
+            status: SyncingMeta {
+                peer_count: peers,
+                current_phase: self.state.to_string(),
+                retry_count: self.retry_count,
+                timeout_count: self.timeout_count,
+                empty_count: self.empty_count,
+                header_downloads: self.headers_downloaded,
+                block_downloads: self.blocks_downloaded,
+                buffered_blocks: self.in_pipeline,
+            },
+        }))
     }
 
     /// Sets the checkpoint, if node was started from a checkpoint.
@@ -976,6 +1006,10 @@ impl SyncPeers {
             peer_id,
             peers: Arc::new(Mutex::new(BinaryHeap::<PeerInfo>::new())),
         }
+    }
+
+    fn count(&self) -> usize {
+        self.peers.lock().unwrap().len()
     }
 
     /// Downgrade a peer based on the response received.
@@ -1116,6 +1150,18 @@ enum SyncState {
     Phase2(Hash),
     Phase3,
     Retry1,
+}
+
+impl std::fmt::Display for SyncState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SyncState::Phase0 => write!(f, "phase0"),
+            SyncState::Phase1(_) => write!(f, "phase1"),
+            SyncState::Phase2(_) => write!(f, "phase2"),
+            SyncState::Phase3 => write!(f, "phase3"),
+            SyncState::Retry1 => write!(f, "retry1"),
+        }
+    }
 }
 
 /// Peer Version

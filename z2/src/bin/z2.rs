@@ -134,6 +134,9 @@ pub struct DeployerConfigArgs {
     /// Node role. Default: validator
     #[clap(long, value_enum)]
     role: Option<chain::node::NodeRole>,
+    /// File to output to.
+    #[clap(long)]
+    out: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -475,6 +478,9 @@ struct JoinStruct {
     /// Specify the tag of the image to run
     #[clap(long)]
     image_tag: Option<String>,
+    /// Endpoint of OTLP collector
+    #[clap(long)]
+    otlp_endpoint: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -829,7 +835,7 @@ async fn main() -> Result<()> {
                     )
                 })?;
                 let role = arg.role.clone().unwrap_or(chain::node::NodeRole::Validator);
-                plumbing::run_deployer_get_config_file(&config_file, role)
+                plumbing::run_deployer_get_config_file(&config_file, role, arg.out.as_deref())
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer get-config-file command: {}", err)
@@ -1061,8 +1067,13 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Join(ref args) => {
-            let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain, &args.image_tag).await?;
+            let mut chain = validators::ChainConfig::new(&args.chain_name).await?;
+            validators::gen_validator_startup_script(
+                &mut chain,
+                &args.image_tag,
+                &args.otlp_endpoint,
+            )
+            .await?;
             Ok(())
         }
         Commands::Deposit(ref args) => {
