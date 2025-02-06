@@ -287,6 +287,7 @@ impl Chain {
 
     pub fn get_log_level(&self) -> Result<&'static str> {
         let log_level = self.get_str("log_level");
+        
         Ok(log_level.unwrap_or("zilliqa=trace"))
     }
 

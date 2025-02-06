@@ -870,13 +870,14 @@ impl Node {
         let parent = self
             .get_block(header.qc.block_hash)?
             .ok_or_else(|| anyhow!("missing parent: {}", header.qc.block_hash))?;
-        let proposer = self
-            .consensus
-            .leader_at_block(&parent, header.view)
-            .unwrap()
-            .public_key;
 
-        self.consensus.state().get_reward_address(proposer)
+        let Some(proposer) = self.consensus.leader_at_block(&parent, header.view) else {
+            return Ok(None);
+        };
+
+        self.consensus
+            .state()
+            .get_reward_address(proposer.public_key)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
