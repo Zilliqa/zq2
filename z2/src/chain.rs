@@ -263,4 +263,12 @@ impl Chain {
             format!("project_id not available for the chain {}", self).red()
         ))
     }
+
+    pub fn get_proto_network_persistence_block_height(&self) -> Option<u64> {
+        match self {
+            Chain::Zq2ProtoTestnet => Some(7507087),
+            Chain::Zq2ProtoMainnet => Some(4277187),
+            _ => None,
+        }
+    }
 }
