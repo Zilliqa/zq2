@@ -146,13 +146,13 @@ impl Sync {
     ///
     /// We get a plain ACK in certain cases - treated as an empty response.
     pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
+        self.empty_count = self.empty_count.saturating_add(1);
         if let Some((peer, _)) = self.in_flight.as_ref() {
             // downgrade peer due to empty response
             if peer.peer_id == from {
                 tracing::warn!(to = %peer.peer_id,
                     "sync::Acknowledgement : empty response"
                 );
-                self.empty_count = self.empty_count.saturating_add(1);
 
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Empty);
@@ -177,6 +177,7 @@ impl Sync {
     ///
     /// This gets called for any libp2p request failure - treated as a network failure
     pub fn handle_request_failure(&mut self, failure: OutgoingMessageFailure) -> Result<()> {
+        self.timeout_count = self.timeout_count.saturating_add(1);
         // check if the request is a sync messages
         if let Some((peer, req_id)) = self.in_flight.as_ref() {
             // downgrade peer due to network failure
@@ -184,7 +185,6 @@ impl Sync {
                 tracing::warn!(to = %peer.peer_id, err = %failure.error,
                     "sync::RequestFailure : network error"
                 );
-                self.timeout_count = self.timeout_count.saturating_add(1);
 
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
@@ -290,7 +290,7 @@ impl Sync {
     }
 
     /// Update the startingBlock value.
-    /// 
+    ///
     /// Must be called before starting/re-starting Phase 1.
     fn update_started_at(&mut self) -> Result<()> {
         let highest_block = self
@@ -331,6 +331,7 @@ impl Sync {
     /// This will rebuild history from the previous marker, with another peer.
     /// If this function is called many times, it will eventually restart from Phase 0.
     fn retry_phase1(&mut self) -> Result<()> {
+        self.retry_count = self.retry_count.saturating_add(1);
         if self.db.count_sync_segments()? == 0 {
             tracing::error!("sync::RetryPhase1 : cannot retry phase 1 without chain segments!");
             self.state = SyncState::Phase0;
@@ -341,7 +342,6 @@ impl Sync {
             "sync::RetryPhase1 : retrying segment #{}",
             self.db.count_sync_segments()?,
         );
-        self.retry_count = self.retry_count.saturating_add(1);
 
         // remove the last segment from the chain metadata
         let (meta, _) = self.db.last_sync_segment()?.unwrap();
