@@ -159,6 +159,7 @@ pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str
         let content = node.get_config_toml().await?;
         if let Some(out) = out {
             std::fs::write(out, content)?;
+            log::info!("Config file {out} successfully written");
         } else {
             println!("Config file for a node role {} in {}", role, chain.name());
             println!("---");
@@ -305,7 +306,7 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         let stake = validators::StakeDeposit::new(
             validator,
             VALIDATOR_DEPOSIT_IN_MILLIONS,
-            chain.chain()?.get_api_endpoint()?,
+            &chain.chain()?.get_api_endpoint()?,
             &genesis_private_key,
             ZERO_ACCOUNT,
             ZERO_ACCOUNT,

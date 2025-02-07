@@ -1086,7 +1086,7 @@ async fn main() -> Result<()> {
             let stake = validators::StakeDeposit::new(
                 node,
                 args.amount,
-                args.chain_name.get_api_endpoint()?,
+                &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
                 &args.reward_address,
                 &args.signing_address,

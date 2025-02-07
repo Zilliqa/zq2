@@ -439,6 +439,9 @@ Options:
           - graph:       Virtual machine graph
           - sentry:      Virtual machine sentry
 
+      --out <OUT>
+          File to output to
+
   -v, --verbose...
           Increase logging verbosity
 
@@ -462,6 +465,19 @@ Configuration file: zq2-prototestnet.yaml
 
 ```bash
 z2 deployer get-config-file --role api zq2-prototestnet.yaml
+```
+
+#### Scenario
+
+Save the config file for a node role `validator` in the `zq2-prototestnet` nodes
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer get-config-file --role validator zq2-prototestnet.yaml --out ./z2/resources/chain-specs/zq2-prototestnet.toml
 ```
 
 ## Backup a node data dir
