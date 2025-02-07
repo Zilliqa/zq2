@@ -733,10 +733,10 @@ impl Sync {
 
         // If the check-point/starting-point is in this segment
         let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
-        let turnaround = self.started_at_block_number >= segment.last().as_ref().unwrap().number;
+        let block_hash = segment.last().as_ref().unwrap().hash;
 
         // If the segment hits our history, turnaround to Phase 2.
-        if turnaround || checkpointed {
+        if checkpointed || self.db.contains_block(&block_hash)? {
             self.state = SyncState::Phase2(Hash::ZERO);
         } else if Self::DO_SPECULATIVE {
             self.request_missing_metadata(None)?;
