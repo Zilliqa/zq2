@@ -303,16 +303,17 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
             node_ethereum_address.bls_public_key,
             deposit_auth_signature,
         )?;
-        let stake = validators::StakeDeposit::new(
-            validator,
-            VALIDATOR_DEPOSIT_IN_MILLIONS,
+        let client_config = validators::ClientConfig::new(
             &chain.chain()?.get_api_endpoint()?,
             &genesis_private_key,
+        )?;
+        let deposit_params = validators::DepositParams::new(
+            VALIDATOR_DEPOSIT_IN_MILLIONS,
             ZERO_ACCOUNT,
             ZERO_ACCOUNT,
         )?;
 
-        let result = validators::deposit_stake(&stake).await;
+        let result = validators::deposit(&validator, &client_config, &deposit_params).await;
 
         match result {
             Ok(()) => successes.push(node.name()),
