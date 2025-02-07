@@ -778,7 +778,10 @@ pub(super) fn get_transaction_receipt_inner(
         cumulative_gas_used: receipt.cumulative_gas_used,
         effective_gas_price: transaction.max_fee_per_gas(),
         gas_used: receipt.gas_used,
-        contract_address: transaction.to_addr().and(contract_address), // Only set contract address if `to` is not empty
+        contract_address: match receipt.contract_address {
+            Some(_) => contract_address,
+            None => None,
+        },
         logs,
         logs_bloom,
         ty: 0,
