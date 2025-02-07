@@ -137,8 +137,9 @@ pub async fn get_chain_spec_config(chain_name: &str) -> Result<Value> {
 }
 
 pub async fn gen_validator_startup_script(
-    config: &ChainConfig,
+    config: &mut ChainConfig,
     image_tag: &Option<String>,
+    otlp_collector_endpoint: &Option<String>,
 ) -> Result<()> {
     println!("✌️ Generating the validator startup scripts and configuration");
     println!("📋 Chain specification: {}", config.name);
@@ -157,6 +158,13 @@ pub async fn gen_validator_startup_script(
     context.insert("chain_name", &config.name);
     if let Some(v) = image_tag {
         context.insert("image_tag", v)
+    }
+
+    if let Some(v) = otlp_collector_endpoint {
+        let _ = config.spec.as_table_mut().unwrap().insert(
+            String::from("otlp_collector_endpoint"),
+            toml::Value::String(v.to_string()),
+        );
     }
 
     let script = tera_template
