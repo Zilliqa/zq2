@@ -208,7 +208,7 @@ pub async fn deposit(
         params.amount, validator.peer_id
     );
 
-    let client = build_client(&client_config).await?;
+    let client = build_client(client_config).await?;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -248,7 +248,7 @@ pub async fn deposit_top_up(
 ) -> Result<()> {
     println!("DepositTopUp: add {} M $ZIL stake", amount,);
 
-    let client = build_client(&client_config).await?;
+    let client = build_client(client_config).await?;
 
     // Topup the validator's funds.
     let tx = TransactionRequest::new()
@@ -282,7 +282,7 @@ pub async fn unstake(
 ) -> Result<()> {
     println!("Unstake: {} M $ZIL unstaked", amount,);
 
-    let client = build_client(&client_config).await?;
+    let client = build_client(client_config).await?;
     // Unstake the validator's funds.
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
@@ -317,7 +317,7 @@ pub async fn withdraw(
 ) -> Result<()> {
     println!("Withdraw: pulling available unstaked funds from deposit contract");
 
-    let client = build_client(&client_config).await?;
+    let client = build_client(client_config).await?;
     // Withdraw the validator's funds.
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
