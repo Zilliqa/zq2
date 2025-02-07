@@ -62,8 +62,8 @@ pub struct Sync {
     message_sender: MessageSender,
     // internal peers
     peers: Arc<SyncPeers>,
-    // peer handling an in-flight request
-    in_flight: Option<(PeerInfo, RequestId)>,
+    // peers handling in-flight requests
+    in_flight: VecDeque<(PeerInfo, RequestId)>,
     // how many blocks to request at once
     max_batch_size: usize,
     // how many blocks to inject into the queue
@@ -97,6 +97,8 @@ impl Sync {
     #[cfg(debug_assertions)]
     const DO_SPECULATIVE: bool = false;
 
+    const MAX_CONCURRENT_PEERS: usize = 1;
+
     pub fn new(
         config: &NodeConfig,
         db: Arc<Db>,
@@ -126,7 +128,7 @@ impl Sync {
             peers,
             max_batch_size,
             max_blocks_in_flight,
-            in_flight: None,
+            in_flight: VecDeque::with_capacity(Self::MAX_CONCURRENT_PEERS),
             in_pipeline: usize::MIN,
             state,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
@@ -146,7 +148,7 @@ impl Sync {
     ///
     /// We get a plain ACK in certain cases - treated as an empty response.
     pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
-        if let Some((peer, _)) = self.in_flight.as_ref() {
+        if let Some((peer, _)) = self.in_flight.front() {
             // downgrade peer due to empty response
             if peer.peer_id == from {
                 tracing::warn!(to = %peer.peer_id,
@@ -155,7 +157,7 @@ impl Sync {
                 self.empty_count = self.empty_count.saturating_add(1);
 
                 self.peers
-                    .done_with_peer(self.in_flight.take(), DownGrade::Empty);
+                    .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
                 // Retry if failed in Phase 2 for whatever reason
                 match self.state {
                     SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
@@ -178,7 +180,7 @@ impl Sync {
     /// This gets called for any libp2p request failure - treated as a network failure
     pub fn handle_request_failure(&mut self, failure: OutgoingMessageFailure) -> Result<()> {
         // check if the request is a sync messages
-        if let Some((peer, req_id)) = self.in_flight.as_ref() {
+        if let Some((peer, req_id)) = self.in_flight.front() {
             // downgrade peer due to network failure
             if peer.peer_id == failure.peer && *req_id == failure.request_id {
                 tracing::warn!(to = %peer.peer_id, err = %failure.error,
@@ -187,7 +189,7 @@ impl Sync {
                 self.timeout_count = self.timeout_count.saturating_add(1);
 
                 self.peers
-                    .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
+                    .done_with_peer(self.in_flight.pop_front(), DownGrade::Timeout);
                 // Retry if failed in Phase 2 for whatever reason
                 match self.state {
                     SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
@@ -351,7 +353,7 @@ impl Sync {
         from: PeerId,
         response: Vec<Proposal>,
     ) -> Result<()> {
-        if let Some((peer, _)) = self.in_flight.as_ref() {
+        if let Some((peer, _)) = self.in_flight.front() {
             if peer.peer_id != from {
                 tracing::warn!(
                     "sync::MultiBlockResponse : unexpected peer={} != {from}",
@@ -369,12 +371,12 @@ impl Sync {
             // Empty response, downgrade peer and retry phase 1.
             tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
             self.peers
-                .done_with_peer(self.in_flight.take(), DownGrade::Empty);
+                .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
             self.state = SyncState::Retry1;
             return Ok(());
         } else {
             self.peers
-                .done_with_peer(self.in_flight.take(), DownGrade::None);
+                .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
         }
 
         let SyncState::Phase2(check_sum) = self.state else {
@@ -466,7 +468,7 @@ impl Sync {
             anyhow::bail!("sync::RequestMissingBlocks : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
-        if self.in_flight.is_some() || self.in_pipeline > self.max_blocks_in_flight {
+        if !self.in_flight.is_empty() || self.in_pipeline > self.max_blocks_in_flight {
             tracing::debug!(
                 "sync::RequestMissingBlocks : syncing {}/{} blocks",
                 self.in_pipeline,
@@ -531,7 +533,7 @@ impl Sync {
                 let request_id = self
                     .message_sender
                     .send_external_message(peer_info.peer_id, message)?;
-                self.in_flight = Some((peer_info, request_id));
+                self.add_in_flight(peer_info, request_id);
             }
         } else {
             tracing::warn!("sync::RequestMissingBlocks : insufficient peers to handle request");
@@ -551,7 +553,7 @@ impl Sync {
             && response.from_view == u64::MAX
         {
             tracing::info!("sync::HandleBlockResponse : new response from {from}",);
-            if let Some((mut peer, _)) = self.in_flight.take() {
+            if let Some((mut peer, _)) = self.in_flight.pop_front() {
                 if peer.peer_id == from && peer.version == PeerVer::V1 {
                     // upgrade to V2 peer
                     peer.version = PeerVer::V2;
@@ -647,7 +649,7 @@ impl Sync {
         response: Vec<BlockHeader>,
     ) -> Result<()> {
         // Check for expected response
-        let segment_peer = if let Some((peer, _)) = self.in_flight.as_ref() {
+        let segment_peer = if let Some((peer, _)) = self.in_flight.front() {
             if peer.peer_id != from {
                 tracing::warn!(
                     "sync::MetadataResponse : unexpected peer={} != {from}",
@@ -667,11 +669,11 @@ impl Sync {
             // Empty response, downgrade peer and retry with a new peer.
             tracing::warn!("sync::MetadataResponse : empty blocks {from}",);
             self.peers
-                .done_with_peer(self.in_flight.take(), DownGrade::Empty);
+                .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
             return Ok(());
         } else {
             self.peers
-                .done_with_peer(self.in_flight.take(), DownGrade::None);
+                .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
         }
 
         let SyncState::Phase1(meta) = &self.state else {
@@ -803,7 +805,7 @@ impl Sync {
             anyhow::bail!("sync::RequestMissingMetadata : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
-        if self.in_flight.is_some() || self.in_pipeline > self.max_batch_size {
+        if !self.in_flight.is_empty() || self.in_pipeline > self.max_batch_size {
             // anything more than this and we cannot be sure whether the segment hits history
             tracing::debug!(
                 "sync::RequestMissingMetadata : syncing {}/{} blocks",
@@ -872,7 +874,7 @@ impl Sync {
             let request_id = self
                 .message_sender
                 .send_external_message(peer_info.peer_id, message)?;
-            self.in_flight = Some((peer_info, request_id));
+            self.add_in_flight(peer_info, request_id);
         } else {
             tracing::warn!("sync::RequestMissingBlocks : insufficient peers to handle request",);
         }
@@ -954,18 +956,14 @@ impl Sync {
             )?
             .expect("missing highest block");
 
-        let peers = if self.in_flight.is_some() {
-            self.peers.count().saturating_add(1)
-        } else {
-            self.peers.count()
-        };
+        let peer_count = self.peers.count() + self.in_flight.len();
 
         Ok(Some(SyncingStruct {
             starting_block: self.started_at_block_number,
             current_block: highest_block.number(),
             highest_block: self.highest_block_seen,
             status: SyncingMeta {
-                peer_count: peers,
+                peer_count,
                 current_phase: self.state.to_string(),
                 retry_count: self.retry_count,
                 timeout_count: self.timeout_count,
@@ -982,6 +980,11 @@ impl Sync {
         let hash = checkpoint.hash();
         tracing::info!("sync::Checkpoint {}", hash);
         self.checkpoint_hash = hash;
+    }
+
+    // Add an in-flight request
+    fn add_in_flight(&mut self, peer_info: PeerInfo, request_id: RequestId) {
+        self.in_flight.push_back((peer_info, request_id));
     }
 }
 
