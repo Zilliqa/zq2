@@ -156,11 +156,11 @@ impl Sync {
 
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Empty);
-                // Retry if failed in Phase 2 for whatever reason
                 match self.state {
                     SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
                         self.request_missing_metadata(None)?
                     }
+                    // Retry if failed in Phase 2 for whatever reason
                     SyncState::Phase2(_) => self.state = SyncState::Retry1,
                     _ => {}
                 }
@@ -188,11 +188,11 @@ impl Sync {
 
                 self.peers
                     .done_with_peer(self.in_flight.take(), DownGrade::Timeout);
-                // Retry if failed in Phase 2 for whatever reason
                 match self.state {
                     SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
                         self.request_missing_metadata(None)?
                     }
+                    // Retry if failed in Phase 2 for whatever reason
                     SyncState::Phase2(_) => self.state = SyncState::Retry1,
                     _ => {}
                 }
@@ -243,20 +243,10 @@ impl Sync {
                 if !self.db.contains_block(&parent_hash)? {
                     // No parent block, trigger sync
                     tracing::info!("sync::SyncProposal : syncing from {parent_hash}",);
-                    let meta = self.recent_proposals.back().unwrap().header;
-
-                    let highest_block = self
-                        .db
-                        .get_canonical_block_by_number(
-                            self.db
-                                .get_highest_canonical_block_number()?
-                                .expect("no highest block"),
-                        )?
-                        .expect("missing highest block");
-                    self.started_at_block_number = highest_block.number();
-
+                    self.update_started_at()?;
                     // Ensure started_at_block_number is set before running this.
                     // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
+                    let meta = self.recent_proposals.back().unwrap().header;
                     self.request_missing_metadata(Some(meta))?;
                 }
             }
@@ -287,6 +277,8 @@ impl Sync {
             }
             // Retry to fix sync issues e.g. peers that are now offline
             SyncState::Retry1 if self.in_pipeline == 0 => {
+                self.update_started_at()?;
+                // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
             }
             _ => {
@@ -294,6 +286,22 @@ impl Sync {
             }
         }
 
+        Ok(())
+    }
+
+    /// Update the startingBlock value.
+    /// 
+    /// Must be called before starting/re-starting Phase 1.
+    fn update_started_at(&mut self) -> Result<()> {
+        let highest_block = self
+            .db
+            .get_canonical_block_by_number(
+                self.db
+                    .get_highest_canonical_block_number()?
+                    .expect("no highest block"),
+            )?
+            .expect("missing highest block");
+        self.started_at_block_number = highest_block.number();
         Ok(())
     }
 
@@ -720,19 +728,15 @@ impl Sync {
 
         // TODO: Implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2158
 
-        // Record the oldest block in the chain's parent
+        // Record the oldest block in the segment
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
 
         // If the check-point/starting-point is in this segment
         let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
-        let range = std::ops::RangeInclusive::new(
-            segment.last().as_ref().unwrap().number,
-            segment.first().as_ref().unwrap().number,
-        );
-        let started = range.contains(&self.started_at_block_number);
+        let turnaround = self.started_at_block_number >= segment.last().as_ref().unwrap().number;
 
         // If the segment hits our history, turnaround to Phase 2.
-        if started || checkpointed {
+        if turnaround || checkpointed {
             self.state = SyncState::Phase2(Hash::ZERO);
         } else if Self::DO_SPECULATIVE {
             self.request_missing_metadata(None)?;
