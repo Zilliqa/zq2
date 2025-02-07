@@ -755,18 +755,29 @@ pub(super) fn get_transaction_receipt_inner(
         })
         .collect();
 
-    let contract_address = match signed_transaction.tx {
-        SignedTransaction::Zilliqa { ref tx, .. } => {
-            Some(tx.get_contract_address(&signed_transaction.signer)?)
-        }
-        _ => receipt.contract_address,
-    };
+    let (is_zilliqa_txn, contract_address) =
+        if let SignedTransaction::Zilliqa { ref tx, .. } = signed_transaction.tx {
+            (
+                true,
+                Some(tx.get_contract_address(&signed_transaction.signer)?),
+            )
+        } else {
+            (false, None)
+        };
 
     let from = signed_transaction.signer;
     let v = signed_transaction.tx.sig_v();
     let r = signed_transaction.tx.sig_r();
     let s = signed_transaction.tx.sig_s();
     let transaction = signed_transaction.tx.into_transaction();
+
+    let contract_address = {
+        if is_zilliqa_txn && transaction.to_addr().is_none() {
+            contract_address
+        } else {
+            receipt.contract_address
+        }
+    };
 
     let receipt = eth::TransactionReceipt {
         transaction_hash: hash.into(),
@@ -778,7 +789,7 @@ pub(super) fn get_transaction_receipt_inner(
         cumulative_gas_used: receipt.cumulative_gas_used,
         effective_gas_price: transaction.max_fee_per_gas(),
         gas_used: receipt.gas_used,
-        contract_address: receipt.contract_address.and(contract_address),
+        contract_address,
         logs,
         logs_bloom,
         ty: 0,
