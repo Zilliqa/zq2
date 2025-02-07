@@ -178,7 +178,11 @@ impl Sync {
     /// P2P Failure
     ///
     /// This gets called for any libp2p request failure - treated as a network failure
-    pub fn handle_request_failure(&mut self, failure: OutgoingMessageFailure) -> Result<()> {
+    pub fn handle_request_failure(
+        &mut self,
+        _from: PeerId,
+        failure: OutgoingMessageFailure,
+    ) -> Result<()> {
         // check if the request is a sync messages
         if let Some((peer, req_id)) = self.in_flight.front() {
             // downgrade peer due to network failure
@@ -1002,6 +1006,21 @@ impl SyncPeers {
         }
     }
 
+    /// Count the number of good peers
+    pub fn count_good_peers(&self) -> usize {
+        let peers = self.peers.lock().unwrap();
+        if peers.is_empty() {
+            return 0;
+        }
+        let best_score = peers.iter().map(|p| p.score).min().unwrap();
+        peers
+            .iter()
+            .filter(|p| p.score == best_score)
+            .count()
+            .saturating_sub(1)
+            .max(1) // always return at least 1
+    }
+
     fn count(&self) -> usize {
         self.peers.lock().unwrap().len()
     }
@@ -1011,18 +1030,22 @@ impl SyncPeers {
     /// This algorithm favours good peers that respond quickly (i.e. no timeout).
     /// In most cases, it eventually degenerates into 2 sources - avoid a single source of truth.
     fn done_with_peer(&self, in_flight: Option<(PeerInfo, RequestId)>, downgrade: DownGrade) {
-        if let Some((mut peer, _)) = in_flight {
-            tracing::trace!("sync::DoneWithPeer {} {:?}", peer.peer_id, downgrade);
-            let mut peers = self.peers.lock().unwrap();
-            peer.score = peer.score.saturating_add(downgrade as u32);
-            if !peers.is_empty() {
-                // Ensure that the next peer is equal or better
-                peer.score = peer.score.max(peers.peek().unwrap().score);
-            }
-            // Reinsert peers that are good
-            if peer.score < u32::MAX {
-                peers.push(peer);
-            }
+        if in_flight.is_none() {
+            return;
+        }
+        let (mut peer, _) = in_flight.unwrap();
+        tracing::trace!("sync::DoneWithPeer {} {:?}", peer.peer_id, downgrade);
+        let mut peers = self.peers.lock().unwrap();
+        peer.score = peer.score.saturating_add(downgrade as u32);
+        if !peers.is_empty() {
+            // Ensure that the next peer is equal or better
+            peer.score = peer.score.max(peers.peek().unwrap().score);
+        }
+        // ensure that it is unique
+        peers.retain(|p| p.peer_id != peer.peer_id);
+        // Reinsert peers that are good
+        if peer.score < u32::MAX {
+            peers.push(peer);
         }
     }
 
@@ -1047,7 +1070,7 @@ impl SyncPeers {
             last_used: Instant::now(),
         };
         // ensure that it is unique
-        peers.retain(|p: &PeerInfo| p.peer_id != peer);
+        peers.retain(|p| p.peer_id != peer);
         peers.push(new_peer);
 
         tracing::trace!("sync::AddPeer {peer}/{}", peers.len());
@@ -1086,6 +1109,8 @@ impl SyncPeers {
                 .checked_sub(Duration::from_secs(1))
                 .expect("time is ordinal");
         }
+        // ensure that it is unique
+        peers.retain(|p| p.peer_id != peer.peer_id);
         peers.push(peer);
         Ok(())
     }
