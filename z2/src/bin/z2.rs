@@ -1083,15 +1083,16 @@ async fn main() -> Result<()> {
                     .unwrap(),
                 BlsSignature::from_string(&args.deposit_auth_signature).unwrap(),
             )?;
-            let stake = validators::StakeDeposit::new(
-                node,
-                args.amount,
+            let client_config = validators::ClientConfig::new(
                 &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
+            )?;
+            let stake = validators::StakeDeposit::new(
+                args.amount,
                 &args.reward_address,
                 &args.signing_address,
             )?;
-            validators::deposit_stake(&stake).await
+            validators::deposit_stake(&node, &client_config, &stake).await
         }
         Commands::Nodes(ref args) => {
             let spec = Composition::parse(&args.nodes)?;
