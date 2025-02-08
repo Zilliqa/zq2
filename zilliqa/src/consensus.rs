@@ -853,6 +853,19 @@ impl Consensus {
         Ok(None)
     }
 
+    fn should_apply_rewards_late_at(&self, parent_block: &Block, block: &Block) -> bool {
+        let block_hash = block.hash();
+        let parent_block_hash = parent_block.hash();
+        let block_or_parent_trusted = self
+            .always_trust_block_hashes
+            .iter()
+            .any(|x| x == &parent_block_hash || x == &block_hash);
+        if block_or_parent_trusted {
+            trace!("Do not apply rewards with parent {parent_block_hash:?} block {block_hash:?} - trusted");
+        }
+        !block_or_parent_trusted
+    }
+
     /// Apply the rewards at the tail-end of the Proposal.
     /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
     /// rewards are calculated, please change the comments in the configuration structure there.
@@ -887,6 +900,7 @@ impl Consensus {
             })
             .collect();
 
+        trace!("RRW070: committee is {committee:?} for block {block:?}");
         let total_cosigner_stake = cosigner_stake.iter().fold(0, |sum, c| sum + c.1);
         if total_cosigner_stake == 0 {
             return Err(anyhow!("total stake is 0"));
@@ -1176,42 +1190,59 @@ impl Consensus {
             .get_block(&proposal.parent_hash())?
             .context("missing parent block")?;
         let parent_block_hash = parent_block.hash();
-
+        trace!("RRW060: 000");
         let mut state = self.state.clone();
         let previous_state_root_hash = state.root_hash()?;
         state.set_to_root(proposal.state_root_hash().into());
-
+        trace!("RRW060: 001 proposal = {proposal:?}");
+        let always_trust_this_block = self
+            .always_trust_block_hashes
+            .iter()
+            .any(|x| x == &parent_block_hash);
         // Compute the majority QC. If aggQC exists then QC is already set to correct value.
         let (final_qc, committee) = match proposal.agg {
             Some(_) => {
+                trace!("RRW010: case 0 {:?}", proposal);
                 let committee: Vec<_> = self.committee_for_hash(proposal.header.qc.block_hash)?;
                 (proposal.header.qc, committee)
             }
             None => {
-                // Check for majority
-                let Some((signatures, cosigned, _, supermajority_reached)) =
-                    self.votes.get(&parent_block_hash)
-                else {
-                    warn!("tried to finalise a proposal without any votes");
-                    return Ok(None);
-                };
-                if !supermajority_reached {
-                    warn!("tried to finalise a proposal without majority");
-                    return Ok(None);
-                };
-                // Retrieve the previous leader and committee - for rewards
-                let committee = state
-                    .at_root(parent_block.state_root_hash().into())
-                    .get_stakers(proposal.header)?;
-                (
-                    self.qc_from_bits(
-                        parent_block_hash,
-                        signatures,
-                        *cosigned,
-                        parent_block.view(),
-                    ),
-                    committee,
-                )
+                trace!("RRW010: case 1 {:?}", &parent_block_hash);
+                if always_trust_this_block {
+                    trace!("RRW010: always trust this block");
+                    // We always trust the parent and no need to check the votes - there won't be any.
+                    (
+                        proposal.header.qc,
+                        self.state
+                            .at_root(parent_block.state_root_hash().into())
+                            .get_stakers(parent_block.header)?,
+                    )
+                } else {
+                    // Check for majority
+                    let Some((signatures, cosigned, _, supermajority_reached)) =
+                        self.votes.get(&parent_block_hash)
+                    else {
+                        warn!("tried to finalise a proposal without any votes");
+                        return Ok(None);
+                    };
+                    if !supermajority_reached {
+                        warn!("tried to finalise a proposal without majority");
+                        return Ok(None);
+                    };
+                    // Retrieve the previous leader and committee - for rewards
+                    let committee = state
+                        .at_root(parent_block.state_root_hash().into())
+                        .get_stakers(proposal.header)?;
+                    (
+                        self.qc_from_bits(
+                            parent_block_hash,
+                            signatures,
+                            *cosigned,
+                            parent_block.view(),
+                        ),
+                        committee,
+                    )
+                }
             }
         };
 
@@ -1221,14 +1252,16 @@ impl Consensus {
             .public_key;
         // Apply the rewards when exiting the round
         proposal.header.qc = final_qc;
-        Self::apply_rewards_late_at(
-            &parent_block,
-            &mut state,
-            &self.config.consensus,
-            &committee,
-            proposer, // Last leader
-            &proposal,
-        )?;
+        if self.should_apply_rewards_late_at(&parent_block, &proposal) {
+            Self::apply_rewards_late_at(
+                &parent_block,
+                &mut state,
+                &self.config.consensus,
+                &committee,
+                proposer, // Last leader
+                &proposal,
+            )?
+        };
 
         // ZIP-9: Sink gas to zero account
         state.mutate_account(Address::ZERO, |a| {
@@ -1498,14 +1531,17 @@ impl Consensus {
     /// Called when consensus will accept our early_block.
     /// Either propose now or set timeout to allow for txs to come in.
     fn ready_for_block_proposal(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        trace!("RRW001");
         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
         let (milliseconds_since_last_view_change, milliseconds_remaining_of_block_time, _) =
             self.get_consensus_timeout_params()?;
 
+        trace!("RRW002");
         if milliseconds_remaining_of_block_time == 0 {
             return self.propose_new_block();
         }
 
+        trace!("RRW003");
         // Reset the timeout and wake up again once it has been at least `block_time` since
         // the last view change. At this point we should be ready to produce a new block.
         self.create_next_block_on_timeout = true;
@@ -1647,11 +1683,13 @@ impl Consensus {
         self.early_proposal_assemble_at(None)?;
         let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
+        trace!("RRW050: 000");
         // intershard transactions are not meant to be broadcast
         let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
             .clone()
             .into_iter()
             .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+        trace!("RRW050: 001");
         // however, for the transactions that we are NOT broadcasting, we re-insert
         // them into the pool - this is because upon broadcasting the proposal, we will
         // have to re-execute it ourselves (in order to vote on it) and thus will
@@ -1661,18 +1699,21 @@ impl Consensus {
             self.transaction_pool.insert_transaction(tx, account_nonce);
         }
 
+        trace!("RRW050: 002");
         // finalise the proposal
         let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
             // Do not Propose.
+            trace!("RRW050: 002a");
             // Recover the proposed transactions into the pool.
             while let Some(txn) = broadcasted_transactions.pop() {
                 self.transaction_pool.insert_ready_transaction(txn)?;
             }
             return Ok(None);
         };
+        trace!("RRW050: 003");
 
         info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
-
+        trace!("RRW030: propose_new_block() : returning");
         Ok(Some((final_block, broadcasted_transactions)))
     }
 
@@ -1734,6 +1775,10 @@ impl Consensus {
 
     fn committee_for_hash(&self, parent_hash: Hash) -> Result<Vec<NodePublicKey>> {
         let Ok(Some(parent)) = self.get_block(&parent_hash) else {
+            trace!(
+                "RRW020: No parent hash {:?} - returning empty committee",
+                parent_hash
+            );
             // tracing::error!("parent block not found: {:?}", parent_hash);
             return Ok(Vec::new()); // return an empty vector instead of Err for graceful app-level error-handling
         };
@@ -1747,7 +1792,11 @@ impl Consensus {
         };
 
         let committee = state.get_stakers(executed_block)?;
-
+        trace!(
+            "RRW021: committee in {:?} is {:?}",
+            parent.header.number + 1,
+            committee
+        );
         Ok(committee)
     }
 
@@ -1882,6 +1931,7 @@ impl Consensus {
                     // We now have a valid aggQC so can create early_block with it
                     self.early_proposal_assemble_at(Some(agg))?;
 
+                    trace!("RRW000X");
                     // as a future improvement, process the proposal before broadcasting it
                     return self.ready_for_block_proposal();
 
@@ -3086,14 +3136,16 @@ impl Consensus {
 
         // Apply rewards after executing transactions but with the committee members from the previous block
         let proposer = self.leader_at_block(&parent, block.view()).unwrap();
-        Self::apply_rewards_late_at(
-            &parent,
-            &mut self.state,
-            &self.config.consensus,
-            committee,
-            proposer.public_key,
-            block,
-        )?;
+        if self.should_apply_rewards_late_at(&parent, block) {
+            Self::apply_rewards_late_at(
+                &parent,
+                &mut self.state,
+                &self.config.consensus,
+                committee,
+                proposer.public_key,
+                block,
+            )?
+        }
 
         // ZIP-9: Sink gas to zero account
         self.state.mutate_account(Address::ZERO, |a| {
