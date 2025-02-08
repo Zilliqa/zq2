@@ -531,28 +531,46 @@ impl Setup {
             &self.config_dir
         );
 
-        // We deliberately only give one of the bootstrap addresses in order to encourage
-        // libp2p to exercise its discovery paths - otherwise a bug which prevented node
-        // discovery would be missed when running locally.
-        let bootstrap_address =
-            if let Some((first_index, _)) = self.config.shape.nodes.iter().next() {
-                let idx = u16::try_from(*first_index)?;
-                println!(
-                    "Bootstrap_address has idx {idx} with node_data {0:?}",
-                    self.config.node_data.get(&u64::from(idx))
-                );
-
-                zilliqa::cfg::OneOrMany(vec![(self.get_peer_id(idx)?, self.get_p2p_multiaddr(idx))])
-            } else {
-                Default::default()
-            };
+        // zq2 has quite a lot of mechanism to stop libp2p binding to addresses that are in any way
+        // "not global". This interferes with z2, since z2 would like it to explore addresses that are
+        // local so as to avoid exposing your super-insecure test chain to anyone on your local network.
+        // To try to mitigate this, we define all z2 nodes as bootstraps, which (hopefully!) leads to
+        // enough connectivity to operate the network, even if it isn't all that realistic.
+        //
+        // One day we might (have to?) do something more drastic, like setting up a local alias address,
+        // but that would require rootly privileges or messing with containers, or possibly both, and
+        // seems worth avoiding until we absolutely have to.
+        // - rrw 2025-02-08
+        let bootstrap_addresses = zilliqa::cfg::OneOrMany(
+            self.config
+                .shape
+                .nodes
+                .iter()
+                .filter_map(|(k, _)| {
+                    let idx = u16::try_from(*k);
+                    if let Ok(v) = idx {
+                        if let Ok(peer_id) = self.get_peer_id(v) {
+                            println!(
+                                "Found bootstrap_at idx {v} with node_data {0:?}",
+                                self.config.node_data.get(&u64::from(v))
+                            );
+                            Some((peer_id, self.get_p2p_multiaddr(v)))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        );
 
         for (node_index, _node_desc) in self.config.shape.nodes.iter() {
             println!("🎱 Generating configuration for node {node_index}...");
             let node_index_u16 = u16::try_from(*node_index)?;
             let mut cfg = zilliqa::cfg::Config {
                 otlp_collector_endpoint: Some("http://localhost:4317".to_string()),
-                bootstrap_address: bootstrap_address.clone(),
+                bootstrap_address: bootstrap_addresses.clone(),
                 nodes: Vec::new(),
                 p2p_port: self.get_p2p_port(node_index_u16),
                 // libp2p's autonat will attempt to infer an external address by having
