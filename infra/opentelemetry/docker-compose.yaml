@@ -19,8 +19,8 @@ services:
     ports:
       - "4211:4201"
     networks:
-      testnet_with_otel:
-        ipv4_address: 198.52.100.100
+      localnet_with_otel:
+        ipv4_address: 198.53.100.100
 
   node1_with_otel:
     depends_on:
@@ -35,8 +35,8 @@ services:
     command:
       - 62070b1a3b5b30236e43b4f1bfd617e1af7474635558314d46127a708b9d302e
     networks:
-      testnet_with_otel:
-        ipv4_address: 198.52.100.101
+      localnet_with_otel:
+        ipv4_address: 198.53.100.101
 
   node2_with_otel:
     depends_on:
@@ -51,8 +51,8 @@ services:
     command:
       - 56d7a450d75c6ba2706ef71da6ca80143ec4971add9c44d7d129a12fa7d3a364
     networks:
-      testnet_with_otel:
-        ipv4_address: 198.52.100.102
+      localnet_with_otel:
+        ipv4_address: 198.53.100.102
 
   node3_with_otel:
     environment:
@@ -65,8 +65,8 @@ services:
     command:
       - db670cbff28f4b15297d03fafdab8f5303d68b7591bd59e31eaef215dd0f246a
     networks:
-      testnet_with_otel:
-        ipv4_address: 198.52.100.103
+      localnet_with_otel:
+        ipv4_address: 198.53.100.103
 
   otterscan_with_otel:
     environment:
@@ -76,8 +76,8 @@ services:
     ports:
       - "5101:80"
     networks:
-      testnet_with_otel:
-        ipv4_address: 198.52.100.9
+      localnet_with_otel:
+        ipv4_address: 198.53.100.9
 
   faucet_with_otel:
     depends_on:
@@ -96,8 +96,8 @@ services:
     # Fast shutdown - Don't gracefully close open connections.
     stop_signal: SIGKILL
     networks:
-      testnet_with_otel:
-        ipv4_address: 198.52.100.10
+      localnet_with_otel:
+        ipv4_address: 198.53.100.10
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
@@ -108,7 +108,7 @@ services:
       - "4317:4317"
       - "9011:8888"
     networks:
-      - testnet_with_otel
+      - localnet_with_otel
 
   mimir:
     image: grafana/mimir:latest
@@ -121,7 +121,7 @@ services:
     ports:
       - "9009:9009"
     networks:
-      - testnet_with_otel
+      - localnet_with_otel
 
   grafana:
     image: grafana/grafana-oss:latest
@@ -131,12 +131,12 @@ services:
     ports:
       - "9010:3000"
     networks:
-      - testnet_with_otel
+      - localnet_with_otel
 
 networks:
-  testnet_with_otel:
+  localnet_with_otel:
     driver: bridge
     ipam:
       config:
-        - subnet: 198.52.100.0/24
-          gateway: 198.52.100.1
+        - subnet: 198.53.100.0/24
+          gateway: 198.53.100.1
