@@ -93,11 +93,8 @@ pub struct Sync {
 
 impl Sync {
     // Speed up syncing by speculatively fetching blocks in Phase 1 & 2.
-    #[cfg(not(debug_assertions))]
     const DO_SPECULATIVE: bool = true;
-    #[cfg(debug_assertions)]
-    const DO_SPECULATIVE: bool = false;
-
+    // Speed up syncing by fetching multiple segments in Phase 1.
     const MAX_CONCURRENT_PEERS: usize = 3;
 
     pub fn new(
@@ -155,11 +152,8 @@ impl Sync {
             tracing::warn!(from = %from,
                 "sync::Acknowledgement"
             );
-            match &self.state {
-                SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, vec![])?;
-                }
-                _ => {}
+            if let SyncState::Phase1(_) = &self.state {
+                self.handle_metadata_response(from, vec![])?;
             }
         } else {
             tracing::warn!("sync::Acknowledgement : spurious {from}");
@@ -180,11 +174,8 @@ impl Sync {
             tracing::warn!(from = %from, err = %failure.error,
                 "sync::RequestFailure"
             );
-            match &self.state {
-                SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, vec![])?;
-                }
-                _ => {}
+            if let SyncState::Phase1(_) = &self.state {
+                self.handle_metadata_response(from, vec![])?;
             }
         } else {
             tracing::warn!("sync::RequestFailure : spurious {from}");
@@ -225,7 +216,7 @@ impl Sync {
 
         match self.state {
             // Check if we are out of sync
-            SyncState::Phase0 if self.in_pipeline == 0 => {
+            SyncState::Phase0 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
                 if !self.db.contains_block(&parent_hash)? {
                     // No parent block, trigger sync
@@ -238,15 +229,19 @@ impl Sync {
                 }
             }
             // Continue phase 1, until we hit history/genesis.
-            SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
+            SyncState::Phase1(_)
+                if self.in_pipeline < self.max_batch_size && self.in_flight.is_empty() =>
+            {
                 self.request_missing_metadata(None)?;
             }
             // Continue phase 2, until we have all segments.
-            SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
+            SyncState::Phase2(_)
+                if self.in_pipeline < self.max_blocks_in_flight && self.in_flight.is_empty() =>
+            {
                 self.request_missing_blocks()?;
             }
             // Wait till 99% synced, zip it up!
-            SyncState::Phase3 if self.in_pipeline == 0 => {
+            SyncState::Phase3 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
                 if self.db.contains_block(&ancestor_hash)? {
                     tracing::info!(
@@ -263,7 +258,7 @@ impl Sync {
                 self.state = SyncState::Phase0;
             }
             // Retry to fix sync issues e.g. peers that are now offline
-            SyncState::Retry1 if self.in_pipeline == 0 => {
+            SyncState::Retry1 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
                 self.update_started_at()?;
                 // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
@@ -551,11 +546,8 @@ impl Sync {
                     p.version = PeerVer::V2;
                 }
             });
-            match &self.state {
-                SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, vec![])?;
-                }
-                _ => {}
+            if let SyncState::Phase1(_) = &self.state {
+                self.handle_metadata_response(from, vec![])?;
             }
             return Ok(());
         }
@@ -1200,7 +1192,7 @@ impl PartialOrd for PeerInfo {
 enum DownGrade {
     None,
     Empty,
-    Timeout,
+    // Timeout,
 }
 
 impl Ord for DownGrade {
