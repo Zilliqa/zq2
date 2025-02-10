@@ -26,7 +26,7 @@ anyhow = { version = "1.0.95", features = ["backtrace"] }
 vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.6.4", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "0.11.0", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 anyhow = { version = "1.0.95", features = ["backtrace"] }
 async-trait = "0.1.86"
 base64 = "0.22.1"
@@ -57,8 +57,8 @@ prost = "0.13.4"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_core = "0.6.4"
-revm = { version = "18.0.0", features = ["optional_no_base_fee"] }
-revm-inspectors = { version = "0.11.0", features = ["js-tracer"] }
+revm = { version = "19.4.0", features = ["optional_no_base_fee"] }
+revm-inspectors = { version = "0.15.0", features = ["js-tracer"] }
 rusqlite = { version = "0.33.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.217", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
@@ -75,7 +75,7 @@ tower = "0.4.13"
 tower-http = { version = "0.6.1", features = ["cors"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
-cbor4ii = "0.3.2"
+cbor4ii = { version = "1.0.0", features = ["serde1"] }
 scilla-parser = "2.0.0"
 scopeguard = "1.2.0"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
@@ -89,7 +89,7 @@ semver = "1.0.23"
 foundry-compilers = { version = "0.13.1", features = ["svm-solc"] }
 
 [dev-dependencies]
-alloy = { version = "0.6.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
+alloy = { version = "0.11.0", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
 async-trait = "0.1.86"
 criterion = "0.5.1"
 ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
