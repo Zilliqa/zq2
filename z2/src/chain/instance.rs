@@ -242,7 +242,7 @@ impl ChainInstance {
             "accept:application/json,*/*;q=0.5",
             "--data",
             &body,
-            endpoint,
+            &endpoint,
         ];
 
         let output = zqutils::commands::CommandBuilder::new()
