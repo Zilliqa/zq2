@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BinaryHeap, VecDeque},
+    collections::{BTreeMap, BinaryHeap, VecDeque},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -64,6 +64,7 @@ pub struct Sync {
     peers: Arc<SyncPeers>,
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
+    p1_response: BTreeMap<PeerId, Vec<BlockHeader>>,
     // how many blocks to request at once
     max_batch_size: usize,
     // how many blocks to inject into the queue
@@ -141,6 +142,7 @@ impl Sync {
             empty_count: 0,
             headers_downloaded: 0,
             blocks_downloaded: 0,
+            p1_response: BTreeMap::new(),
         })
     }
 
@@ -660,36 +662,57 @@ impl Sync {
         from: PeerId,
         response: Vec<BlockHeader>,
     ) -> Result<()> {
-        // Check for expected response
-        let segment_peer = if let Some((peer, _)) = self.in_flight.front() {
-            if peer.peer_id != from {
-                tracing::warn!(
-                    "sync::MetadataResponse : unexpected peer={} != {from}",
-                    peer.peer_id
-                );
-                return Ok(());
-            }
-            peer.clone()
-        } else {
-            // We ignore any responses that arrived late, since the original request has already 'timed-out'.
-            tracing::warn!("sync::MetadataResponse : spurious response {from}");
+        let SyncState::Phase1(_) = &self.state else {
+            tracing::warn!("sync::MetadataResponse : dropped response {from}");
             return Ok(());
         };
 
-        // Process whatever we have received.
-        if response.is_empty() {
-            // Empty response, downgrade peer and retry with a new peer.
-            tracing::warn!("sync::MetadataResponse : empty blocks {from}",);
-            self.peers
-                .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
+        if self.in_flight.is_empty() {
+            tracing::warn!("sync::MetadataResponse : spurious response {from}");
             return Ok(());
-        } else {
-            self.peers
-                .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
         }
 
+        // buffer response for processing
+        self.p1_response.insert(from, response);
+
+        // process responses, in-order
+        while let Some((peer, _)) = self.in_flight.front() {
+            if self.p1_response.contains_key(&peer.peer_id) {
+                let peer_id = peer.peer_id;
+                let response = self.p1_response.remove(&peer_id).unwrap();
+                // Only process a full response
+                if response.is_empty() {
+                    // Empty response, downgrade peer and retry with a new peer.
+                    tracing::warn!("sync::MetadataResponse : empty from {peer_id}");
+                    self.peers
+                        .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
+                    todo!("retry with next peer")
+                } else {
+                    let segment_peer = peer.clone();
+                    self.peers
+                        .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
+                    self.do_metadata_response(segment_peer, response)?;
+                }
+            } else {
+                break;
+            }
+        }
+
+        if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
+            self.p1_response.clear();
+            self.request_missing_metadata(None)?;
+        }
+
+        Ok(())
+    }
+
+    fn do_metadata_response(
+        &mut self,
+        segment_peer: PeerInfo,
+        response: Vec<BlockHeader>,
+    ) -> Result<()> {
         let SyncState::Phase1(meta) = &self.state else {
-            anyhow::bail!("sync::MetadataResponse : invalid state");
+            anyhow::bail!("sync::DoMetadataResponse : invalid state");
         };
 
         // Check the linkage of the returned chain
@@ -704,7 +727,7 @@ impl Sync {
                 // TODO: possibly, discard and rebuild entire chain
                 // if something does not match, do nothing and retry the request with the next peer.
                 tracing::error!(
-                    "sync::MetadataResponse : unexpected metadata hash={block_hash} != {}, num={block_num} != {}",
+                    "sync::DoMetadataResponse : unexpected metadata hash={block_hash} != {}, num={block_num} != {}",
                     meta.hash,
                     meta.number,
                 );
@@ -724,15 +747,22 @@ impl Sync {
         // Record landmark(s), including peer that has this set of blocks
         self.db.push_sync_segment(&segment_peer, meta)?;
 
+        // TODO: Implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
+        let mut block_size = 0;
+        for meta in segment.iter().rev().filter(|_| {
+            // TODO: Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM
+            block_size += 1;
+            block_size % 10 == 9
+        }) {
+            self.db.push_sync_segment(&segment_peer, meta)?;
+        }
+
         tracing::info!(
-            "sync::MetadataResponse : received {} metadata segment #{} from {}",
+            "sync::DoMetadataResponse : received {} headers from {}",
             segment.len(),
-            self.db.count_sync_segments()?,
-            from
+            segment_peer.peer_id,
         );
         self.headers_downloaded = self.headers_downloaded.saturating_add(segment.len() as u64);
-
-        // TODO: Implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2158
 
         // Record the oldest block in the segment
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
@@ -744,8 +774,10 @@ impl Sync {
         // If the segment hits our history, turnaround to Phase 2.
         if checkpointed || self.db.contains_block(&block_hash)? {
             self.state = SyncState::Phase2(Hash::ZERO);
-        } else if Self::DO_SPECULATIVE {
-            self.request_missing_metadata(None)?;
+            // drop all pending requests
+            for p in self.in_flight.drain(..) {
+                self.peers.done_with_peer(Some(p), DownGrade::None);
+            }
         }
 
         Ok(())
@@ -767,7 +799,7 @@ impl Sync {
         );
 
         // Do not respond to stale requests as the client has probably timed-out
-        if request.request_at.elapsed()? > Duration::from_secs(5) {
+        if request.request_at.elapsed()? > Duration::from_secs(10) {
             tracing::warn!("sync::MetadataRequest : stale request");
             return Ok(ExternalMessage::Acknowledgement);
         }
