@@ -98,7 +98,7 @@ impl Sync {
     #[cfg(debug_assertions)]
     const DO_SPECULATIVE: bool = false;
 
-    const MAX_CONCURRENT_PEERS: usize = 1;
+    const MAX_CONCURRENT_PEERS: usize = 3;
 
     pub fn new(
         config: &NodeConfig,
@@ -151,28 +151,18 @@ impl Sync {
     /// We get a plain ACK in certain cases - treated as an empty response.
     pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
         self.empty_count = self.empty_count.saturating_add(1);
-        if let Some((peer, _)) = self.in_flight.front() {
-            // downgrade peer due to empty response
-            if peer.peer_id == from {
-                tracing::warn!(to = %peer.peer_id,
-                    "sync::Acknowledgement : empty response"
-                );
-
-                self.peers
-                    .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
-                match self.state {
-                    SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
-                        self.request_missing_metadata(None)?
-                    }
-                    // Retry if failed in Phase 2 for whatever reason
-                    SyncState::Phase2(_) => self.state = SyncState::Retry1,
-                    _ => {}
+        if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
+            tracing::warn!(from = %from,
+                "sync::Acknowledgement"
+            );
+            match &self.state {
+                SyncState::Phase1(_) => {
+                    self.handle_metadata_response(from, vec![])?;
                 }
-            } else {
-                tracing::warn!(to = %peer.peer_id,
-                    "sync::Acknowledgement : spurious"
-                );
+                _ => {}
             }
+        } else {
+            tracing::warn!("sync::Acknowledgement : spurious {from}");
         }
         Ok(())
     }
@@ -182,33 +172,22 @@ impl Sync {
     /// This gets called for any libp2p request failure - treated as a network failure
     pub fn handle_request_failure(
         &mut self,
-        _from: PeerId,
+        from: PeerId,
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.timeout_count = self.timeout_count.saturating_add(1);
-        // check if the request is a sync messages
-        if let Some((peer, req_id)) = self.in_flight.front() {
-            // downgrade peer due to network failure
-            if peer.peer_id == failure.peer && *req_id == failure.request_id {
-                tracing::warn!(to = %peer.peer_id, err = %failure.error,
-                    "sync::RequestFailure : network error"
-                );
-
-                self.peers
-                    .done_with_peer(self.in_flight.pop_front(), DownGrade::Timeout);
-                match self.state {
-                    SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
-                        self.request_missing_metadata(None)?
-                    }
-                    // Retry if failed in Phase 2 for whatever reason
-                    SyncState::Phase2(_) => self.state = SyncState::Retry1,
-                    _ => {}
+        if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
+            tracing::warn!(from = %from, err = %failure.error,
+                "sync::RequestFailure"
+            );
+            match &self.state {
+                SyncState::Phase1(_) => {
+                    self.handle_metadata_response(from, vec![])?;
                 }
-            } else {
-                tracing::warn!(to = %peer.peer_id,
-                    "sync::RequestFailure : spurious"
-                );
+                _ => {}
             }
+        } else {
+            tracing::warn!("sync::RequestFailure : spurious {from}");
         }
         Ok(())
     }
@@ -566,22 +545,17 @@ impl Sync {
             && response.proposals.is_empty()
             && response.from_view == u64::MAX
         {
-            tracing::info!("sync::HandleBlockResponse : new response from {from}",);
-            if let Some((mut peer, _)) = self.in_flight.pop_front() {
-                if peer.peer_id == from && peer.version == PeerVer::V1 {
-                    // upgrade to V2 peer
-                    peer.version = PeerVer::V2;
-                    self.peers.reinsert_peer(peer)?;
-                    match self.state {
-                        SyncState::Phase2(_) => {
-                            self.state = SyncState::Retry1;
-                        }
-                        SyncState::Phase1(_) if Self::DO_SPECULATIVE => {
-                            self.request_missing_metadata(None)?;
-                        }
-                        _ => {}
-                    }
+            tracing::info!("sync::HandleBlockResponse : upgrade {from}",);
+            self.in_flight.iter_mut().for_each(|(p, _)| {
+                if p.peer_id == from {
+                    p.version = PeerVer::V2;
                 }
+            });
+            match &self.state {
+                SyncState::Phase1(_) => {
+                    self.handle_metadata_response(from, vec![])?;
+                }
+                _ => {}
             }
             return Ok(());
         }
@@ -682,11 +656,11 @@ impl Sync {
                 let response = self.p1_response.remove(&peer_id).unwrap();
                 // Only process a full response
                 if response.is_empty() {
-                    // Empty response, downgrade peer and retry with a new peer.
+                    // Empty response, downgrade peer and retry.
                     tracing::warn!("sync::MetadataResponse : empty from {peer_id}");
                     self.peers
                         .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
-                    todo!("retry with next peer")
+                    self.do_missing_metadata(None, 1)?; // fire one request
                 } else {
                     let segment_peer = peer.clone();
                     self.peers
@@ -838,8 +812,6 @@ impl Sync {
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If Phase 1 is in progress, it continues requesting blocks from the last known Phase 1 block.
     /// Otherwise, it requests blocks from the given starting metadata.
-    ///
-    /// TODO: speed it up - https://github.com/Zilliqa/zq2/issues/2158
     pub fn request_missing_metadata(&mut self, meta: Option<BlockHeader>) -> Result<()> {
         if !matches!(self.state, SyncState::Phase1(_)) && !matches!(self.state, SyncState::Phase0) {
             anyhow::bail!("sync::RequestMissingMetadata : invalid state");
@@ -855,68 +827,115 @@ impl Sync {
             return Ok(());
         }
 
-        if let Some(peer_info) = self.peers.get_next_peer() {
-            tracing::info!(
-                "sync::RequestMissingMetadata : requesting {} metadata of segment #{} from {}",
-                self.max_batch_size,
-                self.db.count_sync_segments()? + 1,
-                peer_info.peer_id
-            );
-            let message = match (self.state.clone(), &peer_info.version) {
-                (
-                    SyncState::Phase1(BlockHeader {
-                        number: block_number,
-                        ..
-                    }),
-                    PeerVer::V2,
-                ) => ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
-                    request_at: SystemTime::now(),
-                    to_height: block_number.saturating_sub(1),
-                    from_height: block_number.saturating_sub(self.max_batch_size as u64),
-                }),
-                (
-                    SyncState::Phase1(BlockHeader {
-                        view: view_number, ..
-                    }),
-                    PeerVer::V1,
-                ) => {
-                    // For V1 BlockRequest, we request a little more than we need, due to drift
-                    // Since the view number is an 'internal' clock, it is possible for the same block number
-                    // to have different view numbers.
-                    let drift = self.max_batch_size as u64 / 10;
-                    ExternalMessage::BlockRequest(BlockRequest {
-                        to_view: view_number.saturating_add(drift),
-                        from_view: view_number.saturating_sub(self.max_batch_size as u64),
-                    })
+        let good_set = Self::MAX_CONCURRENT_PEERS.min(self.peers.count_good_peers());
+        if good_set == 0 {
+            tracing::warn!("sync::RequestMissingMetadata : no good peers to handle request");
+            return Ok(());
+        }
+
+        self.do_missing_metadata(meta, good_set)
+    }
+
+    /// Phase 1: Request chain metadata from a peer.
+    ///
+    /// This fires concurrent requests to N peers, to fetch different segments of chain metadata.
+    /// The number of requests is limited by:
+    /// - the number of good peers
+    /// - hitting the starting point
+    /// - encountering a V1 peer
+    fn do_missing_metadata(&mut self, meta: Option<BlockHeader>, num_peers: usize) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase1(_)) && !matches!(self.state, SyncState::Phase0) {
+            anyhow::bail!("sync::DoMissingMetadata : invalid state");
+        }
+        for n in 0..num_peers {
+            let offset = (n * self.max_batch_size) as u64;
+            if let Some(peer_info) = self.peers.get_next_peer() {
+                tracing::info!(
+                    "sync::DoMissingMetadata : request {}/{num_peers} for {} headers from {}",
+                    n + 1,
+                    self.max_batch_size,
+                    peer_info.peer_id
+                );
+                let (message, done) = match (&self.state, &peer_info.version) {
+                    (
+                        SyncState::Phase1(BlockHeader {
+                            number: block_number,
+                            ..
+                        }),
+                        PeerVer::V2,
+                    ) => {
+                        let from = block_number
+                            .saturating_sub(offset)
+                            .saturating_sub(self.max_batch_size as u64)
+                            .max(self.started_at_block_number);
+                        let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
+                            request_at: SystemTime::now(),
+                            to_height: block_number.saturating_sub(offset).saturating_sub(1),
+                            from_height: from,
+                        });
+                        (message, from == self.started_at_block_number)
+                    }
+                    (
+                        SyncState::Phase1(BlockHeader {
+                            view: view_number, ..
+                        }),
+                        PeerVer::V1,
+                    ) => {
+                        // For V1 BlockRequest, we request a little more than we need, due to drift
+                        // Since the view number is an 'internal' clock, it is possible for the same block number
+                        // to have different view numbers.
+                        let drift = self.max_batch_size as u64 / 10;
+                        let message = ExternalMessage::BlockRequest(BlockRequest {
+                            to_view: view_number.saturating_sub(offset).saturating_add(drift),
+                            from_view: view_number
+                                .saturating_sub(offset)
+                                .saturating_sub(self.max_batch_size as u64),
+                        });
+                        (message, true)
+                    }
+                    (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
+                        let meta = meta.unwrap();
+                        let block_number = meta.number;
+                        self.state = SyncState::Phase1(meta);
+                        let from = block_number
+                            .saturating_sub(offset)
+                            .saturating_sub(self.max_batch_size as u64)
+                            .max(self.started_at_block_number);
+                        let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
+                            request_at: SystemTime::now(),
+                            to_height: block_number.saturating_sub(offset).saturating_sub(1),
+                            from_height: from,
+                        });
+                        (message, from == self.started_at_block_number)
+                    }
+                    (SyncState::Phase0, PeerVer::V1) if meta.is_some() => {
+                        let meta = meta.unwrap();
+                        let view_number = meta.view;
+                        self.state = SyncState::Phase1(meta);
+                        let drift = self.max_batch_size as u64 / 10;
+                        let message = ExternalMessage::BlockRequest(BlockRequest {
+                            to_view: view_number.saturating_sub(offset).saturating_add(drift),
+                            from_view: view_number
+                                .saturating_sub(offset)
+                                .saturating_sub(self.max_batch_size as u64),
+                        });
+                        (message, true)
+                    }
+                    _ => unimplemented!("sync::DoMissingMetadata"),
+                };
+
+                let request_id = self
+                    .message_sender
+                    .send_external_message(peer_info.peer_id, message)?;
+                self.add_in_flight(peer_info, request_id);
+
+                if done {
+                    break;
                 }
-                (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
-                    let meta = meta.unwrap();
-                    let block_number = meta.number;
-                    self.state = SyncState::Phase1(meta);
-                    ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
-                        request_at: SystemTime::now(),
-                        to_height: block_number.saturating_sub(1),
-                        from_height: block_number.saturating_sub(self.max_batch_size as u64),
-                    })
-                }
-                (SyncState::Phase0, PeerVer::V1) if meta.is_some() => {
-                    let meta = meta.unwrap();
-                    let view_number = meta.view;
-                    self.state = SyncState::Phase1(meta);
-                    let drift = self.max_batch_size as u64 / 10;
-                    ExternalMessage::BlockRequest(BlockRequest {
-                        to_view: view_number.saturating_add(drift),
-                        from_view: view_number.saturating_sub(self.max_batch_size as u64),
-                    })
-                }
-                _ => anyhow::bail!("sync::MissingMetadata : invalid state"),
-            };
-            let request_id = self
-                .message_sender
-                .send_external_message(peer_info.peer_id, message)?;
-            self.add_in_flight(peer_info, request_id);
-        } else {
-            tracing::warn!("sync::RequestMissingBlocks : insufficient peers to handle request",);
+            } else {
+                tracing::warn!("sync::DoMissingMetadata : insufficient peers to handle request");
+                break;
+            }
         }
         Ok(())
     }
