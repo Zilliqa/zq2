@@ -229,9 +229,41 @@ pub async fn run_deployer_get_deposit_commands(
     Ok(())
 }
 
+pub async fn run_deployer_stakers(config_file: &str) -> Result<()> {
+    println!("🦆 Running stakers data for {config_file} .. ");
+    deployer::run_stakers(config_file).await?;
+    Ok(())
+}
+
 pub async fn run_deployer_deposit(config_file: &str, node_selection: bool) -> Result<()> {
     println!("🦆 Running deposit for {config_file} .. ");
     deployer::run_deposit(config_file, node_selection).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_deposit_top_up(
+    config_file: &str,
+    node_selection: bool,
+    amount: u8,
+) -> Result<()> {
+    println!("🦆 Running deposit-top-up for {config_file} .. ");
+    deployer::run_deposit_top_up(config_file, node_selection, amount).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_unstake(
+    config_file: &str,
+    node_selection: bool,
+    amount: u8,
+) -> Result<()> {
+    println!("🦆 Running unstake for {config_file} .. ");
+    deployer::run_unstake(config_file, node_selection, amount).await?;
+    Ok(())
+}
+
+pub async fn run_deployer_withdraw(config_file: &str, node_selection: bool) -> Result<()> {
+    println!("🦆 Running withdraw for {config_file} .. ");
+    deployer::run_withdraw(config_file, node_selection).await?;
     Ok(())
 }
 
