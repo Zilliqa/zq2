@@ -64,7 +64,7 @@ pub struct Sync {
     peers: Arc<SyncPeers>,
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
-    p1_response: BTreeMap<PeerId, Vec<BlockHeader>>,
+    p1_response: BTreeMap<PeerId, Option<Vec<BlockHeader>>>,
     // how many blocks to request at once
     max_batch_size: usize,
     // how many blocks to inject into the queue
@@ -146,6 +146,7 @@ impl Sync {
     /// Skip Failure
     ///
     /// We get a plain ACK in certain cases - treated as an empty response.
+    /// FIXME: Remove once all nodes upgraded to next version.
     pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
         self.empty_count = self.empty_count.saturating_add(1);
         if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
@@ -154,10 +155,10 @@ impl Sync {
             );
             match &self.state {
                 SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, vec![])?;
+                    self.handle_metadata_response(from, Some(vec![]))?;
                 }
                 SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(from, vec![])?;
+                    self.handle_multiblock_response(from, Some(vec![]))?;
                 }
                 _ => {}
             }
@@ -182,10 +183,10 @@ impl Sync {
             );
             match &self.state {
                 SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, vec![])?;
+                    self.handle_metadata_response(from, None)?;
                 }
                 SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(from, vec![])?;
+                    self.handle_multiblock_response(from, None)?;
                 }
                 _ => {}
             }
@@ -350,40 +351,48 @@ impl Sync {
     pub fn handle_multiblock_response(
         &mut self,
         from: PeerId,
-        response: Vec<Proposal>,
+        response: Option<Vec<Proposal>>,
     ) -> Result<()> {
-        if let Some((peer, _)) = self.in_flight.front() {
-            if peer.peer_id != from {
-                tracing::warn!(
-                    "sync::MultiBlockResponse : unexpected peer={} != {from}",
-                    peer.peer_id
-                );
-                return Ok(());
-            }
-        } else {
+        let SyncState::Phase2(_) = &self.state else {
+            tracing::warn!("sync::MultiBlockResponse : dropped response {from}");
+            return Ok(());
+        };
+        if self.in_flight.is_empty() || self.in_flight.front().unwrap().0.peer_id != from {
             tracing::warn!("sync::MultiBlockResponse : spurious response {from}");
             return Ok(());
         }
 
-        // Process only a full response
-        if response.is_empty() {
-            // Empty response, downgrade peer and retry phase 1.
-            tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
-            self.peers
-                .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
-            self.state = SyncState::Retry1;
-            return Ok(());
+        // Only process a full response
+        if let Some(response) = response {
+            if !response.is_empty() {
+                tracing::info!(
+                    "sync::MultiBlockResponse : received {} blocks from {}",
+                    response.len(),
+                    from
+                );
+                self.blocks_downloaded =
+                    self.blocks_downloaded.saturating_add(response.len() as u64);
+                self.peers
+                    .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
+                return self.do_multiblock_response(from, response);
+            } else {
+                // Empty response, downgrade peer and retry phase 1.
+                tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
+                self.peers
+                    .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
+            }
         } else {
+            // Network failure, downgrade peer and retry phase 1.
+            tracing::warn!("sync::MultiBlockResponse : error blocks {from}",);
             self.peers
-                .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
+                .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
         }
-
-        self.do_multiblock_response(from, response)?;
-
+        // failure fall-thru
+        self.state = SyncState::Retry1;
         Ok(())
     }
 
-    pub fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<()> {
+    pub fn do_multiblock_response(&mut self, _from: PeerId, response: Vec<Proposal>) -> Result<()> {
         let SyncState::Phase2(check_sum) = self.state else {
             anyhow::bail!("sync::MultiBlockResponse : invalid state");
         };
@@ -403,14 +412,6 @@ impl Sync {
             self.state = SyncState::Retry1;
             return Ok(());
         }
-
-        tracing::info!(
-            "sync::MultiBlockResponse : received {} blocks for segment #{} from {}",
-            response.len(),
-            self.db.count_sync_segments()?,
-            from
-        );
-        self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len() as u64);
 
         // Response seems sane.
         let proposals = response
@@ -466,6 +467,7 @@ impl Sync {
     /// It constructs a set of hashes, which constitute the series of blocks that are missing.
     /// These hashes are then sent to a Peer for retrieval.
     /// This is phase 2 of the syncing algorithm.
+    /// ** MAKE ONLY ONE REQUEST AT A TIME **
     fn request_missing_blocks(&mut self) -> Result<()> {
         if !matches!(self.state, SyncState::Phase2(_)) {
             anyhow::bail!("sync::RequestMissingBlocks : invalid state");
@@ -563,10 +565,10 @@ impl Sync {
             });
             match &self.state {
                 SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, vec![])?;
+                    self.handle_metadata_response(from, Some(vec![]))?;
                 }
                 SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(from, vec![])?;
+                    self.handle_multiblock_response(from, Some(vec![]))?;
                 }
                 _ => {}
             }
@@ -610,7 +612,7 @@ impl Sync {
                     .map(|p| p.header)
                     .collect_vec();
 
-                self.handle_metadata_response(from, metadata)?;
+                self.handle_metadata_response(from, Some(metadata))?;
             }
 
             // Phase 2 - extract the requested proposals only.
@@ -627,7 +629,7 @@ impl Sync {
                     .sorted_by(|a, b| b.number().cmp(&a.number()))
                     .collect_vec();
 
-                self.handle_multiblock_response(from, multi_blocks)?;
+                self.handle_multiblock_response(from, Some(multi_blocks))?;
             }
             _ => {
                 tracing::error!(
@@ -647,13 +649,12 @@ impl Sync {
     pub fn handle_metadata_response(
         &mut self,
         from: PeerId,
-        response: Vec<BlockHeader>,
+        response: Option<Vec<BlockHeader>>,
     ) -> Result<()> {
         let SyncState::Phase1(_) = &self.state else {
             tracing::warn!("sync::MetadataResponse : dropped response {from}");
             return Ok(());
         };
-
         if self.in_flight.is_empty() {
             tracing::warn!("sync::MetadataResponse : spurious response {from}");
             return Ok(());
@@ -668,24 +669,40 @@ impl Sync {
                 let peer_id = peer.peer_id;
                 let response = self.p1_response.remove(&peer_id).unwrap();
                 // Only process a full response
-                if response.is_empty() {
-                    // Empty response, downgrade peer and retry.
-                    tracing::warn!("sync::MetadataResponse : empty from {peer_id}");
-                    self.peers
-                        .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
-                    self.do_missing_metadata(None, 1)?; // fire one request
-                    self.in_flight.rotate_right(1); // adjust peer request order, do_missing_metadata() pushes peer to the back.
+                if let Some(response) = response {
+                    if !response.is_empty() {
+                        tracing::info!(
+                            "sync::MetadataResponse : received {} headers from {}",
+                            response.len(),
+                            peer_id
+                        );
+                        self.headers_downloaded = self
+                            .headers_downloaded
+                            .saturating_add(response.len() as u64);
+                        let peer = peer.clone();
+                        self.peers
+                            .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
+                        self.do_metadata_response(peer, response)?;
+                        continue;
+                    } else {
+                        // Empty response
+                        tracing::warn!("sync::MetadataResponse : empty from {peer_id}");
+                        self.peers
+                            .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
+                    }
                 } else {
-                    let segment_peer = peer.clone();
+                    // Network failure, downgrade peer and retry.
+                    tracing::warn!("sync::MetadataResponse : error from {peer_id}");
                     self.peers
-                        .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
-                    self.do_metadata_response(segment_peer, response)?;
+                        .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
                 }
+                // failure fall-thru - fire one request
+                self.do_missing_metadata(None, 1)?;
+                self.in_flight.rotate_right(1); // adjust request order, do_missing_metadata() pushes peer to the back.
             } else {
                 break;
             }
         }
-
         Ok(())
     }
 
@@ -723,13 +740,6 @@ impl Sync {
 
         // Chain segment is sane
         let segment = response;
-
-        tracing::info!(
-            "sync::DoMetadataResponse : received {} headers from {}",
-            segment.len(),
-            segment_peer.peer_id,
-        );
-        self.headers_downloaded = self.headers_downloaded.saturating_add(segment.len() as u64);
 
         // Record the constructed chain metadata
         self.db.insert_sync_metadata(&segment)?;
@@ -787,7 +797,7 @@ impl Sync {
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()? > Duration::from_secs(10) {
             tracing::warn!("sync::MetadataRequest : stale request");
-            return Ok(ExternalMessage::Acknowledgement);
+            return Ok(ExternalMessage::MetaDataResponse(vec![]));
         }
 
         // TODO: Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
@@ -798,7 +808,7 @@ impl Sync {
         let mut metas = Vec::with_capacity(batch_size);
         let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
             tracing::warn!("sync::MetadataRequest : unknown block height");
-            return Ok(ExternalMessage::Acknowledgement);
+            return Ok(ExternalMessage::MetaDataResponse(vec![]));
         };
         metas.push(block.header);
         let mut hash = block.parent_hash();
@@ -1212,7 +1222,7 @@ impl PartialOrd for PeerInfo {
 enum DownGrade {
     None,
     Empty,
-    // Timeout,
+    Error,
 }
 
 impl Ord for DownGrade {
