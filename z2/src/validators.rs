@@ -184,7 +184,7 @@ pub async fn gen_validator_startup_script(
     Ok(())
 }
 
-async fn build_client(
+pub(crate) async fn build_client(
     client_config: &ClientConfig,
 ) -> Result<SignerMiddleware<Provider<Http>, LocalWallet>> {
     let provider = Provider::<Http>::try_from(client_config.chain_endpoint.clone())?;

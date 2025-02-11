@@ -10,23 +10,26 @@ use std::{
     sync::{Arc, MutexGuard},
 };
 
-use alloy::primitives::{hex, Address, Bytes, U256};
+use alloy::primitives::{address, hex, Address, Bytes, U256};
 use anyhow::{anyhow, Context, Result};
 use eth_trie::{EthTrie, Trie};
 use ethabi::Token;
+use hex::FromHex;
+use itertools::Itertools;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use revm::{
     inspector_handle_register,
     primitives::{
-        AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg, Output,
-        ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
+        AccountInfo, BlockEnv, Bytecode, Env, ExecutionResult, FixedBytes, HaltReason, HandlerCfg,
+        Output, ResultAndState, SpecId, TxEnv, B256, KECCAK_EMPTY,
     },
     Database, DatabaseRef, Evm, GetInspector, Inspector,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use smallvec::SmallVec;
 use tracing::{debug, info, trace, warn};
 
 use crate::{
@@ -711,7 +714,7 @@ impl State {
         let from_addr = txn.signer;
         info!(?hash, ?txn, "executing txn");
 
-        let blessed = BLESSED_TRANSACTIONS.contains(&hash);
+        let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
 
         let txn = txn.tx.into_transaction();
         if let Transaction::Zilliqa(txn) = txn {
@@ -1965,14 +1968,28 @@ pub fn scilla_call(
     ))
 }
 
+pub struct BlessedTransaction {
+    pub hash: Hash,
+    pub payload: Bytes,
+    pub sender: Address,
+    pub required_funds: u128,
+}
+
 /// Blessed transactions bypass minimum gas price rules. These transactions have value to the network even at a lower
 /// gas price, so we accept them anyway.
-const BLESSED_TRANSACTIONS: [Hash; 1] = [
+
+// It is valuable to accept these transactions despite the low gas price, because it means the contract is deployed at the same address as other EVM-compatible chains.
+// This means that contracts deployed using this proxy will be deployed to the same address as on other chains.
+
+pub const BLESSED_TRANSACTIONS: [BlessedTransaction; 1] = [
     // Hash of the deployment transaction for the deterministic deployment proxy from
-    // https://github.com/Arachnid/deterministic-deployment-proxy. It is valuable to accept this transaction despite
-    // the low gas price, because it means the contract is deployed at the same address as other EVM-compatible chains.
-    // This means that contracts deployed using this proxy will be deployed to the same address as on other chains.
-    Hash(hex!(
-        "eddf9e61fb9d8f5111840daef55e5fde0041f5702856532cdbb5a02998033d26"
-    )),
+    // https://github.com/Arachnid/deterministic-deployment-proxy.
+    BlessedTransaction {
+        hash: Hash(hex!(
+            "eddf9e61fb9d8f5111840daef55e5fde0041f5702856532cdbb5a02998033d26"
+        )),
+        payload: Bytes::from_static(&hex!("0xabcd")),
+        required_funds: 100,
+        sender: address!("0x3fAB184622Dc19b6109349B94811493BF2a45362"),
+    },
 ];

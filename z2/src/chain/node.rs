@@ -4,15 +4,24 @@ use anyhow::{anyhow, Ok, Result};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
+use ethabi::Token;
+use ethers::{
+    middleware::Middleware,
+    prelude::TransactionRequest,
+    types::{Bytes, NameOrAddress},
+};
+use primitive_types::H160;
 use regex::Regex;
+use revm::precompile::Address;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
+use zilliqa::{contracts, exec::BLESSED_TRANSACTIONS, state::contract_addr};
 
 use super::instance::ChainInstance;
-use crate::{address::EthereumAddress, chain::Chain, secret::Secret};
+use crate::{address::EthereumAddress, chain::Chain, secret::Secret, validators::ClientConfig};
 
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
@@ -1412,6 +1421,37 @@ impl ChainNode {
         progress_bar.inc(1);
 
         progress_bar.stop(format!("{} {}: Detach completed", "✔".green(), self.name()));
+
+        Ok(())
+    }
+
+    pub async fn post_install(&self) -> Result<()> {
+        let genesis_private_key = self.chain.genesis_private_key().await?;
+        let url = self
+            .chain
+            .checkpoint_url()
+            .ok_or_else(|| anyhow!("Can't get url endpoint"))?;
+
+        let client_config = ClientConfig::new(&url, &genesis_private_key)?;
+
+        let mut client = crate::validators::build_client(&client_config).await?;
+
+        for blessed_txns in BLESSED_TRANSACTIONS {
+            let tx = TransactionRequest::new()
+                .to(H160(blessed_txns.sender.0.into()))
+                .value(blessed_txns.required_funds * 10u128.pow(18));
+
+            let pending_tx = client.send_transaction(tx, None).await?;
+            let _ = pending_tx
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("funding tx dropped from mempool"))?;
+
+            let payload = Bytes::from(blessed_txns.payload.to_vec());
+            let pending_tx = client.send_raw_transaction(payload).await?;
+            let _ = pending_tx
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("raw tx dropped from mempool"))?;
+        }
 
         Ok(())
     }
