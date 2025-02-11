@@ -159,8 +159,6 @@ impl Sync {
                 }
                 _ => {}
             }
-        } else {
-            tracing::warn!("sync::Acknowledgement : spurious {from}");
         }
         Ok(())
     }
@@ -501,9 +499,8 @@ impl Sync {
 
                 // Fire request, to the original peer that sent the segment metadata
                 tracing::info!(
-                    "sync::RequestMissingBlocks : requesting {} blocks of segment #{} from {}",
+                    "sync::RequestMissingBlocks : requesting {} blocks from {}",
                     request_hashes.len(),
-                    self.db.count_sync_segments()?,
                     peer_info.peer_id,
                 );
                 let (peer_info, message) = match peer_info.version {
@@ -723,8 +720,7 @@ impl Sync {
                 block_hash = meta.qc.block_hash;
                 block_num = meta.number;
             } else {
-                // TODO: possibly, discard and rebuild entire chain
-                // if something does not match, do nothing and retry the request with the next peer.
+                // If something does not match, do nothing and it will retry with another peer.
                 tracing::error!(
                     "sync::DoMetadataResponse : unexpected metadata hash={block_hash} != {}, num={block_num} != {}",
                     meta.hash,
@@ -746,12 +742,24 @@ impl Sync {
         // Record landmark(s), including peer that has this set of blocks
         self.db.push_sync_segment(&segment_peer, meta)?;
 
-        // TODO: Implement dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
+        // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
         let mut block_size = 0;
+        let mut block_count = 0;
         for meta in segment.iter().rev().filter(|_| {
             // TODO: Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM
-            block_size += 1;
-            block_size % 10 == 9
+            if let Some(size) = meta.sync_size_estimate {
+                block_size += size;
+                tracing::info!(size = %size, total=%block_size, "sync: block size estimate");
+                if block_size > 9 * 1024 * 1024 {
+                    block_size = 0;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                block_count += 1;
+                block_count % 10 == 9
+            }
         }) {
             self.db.push_sync_segment(&segment_peer, meta)?;
         }
@@ -801,7 +809,7 @@ impl Sync {
 
         // TODO: Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
 
-        let batch_size: usize = self
+        let batch_size = self
             .max_batch_size
             .min(request.to_height.saturating_sub(request.from_height) as usize); // mitigate DOS by limiting the number of blocks we return
         let mut metas = Vec::with_capacity(batch_size);
@@ -809,14 +817,32 @@ impl Sync {
             tracing::warn!("sync::MetadataRequest : unknown block height");
             return Ok(ExternalMessage::MetaDataResponse(vec![]));
         };
-        metas.push(block.header);
-        let mut hash = block.parent_hash();
+
+        let mut hash = block.hash();
         while metas.len() <= batch_size {
             // grab the parent
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(mut block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
             hash = block.parent_hash();
+
+            // compute size estimate
+            let full_transactions = block
+                .transactions
+                .clone()
+                .into_iter()
+                .map(|txn_hash| {
+                    (
+                        self.db.get_transaction(&txn_hash).unwrap().unwrap(),
+                        txn_hash,
+                    )
+                })
+                .collect_vec();
+            let proposal = Proposal::from_parts_with_hashes(block.clone(), full_transactions);
+            let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal)?.len();
+
+            // insert the sync size
+            block.header.sync_size_estimate = Some(encoded_size);
             metas.push(block.header);
         }
 

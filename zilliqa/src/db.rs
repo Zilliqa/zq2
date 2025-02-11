@@ -1007,6 +1007,7 @@ impl Db {
                     timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
                     gas_used: row.get(9)?,
                     gas_limit: row.get(10)?,
+                    sync_size_estimate: None,
                 },
                 agg: row.get(11)?,
                 transactions: vec![],
