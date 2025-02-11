@@ -80,15 +80,13 @@ pub struct Sync {
     // for statistics only
     inject_at: Option<(std::time::Instant, usize)>,
     // record data for eth_syncing() RPC call.
-    started_at_block_number: u64,
+    started_at: u64,
     highest_block_seen: u64,
     retry_count: u64,
     timeout_count: u64,
     empty_count: u64,
     headers_downloaded: u64,
     blocks_downloaded: u64,
-    // checkpoint, if set
-    checkpoint_hash: Hash,
 }
 
 impl Sync {
@@ -115,9 +113,9 @@ impl Sync {
             SyncState::Retry1 // continue sync
         };
 
-        let (latest_block_number, latest_block_hash) = latest_block
+        let latest_block_number = latest_block
             .as_ref()
-            .map_or_else(|| (u64::MIN, Hash::ZERO), |b| (b.number(), b.hash()));
+            .map_or_else(|| u64::MIN, |b| b.number());
 
         Ok(Self {
             db,
@@ -131,8 +129,7 @@ impl Sync {
             state,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
-            started_at_block_number: latest_block_number,
-            checkpoint_hash: latest_block_hash,
+            started_at: latest_block_number,
             highest_block_seen: latest_block_number,
             retry_count: 0,
             timeout_count: 0,
@@ -177,7 +174,11 @@ impl Sync {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.timeout_count = self.timeout_count.saturating_add(1);
-        if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
+        if self
+            .in_flight
+            .iter()
+            .any(|(p, r)| p.peer_id == from && *r == failure.request_id)
+        {
             tracing::warn!(from = %from, err = %failure.error,
                 "sync::RequestFailure"
             );
@@ -295,7 +296,7 @@ impl Sync {
                     .expect("no highest block"),
             )?
             .expect("missing highest block");
-        self.started_at_block_number = highest_block.number();
+        self.started_at = highest_block.number();
         Ok(())
     }
 
@@ -326,16 +327,14 @@ impl Sync {
     /// If this function is called many times, it will eventually restart from Phase 0.
     fn retry_phase1(&mut self) -> Result<()> {
         self.retry_count = self.retry_count.saturating_add(1);
-        if self.db.count_sync_segments()? == 0 {
-            tracing::error!("sync::RetryPhase1 : cannot retry phase 1 without chain segments!");
+        let segment_count = self.db.count_sync_segments()?;
+        if segment_count == 0 {
+            tracing::error!("sync::Retry1 : no metadata segments");
             self.state = SyncState::Phase0;
             return Ok(());
         }
 
-        tracing::debug!(
-            "sync::RetryPhase1 : retrying segment #{}",
-            self.db.count_sync_segments()?,
-        );
+        tracing::debug!("sync::Retry1 : retrying segment #{segment_count}");
 
         // remove the last segment from the chain metadata
         let (meta, _) = self.db.last_sync_segment()?.unwrap();
@@ -761,7 +760,7 @@ impl Sync {
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
 
         // If the check-point/starting-point is in this segment
-        let checkpointed = segment.iter().any(|b| b.hash == self.checkpoint_hash);
+        let checkpointed = segment.last().as_ref().unwrap().number <= self.started_at;
         let block_hash = segment.last().as_ref().unwrap().hash;
 
         // If the segment hits our history, turnaround to Phase 2.
@@ -889,13 +888,13 @@ impl Sync {
                         let from = block_number
                             .saturating_sub(offset)
                             .saturating_sub(self.max_batch_size as u64)
-                            .max(self.started_at_block_number);
+                            .max(self.started_at);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
                             to_height: block_number.saturating_sub(offset).saturating_sub(1),
                             from_height: from,
                         });
-                        (message, from == self.started_at_block_number)
+                        (message, from == self.started_at)
                     }
                     (
                         SyncState::Phase1(BlockHeader {
@@ -922,13 +921,13 @@ impl Sync {
                         let from = block_number
                             .saturating_sub(offset)
                             .saturating_sub(self.max_batch_size as u64)
-                            .max(self.started_at_block_number);
+                            .max(self.started_at);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
                             to_height: block_number.saturating_sub(offset).saturating_sub(1),
                             from_height: from,
                         });
-                        (message, from == self.started_at_block_number)
+                        (message, from == self.started_at)
                     }
                     (SyncState::Phase0, PeerVer::V1) if meta.is_some() => {
                         let meta = meta.unwrap();
@@ -1040,7 +1039,7 @@ impl Sync {
         let peer_count = self.peers.count() + self.in_flight.len();
 
         Ok(Some(SyncingStruct {
-            starting_block: self.started_at_block_number,
+            starting_block: self.started_at,
             current_block: highest_block.number(),
             highest_block: self.highest_block_seen,
             status: SyncingMeta {
@@ -1058,9 +1057,9 @@ impl Sync {
 
     /// Sets the checkpoint, if node was started from a checkpoint.
     pub fn set_checkpoint(&mut self, checkpoint: &Block) {
-        let hash = checkpoint.hash();
-        tracing::info!("sync::Checkpoint {}", hash);
-        self.checkpoint_hash = hash;
+        let number = checkpoint.number();
+        tracing::debug!("sync::Checkpoint {}", number);
+        self.started_at = number;
     }
 
     // Add an in-flight request
