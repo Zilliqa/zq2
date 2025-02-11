@@ -1089,12 +1089,8 @@ impl SyncPeers {
             return 0;
         }
         let best_score = peers.iter().map(|p| p.score).min().unwrap();
-        peers
-            .iter()
-            .filter(|p| p.score == best_score)
-            .count()
-            .saturating_sub(1)
-            .max(1) // always return at least 1
+        let best_count = peers.iter().filter(|p| p.score == best_score).count();
+        best_count // optimistic, use as many peers as possible
     }
 
     fn count(&self) -> usize {
@@ -1111,16 +1107,15 @@ impl SyncPeers {
         }
         let (mut peer, _) = in_flight.unwrap();
         tracing::trace!("sync::DoneWithPeer {} {:?}", peer.peer_id, downgrade);
-        let mut peers = self.peers.lock().unwrap();
-        peer.score = peer.score.saturating_add(downgrade as u32);
-        if !peers.is_empty() {
-            // Ensure that the next peer is equal or better
-            peer.score = peer.score.max(peers.peek().unwrap().score);
-        }
-        // ensure that it is unique
-        peers.retain(|p| p.peer_id != peer.peer_id);
         // Reinsert peers that are good
         if peer.score < u32::MAX {
+            peer.score = peer.score.saturating_add(downgrade as u32);
+            let mut peers = self.peers.lock().unwrap();
+            if !peers.is_empty() {
+                // Ensure that the next peer is equal or better
+                peer.score = peer.score.max(peers.peek().unwrap().score);
+            }
+            peers.retain(|p| p.peer_id != peer.peer_id);
             peers.push(peer);
         }
     }
