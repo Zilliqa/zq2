@@ -42,6 +42,8 @@ pub enum Components {
     StatsDashboard,
     #[serde(rename = "stats_agent")]
     StatsAgent,
+    #[serde(rename = "zq2_metrics")]
+    ZQ2Metrics,
 }
 
 impl FromStr for Components {
@@ -54,6 +56,7 @@ impl FromStr for Components {
             "spout" => Ok(Components::Spout),
             "stats_dashboard" => Ok(Components::StatsDashboard),
             "stats_agent" => Ok(Components::StatsAgent),
+            "zq2_metrics" => Ok(Components::ZQ2Metrics),
             _ => Err(anyhow!("Component not supported")),
         }
     }
@@ -79,6 +82,10 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
                 Err(anyhow!("Invalid version for ZQ2"))
             }
         }
+        Components::Otterscan => Ok(format!(
+            "docker.io/zilliqa/otterscan:{}", 
+            version
+        )),
         Components::Spout => Ok(format!(
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
             version
@@ -91,7 +98,10 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:{}",
             version
         )),
-        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
+        Components::ZQ2Metrics => Ok(format!(
+          "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2-metrics:{}",
+          version
+      )),
     }
 }
 
@@ -975,12 +985,9 @@ impl ChainNode {
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
-        let stats_dashboard_image = &docker_image(
-            "stats_dashboard",
-            &self.chain.get_version("stats_dashboard"),
-        )?;
-        let stats_agent_image =
-            &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
+        let stats_dashboard_image = &docker_image("stats_dashboard", &self.chain.get_version("stats_dashboard"))?;
+        let stats_agent_image = &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
+        let zq2_metrics_image = &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
 
         let private_key = if *role_name == NodeRole::Apps.to_string() {
             ""
@@ -1007,6 +1014,7 @@ impl ChainNode {
         var_map.insert("stats_dashboard_image", stats_dashboard_image);
         var_map.insert("stats_dashboard_key", stats_dashboard_key);
         var_map.insert("stats_agent_image", stats_agent_image);
+        var_map.insert("zq2_metrics_image", zq2_metrics_image);
         var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
