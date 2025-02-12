@@ -50,8 +50,14 @@ enum Commands {
     Depends(DependsCommands),
     /// Join a ZQ2 network
     Join(JoinStruct),
-    /// Deposit stake amount to validators
+    /// Deposit stake amount to a validator
     Deposit(DepositStruct),
+    /// Top up stake
+    DepositTopUp(DepositTopUpStruct),
+    /// Unstake funds
+    Unstake(UnstakeStruct),
+    /// Withdraw unstaked funds
+    Withdraw(WithdrawStruct),
     Kpi(KpiStruct),
     /// Print out the ports in use (otherwise they scroll off the top too fast)
     Ports(RunStruct),
@@ -134,6 +140,9 @@ pub struct DeployerConfigArgs {
     /// Node role. Default: validator
     #[clap(long, value_enum)]
     role: Option<chain::node::NodeRole>,
+    /// File to output to.
+    #[clap(long)]
+    out: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -475,6 +484,9 @@ struct JoinStruct {
     /// Specify the tag of the image to run
     #[clap(long)]
     image_tag: Option<String>,
+    /// Endpoint of OTLP collector
+    #[clap(long)]
+    otlp_endpoint: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -482,15 +494,18 @@ struct DepositStruct {
     /// Specify the ZQ2 deposit chain
     #[clap(long = "chain")]
     chain_name: chain::Chain,
+    /// Specify the private_key to fund the deposit
+    #[clap(long, short)]
+    private_key: String,
     /// Specify the Validator Public Key
     #[clap(long)]
     public_key: String,
     /// Specify the Validator PeerId
     #[clap(long)]
     peer_id: String,
-    /// Specify the private_key to fund the deposit
-    #[clap(long, short)]
-    private_key: String,
+    /// Specify the Validator deposit signature
+    #[clap(long)]
+    deposit_auth_signature: String,
     /// Specify the stake amount you want provide
     #[clap(long, short)]
     amount: u8,
@@ -500,9 +515,54 @@ struct DepositStruct {
     /// Specify the signing address
     #[clap(long, short)]
     signing_address: String,
-    /// Specify the Validator deposit signature
+}
+
+#[derive(Args, Debug)]
+struct DepositTopUpStruct {
+    /// Specify the ZQ2 deposit chain
+    #[clap(long = "chain")]
+    chain_name: chain::Chain,
+    /// Specify the private_key to fund the deposit
+    #[clap(long, short)]
+    private_key: String,
+    /// Specify the Validator Public Key
     #[clap(long)]
-    deposit_auth_signature: String,
+    public_key: String,
+    /// Specify the stake amount you want provide
+    #[clap(long, short)]
+    amount: u8,
+}
+
+#[derive(Args, Debug)]
+struct UnstakeStruct {
+    /// Specify the ZQ2 deposit chain
+    #[clap(long = "chain")]
+    chain_name: chain::Chain,
+    /// Specify the private_key to fund the deposit
+    #[clap(long, short)]
+    private_key: String,
+    /// Specify the Validator Public Key
+    #[clap(long)]
+    public_key: String,
+    /// Specify the stake amount you want provide
+    #[clap(long, short)]
+    amount: u8,
+}
+
+#[derive(Args, Debug)]
+struct WithdrawStruct {
+    /// Specify the ZQ2 deposit chain
+    #[clap(long = "chain")]
+    chain_name: chain::Chain,
+    /// Specify the private_key to fund the deposit
+    #[clap(long, short)]
+    private_key: String,
+    /// Specify the Validator Public Key
+    #[clap(long)]
+    public_key: String,
+    /// Specify the number of withdrawals
+    #[clap(long, short)]
+    count: u8,
 }
 
 #[derive(Args, Debug)]
@@ -829,7 +889,7 @@ async fn main() -> Result<()> {
                     )
                 })?;
                 let role = arg.role.clone().unwrap_or(chain::node::NodeRole::Validator);
-                plumbing::run_deployer_get_config_file(&config_file, role)
+                plumbing::run_deployer_get_config_file(&config_file, role, arg.out.as_deref())
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer get-config-file command: {}", err)
@@ -1061,8 +1121,13 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Join(ref args) => {
-            let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain, &args.image_tag).await?;
+            let mut chain = validators::ChainConfig::new(&args.chain_name).await?;
+            validators::gen_validator_startup_script(
+                &mut chain,
+                &args.image_tag,
+                &args.otlp_endpoint,
+            )
+            .await?;
             Ok(())
         }
         Commands::Deposit(ref args) => {
@@ -1072,15 +1137,46 @@ async fn main() -> Result<()> {
                     .unwrap(),
                 BlsSignature::from_string(&args.deposit_auth_signature).unwrap(),
             )?;
-            let stake = validators::StakeDeposit::new(
-                node,
-                args.amount,
-                args.chain_name.get_api_endpoint()?,
+            let client_config = validators::ClientConfig::new(
+                &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
+            )?;
+            let deposit_params = validators::DepositParams::new(
+                args.amount,
                 &args.reward_address,
                 &args.signing_address,
             )?;
-            validators::deposit_stake(&stake).await
+            validators::deposit(&node, &client_config, &deposit_params).await
+        }
+        Commands::DepositTopUp(ref args) => {
+            let bls_public_key =
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap();
+            let client_config = validators::ClientConfig::new(
+                &args.chain_name.get_api_endpoint()?,
+                &args.private_key,
+            )?;
+            validators::deposit_top_up(&client_config, &bls_public_key, args.amount).await
+        }
+        Commands::Unstake(ref args) => {
+            let bls_public_key =
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap();
+            let client_config = validators::ClientConfig::new(
+                &args.chain_name.get_api_endpoint()?,
+                &args.private_key,
+            )?;
+            validators::unstake(&client_config, &bls_public_key, args.amount).await
+        }
+        Commands::Withdraw(ref args) => {
+            let bls_public_key =
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap();
+            let client_config = validators::ClientConfig::new(
+                &args.chain_name.get_api_endpoint()?,
+                &args.private_key,
+            )?;
+            validators::withdraw(&client_config, &bls_public_key, args.count).await
         }
         Commands::Nodes(ref args) => {
             let spec = Composition::parse(&args.nodes)?;

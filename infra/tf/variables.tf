@@ -135,7 +135,6 @@ variable "bootstrap" {
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, true)
-    detach_load_balancer = optional(bool, false)
     nodes = list(object({
       count  = number
       region = optional(string)
@@ -316,18 +315,6 @@ variable "graph" {
     ])
     error_message = "You need to specify either 'region' or 'zone' for a node."
   }
-}
-
-variable "node_dns_subdomain" {
-  description = "Nodes DNS zone name"
-  type        = string
-  nullable    = false
-}
-
-variable "node_dns_zone_project_id" {
-  description = "The id of the Google project that hosts the DNS zone."
-  type        = string
-  nullable    = false
 }
 
 variable "subdomain" {

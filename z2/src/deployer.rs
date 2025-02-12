@@ -140,7 +140,7 @@ async fn execute_install_or_upgrade(
     Ok(())
 }
 
-pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
+pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str>) -> Result<()> {
     if role == NodeRole::Apps {
         log::info!(
             "Config file is not present for nodes with role {}",
@@ -157,10 +157,15 @@ pub async fn get_config_file(config_file: &str, role: NodeRole) -> Result<()> {
 
     if let Some(node) = chain_nodes.first() {
         let content = node.get_config_toml().await?;
-        println!("Config file for a node role {} in {}", role, chain.name());
-        println!("---");
-        println!("{}", content);
-        println!("---");
+        if let Some(out) = out {
+            std::fs::write(out, content)?;
+            log::info!("Config file {out} successfully written");
+        } else {
+            println!("Config file for a node role {} in {}", role, chain.name());
+            println!("---");
+            println!("{}", content);
+            println!("---");
+        }
     } else {
         log::error!(
             "No nodes available in {} for the role {}",
@@ -298,16 +303,17 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
             node_ethereum_address.bls_public_key,
             deposit_auth_signature,
         )?;
-        let stake = validators::StakeDeposit::new(
-            validator,
-            VALIDATOR_DEPOSIT_IN_MILLIONS,
-            chain.chain()?.get_api_endpoint()?,
+        let client_config = validators::ClientConfig::new(
+            &chain.chain()?.get_api_endpoint()?,
             &genesis_private_key,
+        )?;
+        let deposit_params = validators::DepositParams::new(
+            VALIDATOR_DEPOSIT_IN_MILLIONS,
             ZERO_ACCOUNT,
             ZERO_ACCOUNT,
         )?;
 
-        let result = validators::deposit_stake(&stake).await;
+        let result = validators::deposit(&validator, &client_config, &deposit_params).await;
 
         match result {
             Ok(()) => successes.push(node.name()),

@@ -26,7 +26,7 @@ anyhow = { version = "1.0.95", features = ["backtrace"] }
 vergen = { version = "8.3.1", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.6.4", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "0.11.0", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 anyhow = { version = "1.0.95", features = ["backtrace"] }
 async-trait = "0.1.86"
 base64 = "0.22.1"
@@ -34,7 +34,7 @@ bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bs58 = "0.5.1"
 bytes = "1.9.0"
-clap = { version = "4.5.27", features = ["derive"] }
+clap = { version = "4.5.28", features = ["derive"] }
 crypto-bigint = "=0.5.5"
 eth_trie = {path =  "../eth-trie.rs"}
 ethabi = "18.0.0"
@@ -48,7 +48,7 @@ k256 = {version = "0.13.4", features = ["serde", "pem"] }
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "930118ef5a6566f058d22e1614a8e96b4c287262", features = ["cbor", "dns", "gossipsub", "macros", "tokio", "request-response", "kad", "identify", "serde", "autonat", "tcp", "noise", "yamux"] }
 lru = "0.13"
 lz4 = "1.28"
-once_cell = "1.20.2"
+once_cell = "1.20.3"
 opentelemetry = { version = "0.27.1", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.27.1", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.27.0", features = ["metrics"] }
@@ -57,8 +57,8 @@ prost = "0.13.4"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rand_core = "0.6.4"
-revm = { version = "18.0.0", features = ["optional_no_base_fee"] }
-revm-inspectors = { version = "0.11.0", features = ["js-tracer"] }
+revm = { version = "19.4.0", features = ["optional_no_base_fee"] }
+revm-inspectors = { version = "0.15.0", features = ["js-tracer"] }
 rusqlite = { version = "0.33.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.217", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
@@ -70,12 +70,12 @@ tempfile = "3.16.0"
 time = { version = "0.3.37", features = ["formatting", "macros"] }
 tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.17"
-toml = "0.8.19"
+toml = "0.8.20"
 tower = "0.4.13"
 tower-http = { version = "0.6.1", features = ["cors"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
-cbor4ii = "0.3.2"
+cbor4ii = { version = "1.0.0", features = ["serde1"] }
 scilla-parser = "2.0.0"
 scopeguard = "1.2.0"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
@@ -86,10 +86,10 @@ thiserror = "2.0.11"
 lru-mem = "0.3.0"
 opentelemetry-semantic-conventions = { version = "0.27.0", features = ["semconv_experimental"] }
 semver = "1.0.23"
-foundry-compilers = { version = "0.13.1", features = ["svm-solc"] }
+foundry-compilers = { version = "0.13.2", features = ["svm-solc"] }
 
 [dev-dependencies]
-alloy = { version = "0.6.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
+alloy = { version = "0.11.0", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
 async-trait = "0.1.86"
 criterion = "0.5.1"
 ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
@@ -97,7 +97,7 @@ fs_extra = "1.3.0"
 indicatif = "0.17.11"
 pprof = { version = "0.14.0", default-features = false, features = ["criterion", "flamegraph"] }
 primitive-types = { version = "0.12.2" }
-ureq = "3.0.3"
+ureq = "3.0.5"
 zilliqa = { path = ".", default-features = false, features = ["fake_response_channel", "fake_time"] }
 zilliqa-macros = { path = "../zilliqa-macros" }
 

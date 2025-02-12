@@ -7,12 +7,15 @@ use std::{
 use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::Address,
-    rpc::types::trace::{
-        geth::{
-            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-            GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
+    rpc::types::{
+        trace::{
+            geth::{
+                FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
+                GethDebugTracingOptions, GethTrace, NoopFrame, TraceResult,
+            },
+            parity::{TraceResults, TraceType},
         },
-        parity::{TraceResults, TraceType},
+        TransactionInfo,
     },
 };
 use anyhow::{anyhow, Result};
@@ -463,6 +466,17 @@ impl Node {
         }
     }
 
+    pub fn get_latest_finalized_block(&self) -> Result<Option<Block>> {
+        self.resolve_block_number(BlockNumberOrTag::Finalized)
+    }
+
+    pub fn get_latest_finalized_block_number(&self) -> Result<u64> {
+        match self.resolve_block_number(BlockNumberOrTag::Finalized)? {
+            Some(block) => Ok(block.number()),
+            None => Ok(0),
+        }
+    }
+
     pub fn get_block(&self, block_id: impl Into<BlockId>) -> Result<Option<Block>> {
         match block_id.into() {
             BlockId::Hash(RpcBlockHash {
@@ -713,7 +727,14 @@ impl Node {
                         return Ok(None);
                     };
                     let state_ref = &(*state);
-                    let trace = inspector.try_into_mux_frame(&result, &state_ref)?;
+                    let tx_info = TransactionInfo {
+                        hash: Some(txn_hash.into()),
+                        index: Some(txn_index as u64),
+                        block_hash: Some(block.hash().into()),
+                        block_number: Some(block.number()),
+                        base_fee: state.gas_price.try_into().ok(),
+                    };
+                    let trace = inspector.try_into_mux_frame(&result, &state_ref, tx_info)?;
                     Ok(Some(TraceResult::Success {
                         result: trace.into(),
                         tx_hash: Some(txn_hash.0.into()),
@@ -924,7 +945,7 @@ impl Node {
         }
         trace!("Handling proposal for view {0}", req.block.header.view);
         let proposal = self.consensus.receive_block(from, req.block)?;
-        self.consensus.sync.mark_received_proposal(req.from)?;
+        self.consensus.sync.mark_received_proposal()?;
         if let Some(proposal) = proposal {
             trace!(
                 " ... broadcasting proposal for view {0}",
