@@ -9,7 +9,7 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
-use libp2p::{gossipsub::IdentTopic, PeerId};
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -384,8 +384,18 @@ pub enum InternalMessage {
         TrieStorage,
         Box<Path>,
     ),
-    SubscribeToGossipSubTopic(IdentTopic),
-    UnsubscribeFromGossipSubTopic(IdentTopic),
+    /// Notify p2p cordinator to subscribe to a particular gossipsub topic
+    SubscribeToGossipSubTopic(GossipSubTopic),
+    /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
+    UnsubscribeFromGossipSubTopic(GossipSubTopic),
+}
+
+#[derive(Debug, Clone)]
+pub enum GossipSubTopic {
+    /// General topic for all nodes. Includes Proposal messages 
+    General(u64),
+    /// Topic for Validators only. Includes NewView messages
+    Validator(u64),
 }
 
 /// Returns a terse, human-readable summary of a message.
@@ -399,10 +409,10 @@ impl Display for InternalMessage {
                 write!(f, "ExportCheckpoint({})", block.number())
             }
             InternalMessage::SubscribeToGossipSubTopic(topic) => {
-                write!(f, "SubscribeToGossipSubTopic({topic})")
+                write!(f, "SubscribeToGossipSubTopic({:?})", topic)
             }
             InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
-                write!(f, "UnsubscribeFromGossipSubTopic({topic})")
+                write!(f, "UnsubscribeFromGossipSubTopic({:?})", topic)
             }
         }
     }

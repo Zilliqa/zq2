@@ -28,9 +28,7 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
-        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
-        ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
-        MAX_COMMITTEE_SIZE,
+        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy, ExternalMessage, GossipSubTopic, InternalMessage, NewView, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE
     },
     node::{MessageSender, NetworkMessage},
     pool::{TransactionPool, TxAddResult, TxPoolContent},
@@ -177,6 +175,8 @@ pub struct Consensus {
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
+    /// Mark if this node is in the committee at it's current head block height
+    in_committee: bool,
 }
 
 impl Consensus {
@@ -342,6 +342,7 @@ impl Consensus {
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
+            in_committee: true,
         };
         consensus.db.set_view(start_view)?;
         consensus.set_finalized_view(finalized_view)?;
@@ -770,12 +771,14 @@ impl Consensus {
             let stakers = self.state.get_stakers(next_block_header)?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
+                self.in_committee(false)?;
                 debug!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
                 return Ok(None);
             } else {
+                self.in_committee(true)?;
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
 
@@ -3128,6 +3131,22 @@ impl Consensus {
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
         self.sync.get_sync_data()
+    }
+
+    fn in_committee(&mut self, val: bool) -> Result<()> {
+        if val && !self.in_committee {
+            self.in_committee = true;
+            self.message_sender.send_message_to_coordinator(
+                InternalMessage::SubscribeToGossipSubTopic(GossipSubTopic::Validator(self.config.eth_chain_id)),
+            )?;
+        }
+        if !val && self.in_committee {
+            self.in_committee = false;
+            self.message_sender.send_message_to_coordinator(
+                InternalMessage::UnsubscribeFromGossipSubTopic(GossipSubTopic::Validator(self.config.eth_chain_id)),
+            )?;
+        }
+        Ok(())
     }
 }
 
