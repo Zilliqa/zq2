@@ -172,14 +172,20 @@ impl Sync {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.timeout_count = self.timeout_count.saturating_add(1);
-        if self
+        if let Some((peer, _)) = self
             .in_flight
-            .iter()
-            .any(|(p, r)| p.peer_id == from && *r == failure.request_id)
+            .iter_mut()
+            .find(|(p, r)| p.peer_id == from && *r == failure.request_id)
         {
             tracing::warn!(from = %from, err = %failure.error,
                 "sync::RequestFailure"
             );
+
+            // drop the peer, in case of any fatal errors
+            if !matches!(failure.error, libp2p::autonat::OutboundFailure::Timeout) {
+                peer.score = u32::MAX;
+            }
+
             match &self.state {
                 SyncState::Phase1(_) => {
                     self.handle_metadata_response(from, None)?;
