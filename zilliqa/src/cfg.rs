@@ -159,6 +159,9 @@ pub struct NodeConfig {
     /// Maximum allowed RPC response size
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
+    /// How often to ignore a sync request
+    #[serde(default)]
+    pub validator_ignore_sync_chance: f64,
 }
 
 impl Default for NodeConfig {
@@ -179,6 +182,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            validator_ignore_sync_chance: f64::default(),
         }
     }
 }
