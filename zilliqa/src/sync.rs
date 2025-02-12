@@ -778,19 +778,7 @@ impl Sync {
             };
             hash = block.parent_hash();
 
-            // compute size estimate
-            let full_transactions = block
-                .transactions
-                .clone()
-                .into_iter()
-                .map(|txn_hash| {
-                    (
-                        self.db.get_transaction(&txn_hash).unwrap().unwrap(),
-                        txn_hash,
-                    )
-                })
-                .collect_vec();
-            let proposal = Proposal::from_parts_with_hashes(block.clone(), full_transactions);
+            let proposal = self.block_to_proposal(block.clone());
             let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal)?.len();
 
             // insert the sync size
