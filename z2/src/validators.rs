@@ -46,31 +46,16 @@ impl Validator {
 }
 
 #[derive(Debug)]
-pub struct StakeDeposit {
-    validator: Validator,
-    amount: u8,
+pub struct ClientConfig {
     chain_endpoint: String,
     private_key: String,
-    reward_address: H160,
-    signing_address: H160,
 }
 
-impl StakeDeposit {
-    pub fn new(
-        validator: Validator,
-        amount: u8,
-        chain_endpoint: &str,
-        private_key: &str,
-        reward_address: &str,
-        signing_address: &str,
-    ) -> Result<Self> {
+impl ClientConfig {
+    pub fn new(chain_endpoint: &str, private_key: &str) -> Result<Self> {
         Ok(Self {
-            validator,
-            amount,
             chain_endpoint: chain_endpoint.to_owned(),
             private_key: private_key.to_owned(),
-            reward_address: H160(hex_string_to_u8_20(reward_address).unwrap()),
-            signing_address: H160(hex_string_to_u8_20(signing_address).unwrap()),
         })
     }
 }
@@ -110,6 +95,23 @@ impl ChainConfig {
 
     pub fn get_name(&self) -> String {
         self.name.to_string()
+    }
+}
+
+#[derive(Debug)]
+pub struct DepositParams {
+    amount: u8,
+    reward_address: H160,
+    signing_address: H160,
+}
+
+impl DepositParams {
+    pub fn new(amount: u8, reward_address: &str, signing_address: &str) -> Result<Self> {
+        Ok(Self {
+            amount,
+            reward_address: H160(hex_string_to_u8_20(reward_address).unwrap()),
+            signing_address: H160(hex_string_to_u8_20(signing_address).unwrap()),
+        })
     }
 }
 
@@ -162,7 +164,7 @@ pub async fn gen_validator_startup_script(
 
     if let Some(v) = otlp_collector_endpoint {
         let _ = config.spec.as_table_mut().unwrap().insert(
-            String::from("otlp_collector_endpoints"),
+            String::from("otlp_collector_endpoint"),
             toml::Value::String(v.to_string()),
         );
     }
@@ -182,37 +184,148 @@ pub async fn gen_validator_startup_script(
     Ok(())
 }
 
-pub async fn deposit_stake(stake: &StakeDeposit) -> Result<()> {
-    println!(
-        "Deposit: add {} M $ZIL to {}",
-        stake.amount, stake.validator.peer_id
-    );
+async fn build_client(
+    client_config: &ClientConfig,
+) -> Result<SignerMiddleware<Provider<Http>, LocalWallet>> {
+    let provider = Provider::<Http>::try_from(client_config.chain_endpoint.clone())?;
 
-    let network_api = stake.chain_endpoint.clone();
-    let provider = Provider::<Http>::try_from(network_api)?;
-
-    let chain_id = provider.get_chainid().await?;
-
-    let wallet: LocalWallet = stake
+    let wallet: LocalWallet = client_config
         .private_key
         .as_str()
         .parse::<LocalWallet>()?
-        .with_chain_id(chain_id.as_u64());
+        .with_chain_id(provider.get_chainid().await?.as_u64());
 
-    let client = SignerMiddleware::new(provider, wallet);
+    Ok(SignerMiddleware::new(provider, wallet))
+}
+
+pub async fn deposit(
+    validator: &Validator,
+    client_config: &ClientConfig,
+    params: &DepositParams,
+) -> Result<()> {
+    println!(
+        "Deposit: add {} M $ZIL to {}",
+        params.amount, validator.peer_id
+    );
+
+    let client = build_client(client_config).await?;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-        .value(stake.amount as u128 * 1_000_000u128 * 10u128.pow(18))
+        .value(params.amount as u128 * 1_000_000u128 * 10u128.pow(18))
         .data(
-            contracts::deposit_v3::DEPOSIT
+            contracts::deposit_v4::DEPOSIT
                 .encode_input(&[
-                    Token::Bytes(stake.validator.public_key.as_bytes()),
-                    Token::Bytes(stake.validator.peer_id.to_bytes()),
-                    Token::Bytes(stake.validator.deposit_auth_signature.to_bytes()),
-                    Token::Address(stake.reward_address),
-                    Token::Address(stake.signing_address),
+                    Token::Bytes(validator.public_key.as_bytes()),
+                    Token::Bytes(validator.peer_id.to_bytes()),
+                    Token::Bytes(validator.deposit_auth_signature.to_bytes()),
+                    Token::Address(params.reward_address),
+                    Token::Address(params.signing_address),
+                ])
+                .unwrap(),
+        );
+
+    // send it!
+    let pending_tx = client.send_transaction(tx, None).await?;
+
+    // get the mined tx
+    let receipt = pending_tx
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
+    let tx = client.get_transaction(receipt.transaction_hash).await?;
+
+    println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
+    println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
+
+    Ok(())
+}
+
+pub async fn deposit_top_up(
+    client_config: &ClientConfig,
+    bls_public_key: &NodePublicKey,
+    amount: u8,
+) -> Result<()> {
+    println!("DepositTopUp: add {} M $ZIL stake", amount,);
+
+    let client = build_client(client_config).await?;
+
+    // Topup the validator's funds.
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .value(amount as u128 * 1_000_000u128 * 10u128.pow(18))
+        .data(
+            contracts::deposit_v4::DEPOSIT_TOPUP
+                .encode_input(&[Token::Bytes(bls_public_key.as_bytes())])
+                .unwrap(),
+        );
+
+    // send it!
+    let pending_tx = client.send_transaction(tx, None).await?;
+
+    // get the mined tx
+    let receipt = pending_tx
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
+    let tx = client.get_transaction(receipt.transaction_hash).await?;
+
+    println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
+    println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
+
+    Ok(())
+}
+
+pub async fn unstake(
+    client_config: &ClientConfig,
+    bls_public_key: &NodePublicKey,
+    amount: u8,
+) -> Result<()> {
+    println!("Unstake: {} M $ZIL unstaked", amount,);
+
+    let client = build_client(client_config).await?;
+    // Unstake the validator's funds.
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(
+            contracts::deposit_v4::UNSTAKE
+                .encode_input(&[
+                    Token::Bytes(bls_public_key.as_bytes()),
+                    Token::Uint((amount as u128 * 1_000_000u128 * 10u128.pow(18)).into()),
+                ])
+                .unwrap(),
+        );
+
+    // send it!
+    let pending_tx = client.send_transaction(tx, None).await?;
+
+    // get the mined tx
+    let receipt = pending_tx
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("tx dropped from mempool"))?;
+    let tx = client.get_transaction(receipt.transaction_hash).await?;
+
+    println!("Sent tx: {}\n", serde_json::to_string(&tx)?);
+    println!("Tx receipt: {}", serde_json::to_string(&receipt)?);
+
+    Ok(())
+}
+
+pub async fn withdraw(
+    client_config: &ClientConfig,
+    bls_public_key: &NodePublicKey,
+    count: u8,
+) -> Result<()> {
+    println!("Withdraw: pulling available unstaked funds from deposit contract");
+
+    let client = build_client(client_config).await?;
+    // Withdraw the validator's funds.
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(
+            contracts::deposit_v4::UNSTAKE
+                .encode_input(&[
+                    Token::Bytes(bls_public_key.as_bytes()),
+                    Token::Uint((count as u128).into()),
                 ])
                 .unwrap(),
         );
