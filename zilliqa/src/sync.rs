@@ -834,8 +834,8 @@ impl Sync {
         if !matches!(self.state, SyncState::Phase1(_)) && !matches!(self.state, SyncState::Phase0) {
             anyhow::bail!("sync::DoMissingMetadata : invalid state");
         }
-        for n in 0..num_peers {
-            let offset = (n * self.max_batch_size) as u64;
+        let mut offset = u64::MIN;
+        for num in 1..=num_peers {
             if let Some(peer_info) = self.peers.get_next_peer() {
                 let (message, done, range) = match (&self.state, &peer_info.version) {
                     (
@@ -892,10 +892,11 @@ impl Sync {
                 };
 
                 tracing::info!(
-                    "sync::MissingMetadata : requesting [{:?}] from {}",
+                    "sync::MissingMetadata : requesting [{:?}] from {} ({num}/{num_peers})",
                     range,
                     peer_info.peer_id
                 );
+                offset += self.max_batch_size as u64;
 
                 let request_id = self
                     .message_sender
