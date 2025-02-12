@@ -94,15 +94,15 @@ enum DeployerCommands {
     GetConfigFile(DeployerConfigArgs),
     /// Generate in output the commands to deposit stake amount to all the validators
     GetDepositCommands(DeployerActionsArgs),
-    /// Deposit the stake amounts to all the validators
+    /// Deposit stake amounts to the internal validators
     Deposit(DeployerActionsArgs),
-    /// Deposit the stake amounts to all the validators
+    /// Top up stake to the internal validators
     DepositTopUp(DeployerStakingArgs),
-    /// Deposit the stake amounts to all the validators
+    /// Unstake funds of the internal validators
     Unstake(DeployerStakingArgs),
-    /// Deposit the stake amounts to all the validators
+    /// Withdraw unstaked funds to the internal validators
     Withdraw(DeployerActionsArgs),
-    /// Deposit the stake amounts to all the validators
+    /// Show network stake information
     Stakers(DeployerStakersArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
