@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap, VecDeque},
+    ops::Range,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -17,7 +18,7 @@ use crate::{
     db::Db,
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InjectedProposal,
-        Proposal, QuorumCertificate, RequestBlocksByHeight,
+        Proposal, RequestBlocksByHeight,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
@@ -521,21 +522,7 @@ impl Sync {
                             ExternalMessage::MultiBlockRequest(request_hashes),
                         )
                     }
-                    PeerVer::V1 => {
-                        (
-                            PeerInfo {
-                                version: PeerVer::V1,
-                                peer_id: peer_info.peer_id,
-                                last_used: std::time::Instant::now(),
-                                score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
-                            },
-                            // do not add VIEW_DRIFT - the stored marker is accurate!
-                            ExternalMessage::BlockRequest(BlockRequest {
-                                to_view: meta.view.saturating_sub(1),
-                                from_view: meta.view.saturating_sub(self.max_batch_size as u64),
-                            }),
-                        )
-                    }
+                    _ => unimplemented!("Deprecated V1 in Phase 2"),
                 };
                 let request_id = self
                     .message_sender
@@ -548,97 +535,34 @@ impl Sync {
         Ok(())
     }
 
-    /// Phase 1 / 2: Handle a V1 block response
+    /// Phase 0/\1: Handle a V1 block response
     ///
-    /// If the response if from a V2 peer, it will upgrade that peer to V2.
-    /// In phase 1, it will extract the metadata and feed it into handle_metadata_response.
-    /// In phase 2, it will extract the blocks and feed it into handle_multiblock_response.
+    /// Drop V1 peers from our set.
     pub fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
         // V2 response
         if response.availability.is_none()
             && response.proposals.is_empty()
             && response.from_view == u64::MAX
         {
-            tracing::info!("sync::HandleBlockResponse : upgrade {from}",);
-            self.in_flight.iter_mut().for_each(|(p, _)| {
-                if p.peer_id == from {
-                    p.version = PeerVer::V2;
-                }
-            });
-            match &self.state {
-                SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, Some(vec![]))?;
-                }
-                SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(from, Some(vec![]))?;
-                }
-                _ => {}
-            }
-            return Ok(());
+            if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
+                tracing::info!("sync::BlockResponse : upgrade {from}",);
+                p.version = PeerVer::V2;
+            };
+        } else {
+            if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
+                tracing::warn!("sync::BlockResponse : dropped {from}",);
+                p.score = u32::MAX;
+            };
         }
 
-        tracing::trace!(
-            "sync::HandleBlockResponse : received {} blocks from {from}",
-            response.proposals.len()
-        );
-
-        // Convert the V1 response into a V2 response.
-        match self.state {
-            // Phase 1 - construct the metadata chain from the set of received proposals
-            SyncState::Phase1(BlockHeader {
-                number: block_number,
-                qc:
-                    QuorumCertificate {
-                        block_hash: parent_hash,
-                        ..
-                    },
-                ..
-            }) => {
-                // We do not buffer the proposals, as it takes 250MB/day!
-                // Instead, we will re-request the proposals again, in Phase 2.
-                let mut parent_hash = parent_hash;
-                let metadata = response
-                    .proposals
-                    .into_iter()
-                    // filter extras due to drift
-                    .filter(|p| p.number() < block_number)
-                    .sorted_by(|a, b| b.number().cmp(&a.number()))
-                    // filter any forks
-                    .filter(|p| {
-                        if parent_hash != p.hash() {
-                            return false;
-                        }
-                        parent_hash = p.header.qc.block_hash;
-                        true
-                    })
-                    .map(|p| p.header)
-                    .collect_vec();
-
-                self.handle_metadata_response(from, Some(metadata))?;
+        match &self.state {
+            SyncState::Phase1(_) => {
+                self.handle_metadata_response(from, Some(vec![]))?;
             }
-
-            // Phase 2 - extract the requested proposals only.
             SyncState::Phase2(_) => {
-                let multi_blocks = response
-                    .proposals
-                    .into_iter()
-                    // filter any blocks that are not in the chain e.g. forks
-                    .filter(|p| {
-                        self.db
-                            .contains_sync_metadata(&p.hash())
-                            .unwrap_or_default()
-                    })
-                    .sorted_by(|a, b| b.number().cmp(&a.number()))
-                    .collect_vec();
-
-                self.handle_multiblock_response(from, Some(multi_blocks))?;
+                self.handle_multiblock_response(from, Some(vec![]))?;
             }
-            _ => {
-                tracing::error!(
-                    "sync::HandleBlockResponse : from={from} response={:?}",
-                    response
-                );
-            }
+            _ => {}
         }
         Ok(())
     }
@@ -673,9 +597,13 @@ impl Sync {
                 // Only process a full response
                 if let Some(response) = response {
                     if !response.is_empty() {
+                        let range = Range {
+                            start: response.last().unwrap().number,
+                            end: response.first().unwrap().number,
+                        };
                         tracing::info!(
-                            "sync::MetadataResponse : received {} headers from {}",
-                            response.len(),
+                            "sync::MetadataResponse : received {:?} from {}",
+                            range,
                             peer_id
                         );
                         self.headers_downloaded = self
@@ -716,6 +644,10 @@ impl Sync {
         let SyncState::Phase1(meta) = &self.state else {
             anyhow::bail!("sync::DoMetadataResponse : invalid state");
         };
+
+        if response.is_empty() {
+            return Ok(());
+        }
 
         // Check the linkage of the returned chain
         let mut block_hash = meta.qc.block_hash;
@@ -903,13 +835,7 @@ impl Sync {
         for n in 0..num_peers {
             let offset = (n * self.max_batch_size) as u64;
             if let Some(peer_info) = self.peers.get_next_peer() {
-                tracing::info!(
-                    "sync::DoMissingMetadata : request {}/{num_peers} for {} headers from {}",
-                    n + 1,
-                    self.max_batch_size,
-                    peer_info.peer_id
-                );
-                let (message, done) = match (&self.state, &peer_info.version) {
+                let (message, done, range) = match (&self.state, &peer_info.version) {
                     (
                         SyncState::Phase1(BlockHeader {
                             number: block_number,
@@ -917,65 +843,58 @@ impl Sync {
                         }),
                         PeerVer::V2,
                     ) => {
-                        let from = block_number
-                            .saturating_sub(offset)
-                            .saturating_sub(self.max_batch_size as u64)
-                            .max(self.started_at);
+                        let range = Range {
+                            start: block_number
+                                .saturating_sub(offset)
+                                .saturating_sub(self.max_batch_size as u64)
+                                .max(self.started_at),
+                            end: block_number.saturating_sub(offset).saturating_sub(1),
+                        };
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
-                            to_height: block_number.saturating_sub(offset).saturating_sub(1),
-                            from_height: from,
+                            to_height: range.end,
+                            from_height: range.start,
                         });
-                        (message, from == self.started_at)
-                    }
-                    (
-                        SyncState::Phase1(BlockHeader {
-                            view: view_number, ..
-                        }),
-                        PeerVer::V1,
-                    ) => {
-                        // For V1 BlockRequest, we request a little more than we need, due to drift
-                        // Since the view number is an 'internal' clock, it is possible for the same block number
-                        // to have different view numbers.
-                        let drift = self.max_batch_size as u64 / 10;
-                        let message = ExternalMessage::BlockRequest(BlockRequest {
-                            to_view: view_number.saturating_sub(offset).saturating_add(drift),
-                            from_view: view_number
-                                .saturating_sub(offset)
-                                .saturating_sub(self.max_batch_size as u64),
-                        });
-                        (message, true)
+                        (message, range.start <= self.started_at, range)
                     }
                     (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
                         let meta = meta.unwrap();
                         let block_number = meta.number;
+                        let range = Range {
+                            start: block_number
+                                .saturating_sub(offset)
+                                .saturating_sub(self.max_batch_size as u64)
+                                .max(self.started_at),
+                            end: block_number.saturating_sub(offset).saturating_sub(1),
+                        };
                         self.state = SyncState::Phase1(meta);
-                        let from = block_number
-                            .saturating_sub(offset)
-                            .saturating_sub(self.max_batch_size as u64)
-                            .max(self.started_at);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
-                            to_height: block_number.saturating_sub(offset).saturating_sub(1),
-                            from_height: from,
+                            to_height: range.end,
+                            from_height: range.start,
                         });
-                        (message, from == self.started_at)
+                        (message, range.start <= self.started_at, range)
                     }
-                    (SyncState::Phase0, PeerVer::V1) if meta.is_some() => {
-                        let meta = meta.unwrap();
-                        let view_number = meta.view;
-                        self.state = SyncState::Phase1(meta);
-                        let drift = self.max_batch_size as u64 / 10;
+                    (SyncState::Phase0, PeerVer::V1) | (SyncState::Phase1(_), PeerVer::V1) => {
+                        // Fire a V1 query as a V2 negotiation/hello.
+                        if let Some(meta) = meta {
+                            self.state = SyncState::Phase1(meta);
+                        }
                         let message = ExternalMessage::BlockRequest(BlockRequest {
-                            to_view: view_number.saturating_sub(offset).saturating_add(drift),
-                            from_view: view_number
-                                .saturating_sub(offset)
-                                .saturating_sub(self.max_batch_size as u64),
+                            to_view: 0,
+                            from_view: 0,
                         });
-                        (message, true)
+                        (message, true, Range::default())
                     }
                     _ => unimplemented!("sync::DoMissingMetadata"),
                 };
+
+                tracing::info!(
+                    "sync::DoMissingMetadata : request {}/{num_peers} for {:?} from {}",
+                    n + 1,
+                    range,
+                    peer_info.peer_id
+                );
 
                 let request_id = self
                     .message_sender
@@ -1167,7 +1086,7 @@ impl SyncPeers {
         // if the new peer is not synced, it will get downgraded to the back of heap.
         // but by placing them at the back of the 'best' pack, we get to try them out soon.
         let new_peer = PeerInfo {
-            version: PeerVer::V1,
+            version: PeerVer::V1, // default to V1
             score: peers.iter().map(|p| p.score).min().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
