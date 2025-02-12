@@ -682,21 +682,18 @@ impl Sync {
 
         // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
         let mut block_size = 0;
-        let mut block_count = 0;
-        for meta in segment.iter().rev().filter(|_| {
-            // TODO: Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM
-            if let Some(size) = meta.sync_size_estimate {
-                block_size += size;
-                tracing::info!(size = %size, total=%block_size, "sync: block size estimate");
-                if block_size > 9 * 1024 * 1024 {
-                    block_size = 0;
-                    true
-                } else {
-                    false
-                }
+        for meta in segment.iter().rev().filter(|&block| {
+            // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB
+            block_size += block.sync_size_estimate.unwrap_or(
+                1024 * 1024, // conservative guesstimate of a Proposal with 4000 ZIL transfers.
+            );
+            tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
+            // Due to some slack, this fills up >90% of RESPONSE_SIZE_MAXIMUM.
+            if block_size > 9 * 1024 * 1024 {
+                block_size = 0;
+                true
             } else {
-                block_count += 1;
-                block_count % 10 == 9
+                false
             }
         }) {
             self.db.push_sync_segment(&segment_peer, meta)?;
