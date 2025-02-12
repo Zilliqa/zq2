@@ -95,6 +95,8 @@ impl Sync {
     const DO_SPECULATIVE: bool = true;
     // Speed up by fetching multiple segments in Phase 1.
     const MAX_CONCURRENT_PEERS: usize = 10;
+    // Mitigate DoS
+    const MAX_BATCH_SIZE: usize = 1000;
 
     pub fn new(
         config: &NodeConfig,
@@ -104,8 +106,12 @@ impl Sync {
         peers: Arc<SyncPeers>,
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
-        let max_batch_size = config.block_request_batch_size.clamp(10, 100);
-        let max_blocks_in_flight = config.max_blocks_in_flight.clamp(max_batch_size, 1000);
+        let max_batch_size = config
+            .block_request_batch_size
+            .clamp(100, Self::MAX_BATCH_SIZE);
+        let max_blocks_in_flight = config
+            .max_blocks_in_flight
+            .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
 
         // Start from reset, or continue sync
         let state = if db.count_sync_segments()? == 0 {
@@ -238,7 +244,7 @@ impl Sync {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
                 if !self.db.contains_block(&parent_hash)? {
                     // No parent block, trigger sync
-                    tracing::info!("sync::DoSync : syncing from {parent_hash}",);
+                    tracing::debug!("sync::DoSync : syncing from {parent_hash}",);
                     self.update_started_at()?;
                     // Ensure started_at_block_number is set before running this.
                     // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
@@ -369,7 +375,7 @@ impl Sync {
         if let Some(response) = response {
             if !response.is_empty() {
                 let SyncState::Phase2((_, range)) = &self.state else {
-                    unimplemented!("sync:MultiblockResponse");
+                    unimplemented!("sync:MultiBlockResponse");
                 };
                 tracing::info!(
                     "sync::MultiBlockResponse : received [{:?}] blocks from {from}",
@@ -454,7 +460,7 @@ impl Sync {
         // TODO: Any additional checks
         // Validators should not respond to this, unless they are free e.g. stuck in an exponential backoff.
 
-        let batch_size: usize = self.max_batch_size.min(request.len()); // mitigate DOS by limiting the number of blocks we return
+        let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
         for hash in request {
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
@@ -475,12 +481,12 @@ impl Sync {
     /// ** MAKE ONLY ONE REQUEST AT A TIME **
     fn request_missing_blocks(&mut self) -> Result<()> {
         if !matches!(self.state, SyncState::Phase2(_)) {
-            anyhow::bail!("sync::RequestMissingBlocks : invalid state");
+            anyhow::bail!("sync::MissingBlocks : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
         if !self.in_flight.is_empty() || self.in_pipeline > self.max_blocks_in_flight {
             tracing::debug!(
-                "sync::RequestMissingBlocks : syncing {}/{} blocks",
+                "sync::MissingBlocks : syncing {}/{} blocks",
                 self.in_pipeline,
                 self.max_blocks_in_flight
             );
@@ -510,7 +516,7 @@ impl Sync {
 
                 // Fire request, to the original peer that sent the segment metadata
                 tracing::info!(
-                    "sync::RequestMissingBlocks : requesting [{:?}] from {}",
+                    "sync::MissingBlocks : requesting [{:?}] from {}",
                     range,
                     peer_info.peer_id,
                 );
@@ -536,7 +542,7 @@ impl Sync {
                 self.add_in_flight(peer_info, request_id);
             }
         } else {
-            tracing::warn!("sync::RequestMissingBlocks : insufficient peers to handle request");
+            tracing::warn!("sync::MissingBlocks : insufficient peers to handle request");
         }
         Ok(())
     }
@@ -614,8 +620,16 @@ impl Sync {
                             .headers_downloaded
                             .saturating_add(response.len() as u64);
                         let peer = peer.clone();
-                        self.peers
-                            .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
+
+                        if response.len() == self.max_batch_size {
+                            self.peers
+                                .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
+                        } else {
+                            // downgrade peers that cannot fulfill request range
+                            self.peers
+                                .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
+                        }
+
                         self.do_metadata_response(peer, response)?;
                         continue;
                     } else {
@@ -748,9 +762,8 @@ impl Sync {
 
         // TODO: Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
 
-        let batch_size = self
-            .max_batch_size
-            .min(request.to_height.saturating_sub(request.from_height) as usize); // mitigate DOS by limiting the number of blocks we return
+        let batch_size = Self::MAX_BATCH_SIZE
+            .min(request.to_height.saturating_sub(request.from_height) as usize);
         let mut metas = Vec::with_capacity(batch_size);
         let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
             tracing::warn!("sync::MetadataRequest : unknown block height");
@@ -891,7 +904,7 @@ impl Sync {
                 };
 
                 tracing::info!(
-                    "sync::DoMissingMetadata : requesting [{:?}] from {}",
+                    "sync::MissingMetadata : requesting [{:?}] from {}",
                     range,
                     peer_info.peer_id
                 );
@@ -1180,11 +1193,6 @@ impl PartialOrd for DownGrade {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
-}
-
-struct Phase1Meta {
-    pub range: Range<u64>,
-    pub parent_hash: Hash,
 }
 
 /// Sync state

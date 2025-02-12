@@ -372,7 +372,7 @@ impl Db {
             .query_row([], |row| row.get(0))
             .unwrap_or_default())
     }
-    
+
     /// Returns the number of stored sync segments
     pub fn count_sync_segments(&self) -> Result<usize> {
         Ok(self
