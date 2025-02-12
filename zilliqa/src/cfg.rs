@@ -159,6 +159,10 @@ pub struct NodeConfig {
     /// Maximum allowed RPC response size
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
+    /// The block height at which ZQ1 converted persistence ends. After this block ZQ2 blocks begin.
+    /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks. In future converted networks all ZQ1 blocks will be distinguishable by their zeroed state root hash.  
+    #[serde(default)]
+    pub proto_network_persistence_block_height: Option<u64>,
 }
 
 impl Default for NodeConfig {
@@ -179,6 +183,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            proto_network_persistence_block_height: None,
         }
     }
 }
