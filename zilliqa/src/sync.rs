@@ -368,10 +368,12 @@ impl Sync {
         // Only process a full response
         if let Some(response) = response {
             if !response.is_empty() {
+                let SyncState::Phase2((_, range)) = &self.state else {
+                    unimplemented!("sync:MultiblockResponse");
+                };
                 tracing::info!(
-                    "sync::MultiBlockResponse : received {} blocks from {}",
-                    response.len(),
-                    from
+                    "sync::MultiBlockResponse : received [{:?}] blocks from {from}",
+                    range,
                 );
                 self.blocks_downloaded =
                     self.blocks_downloaded.saturating_add(response.len() as u64);
@@ -395,22 +397,22 @@ impl Sync {
         Ok(())
     }
 
-    pub fn do_multiblock_response(&mut self, _from: PeerId, response: Vec<Proposal>) -> Result<()> {
-        let SyncState::Phase2(check_sum) = self.state else {
+    pub fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<()> {
+        let SyncState::Phase2((check_sum, _)) = self.state else {
             anyhow::bail!("sync::MultiBlockResponse : invalid state");
         };
 
         // If the checksum does not match, retry phase 1. Maybe the node has pruned the segment.
-        let checksum = response
+        let computed_sum = response
             .iter()
             .fold(Hash::builder().with(Hash::ZERO.as_bytes()), |sum, p| {
                 sum.with(p.hash().as_bytes())
             })
             .finalize();
 
-        if check_sum != checksum {
+        if check_sum != computed_sum {
             tracing::error!(
-                "sync::MultiBlockResponse : unexpected checksum={check_sum} != {checksum}"
+                "sync::MultiBlockResponse : unexpected checksum={check_sum} != {computed_sum} from {from}"
             );
             self.state = SyncState::Retry1;
             return Ok(());
@@ -501,14 +503,19 @@ impl Sync {
                         sum.with(h.as_bytes())
                     })
                     .finalize();
-                self.state = SyncState::Phase2(checksum);
+                let range = Range {
+                    start: self.db.last_sync_block_number()?,
+                    end: meta.number.saturating_sub(1),
+                };
 
                 // Fire request, to the original peer that sent the segment metadata
                 tracing::info!(
-                    "sync::RequestMissingBlocks : requesting {} blocks from {}",
-                    request_hashes.len(),
+                    "sync::RequestMissingBlocks : requesting [{:?}] from {}",
+                    range,
                     peer_info.peer_id,
                 );
+                self.state = SyncState::Phase2((checksum, range));
+
                 let (peer_info, message) = match peer_info.version {
                     PeerVer::V2 => {
                         (
@@ -599,7 +606,7 @@ impl Sync {
                             end: response.first().unwrap().number,
                         };
                         tracing::info!(
-                            "sync::MetadataResponse : received {:?} from {}",
+                            "sync::MetadataResponse : received [{:?}] from {}",
                             range,
                             peer_id
                         );
@@ -705,7 +712,7 @@ impl Sync {
 
         // If the segment hits our history, turnaround to Phase 2.
         if checkpointed || self.db.contains_block(&block_hash)? {
-            self.state = SyncState::Phase2(Hash::ZERO);
+            self.state = SyncState::Phase2((Hash::ZERO, Range::default()));
             // drop all pending requests
             for p in self.in_flight.drain(..) {
                 self.peers.done_with_peer(Some(p), DownGrade::None);
@@ -884,8 +891,7 @@ impl Sync {
                 };
 
                 tracing::info!(
-                    "sync::DoMissingMetadata : request {}/{num_peers} for {:?} from {}",
-                    n + 1,
+                    "sync::DoMissingMetadata : requesting [{:?}] from {}",
                     range,
                     peer_info.peer_id
                 );
@@ -1176,13 +1182,18 @@ impl PartialOrd for DownGrade {
     }
 }
 
+struct Phase1Meta {
+    pub range: Range<u64>,
+    pub parent_hash: Hash,
+}
+
 /// Sync state
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 enum SyncState {
     Phase0,
     Phase1(BlockHeader),
-    Phase2(Hash),
+    Phase2((Hash, Range<u64>)),
     Phase3,
     Retry1,
 }
