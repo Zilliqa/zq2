@@ -702,11 +702,11 @@ impl Sync {
         let mut block_size = 0;
         for meta in segment.iter().rev().filter(|&block| {
             // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB
-            block_size += block.sync_size_estimate.unwrap_or(
-                1024 * 1024, // conservative guesstimate of a Proposal with 4000 ZIL transfers.
+            block_size += block.sync_size_estimate.unwrap_or_else(
+                || (1024 * 1024 * meta.gas_used.0 / meta.gas_limit.0) as usize, // guesstimate with gas
             );
             tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
-            // Due to some slack, this fills up >90% of RESPONSE_SIZE_MAXIMUM.
+            // Try to fill up >90% of RESPONSE_SIZE_MAXIMUM.
             if block_size > 9 * 1024 * 1024 {
                 block_size = 0;
                 true
