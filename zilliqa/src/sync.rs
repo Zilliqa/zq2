@@ -178,13 +178,12 @@ impl Sync {
             .iter_mut()
             .find(|(p, r)| p.peer_id == from && *r == failure.request_id)
         {
-            tracing::warn!(from = %from, err = %failure.error,
-                "sync::RequestFailure"
-            );
-
             // drop the peer, in case of any fatal errors
             if !matches!(failure.error, libp2p::autonat::OutboundFailure::Timeout) {
+                tracing::warn!("sync::RequestFailure : {} {from}", failure.error);
                 peer.score = u32::MAX;
+            } else {
+                tracing::warn!("sync::RequestFailure : timeout {from}",);
             }
 
             match &self.state {
@@ -545,15 +544,13 @@ impl Sync {
             && response.from_view == u64::MAX
         {
             if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
-                tracing::info!("sync::BlockResponse : upgrade {from}",);
+                tracing::debug!("sync::BlockResponse : upgrade {from}",);
                 p.version = PeerVer::V2;
             };
-        } else {
-            if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
-                tracing::warn!("sync::BlockResponse : dropped {from}",);
-                p.score = u32::MAX;
-            };
-        }
+        } else if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
+            tracing::warn!("sync::BlockResponse : dropped {from}",);
+            p.score = u32::MAX;
+        };
 
         match &self.state {
             SyncState::Phase1(_) => {
