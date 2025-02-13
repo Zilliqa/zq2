@@ -1974,10 +1974,8 @@ pub struct BlessedTransaction {
 
 /// Blessed transactions bypass minimum gas price rules. These transactions have value to the network even at a lower
 /// gas price, so we accept them anyway.
-
 // It is valuable to accept these transactions despite the low gas price, because it means the contract is deployed at the same address as other EVM-compatible chains.
 // This means that contracts deployed using this proxy will be deployed to the same address as on other chains.
-
 pub const BLESSED_TRANSACTIONS: [BlessedTransaction; 2] = [
     // Hash of the deployment transaction for the deterministic deployment proxy from
     // https://github.com/Arachnid/deterministic-deployment-proxy

@@ -5,7 +5,7 @@ use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
 use ethers::{middleware::Middleware, prelude::TransactionRequest, types::Bytes};
-use primitive_types::H160;
+use primitive_types::{H160, U256};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,10 +13,9 @@ use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 use zilliqa::exec::BLESSED_TRANSACTIONS;
-use primitive_types::U256;
 
 use super::instance::ChainInstance;
-use crate::{address::EthereumAddress, chain::Chain, secret::Secret, validators::ClientConfig};
+use crate::{address::EthereumAddress, chain::Chain, secret::Secret, validators::SignerClient};
 
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
@@ -1421,7 +1420,8 @@ impl ChainNode {
     }
 
     pub async fn post_install(&self) -> Result<()> {
-        if self.chain.name().contains("prototestnet") || self.chain.name().contains("protomainnet") {
+        if self.chain.name().contains("prototestnet") || self.chain.name().contains("protomainnet")
+        {
             log::info!("Skipping post install actions for chain: {}", self.name());
             return Ok(());
         }
@@ -1440,9 +1440,10 @@ impl ChainNode {
 
         let genesis_address = EthereumAddress::from_private_key(&genesis_private_key)?;
 
-        let client_config = ClientConfig::new(&url, &genesis_private_key)?;
+        let client = SignerClient::new(&url, &genesis_private_key)?
+            .get_signer()
+            .await?;
 
-        let client = crate::validators::build_client(&client_config).await?;
         let gas_price = client.get_gas_price().await?;
 
         let mut start_nonce = client

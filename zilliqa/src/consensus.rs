@@ -2520,21 +2520,9 @@ impl Consensus {
     fn get_highest_from_agg(&self, agg: &AggregateQc) -> Result<QuorumCertificate> {
         agg.qcs
             .iter()
-            .map(|qc| (qc, self.get_block(&qc.block_hash)))
-            .try_fold(None, |acc, (qc, block)| {
-                let block = block?.ok_or_else(|| anyhow!("missing block"))?;
-                if let Some((_, acc_view)) = acc {
-                    if acc_view < block.view() {
-                        Ok::<_, anyhow::Error>(Some((qc, block.view())))
-                    } else {
-                        Ok(acc)
-                    }
-                } else {
-                    Ok(Some((qc, block.view())))
-                }
-            })?
+            .max_by_key(|qc| qc.view)
+            .copied()
             .ok_or_else(|| anyhow!("no qcs in agg"))
-            .map(|(qc, _)| *qc)
     }
 
     fn verify_qc_signature(
