@@ -10,7 +10,6 @@ use colored::Colorize;
 use strum::Display;
 use tokio::{fs, sync::Semaphore, task};
 use zilliqa::crypto::SecretKey;
-
 use crate::{
     address::EthereumAddress,
     chain::{
