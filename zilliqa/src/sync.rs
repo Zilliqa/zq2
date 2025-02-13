@@ -814,7 +814,11 @@ impl Sync {
             return Ok(());
         }
 
-        let good_set = Self::MAX_CONCURRENT_PEERS.min(self.peers.count_good_peers());
+        let good_set = if self.peers.count() > Self::MAX_CONCURRENT_PEERS {
+            Self::MAX_CONCURRENT_PEERS.min(self.peers.count_good_peers())
+        } else {
+            self.peers.count_good_peers().saturating_sub(1) // leave one spare, for handling issues
+        };
         if good_set == 0 {
             tracing::warn!("sync::RequestMissingMetadata : no good peers to handle request");
             return Ok(());
@@ -1043,6 +1047,7 @@ impl SyncPeers {
         }
         let best_score = peers.iter().map(|p| p.score).min().unwrap();
         let best_count = peers.iter().filter(|p| p.score == best_score).count();
+
         best_count // optimistic, use as many peers as possible
     }
 
