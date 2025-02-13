@@ -1,24 +1,19 @@
-use std::{collections::BTreeMap, fmt, str::FromStr};
+use std::{collections::BTreeMap, fmt, ops::Add, str::FromStr};
 
 use anyhow::{anyhow, Ok, Result};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
-use ethabi::Token;
-use ethers::{
-    middleware::Middleware,
-    prelude::TransactionRequest,
-    types::{Bytes, NameOrAddress},
-};
+use ethers::{middleware::Middleware, prelude::TransactionRequest, types::Bytes};
 use primitive_types::H160;
 use regex::Regex;
-use revm::precompile::Address;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
-use zilliqa::{contracts, exec::BLESSED_TRANSACTIONS, state::contract_addr};
+use zilliqa::exec::BLESSED_TRANSACTIONS;
+use primitive_types::U256;
 
 use super::instance::ChainInstance;
 use crate::{address::EthereumAddress, chain::Chain, secret::Secret, validators::ClientConfig};
@@ -1426,31 +1421,49 @@ impl ChainNode {
     }
 
     pub async fn post_install(&self) -> Result<()> {
+        if self.chain.name().contains("prototestnet") || self.chain.name().contains("protomainnet") {
+            log::info!("Skipping post install actions for chain: {}", self.name());
+            return Ok(());
+        }
+        if self.role != NodeRole::Validator {
+            log::info!("Skipping post install actions for node: {}", self.name());
+            return Ok(());
+        }
+
+        log::info!("Applying post install actions for node: {}", self.name());
+
         let genesis_private_key = self.chain.genesis_private_key().await?;
         let url = self
             .chain
             .checkpoint_url()
             .ok_or_else(|| anyhow!("Can't get url endpoint"))?;
 
+        let genesis_address = EthereumAddress::from_private_key(&genesis_private_key)?;
+
         let client_config = ClientConfig::new(&url, &genesis_private_key)?;
 
-        let mut client = crate::validators::build_client(&client_config).await?;
+        let client = crate::validators::build_client(&client_config).await?;
+        let gas_price = client.get_gas_price().await?;
+
+        let mut start_nonce = client
+            .get_transaction_count(H160(genesis_address.address.0.into()), None)
+            .await?;
 
         for blessed_txns in BLESSED_TRANSACTIONS {
             let tx = TransactionRequest::new()
                 .to(H160(blessed_txns.sender.0.into()))
-                .value(blessed_txns.required_funds * 10u128.pow(18));
+                .nonce(start_nonce)
+                .value(U256::from(blessed_txns.gas_limit) * gas_price);
 
-            let pending_tx = client.send_transaction(tx, None).await?;
-            let _ = pending_tx
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("funding tx dropped from mempool"))?;
+            start_nonce = start_nonce.add(1);
 
+            // It's best effort attempt so we don't wait for txn_hash/receipt
+            // Txn can be mined at node X before we send txn to node Y and therefore node Y would complain that such txn already exists
+            _ = client.send_transaction(tx, None).await;
+
+            // Send blessed transaction itself
             let payload = Bytes::from(blessed_txns.payload.to_vec());
-            let pending_tx = client.send_raw_transaction(payload).await?;
-            let _ = pending_tx
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("raw tx dropped from mempool"))?;
+            _ = client.send_raw_transaction(payload).await;
         }
 
         Ok(())
