@@ -1432,7 +1432,12 @@ impl ChainNode {
 
         log::info!("Applying post install actions for node: {}", self.name());
 
-        let genesis_private_key = self.chain.genesis_private_key().await?;
+        let genesis_private_key = self.chain.genesis_private_key().await;
+        if let Err(err) = genesis_private_key {
+            log::info!("Failed to query genesis key due to error: {}", err);
+            return Ok(());
+        }
+        let genesis_private_key = genesis_private_key.unwrap();
         // let url = self
         //     .chain.chain()?.get_api_endpoint()?;
         let url = format!("http://localhost:{:?}", NodePort::Default);
