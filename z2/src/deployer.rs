@@ -10,7 +10,6 @@ use colored::Colorize;
 use strum::Display;
 use tokio::{fs, sync::Semaphore, task};
 use zilliqa::crypto::SecretKey;
-
 use crate::{
     address::EthereumAddress,
     chain::{
@@ -125,7 +124,7 @@ async fn execute_install_or_upgrade(
 
     for result in results {
         match result? {
-            (node, Ok(())) => successes.push(node.name()),
+            (node, Ok(())) => successes.push(node),
             (node, Err(err)) => {
                 println!("Node {} failed with error: {}", node.name(), err);
                 failures.push(node.name());
@@ -133,12 +132,18 @@ async fn execute_install_or_upgrade(
         }
     }
 
-    for success in successes {
-        log::info!("SUCCESS: {}", success);
+    for success in &successes {
+        log::info!("SUCCESS: {}", success.name());
     }
 
     for failure in failures {
         log::error!("FAILURE: {}", failure);
+    }
+
+    if !is_upgrade {
+        for node in successes {
+            node.post_install().await?
+        }
     }
 
     Ok(())

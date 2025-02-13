@@ -60,7 +60,7 @@ impl SignerClient {
         })
     }
 
-    async fn get_signer(&self) -> Result<SignerMiddleware<Provider<Http>, LocalWallet>> {
+    pub async fn get_signer(&self) -> Result<SignerMiddleware<Provider<Http>, LocalWallet>> {
         let provider = Provider::<Http>::try_from(self.chain_endpoint.clone())?;
 
         let wallet: LocalWallet = self
