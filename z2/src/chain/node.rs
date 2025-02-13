@@ -82,10 +82,7 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
                 Err(anyhow!("Invalid version for ZQ2"))
             }
         }
-        Components::Otterscan => Ok(format!(
-            "docker.io/zilliqa/otterscan:{}", 
-            version
-        )),
+        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
         Components::Spout => Ok(format!(
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
             version
@@ -99,14 +96,14 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
             version
         )),
         Components::ZQ2Metrics => Ok(format!(
-          "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2-metrics:{}",
-          version
-      )),
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2-metrics:{}",
+            version
+        )),
     }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum NodeRole {
     /// Virtual machine bootstrap
     Bootstrap,
@@ -114,16 +111,14 @@ pub enum NodeRole {
     Validator,
     /// Virtual machine api
     Api,
+    /// Virtual machine private api
+    PrivateApi,
     /// Virtual machine apps
     Apps,
     /// Virtual machine checkpoint
     Checkpoint,
     /// Virtual machine persistence
     Persistence,
-    /// Virtual machine query
-    Query,
-    /// Virtual machine graph
-    Graph,
     /// Virtual machine sentry
     Sentry,
 }
@@ -137,9 +132,8 @@ impl FromStr for NodeRole {
             "apps" => Ok(NodeRole::Apps),
             "validator" => Ok(NodeRole::Validator),
             "checkpoint" => Ok(NodeRole::Checkpoint),
+            "private-api" => Ok(NodeRole::PrivateApi),
             "persistence" => Ok(NodeRole::Persistence),
-            "query" => Ok(NodeRole::Query),
-            "graph" => Ok(NodeRole::Graph),
             "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
@@ -154,9 +148,8 @@ impl fmt::Display for NodeRole {
             NodeRole::Apps => write!(f, "apps"),
             NodeRole::Validator => write!(f, "validator"),
             NodeRole::Checkpoint => write!(f, "checkpoint"),
+            NodeRole::PrivateApi => write!(f, "private-api"),
             NodeRole::Persistence => write!(f, "persistence"),
-            NodeRole::Query => write!(f, "query"),
-            NodeRole::Graph => write!(f, "graph"),
             NodeRole::Sentry => write!(f, "sentry"),
         }
     }
@@ -597,23 +590,23 @@ impl ChainNode {
     }
 
     pub async fn get_validator_identities(&self) -> Result<String> {
-      let validator_identities_items = retrieve_validator_identities_by_chain_name(
-          &self.chain.name(),
-          &self.machine.project_id,
-      )
-      .await?;
-      let validator_identities = if let Some(validator_identities) = validator_identities_items.first() {
-        validator_identities
-      } else {
-          return Err(anyhow!(
-              "No validator_identities for the chain {}",
-              &self.chain.name()
-          ));
-      };
+        let validator_identities_items = retrieve_validator_identities_by_chain_name(
+            &self.chain.name(),
+            &self.machine.project_id,
+        )
+        .await?;
+        let validator_identities =
+            if let Some(validator_identities) = validator_identities_items.first() {
+                validator_identities
+            } else {
+                return Err(anyhow!(
+                    "No validator_identities for the chain {}",
+                    &self.chain.name()
+                ));
+            };
 
-
-      Ok(validator_identities.value().await?)
-  }
+        Ok(validator_identities.value().await?)
+    }
 
     async fn tag_machine(&self) -> Result<()> {
         if self.role == NodeRole::Apps {
@@ -844,7 +837,7 @@ impl ChainNode {
         let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
-        let public_api = if self.role == NodeRole::Api {
+        let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
             // Enable all APIs, except `admin_` for API nodes.
             json!({ "port": 4201, "enabled_apis": ["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] })
         } else {
@@ -856,13 +849,7 @@ impl ChainNode {
         let api_servers = json!([public_api, private_api]);
 
         // Enable Otterscan indices on API nodes.
-        let enable_ots_indices = self.role == NodeRole::Api;
-
-        let max_rpc_response_size = if self.role == NodeRole::Query {
-            u32::MAX
-        } else {
-            10 * 1024 * 1024
-        };
+        let enable_ots_indices = self.role == NodeRole::Api || self.role == NodeRole::PrivateApi;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
@@ -892,7 +879,6 @@ impl ChainNode {
             &bootstrap_addresses[0].1.bls_public_key,
         );
         ctx.insert("genesis_address", &genesis_account.address);
-        ctx.insert("max_rpc_response_size", &max_rpc_response_size);
         ctx.insert(
             "whitelisted_evm_contract_addresses",
             &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
@@ -1004,8 +990,12 @@ impl ChainNode {
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
-        let stats_dashboard_image = &docker_image("stats_dashboard", &self.chain.get_version("stats_dashboard"))?;
-        let stats_agent_image = &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
+        let stats_dashboard_image = &docker_image(
+            "stats_dashboard",
+            &self.chain.get_version("stats_dashboard"),
+        )?;
+        let stats_agent_image =
+            &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
 
         let private_key = if *role_name == NodeRole::Apps.to_string() {
             ""
@@ -1020,7 +1010,8 @@ impl ChainNode {
         };
 
         let enable_z2_metrics = self.chain()?.is_z2_metrics_enabled().to_string();
-        let zq2_metrics_image = &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
+        let zq2_metrics_image =
+            &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
         let validator_identities = if *role_name == NodeRole::Apps.to_string() {
             &self.get_validator_identities().await?
         } else {
@@ -1486,16 +1477,16 @@ async fn retrieve_secret_by_node_name(
 }
 
 async fn retrieve_validator_identities_by_chain_name(
-  chain_name: &str,
-  project_id: &str,
+    chain_name: &str,
+    project_id: &str,
 ) -> Result<Vec<Secret>> {
-  Secret::get_secrets(
-      project_id,
-      format!(
-          "labels.zq2-network={} AND labels.is-validator-identities-list=true",
-          chain_name
-      )
-      .as_str(),
-  )
-  .await
+    Secret::get_secrets(
+        project_id,
+        format!(
+            "labels.zq2-network={} AND labels.is-validator-identities-list=true",
+            chain_name
+        )
+        .as_str(),
+    )
+    .await
 }

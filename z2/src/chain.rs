@@ -246,7 +246,7 @@ impl Chain {
 
     pub fn is_z2_metrics_enabled(&self) -> bool {
         self.get_str("enable_z2_metrics")
-        .map(|value| value.parse::<bool>().unwrap_or(false))
-        .unwrap_or(false)
+            .map(|value| value.parse::<bool>().unwrap_or(false))
+            .unwrap_or(false)
     }
 }

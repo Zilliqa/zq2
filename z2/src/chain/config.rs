@@ -25,10 +25,7 @@ impl NetworkConfig {
                     github::get_release_or_commit("zq2").await?,
                 );
             } else if r.to_string().to_lowercase() == "apps" {
-                versions.insert(
-                    "otterscan".to_string(), 
-                    "latest".to_string()
-                );
+                versions.insert("otterscan".to_string(), "latest".to_string());
                 versions.insert(
                     "spout".to_string(),
                     github::get_release_or_commit("zilliqa-developer").await?,
