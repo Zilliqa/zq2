@@ -1447,7 +1447,14 @@ impl ChainNode {
 
         let client = SignerClient::new(&url, &genesis_private_key)?
             .get_signer()
-            .await?;
+            .await;
+
+        if let Err(err) = client {
+            log::info!("Client returned an error: {}", err);
+            return Ok(());
+        }
+
+        let client = client?;
 
         log::info!("Queried client");
         let gas_price = client.get_gas_price().await?;
