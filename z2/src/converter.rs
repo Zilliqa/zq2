@@ -453,9 +453,7 @@ pub async fn convert_persistence(
     let tx_blocks_iter = tx_blocks
         .into_iter()
         .progress_with(progress)
-        .skip_while(|(n, _)| {
-                *n <= current_block
-        });
+        .skip_while(|(n, _)| *n <= current_block);
 
     let mut parent_hash = Hash::ZERO;
 
