@@ -1440,7 +1440,7 @@ impl ChainNode {
         let genesis_private_key = genesis_private_key.unwrap();
         // let url = self
         //     .chain.chain()?.get_api_endpoint()?;
-        let url = format!("http://localhost:{:?}", NodePort::Default);
+        let url = format!("http://localhost:{:?}", NodePort::Default.value());
 
         log::info!("Url is: {}", url.as_str());
         let genesis_address = EthereumAddress::from_private_key(&genesis_private_key)?;
