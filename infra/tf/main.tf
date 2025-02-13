@@ -78,23 +78,23 @@ resource "google_storage_bucket" "persistence" {
 resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {
   bucket = google_storage_bucket.persistence.name
   role   = "roles/storage.objectAdmin"
-  members = [
+  members = concat([
     "serviceAccount:${module.bootstraps.service_account.email}",
     "serviceAccount:${module.validators.service_account.email}",
     "serviceAccount:${module.apis.service_account.email}",
     "serviceAccount:${module.checkpoints.service_account.email}",
-    "serviceAccount:${module.persistences.service_account.email}",
-    "serviceAccount:${module.queries.service_account.email}",
-    "serviceAccount:${module.graphs.service_account.email}"
-  ]
+    "serviceAccount:${module.persistences.service_account.email}"
+    ],
+    [for private_api in module.private_apis : "serviceAccount:${private_api.service_account.email}"]
+  )
 }
 
 ################################################################################
 # FIREWALL POLICIES
 ################################################################################
 
-resource "google_compute_firewall" "allow_ingress_from_iap" {
-  name    = "${var.chain_name}-allow-ingress-from-iap"
+resource "google_compute_firewall" "allow_ssh_from_iap" {
+  name    = "${var.chain_name}-allow-ssh-from-iap"
   network = local.network_name
 
   direction     = "INGRESS"
@@ -133,13 +133,28 @@ resource "google_compute_firewall" "allow_external_jsonrpc" {
   network = local.network_name
 
   direction     = "INGRESS"
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = concat(local.google_load_balancer_ip_ranges, ["0.0.0.0/0", local.iap_ip_range])
 
   target_tags = [var.chain_name]
 
   allow {
     protocol = "tcp"
     ports    = ["4201"]
+  }
+}
+
+resource "google_compute_firewall" "allow_jsonrpc_from_iap" {
+  name    = "${var.chain_name}-allow-jsonrpc-from-iap"
+  network = local.network_name
+
+  direction     = "INGRESS"
+  source_ranges = [local.monitoring_ip_range, local.iap_ip_range]
+
+  target_tags = [var.chain_name]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["4202"]
   }
 }
 
@@ -150,7 +165,7 @@ resource "google_compute_firewall" "allow_monitor_healthcheck" {
   direction     = "INGRESS"
   source_ranges = [local.monitoring_ip_range]
 
-  target_tags = [format("%s", var.chain_name)]
+  target_tags = [var.chain_name]
 
   allow {
     protocol = "tcp"
