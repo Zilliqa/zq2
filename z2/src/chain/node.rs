@@ -99,7 +99,7 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
             version
         )),
         Components::ZQ2Metrics => Ok(format!(
-          "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2-metrics:{}",
+          "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2-metrics:{}",
           version
       )),
     }
@@ -596,6 +596,25 @@ impl ChainNode {
         Ok(private_key.value().await?)
     }
 
+    pub async fn get_validator_identities(&self) -> Result<String> {
+      let validator_identities_items = retrieve_validator_identities_by_chain_name(
+          &self.chain.name(),
+          &self.machine.project_id,
+      )
+      .await?;
+      let validator_identities = if let Some(validator_identities) = validator_identities_items.first() {
+        validator_identities
+      } else {
+          return Err(anyhow!(
+              "No validator_identities for the chain {}",
+              &self.chain.name()
+          ));
+      };
+
+
+      Ok(validator_identities.value().await?)
+  }
+
     async fn tag_machine(&self) -> Result<()> {
         if self.role == NodeRole::Apps {
             return Ok(());
@@ -987,7 +1006,6 @@ impl ChainNode {
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
         let stats_dashboard_image = &docker_image("stats_dashboard", &self.chain.get_version("stats_dashboard"))?;
         let stats_agent_image = &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
-        let zq2_metrics_image = &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
 
         let private_key = if *role_name == NodeRole::Apps.to_string() {
             ""
@@ -997,6 +1015,14 @@ impl ChainNode {
 
         let genesis_key = if *role_name == NodeRole::Apps.to_string() {
             &self.chain.genesis_private_key().await?
+        } else {
+            ""
+        };
+
+        let enable_z2_metrics = self.chain()?.is_z2_metrics_enabled().to_string();
+        let zq2_metrics_image = &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
+        let validator_identities = if *role_name == NodeRole::Apps.to_string() {
+            &self.get_validator_identities().await?
         } else {
             ""
         };
@@ -1014,11 +1040,13 @@ impl ChainNode {
         var_map.insert("stats_dashboard_image", stats_dashboard_image);
         var_map.insert("stats_dashboard_key", stats_dashboard_key);
         var_map.insert("stats_agent_image", stats_agent_image);
-        var_map.insert("zq2_metrics_image", zq2_metrics_image);
         var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
+        var_map.insert("enable_z2_metrics", &enable_z2_metrics);
+        var_map.insert("zq2_metrics_image", zq2_metrics_image);
+        var_map.insert("validator_identities", validator_identities);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;
@@ -1455,4 +1483,19 @@ async fn retrieve_secret_by_node_name(
         .as_str(),
     )
     .await
+}
+
+async fn retrieve_validator_identities_by_chain_name(
+  chain_name: &str,
+  project_id: &str,
+) -> Result<Vec<Secret>> {
+  Secret::get_secrets(
+      project_id,
+      format!(
+          "labels.zq2-network={} AND labels.is-validator-identities-list=true",
+          chain_name
+      )
+      .as_str(),
+  )
+  .await
 }

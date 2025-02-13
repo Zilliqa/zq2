@@ -21,8 +21,10 @@ templatefile() vars:
 - spout_image, the Eth Spout docker image (incl. version)
 - stats_dashboard_image, the Stats dashboard docker image (incl. version)
 - stats_agent_image, the Stats agent docker image (incl. version)
-- zq2_metrics_image, the ZQ2 metrics docker image (incl. version)
 - subdomain, the ZQ2 network domain name
+- enable_z2_metrics, boolean flag to enable ZQ2 metrics collection
+- zq2_metrics_image, the ZQ2 metrics docker image (incl. version)
+- validator_identities, the ZQ2 network validator identities to be used for metrics collection
 """
 
 def query_metadata_key(key: str) -> str:
@@ -42,6 +44,7 @@ GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
 CHECKPOINT_URL="{{ checkpoint_url }}"
 SUBDOMAIN=base64.b64decode(query_metadata_key("subdomain")).decode('utf-8')
+VALIDATOR_IDENTITIES="{{ validator_identities }}"
 
 def mount_checkpoint_file():
     if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
@@ -289,7 +292,7 @@ Description=Otterscan app
 [Service]
 Type=forking
 ExecStart=/usr/local/bin/otterscan.sh start
-ExecStop=/usr/local/bin/otterscan.sh start
+ExecStop=/usr/local/bin/otterscan.sh stop
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
@@ -442,14 +445,20 @@ echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.d
 ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
 
 start() {
+    cat > .env << 'EOL'
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4317
+ZQ2_METRICS_RPC_URL=ws://metrics.""" + SUBDOMAIN + """
+ZQ2_METRICS_VALIDATOR_IDENTITIES='""" + VALIDATOR_IDENTITIES + """'
+EOL
     docker rm zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ &> /dev/null || echo 0
     docker run -td --name zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ \
-        --restart=unless-stopped --pull=always \
+        --net=host --restart=unless-stopped --pull=always \
+        -v $(pwd)/.env:/.env \
         ${ZQ2_METRICS_IMAGE} &> /dev/null &
 }
 
 stop() {
-    docker stop zq2-metrics-""" + VERSIONS.get('zq2-metrics') + """
+    docker stop zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """
 }
 
 case ${1} in
@@ -466,7 +475,7 @@ Description=ZQ2 metrics app
 [Service]
 Type=forking
 ExecStart=/usr/local/bin/zq2_metrics.sh start
-ExecStop=/usr/local/bin/zq2_metrics.sh start
+ExecStop=/usr/local/bin/zq2_metrics.sh stop
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
@@ -748,7 +757,10 @@ def go(role):
             install_otterscan()
             install_spout()
             install_stats_dashboard()
-            install_zq2_metrics()
+            if "{{ enable_z2_metrics }}" == "true":
+                stop_zq2_metrics()
+                install_zq2_metrics()
+                start_zq2_metrics()
             start_apps()
         case _:
             log(f"Invalide role {role}")
@@ -905,13 +917,13 @@ def install_zq2_metrics():
     run_or_die(["sudo", "systemctl", "enable", "zq2_metrics.service"])
 
 def start_apps():
-    for app in [ "otterscan", "spout", "stats_dashboard", "zq2_metrics" ]:
+    for app in [ "otterscan", "spout", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
             run_or_die(["sudo", "systemctl", "start", f"{app}"])
     pass
 
 def stop_apps():
-    for app in [ "otterscan", "spout", "stats_dashboard", "zq2_metrics" ]:
+    for app in [ "otterscan", "spout", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
             run_or_die(["sudo", "systemctl", "stop", f"{app}"])
     pass
@@ -922,6 +934,14 @@ def start_stats_agent():
 def stop_stats_agent():
     if os.path.exists("/etc/systemd/system/stats_agent.service"):
         run_or_die(["sudo", "systemctl", "stop", "stats_agent"])
+    pass
+
+def start_zq2_metrics():
+    run_or_die(["sudo", "systemctl", "start", "zq2_metrics"])
+
+def stop_zq2_metrics():
+    if os.path.exists("/etc/systemd/system/zq2_metrics.service"):
+        run_or_die(["sudo", "systemctl", "stop", "zq2_metrics"])
     pass
 
 def configure_logrotate():

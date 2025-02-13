@@ -36,7 +36,8 @@ pub enum Chain {
         serialize = "zq2-infratest",
         props(
             subdomain = "zq2-infratest.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            enable_z2_metrics = "true"
         )
     )]
     Zq2InfraTest,
@@ -63,7 +64,8 @@ pub enum Chain {
         serialize = "zq2-prototestnet",
         props(
             subdomain = "zq2-prototestnet.zilliqa.com",
-            project_id = "prj-d-zq2-testnet-g13pnaa8"
+            project_id = "prj-d-zq2-testnet-g13pnaa8",
+            enable_z2_metrics = "true"
         )
     )]
     Zq2ProtoTestnet,
@@ -72,7 +74,8 @@ pub enum Chain {
         serialize = "zq2-protomainnet",
         props(
             subdomain = "zq2-protomainnet.zilliqa.com",
-            project_id = "prj-p-zq2-mainnet-sn5n8wfl"
+            project_id = "prj-p-zq2-mainnet-sn5n8wfl",
+            enable_z2_metrics = "true"
         )
     )]
     Zq2ProtoMainnet,
@@ -239,5 +242,11 @@ impl Chain {
             "{}",
             format!("project_id not available for the chain {}", self).red()
         ))
+    }
+
+    pub fn is_z2_metrics_enabled(&self) -> bool {
+        self.get_str("enable_z2_metrics")
+        .map(|value| value.parse::<bool>().unwrap_or(false))
+        .unwrap_or(false)
     }
 }
