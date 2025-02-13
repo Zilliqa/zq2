@@ -334,7 +334,7 @@ impl Node {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
-        self.consensus.sync.handle_request_failure(failure)?;
+        self.consensus.sync.handle_request_failure(to, failure)?;
         Ok(())
     }
 
@@ -344,12 +344,11 @@ impl Node {
             ExternalMessage::MultiBlockResponse(response) => self
                 .consensus
                 .sync
-                .handle_multiblock_response(from, response)?,
-
+                .handle_multiblock_response(from, Some(response))?,
             ExternalMessage::MetaDataResponse(response) => self
                 .consensus
                 .sync
-                .handle_metadata_response(from, response)?,
+                .handle_metadata_response(from, Some(response))?,
             ExternalMessage::BlockResponse(response) => {
                 self.consensus.sync.handle_block_response(from, response)?
             }

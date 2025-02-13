@@ -362,6 +362,17 @@ impl Db {
         Ok(Some(base_path.join("checkpoints").into_boxed_path()))
     }
 
+    /// Returns the lowest block number of stored sync segments
+    pub fn last_sync_block_number(&self) -> Result<u64> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT MIN(block_number) FROM sync_metadata")?
+            .query_row([], |row| row.get(0))
+            .unwrap_or_default())
+    }
+
     /// Returns the number of stored sync segments
     pub fn count_sync_segments(&self) -> Result<usize> {
         Ok(self
@@ -1007,6 +1018,7 @@ impl Db {
                     timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
                     gas_used: row.get(9)?,
                     gas_limit: row.get(10)?,
+                    sync_size_estimate: None,
                 },
                 agg: row.get(11)?,
                 transactions: vec![],

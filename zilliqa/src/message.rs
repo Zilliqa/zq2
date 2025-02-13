@@ -550,6 +550,8 @@ pub struct BlockHeader {
     pub timestamp: SystemTime,
     pub gas_used: EvmGas,
     pub gas_limit: EvmGas,
+    /// Used for syncing only, defaults to None
+    pub sync_size_estimate: Option<usize>,
 }
 
 impl BlockHeader {
@@ -573,6 +575,7 @@ impl BlockHeader {
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
+            sync_size_estimate: None,
         }
     }
 
@@ -606,6 +609,7 @@ impl Default for BlockHeader {
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
+            sync_size_estimate: None,
         }
     }
 }
@@ -696,6 +700,7 @@ impl Block {
                 timestamp,
                 gas_used,
                 gas_limit,
+                sync_size_estimate: None,
             },
             agg,
             transactions,
