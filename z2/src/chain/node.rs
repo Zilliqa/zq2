@@ -1440,14 +1440,14 @@ impl ChainNode {
         let genesis_private_key = genesis_private_key.unwrap();
         // let url = self
         //     .chain.chain()?.get_api_endpoint()?;
-        let url = format!("http://localhost:{:?}", NodePort::Default.value());
+        let url = "http://localhost:4201";
 
-        log::info!("Url is: {}", url.as_str());
+        log::info!("Url is: {}", url);
         let genesis_address = EthereumAddress::from_private_key(&genesis_private_key)?;
 
         log::info!("Genesis address: {}", genesis_address.address.to_string());
 
-        let client = SignerClient::new(&url, &genesis_private_key)?
+        let client = SignerClient::new(url, &genesis_private_key)?
             .get_signer()
             .await?;
 
