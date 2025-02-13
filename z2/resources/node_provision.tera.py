@@ -673,7 +673,7 @@ def go(role):
             start_zq2()
             start_healthcheck()
             start_stats_agent()
-        case "checkpoint" | "persistence" | "query" | "graph":
+        case "checkpoint" | "persistence" | "private-api" :
             log("Configuring a not validator node")
             stop_healthcheck()
             install_healthcheck()

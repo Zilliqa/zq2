@@ -26,11 +26,6 @@ consensus.blocks_per_epoch=3600
 consensus.epochs_per_checkpoint=24
 {%- endif %}
 
-{%- if role == "query" %}
-# Query node configuration
-max_rpc_response_size={{ max_rpc_response_size }}
-{%- endif %}
-
 api_servers = {{ api_servers }}
 
 {%- if enable_ots_indices %}
