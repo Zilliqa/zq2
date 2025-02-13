@@ -94,8 +94,16 @@ enum DeployerCommands {
     GetConfigFile(DeployerConfigArgs),
     /// Generate in output the commands to deposit stake amount to all the validators
     GetDepositCommands(DeployerActionsArgs),
-    /// Deposit the stake amounts to all the validators
+    /// Deposit stake amounts to the internal validators
     Deposit(DeployerActionsArgs),
+    /// Top up stake to the internal validators
+    DepositTopUp(DeployerStakingArgs),
+    /// Unstake funds of the internal validators
+    Unstake(DeployerStakingArgs),
+    /// Withdraw unstaked funds to the internal validators
+    Withdraw(DeployerActionsArgs),
+    /// Show network stake information
+    Stakers(DeployerStakersArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
     /// Run command over SSH in the internal network nodes
@@ -182,6 +190,24 @@ pub struct DeployerActionsArgs {
     /// Enable nodes selection
     #[clap(long)]
     select: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerStakingArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// Specify the amount in millions
+    #[clap(long)]
+    amount: u8,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerStakersArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -506,7 +532,7 @@ struct DepositStruct {
     /// Specify the Validator deposit signature
     #[clap(long)]
     deposit_auth_signature: String,
-    /// Specify the stake amount you want provide
+    /// Specify the stake amount in millions you want provide
     #[clap(long, short)]
     amount: u8,
     /// Specify the staking reward address
@@ -528,7 +554,7 @@ struct DepositTopUpStruct {
     /// Specify the Validator Public Key
     #[clap(long)]
     public_key: String,
-    /// Specify the stake amount you want provide
+    /// Specify the stake amount in millions you want provide
     #[clap(long, short)]
     amount: u8,
 }
@@ -538,13 +564,13 @@ struct UnstakeStruct {
     /// Specify the ZQ2 deposit chain
     #[clap(long = "chain")]
     chain_name: chain::Chain,
-    /// Specify the private_key to fund the deposit
+    /// Specify the private_key that submitted the deposit transaction
     #[clap(long, short)]
     private_key: String,
     /// Specify the Validator Public Key
     #[clap(long)]
     public_key: String,
-    /// Specify the stake amount you want provide
+    /// Specify the amount in millions you want to unstake
     #[clap(long, short)]
     amount: u8,
 }
@@ -554,7 +580,7 @@ struct WithdrawStruct {
     /// Specify the ZQ2 deposit chain
     #[clap(long = "chain")]
     chain_name: chain::Chain,
-    /// Specify the private_key to fund the deposit
+    /// Specify the private_key that submitted the deposit transaction
     #[clap(long, short)]
     private_key: String,
     /// Specify the Validator Public Key
@@ -912,6 +938,19 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
+            DeployerCommands::Stakers(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_stakers(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer stakers command: {}", err)
+                    })?;
+                Ok(())
+            }
             DeployerCommands::Deposit(ref arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
@@ -922,6 +961,45 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer deposit command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::DepositTopUp(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_deposit_top_up(&config_file, arg.select, arg.amount)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer deposit-top-up command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Unstake(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_unstake(&config_file, arg.select, arg.amount)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer unstake command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Withdraw(ref arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_withdraw(&config_file, arg.select)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer withdraw command: {}", err)
                     })?;
                 Ok(())
             }
@@ -1137,7 +1215,7 @@ async fn main() -> Result<()> {
                     .unwrap(),
                 BlsSignature::from_string(&args.deposit_auth_signature).unwrap(),
             )?;
-            let client_config = validators::ClientConfig::new(
+            let signer_client = validators::SignerClient::new(
                 &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
             )?;
@@ -1146,37 +1224,39 @@ async fn main() -> Result<()> {
                 &args.reward_address,
                 &args.signing_address,
             )?;
-            validators::deposit(&node, &client_config, &deposit_params).await
+            signer_client.deposit(&node, &deposit_params).await
         }
         Commands::DepositTopUp(ref args) => {
             let bls_public_key =
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
                     .unwrap();
-            let client_config = validators::ClientConfig::new(
+            let signer_client = validators::SignerClient::new(
                 &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
             )?;
-            validators::deposit_top_up(&client_config, &bls_public_key, args.amount).await
+            signer_client
+                .deposit_top_up(&bls_public_key, args.amount)
+                .await
         }
         Commands::Unstake(ref args) => {
             let bls_public_key =
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
                     .unwrap();
-            let client_config = validators::ClientConfig::new(
+            let signer_client = validators::SignerClient::new(
                 &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
             )?;
-            validators::unstake(&client_config, &bls_public_key, args.amount).await
+            signer_client.unstake(&bls_public_key, args.amount).await
         }
         Commands::Withdraw(ref args) => {
             let bls_public_key =
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
                     .unwrap();
-            let client_config = validators::ClientConfig::new(
+            let signer_client = validators::SignerClient::new(
                 &args.chain_name.get_api_endpoint()?,
                 &args.private_key,
             )?;
-            validators::withdraw(&client_config, &bls_public_key, args.count).await
+            signer_client.withdraw(&bls_public_key, args.count).await
         }
         Commands::Nodes(ref args) => {
             let spec = Composition::parse(&args.nodes)?;
