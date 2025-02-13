@@ -1432,6 +1432,8 @@ impl ChainNode {
 
         log::info!("Applying post install actions for node: {}", self.name());
 
+        self.wait_for_block_number().await?;
+
         let genesis_private_key = self.chain.genesis_private_key().await;
         if let Err(err) = genesis_private_key {
             log::info!("Failed to query genesis key due to error: {}", err);
