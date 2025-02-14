@@ -96,7 +96,7 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum NodeRole {
     /// Virtual machine bootstrap
     Bootstrap,
@@ -104,16 +104,14 @@ pub enum NodeRole {
     Validator,
     /// Virtual machine api
     Api,
+    /// Virtual machine private api
+    PrivateApi,
     /// Virtual machine apps
     Apps,
     /// Virtual machine checkpoint
     Checkpoint,
     /// Virtual machine persistence
     Persistence,
-    /// Virtual machine query
-    Query,
-    /// Virtual machine graph
-    Graph,
     /// Virtual machine sentry
     Sentry,
 }
@@ -127,9 +125,8 @@ impl FromStr for NodeRole {
             "apps" => Ok(NodeRole::Apps),
             "validator" => Ok(NodeRole::Validator),
             "checkpoint" => Ok(NodeRole::Checkpoint),
+            "private-api" => Ok(NodeRole::PrivateApi),
             "persistence" => Ok(NodeRole::Persistence),
-            "query" => Ok(NodeRole::Query),
-            "graph" => Ok(NodeRole::Graph),
             "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
@@ -144,9 +141,8 @@ impl fmt::Display for NodeRole {
             NodeRole::Apps => write!(f, "apps"),
             NodeRole::Validator => write!(f, "validator"),
             NodeRole::Checkpoint => write!(f, "checkpoint"),
+            NodeRole::PrivateApi => write!(f, "private-api"),
             NodeRole::Persistence => write!(f, "persistence"),
-            NodeRole::Query => write!(f, "query"),
-            NodeRole::Graph => write!(f, "graph"),
             NodeRole::Sentry => write!(f, "sentry"),
         }
     }
@@ -815,7 +811,7 @@ impl ChainNode {
         let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
-        let public_api = if self.role == NodeRole::Api {
+        let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
             // Enable all APIs, except `admin_` for API nodes.
             json!({ "port": 4201, "enabled_apis": ["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] })
         } else {
@@ -827,13 +823,7 @@ impl ChainNode {
         let api_servers = json!([public_api, private_api]);
 
         // Enable Otterscan indices on API nodes.
-        let enable_ots_indices = self.role == NodeRole::Api;
-
-        let max_rpc_response_size = if self.role == NodeRole::Query {
-            u32::MAX
-        } else {
-            10 * 1024 * 1024
-        };
+        let enable_ots_indices = self.role == NodeRole::Api || self.role == NodeRole::PrivateApi;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
@@ -863,7 +853,6 @@ impl ChainNode {
             &bootstrap_addresses[0].1.bls_public_key,
         );
         ctx.insert("genesis_address", &genesis_account.address);
-        ctx.insert("max_rpc_response_size", &max_rpc_response_size);
         ctx.insert(
             "whitelisted_evm_contract_addresses",
             &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?

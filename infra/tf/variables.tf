@@ -23,20 +23,13 @@ variable "apps" {
     generate_external_ip       = optional(bool, false)
     detach_load_balancer       = optional(bool, false)
     faucet_max_hourly_requests = optional(number, 1000000)
-    nodes = list(object({
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -61,20 +54,13 @@ variable "api" {
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     detach_load_balancer = optional(bool, false)
-    nodes = list(object({
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 3
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -98,20 +84,13 @@ variable "validator" {
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
-    nodes = list(object({
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 3
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -135,20 +114,13 @@ variable "bootstrap" {
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, true)
-    nodes = list(object({
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -174,20 +146,13 @@ variable "checkpoint" {
     generate_external_ip = optional(bool, false)
     bucket_force_destroy = optional(bool, true)
     bucket_versioning    = optional(bool, true)
-    nodes = list(object({
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -211,20 +176,13 @@ variable "persistence" {
     instance_type        = optional(string, "e2-standard-2")
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
-    nodes = list(object({
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
+    })), [])
   })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
-  }
+  default = {}
 
   # Validation for provisioning_model
   validation {
@@ -241,79 +199,48 @@ variable "persistence" {
   }
 }
 
-variable "query" {
-  description = "(Optional) The configuration of the large query nodes"
-  type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    detach_load_balancer = optional(bool, false)
-    nodes = list(object({
+variable "private_api" {
+  description = "(Optional) The configuration of the private API nodes"
+  type = map(object({
+    disk_size              = optional(number, 256)
+    instance_type          = optional(string, "e2-standard-2")
+    provisioning_model     = optional(string, "STANDARD")
+    generate_external_ip   = optional(bool, false)
+    firewall_source_ranges = optional(list(string), [])
+    dns_names              = optional(list(string), [])
+    nodes = optional(list(object({
       count  = number
       region = optional(string)
       zone   = optional(string)
-    }))
-  })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "asia-southeast1"
-      }
-    ]
-  }
+    })), [])
+  }))
+  default = {}
 
   # Validation for provisioning_model
   validation {
-    condition     = contains(["STANDARD", "SPOT"], var.query.provisioning_model)
-    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
+    condition     = alltrue([for key, config in var.private_api : contains(["STANDARD", "SPOT"], config.provisioning_model)])
+    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT' for all private API configurations."
   }
 
   # Validation to check that both 'region' and 'zone' are not specified together
   validation {
     condition = alltrue([
-      for node in var.query.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+      for key, config in var.private_api :
+      alltrue([
+        for node in config.nodes :
+        (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+      ])
     ])
-    error_message = "You need to specify either 'region' or 'zone' for a node."
-  }
-}
-
-variable "graph" {
-  description = "(Optional) The configuration of the graph nodes"
-  type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    detach_load_balancer = optional(bool, false)
-    nodes = list(object({
-      count  = number
-      region = optional(string)
-      zone   = optional(string)
-    }))
-  })
-  default = {
-    nodes : [
-      {
-        count  = 1
-        region = "us-west1"
-      }
-    ]
+    error_message = "For each private API configuration, you need to specify either 'region' or 'zone' for each node, but not both."
   }
 
-  # Validation for provisioning_model
-  validation {
-    condition     = contains(["STANDARD", "SPOT"], var.graph.provisioning_model)
-    error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
-  }
-
-  # Validation to check that both 'region' and 'zone' are not specified together
+  # Validation to ensure the length of dns_names matches the sum of all node counts
   validation {
     condition = alltrue([
-      for node in var.graph.nodes : (node.region != null && node.zone == null) || (node.region == null && node.zone != null)
+      for name, config in var.private_api :
+      length(config.dns_names) == sum([for node in config.nodes : node.count])
     ])
-    error_message = "You need to specify either 'region' or 'zone' for a node."
+    error_message = "The length of 'dns_names' must match the total number of nodes (sum of 'count' in 'nodes')."
   }
 }
 
