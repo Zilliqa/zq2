@@ -10,6 +10,7 @@ use colored::Colorize;
 use strum::Display;
 use tokio::{fs, sync::Semaphore, task};
 use zilliqa::crypto::SecretKey;
+
 use crate::{
     address::EthereumAddress,
     chain::{
@@ -88,9 +89,18 @@ pub async fn install_or_upgrade(
             && selected_machines.clone().contains(&node.name())
     });
 
+    let chain_node = chain_nodes
+        .first()
+        .cloned()
+        .ok_or(anyhow!("No chain nodes found!"))?;
+
     let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade, max_parallel).await;
-    let _ = execute_install_or_upgrade(chain_nodes, is_upgrade, max_parallel).await;
+    let _ = execute_install_or_upgrade(chain_nodes.clone(), is_upgrade, max_parallel).await;
     let _ = execute_install_or_upgrade(apps_nodes, is_upgrade, max_parallel).await;
+
+    if !is_upgrade {
+        post_install(chain_node).await?;
+    }
 
     Ok(())
 }
@@ -140,13 +150,11 @@ async fn execute_install_or_upgrade(
         log::error!("FAILURE: {}", failure);
     }
 
-    if !is_upgrade {
-        for node in successes {
-            node.post_install().await?
-        }
-    }
-
     Ok(())
+}
+
+async fn post_install(node: ChainNode) -> Result<()> {
+    node.post_install().await
 }
 
 pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str>) -> Result<()> {

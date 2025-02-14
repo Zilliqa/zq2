@@ -1425,50 +1425,21 @@ impl ChainNode {
             log::info!("Skipping post install actions for chain: {}", self.name());
             return Ok(());
         }
-        if self.role != NodeRole::Validator {
-            log::info!("Skipping post install actions for node: {}", self.name());
-            return Ok(());
-        }
 
-        log::info!("Applying post install actions for node: {}", self.name());
-
-        self.wait_for_block_number().await?;
-
-        let genesis_private_key = self.chain.genesis_private_key().await;
-        if let Err(err) = genesis_private_key {
-            log::info!("Failed to query genesis key due to error: {}", err);
-            return Ok(());
-        }
-        let genesis_private_key = genesis_private_key.unwrap();
+        let genesis_private_key = self.chain.genesis_private_key().await?;
         let url = self.chain.chain()?.get_api_endpoint()?;
 
-        log::info!("Url is: {}", url);
         let genesis_address = EthereumAddress::from_private_key(&genesis_private_key)?;
-
-        log::info!("Genesis address: {}", genesis_address.address.to_string());
 
         let client = SignerClient::new(&url, &genesis_private_key)?
             .get_signer()
-            .await;
+            .await?;
 
-        if let Err(err) = client {
-            log::info!("Client returned an error: {}", err);
-            return Ok(());
-        }
-
-        let client = client?;
-
-        log::info!("Queried client");
         let gas_price = client.get_gas_price().await?;
-
-        log::info!("Gas price: {}", gas_price);
 
         let mut start_nonce = client
             .get_transaction_count(H160(genesis_address.address.0.into()), None)
             .await?;
-
-        log::info!("Start nonce: {}", gas_price);
-
         for blessed_txns in BLESSED_TRANSACTIONS {
             let tx = TransactionRequest::new()
                 .to(H160(blessed_txns.sender.0.into()))
@@ -1477,21 +1448,12 @@ impl ChainNode {
 
             start_nonce = start_nonce.add(1);
 
-            // It's best effort attempt so we don't wait for txn_hash/receipt
-            // Txn can be mined at node X before we send txn to node Y and therefore node Y would complain that such txn already exists
-            log::info!(
-                "Funding recipient: {} from sender: {} with funds: {}",
-                H160(blessed_txns.sender.0.into()).to_string(),
-                genesis_address.address.to_string(),
-                U256::from(blessed_txns.gas_limit) * gas_price
-            );
-            let tx = client.send_transaction(tx, None).await;
-            log::info!("Result is: {:?}", tx);
+            let funding_txn = client.send_transaction(tx, None).await?;
+            _ = funding_txn.await?;
 
             // Send blessed transaction itself
             let payload = Bytes::from(blessed_txns.payload.to_vec());
-            let tx = client.send_raw_transaction(payload).await;
-            log::info!("Result is: {:?}", tx);
+            _ = client.send_raw_transaction(payload).await?;
         }
 
         Ok(())
