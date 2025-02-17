@@ -22,28 +22,37 @@ templatefile() vars:
 - stats_dashboard_image, the Stats dashboard docker image (incl. version)
 - stats_agent_image, the Stats agent docker image (incl. version)
 - subdomain, the ZQ2 network domain name
-- enable_z2_metrics, boolean flag to enable ZQ2 metrics collection
 - zq2_metrics_image, the ZQ2 metrics docker image (incl. version)
 - validator_identities, the ZQ2 network validator identities to be used for metrics collection
 """
 
 def query_metadata_key(key: str) -> str:
-    url = f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{key}"
-    r = requests.get(url, headers = {
-        "Metadata-Flavor" : "Google" })
-    return r.text
+    try:
+        url = f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{key}"
+        r = requests.get(url, headers={"Metadata-Flavor": "Google"})
+        value = r.text
+        try:
+            value = base64.b64decode(value).decode('utf-8')
+        except (ValueError, UnicodeDecodeError):
+            print(f"Warning: Failed to decode base64 value for key {key}")
+            return ""
+        return value
+    except Exception:
+        print(f"Metadata key not found {key}")
+        return ""
 
 ZQ2_IMAGE="{{ docker_image }}"
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
 SPOUT_IMAGE="{{ spout_image }}"
 STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
 STATS_AGENT_IMAGE="{{ stats_agent_image }}"
-ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
 SECRET_KEY="{{ secret_key }}"
 GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
 CHECKPOINT_URL="{{ checkpoint_url }}"
-SUBDOMAIN=base64.b64decode(query_metadata_key("subdomain")).decode('utf-8')
+SUBDOMAIN=query_metadata_key("subdomain")
+ZQ2_METRICS_ENABLED=query_metadata_key("private-api") == "metrics"
+ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
 VALIDATOR_IDENTITIES="{{ validator_identities }}"
 
 def mount_checkpoint_file():
@@ -447,7 +456,7 @@ ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
 start() {
     cat > .env << 'EOL'
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4317
-ZQ2_METRICS_RPC_URL=ws://metrics.""" + SUBDOMAIN + """
+ZQ2_METRICS_RPC_URL=ws://localhost:4201
 ZQ2_METRICS_VALIDATOR_IDENTITIES='""" + VALIDATOR_IDENTITIES + """'
 EOL
     docker rm zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ &> /dev/null || echo 0
@@ -736,6 +745,10 @@ def go(role):
             download_persistence()
             start_zq2()
             start_healthcheck()
+            if ZQ2_METRICS_ENABLED:
+                stop_zq2_metrics()
+                install_zq2_metrics()
+                start_zq2_metrics()
         case "validator":
             log("Configuring a validator node")
             stop_healthcheck()
@@ -757,10 +770,6 @@ def go(role):
             install_otterscan()
             install_spout()
             install_stats_dashboard()
-            if "{{ enable_z2_metrics }}" == "true":
-                stop_zq2_metrics()
-                install_zq2_metrics()
-                start_zq2_metrics()
             start_apps()
         case _:
             log(f"Invalide role {role}")

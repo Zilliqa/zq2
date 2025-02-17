@@ -590,9 +590,10 @@ impl ChainNode {
     }
 
     pub async fn get_validator_identities(&self) -> Result<String> {
-        let validator_identities_items = retrieve_validator_identities_by_chain_name(
+        let validator_identities_items = retrieve_secret_by_role(
             &self.chain.name(),
             &self.machine.project_id,
+            "validator-identities",
         )
         .await?;
         let validator_identities =
@@ -1009,10 +1010,9 @@ impl ChainNode {
             ""
         };
 
-        let enable_z2_metrics = self.chain()?.is_z2_metrics_enabled().to_string();
         let zq2_metrics_image =
             &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
-        let validator_identities = if *role_name == NodeRole::Apps.to_string() {
+        let validator_identities = if *role_name == NodeRole::PrivateApi.to_string() {
             &self.get_validator_identities().await?
         } else {
             ""
@@ -1035,7 +1035,6 @@ impl ChainNode {
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
-        var_map.insert("enable_z2_metrics", &enable_z2_metrics);
         var_map.insert("zq2_metrics_image", zq2_metrics_image);
         var_map.insert("validator_identities", validator_identities);
 
@@ -1470,21 +1469,6 @@ async fn retrieve_secret_by_node_name(
         format!(
             "labels.zq2-network={} AND labels.node-name={} AND labels.is-private-key=true",
             chain_name, node_name
-        )
-        .as_str(),
-    )
-    .await
-}
-
-async fn retrieve_validator_identities_by_chain_name(
-    chain_name: &str,
-    project_id: &str,
-) -> Result<Vec<Secret>> {
-    Secret::get_secrets(
-        project_id,
-        format!(
-            "labels.zq2-network={} AND labels.is-validator-identities-list=true",
-            chain_name
         )
         .as_str(),
     )
