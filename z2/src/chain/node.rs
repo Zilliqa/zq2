@@ -42,6 +42,8 @@ pub enum Components {
     StatsDashboard,
     #[serde(rename = "stats_agent")]
     StatsAgent,
+    #[serde(rename = "zq2_metrics")]
+    ZQ2Metrics,
 }
 
 impl FromStr for Components {
@@ -54,6 +56,7 @@ impl FromStr for Components {
             "spout" => Ok(Components::Spout),
             "stats_dashboard" => Ok(Components::StatsDashboard),
             "stats_agent" => Ok(Components::StatsAgent),
+            "zq2_metrics" => Ok(Components::ZQ2Metrics),
             _ => Err(anyhow!("Component not supported")),
         }
     }
@@ -79,6 +82,7 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
                 Err(anyhow!("Invalid version for ZQ2"))
             }
         }
+        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
         Components::Spout => Ok(format!(
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
             version
@@ -91,7 +95,10 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:{}",
             version
         )),
-        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
+        Components::ZQ2Metrics => Ok(format!(
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2-metrics:{}",
+            version
+        )),
     }
 }
 
@@ -582,6 +589,26 @@ impl ChainNode {
         Ok(private_key.value().await?)
     }
 
+    pub async fn get_validator_identities(&self) -> Result<String> {
+        let validator_identities_items = retrieve_secret_by_role(
+            &self.chain.name(),
+            &self.machine.project_id,
+            "validator-identities",
+        )
+        .await?;
+        let validator_identities =
+            if let Some(validator_identities) = validator_identities_items.first() {
+                validator_identities
+            } else {
+                return Err(anyhow!(
+                    "No validator_identities for the chain {}",
+                    &self.chain.name()
+                ));
+            };
+
+        Ok(validator_identities.value().await?)
+    }
+
     async fn tag_machine(&self) -> Result<()> {
         if self.role == NodeRole::Apps {
             return Ok(());
@@ -983,6 +1010,14 @@ impl ChainNode {
             ""
         };
 
+        let zq2_metrics_image =
+            &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
+        let validator_identities = if *role_name == NodeRole::PrivateApi.to_string() {
+            &self.get_validator_identities().await?
+        } else {
+            ""
+        };
+
         let stats_dashboard_key = &self.chain.stats_dashboard_key().await?;
 
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
@@ -1000,6 +1035,8 @@ impl ChainNode {
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
+        var_map.insert("zq2_metrics_image", zq2_metrics_image);
+        var_map.insert("validator_identities", validator_identities);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;

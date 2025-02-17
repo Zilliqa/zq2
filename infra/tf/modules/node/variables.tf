@@ -72,7 +72,7 @@ variable "role" {
   type        = string
   validation {
     condition     = contains(["bootstrap", "api", "validator", "apps", "checkpoint", "persistence", "private-api", "sentry"], var.role)
-    error_message = "The role value must be one of:  'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'private-api', 'sentry'."
+    error_message = "The role value must be one of: 'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'private-api', 'sentry'."
   }
 }
 
