@@ -1,18 +1,8 @@
 p2p_port = 3333
 
 bootstrap_address = [
-  [
-    "12D3KooWSe8gG2PYGg9qemHNZDsuZcFjkvcU2Fr49bomHGZD2k8x",
-    "/dns/bootstrap-0.zq2-infratest.zilstg.dev/tcp/3333"
-  ],
-  [
-    "12D3KooWLe4CnsLgeEZnfgS44gdDKdsMEayE96qfU2csB8Lijp54",
-    "/dns/bootstrap-1.zq2-infratest.zilstg.dev/tcp/3333"
-  ],
-  [
-    "12D3KooWFsmJMnsRjFPsGi1EZfcK4N62ia9gTRfKDZHMpRKQWKeZ",
-    "/dns/bootstrap-2.zq2-infratest.zilstg.dev/tcp/3333"
-  ]
+  "12D3KooWSe8gG2PYGg9qemHNZDsuZcFjkvcU2Fr49bomHGZD2k8x",
+  "/dns/bootstrap.zq2-infratest.zilstg.dev/tcp/3333"
 ]
 
 [[nodes]]

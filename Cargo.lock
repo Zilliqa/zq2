@@ -1808,9 +1808,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.27"
+version = "4.5.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "769b0145982b4b48713e01ec42d61614425f27b7058bda7180a3a41f30104796"
+checksum = "3e77c3243bd94243c03672cb5154667347c457ca271254724f9f393aee1c05ff"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1840,9 +1840,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.24"
+version = "4.5.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54b755194d6389280185988721fffba69495eed5ee9feeee9a599b53db80318c"
+checksum = "bf4ced95c6f4a675af3da73304b9ac4ed991640c36374e4b46795c49e17cf1ed"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2297,7 +2297,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef552e6f588e446098f6ba40d89ac146c8c7b64aade83c051ee00bb5d2bc18d"
 dependencies = [
- "uuid 1.12.1",
+ "uuid 1.13.1",
 ]
 
 [[package]]
@@ -2754,7 +2754,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "rand",
  "rlp 0.6.1",
- "uuid 1.12.1",
+ "uuid 1.13.1",
 ]
 
 [[package]]
@@ -3250,9 +3250,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "203e96bd596350ec8d9aedfca7eff573e9347e2b2fe50eedfbf78532dabe418e"
+checksum = "de23802550de5204eec1a6297296d2fef6b86ea61f33b1667eebd886577caa34"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3282,9 +3282,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be8ba2ccf8a4bf7730b2ad2815984c1af8e5b8c492420f1cf1d26a8be29cc9e4"
+checksum = "27f065a1c785b3ec556a7a49a27016fc723bd9a4d8623f521c326f8396df64a6"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -3292,9 +3292,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5889eeb7d6729afbbbb1313b22e8f58aa909fcf38aa6b2f9c9b2443ca0765c59"
+checksum = "127e0e788765bc0103eb6b92067843c6ffe660090b2f6fbff1a1441a51939aa0"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3314,9 +3314,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b01048f354b4e98bf5fb4810e0607c87d4b8cc7fe6305a42103ce192e33b2da7"
+checksum = "8764f450332267305440ec399560919e01aa98f23af2c36ac952f9216449cdca"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -3329,9 +3329,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "079b80a4f188af9c273b081547d1a95a0a33f782851a99e21aa4eba06e47fa34"
+checksum = "c59caebbeaeb0e34564c1a404081478a0aadaa8999b57f0befd85965252e074a"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -3866,9 +3866,9 @@ checksum = "b07f60793ff0a4d9cef0f18e63b5357e06209987153a64648c972c1e5aff336f"
 
 [[package]]
 name = "hickory-proto"
-version = "0.24.2"
+version = "0.24.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "447afdcdb8afb9d0a852af6dc65d9b285ce720ed7a59e42a8bf2e931c67bc1b5"
+checksum = "2ad3d6d98c648ed628df039541a5577bee1a7c83e9e16fe3dbedeea4cdfeb971"
 dependencies = [
  "async-trait",
  "cfg-if",
@@ -4124,7 +4124,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.1",
  "tower-service",
- "webpki-roots 0.26.7",
+ "webpki-roots 0.26.8",
 ]
 
 [[package]]
@@ -5003,7 +5003,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -6080,9 +6080,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.20.2"
+version = "1.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1261fe7e33c73b354eab43b1273a57c8f967d0391e80353e51f764ac02cf6775"
+checksum = "945462a4b81e43c4e3ba96bd7b49d834c6f61198356aa858733bc4acf3cbe62e"
 
 [[package]]
 name = "oorandom"
@@ -7268,7 +7268,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 0.26.7",
+ "webpki-roots 0.26.8",
  "windows-registry",
 ]
 
@@ -7690,9 +7690,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.10.1"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2bf47e6ff922db3825eb750c4e2ff784c6ff8fb9e13046ef6a1d1c5401b0b37"
+checksum = "917ce264624a4b4db1c364dcc35bfca9ded014d0a958cd47ad3e960e988ea51c"
 dependencies = [
  "web-time",
 ]
@@ -7714,7 +7714,7 @@ dependencies = [
  "rustls-webpki 0.102.8",
  "security-framework 2.11.1",
  "security-framework-sys",
- "webpki-roots 0.26.7",
+ "webpki-roots 0.26.8",
  "winapi",
 ]
 
@@ -8571,7 +8571,7 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.26.4",
 ]
 
 [[package]]
@@ -8579,6 +8579,19 @@ name = "strum_macros"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.98",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9688894b43459159c82bfa5a5fa0435c19cbe3c9b427fa1dd7b1ce0c279b18a7"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -8668,7 +8681,7 @@ dependencies = [
  "debugid",
  "memmap2",
  "stable_deref_trait",
- "uuid 1.12.1",
+ "uuid 1.13.1",
 ]
 
 [[package]]
@@ -9164,9 +9177,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.8.19"
+version = "0.8.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1ed1f98e3fdc28d6d910e6737ae6ab1a93bf1985935a1193e68f93eeb68d24e"
+checksum = "cd87a5cdd6ffab733b2f74bc4fd7ee5fff6634124999ac278c35fc78c6120148"
 dependencies = [
  "indexmap 2.7.0",
  "serde",
@@ -9186,15 +9199,15 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.22.22"
+version = "0.22.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae48d6208a266e853d946088ed816055e556cc6028c5e8e2b84d9fa5dd7c7f5"
+checksum = "02a8b472d1a3d7c18e2d61a489aee3453fd9031c33e4f55bd533f4a7adca1bee"
 dependencies = [
  "indexmap 2.7.0",
  "serde",
  "serde_spanned",
  "toml_datetime",
- "winnow 0.6.24",
+ "winnow 0.7.0",
 ]
 
 [[package]]
@@ -9582,12 +9595,11 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "ureq"
-version = "3.0.3"
+version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "217751151c53226090391713e533d9a5e904ba2570dabaaace29032687589c3e"
+checksum = "b2916852be768844b6e9cbe107358b5bc40a696bd6dc8e036c9f80c731242c9c"
 dependencies = [
  "base64 0.22.1",
- "cc",
  "flate2",
  "log",
  "percent-encoding",
@@ -9596,7 +9608,7 @@ dependencies = [
  "rustls-pki-types",
  "ureq-proto",
  "utf-8",
- "webpki-roots 0.26.7",
+ "webpki-roots 0.26.8",
 ]
 
 [[package]]
@@ -9659,11 +9671,11 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.12.1"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3758f5e68192bb96cc8f9b7e2c2cfdabb435499a28499a42f8f984092adad4b"
+checksum = "ced87ca4be083373936a67f8de945faa23b6b42384bd5b64434850802c6dccd0"
 dependencies = [
- "getrandom 0.2.15",
+ "getrandom 0.3.1",
  "serde",
 ]
 
@@ -9871,9 +9883,9 @@ checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
 
 [[package]]
 name = "webpki-roots"
-version = "0.26.7"
+version = "0.26.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d642ff16b7e79272ae451b7322067cdc17cadf68c23264be9d94a32319efe7e"
+checksum = "2210b291f7ea53617fbafcc4939f10914214ec15aace5ba62293a668f322c5c9"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -10426,7 +10438,7 @@ dependencies = [
  "sha2",
  "sha3",
  "strum",
- "strum_macros",
+ "strum_macros 0.27.0",
  "tempfile",
  "tera",
  "thiserror 2.0.11",
