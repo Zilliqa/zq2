@@ -1538,6 +1538,11 @@ fn scilla_create(
     let contract_address = zil_contract_address(from_addr, txn.nonce - 1);
 
     let mut init_data: Vec<ParamValue> = serde_json::from_str(&txn.data)?;
+    if !fork.serde_json_preserve_ordering {
+        for param_value in init_data.iter_mut() {
+            param_value.value.sort_all_objects();
+        }
+    }
 
     init_data.extend([
         ParamValue {
