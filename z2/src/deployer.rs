@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    ops::Add,
     sync::Arc,
 };
 
@@ -7,9 +8,14 @@ use anyhow::{anyhow, Result};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
+use ethers::{
+    middleware::Middleware,
+    prelude::{Bytes, TransactionRequest},
+};
+use primitive_types::{H160, U256};
 use strum::Display;
 use tokio::{fs, sync::Semaphore, task};
-use zilliqa::crypto::SecretKey;
+use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 
 use crate::{
     address::EthereumAddress,
@@ -21,6 +27,7 @@ use crate::{
     secret::Secret,
     utils::format_amount,
     validators,
+    validators::SignerClient,
 };
 
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
@@ -89,17 +96,12 @@ pub async fn install_or_upgrade(
             && selected_machines.clone().contains(&node.name())
     });
 
-    let chain_node = chain_nodes
-        .first()
-        .cloned()
-        .ok_or(anyhow!("No chain nodes found!"))?;
-
     let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade, max_parallel).await;
     let _ = execute_install_or_upgrade(chain_nodes.clone(), is_upgrade, max_parallel).await;
     let _ = execute_install_or_upgrade(apps_nodes, is_upgrade, max_parallel).await;
 
     if !is_upgrade {
-        post_install(chain_node).await?;
+        post_install(chain).await?;
     }
 
     Ok(())
@@ -153,8 +155,43 @@ async fn execute_install_or_upgrade(
     Ok(())
 }
 
-async fn post_install(node: ChainNode) -> Result<()> {
-    node.post_install().await
+async fn post_install(chain: ChainInstance) -> Result<()> {
+    if chain.name().contains("prototestnet") || chain.name().contains("protomainnet") {
+        log::info!("Skipping post install actions for chain: {}", chain.name());
+        return anyhow::Ok(());
+    }
+
+    let genesis_private_key = chain.genesis_private_key().await?;
+    let url = chain.chain()?.get_api_endpoint()?;
+
+    let genesis_address = EthereumAddress::from_private_key(&genesis_private_key)?;
+
+    let client = SignerClient::new(&url, &genesis_private_key)?
+        .get_signer()
+        .await?;
+
+    let gas_price = client.get_gas_price().await?;
+
+    let mut start_nonce = client
+        .get_transaction_count(H160(genesis_address.address.0.into()), None)
+        .await?;
+    for blessed_txns in BLESSED_TRANSACTIONS {
+        let tx = TransactionRequest::new()
+            .to(H160(blessed_txns.sender.0.into()))
+            .nonce(start_nonce)
+            .value(U256::from(blessed_txns.gas_limit) * gas_price);
+
+        start_nonce = start_nonce.add(1);
+
+        let funding_txn = client.send_transaction(tx, None).await?;
+        _ = funding_txn.await?;
+
+        // Send blessed transaction itself
+        let payload = Bytes::from(blessed_txns.payload.to_vec());
+        _ = client.send_raw_transaction(payload).await?;
+    }
+
+    anyhow::Ok(())
 }
 
 pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str>) -> Result<()> {
