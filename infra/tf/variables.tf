@@ -242,6 +242,15 @@ variable "private_api" {
     ])
     error_message = "The length of 'dns_names' must match the total number of nodes (sum of 'count' in 'nodes')."
   }
+
+  # Validation to ensure the length of dns_names matches the sum of all node counts
+  validation {
+    condition = alltrue([
+      for key in keys(var.private_api) :
+      !contains(["bootstrap", "api", "validator", "apps", "checkpoint", "persistence", "private-api", "sentry"], key)
+    ])
+    error_message = "The private-api key must NOT be one of: 'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'private-api', 'sentry'."
+  }
 }
 
 variable "subdomain" {
