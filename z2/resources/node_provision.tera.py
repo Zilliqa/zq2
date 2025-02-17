@@ -22,13 +22,24 @@ templatefile() vars:
 - stats_dashboard_image, the Stats dashboard docker image (incl. version)
 - stats_agent_image, the Stats agent docker image (incl. version)
 - subdomain, the ZQ2 network domain name
+- zq2_metrics_image, the ZQ2 metrics docker image (incl. version)
+- validator_identities, the ZQ2 network validator identities to be used for metrics collection
 """
 
 def query_metadata_key(key: str) -> str:
-    url = f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{key}"
-    r = requests.get(url, headers = {
-        "Metadata-Flavor" : "Google" })
-    return r.text
+    try:
+        url = f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{key}"
+        r = requests.get(url, headers={"Metadata-Flavor": "Google"})
+        value = r.text
+        try:
+            value = base64.b64decode(value).decode('utf-8')
+        except (ValueError, UnicodeDecodeError):
+            print(f"Warning: Failed to decode base64 value for key {key}")
+            return ""
+        return value
+    except Exception:
+        print(f"Metadata key not found {key}")
+        return ""
 
 ZQ2_IMAGE="{{ docker_image }}"
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
@@ -39,7 +50,10 @@ SECRET_KEY="{{ secret_key }}"
 GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
 CHECKPOINT_URL="{{ checkpoint_url }}"
-SUBDOMAIN=base64.b64decode(query_metadata_key("subdomain")).decode('utf-8')
+SUBDOMAIN=query_metadata_key("subdomain")
+ZQ2_METRICS_ENABLED=query_metadata_key("private-api") == "metrics"
+ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
+VALIDATOR_IDENTITIES="{{ validator_identities }}"
 
 def mount_checkpoint_file():
     if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
@@ -53,6 +67,7 @@ VERSIONS={
     "spout": SPOUT_IMAGE.split(":")[-1] if SPOUT_IMAGE.split(":")[-1] else "latest",
     "stats_dashboard": STATS_DASHBOARD_IMAGE.split(":")[-1] if STATS_DASHBOARD_IMAGE.split(":")[-1] else "latest",
     "stats_agent": STATS_AGENT_IMAGE.split(":")[-1] if STATS_AGENT_IMAGE.split(":")[-1] else "latest",
+    "zq2_metrics": ZQ2_METRICS_IMAGE.split(":")[-1] if ZQ2_METRICS_IMAGE.split(":")[-1] else "latest",
 }
 
 def query_metadata_ext_ip() -> str:
@@ -286,7 +301,7 @@ Description=Otterscan app
 [Service]
 Type=forking
 ExecStart=/usr/local/bin/otterscan.sh start
-ExecStop=/usr/local/bin/otterscan.sh start
+ExecStop=/usr/local/bin/otterscan.sh stop
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
@@ -428,6 +443,52 @@ ExecStop=/usr/local/bin/stats_agent.sh stop
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+ZQ2_METRICS_SCRIPT="""#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+
+ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
+
+start() {
+    cat > .env << 'EOL'
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4317
+ZQ2_METRICS_RPC_URL=ws://localhost:4201
+ZQ2_METRICS_VALIDATOR_IDENTITIES='""" + VALIDATOR_IDENTITIES + """'
+EOL
+    docker rm zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ &> /dev/null || echo 0
+    docker run -td --name zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ \
+        --net=host --restart=unless-stopped --pull=always \
+        -v $(pwd)/.env:/.env \
+        ${ZQ2_METRICS_IMAGE} &> /dev/null &
+}
+
+stop() {
+    docker stop zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0
+"""
+
+ZQ2_METRICS_SERVICE_DESC="""
+[Unit]
+Description=ZQ2 metrics app
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/zq2_metrics.sh start
+ExecStop=/usr/local/bin/zq2_metrics.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target
@@ -684,6 +745,10 @@ def go(role):
             download_persistence()
             start_zq2()
             start_healthcheck()
+            if ZQ2_METRICS_ENABLED:
+                stop_zq2_metrics()
+                install_zq2_metrics()
+                start_zq2_metrics()
         case "validator":
             log("Configuring a validator node")
             stop_healthcheck()
@@ -832,6 +897,34 @@ def install_stats_dashboard():
     run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/stats_dashboard.service", "/etc/systemd/system/multi-user.target.wants/stats_dashboard.service"])
     run_or_die(["sudo", "systemctl", "enable", "stats_dashboard.service"])
 
+def install_stats_agent():
+    with open("/tmp/stats_agent.sh", "w") as f:
+        f.write(STATS_AGENT_SCRIPT)
+    run_or_die(["sudo", "cp", "/tmp/stats_agent.sh", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh", "/usr/local/bin/stats_agent.sh"])
+
+    with open("/tmp/stats_agent.service", "w") as f:
+        f.write(STATS_AGENT_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/stats_agent.service","/etc/systemd/system/stats_agent.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/stats_agent.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/stats_agent.service", "/etc/systemd/system/multi-user.target.wants/stats_agent.service"])
+    run_or_die(["sudo", "systemctl", "enable", "stats_agent.service"])
+
+def install_zq2_metrics():
+    with open(f"/tmp/zq2_metrics.sh", "w") as f:
+        f.write(ZQ2_METRICS_SCRIPT)
+    run_or_die(["sudo", "cp", "/tmp/zq2_metrics.sh", f"/usr/local/bin/zq2_metrics-{VERSIONS.get('zq2_metrics')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/zq2_metrics-{VERSIONS.get('zq2_metrics')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/zq2_metrics-{VERSIONS.get('zq2_metrics')}.sh", "/usr/local/bin/zq2_metrics.sh"])
+
+    with open("/tmp/zq2_metrics.service", "w") as f:
+        f.write(ZQ2_METRICS_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/zq2_metrics.service","/etc/systemd/system/zq2_metrics.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/zq2_metrics.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/zq2_metrics.service", "/etc/systemd/system/multi-user.target.wants/zq2_metrics.service"])
+    run_or_die(["sudo", "systemctl", "enable", "zq2_metrics.service"])
+
 def start_apps():
     for app in [ "otterscan", "spout", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
@@ -847,23 +940,17 @@ def stop_apps():
 def start_stats_agent():
     run_or_die(["sudo", "systemctl", "start", "stats_agent"])
 
-def install_stats_agent():
-    with open("/tmp/stats_agent.sh", "w") as f:
-        f.write(STATS_AGENT_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/stats_agent.sh", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
-    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
-    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh", "/usr/local/bin/stats_agent.sh"])
-
-    with open("/tmp/stats_agent.service", "w") as f:
-        f.write(STATS_AGENT_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/stats_agent.service","/etc/systemd/system/stats_agent.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/stats_agent.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/stats_agent.service", "/etc/systemd/system/multi-user.target.wants/stats_agent.service"])
-    run_or_die(["sudo", "systemctl", "enable", "stats_agent.service"])
-
 def stop_stats_agent():
     if os.path.exists("/etc/systemd/system/stats_agent.service"):
         run_or_die(["sudo", "systemctl", "stop", "stats_agent"])
+    pass
+
+def start_zq2_metrics():
+    run_or_die(["sudo", "systemctl", "start", "zq2_metrics"])
+
+def stop_zq2_metrics():
+    if os.path.exists("/etc/systemd/system/zq2_metrics.service"):
+        run_or_die(["sudo", "systemctl", "stop", "zq2_metrics"])
     pass
 
 def configure_logrotate():
