@@ -53,7 +53,7 @@ CHECKPOINT_URL="{{ checkpoint_url }}"
 SUBDOMAIN=query_metadata_key("subdomain")
 ZQ2_METRICS_ENABLED=query_metadata_key("private-api") == "metrics"
 ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
-VALIDATOR_IDENTITIES="{{ validator_identities }}"
+VALIDATOR_IDENTITIES='{{ validator_identities }}'
 
 def mount_checkpoint_file():
     if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
