@@ -12,7 +12,7 @@ use ethers::{
     middleware::Middleware,
     prelude::{Bytes, TransactionRequest},
 };
-use primitive_types::{H160, U256};
+use primitive_types::{H160, H256, U256};
 use strum::Display;
 use tokio::{fs, sync::Semaphore, task};
 use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
@@ -176,6 +176,13 @@ async fn post_install(chain: ChainInstance) -> Result<()> {
         .get_transaction_count(H160(genesis_address.address.0.into()), None)
         .await?;
     for blessed_txns in BLESSED_TRANSACTIONS {
+        if let Ok(Some(_)) = client
+            .get_transaction_receipt(H256(blessed_txns.hash.0))
+            .await
+        {
+            continue;
+        }
+
         let tx = TransactionRequest::new()
             .to(H160(blessed_txns.sender.0.into()))
             .nonce(start_nonce)
