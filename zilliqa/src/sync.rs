@@ -18,7 +18,7 @@ use crate::{
     db::Db,
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InjectedProposal,
-        Proposal, RequestBlocksByHeight,
+        Proposal, RequestBlocksByHeight, SyncBlockHeader,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
@@ -65,7 +65,7 @@ pub struct Sync {
     peers: Arc<SyncPeers>,
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
-    p1_response: BTreeMap<PeerId, Option<Vec<BlockHeader>>>,
+    p1_response: BTreeMap<PeerId, Option<Vec<SyncBlockHeader>>>,
     // how many blocks to request at once
     max_batch_size: usize,
     // how many blocks to inject into the queue
@@ -585,7 +585,7 @@ impl Sync {
     pub fn handle_metadata_response(
         &mut self,
         from: PeerId,
-        response: Option<Vec<BlockHeader>>,
+        response: Option<Vec<SyncBlockHeader>>,
     ) -> Result<()> {
         let SyncState::Phase1(_) = &self.state else {
             tracing::warn!("sync::MetadataResponse : dropped response {from}");
@@ -608,8 +608,8 @@ impl Sync {
                 if let Some(response) = response {
                     if !response.is_empty() {
                         let range = Range {
-                            start: response.last().unwrap().number,
-                            end: response.first().unwrap().number,
+                            start: response.last().unwrap().header.number,
+                            end: response.first().unwrap().header.number,
                         };
                         tracing::info!(
                             "sync::MetadataResponse : received [{:?}] from {}",
@@ -657,7 +657,7 @@ impl Sync {
     fn do_metadata_response(
         &mut self,
         segment_peer: PeerInfo,
-        response: Vec<BlockHeader>,
+        response: Vec<SyncBlockHeader>,
     ) -> Result<()> {
         let SyncState::Phase1(meta) = &self.state else {
             anyhow::bail!("sync::DoMetadataResponse : invalid state");
@@ -670,7 +670,7 @@ impl Sync {
         // Check the linkage of the returned chain
         let mut block_hash = meta.qc.block_hash;
         let mut block_num = meta.number;
-        for meta in response.iter() {
+        for SyncBlockHeader { header: meta, .. } in response.iter() {
             // check that the block hash and number is as expected.
             if meta.hash != Hash::ZERO && block_hash == meta.hash && block_num == meta.number + 1 {
                 block_hash = meta.qc.block_hash;
@@ -684,13 +684,13 @@ impl Sync {
                 );
                 return Ok(());
             }
-            if meta.hash == response.last().unwrap().hash {
+            if meta.hash == response.last().unwrap().header.hash {
                 break; // done, we do not check the last parent, because that's outside this segment
             }
         }
 
         // Chain segment is sane
-        let segment = response;
+        let segment = response.iter().map(|sb| sb.header).collect_vec();
 
         // Record the constructed chain metadata
         self.db.insert_sync_metadata(&segment)?;
@@ -700,11 +700,14 @@ impl Sync {
 
         // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
         let mut block_size = 0;
-        for meta in segment.iter().rev().filter(|&block| {
-            // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB
-            block_size += block.sync_size_estimate.unwrap_or_else(
-                || (1024 * 1024 * meta.gas_used.0 / meta.gas_limit.0) as usize, // guesstimate with gas
-            );
+        for SyncBlockHeader { header, .. } in response.iter().rev().filter(|&sb| {
+            // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
+            block_size += if sb.size_estimate > usize::MIN {
+                sb.size_estimate
+            } else {
+                // guesstimate with gas, if unknown
+                (1024 * 1024 * sb.header.gas_used.0 / sb.header.gas_limit.0) as usize
+            };
             tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
             // Try to fill up >90% of RESPONSE_SIZE_MAXIMUM.
             if block_size > 9 * 1024 * 1024 {
@@ -714,7 +717,7 @@ impl Sync {
                 false
             }
         }) {
-            self.db.push_sync_segment(&segment_peer, meta)?;
+            self.db.push_sync_segment(&segment_peer, header)?;
         }
 
         // Record the oldest block in the segment
@@ -773,7 +776,7 @@ impl Sync {
         let mut hash = block.hash();
         while metas.len() <= batch_size {
             // grab the parent
-            let Some(mut block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
             hash = block.parent_hash();
@@ -782,11 +785,13 @@ impl Sync {
             let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal)?.len();
 
             // insert the sync size
-            block.header.sync_size_estimate = Some(encoded_size);
-            metas.push(block.header);
+            metas.push(SyncBlockHeader {
+                header: block.header,
+                size_estimate: encoded_size,
+            });
         }
 
-        let message = ExternalMessage::MetaDataResponse(metas);
+        let message = ExternalMessage::SyncBlockHeaders(metas);
         tracing::trace!(
             ?message,
             "sync::MetadataFromHash : responding to block request"
@@ -1213,6 +1218,13 @@ impl std::fmt::Display for SyncState {
 }
 
 /// Peer Version
+///
+/// It identifies the form of sync algorithm that is supported by a peer. We assume that all peers are V1 at first.
+/// At the first encounter with a peer, it is probed and its response determines if it is treated as a V1/V2 peer.
+/// We have deprecated support for V1 peers. So, V1 now really means 'unknown' peer version.
+///
+/// V1 - peers that support original sync algorithm in `block_store.rs`
+/// V2 - peers that support new sync algorithm in `sync.rs`
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum PeerVer {
     V1 = 1,

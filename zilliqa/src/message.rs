@@ -280,6 +280,7 @@ pub enum ExternalMessage {
     MetaDataResponse(Vec<BlockHeader>),
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),
+    SyncBlockHeaders(Vec<SyncBlockHeader>),
 }
 
 impl ExternalMessage {
@@ -295,6 +296,9 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::SyncBlockHeaders(r) => {
+                write!(f, "SyncBlockHeaders({})", r.len())
+            }
             ExternalMessage::MultiBlockRequest(r) => {
                 write!(f, "MultiBlockRequest({})", r.len())
             }
@@ -533,6 +537,12 @@ pub enum BlockRef {
     Number(u64),
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SyncBlockHeader {
+    pub header: BlockHeader,
+    pub size_estimate: usize,
+}
+
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockHeader {
@@ -550,8 +560,6 @@ pub struct BlockHeader {
     pub timestamp: SystemTime,
     pub gas_used: EvmGas,
     pub gas_limit: EvmGas,
-    /// Used for syncing only, defaults to None
-    pub sync_size_estimate: Option<usize>,
 }
 
 impl BlockHeader {
@@ -575,7 +583,6 @@ impl BlockHeader {
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
-            sync_size_estimate: None,
         }
     }
 
@@ -609,7 +616,6 @@ impl Default for BlockHeader {
             timestamp: SystemTime::UNIX_EPOCH,
             gas_used: EvmGas(0),
             gas_limit: EvmGas(0),
-            sync_size_estimate: None,
         }
     }
 }
@@ -700,7 +706,6 @@ impl Block {
                 timestamp,
                 gas_used,
                 gas_limit,
-                sync_size_estimate: None,
             },
             agg,
             transactions,
