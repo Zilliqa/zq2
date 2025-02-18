@@ -185,6 +185,7 @@ impl Chain {
                 "failed_scilla_call_from_gas_exempt_caller_causes_revert": false,
                 "scilla_messages_can_call_evm_contracts": false,
                 "scilla_contract_creation_increments_account_balance": false,
+                "serde_json_preserve_ordering": false
             })),
             _ => None,
         }
