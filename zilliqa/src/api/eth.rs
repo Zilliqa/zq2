@@ -1076,7 +1076,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHisto
     }
 
     let newest_block: BlockNumberOrTag = params.next()?;
-    let reward_percentiles: Option<Vec<f64>> = params.optional_next()?.unwrap_or_default();
+    let reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
     if let Some(ref percentiles) = reward_percentiles {
         if !percentiles.windows(2).all(|w| w[0] <= w[1])
             || percentiles.iter().any(|&p| !(0.0..=100.0).contains(&p))
@@ -1124,7 +1124,10 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHisto
                 reward_percentiles
                     .iter()
                     .map(|x| {
-                        let i = (x * fees_len / 100_f64) as usize;
+                        // Calculate the index in the sorted effective priority fees based on the percentile
+                        let i = ((x / 100_f64) * fees_len) as usize;
+
+                        // Get the fee at the calculated index, or default to 0 if the index is out of bounds
                         effective_priority_fees.get(i).cloned().unwrap_or_default()
                     })
                     .collect()
