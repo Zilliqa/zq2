@@ -927,13 +927,25 @@ pub fn get_current_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<
 // DSBlockListing
 pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockListingResult> {
     // Dummy implementation
-    let node = node.lock().unwrap();
-    let num_tx_blocks = node.get_latest_finalized_block_number()?;
-    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
+    let num_tx_blocks = {
+        let node = node.lock().unwrap();
+        node.get_latest_finalized_block_number()?
+    };
+
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK)
+        + if num_tx_blocks % TX_BLOCKS_PER_DS_BLOCK == 0 {
+            0
+        } else {
+            1
+        };
     let max_pages = num_ds_blocks / 10 + if num_ds_blocks % 10 == 0 { 0 } else { 1 };
     let page_requested: u64 = params.one()?;
+
     if page_requested == 0 || page_requested > max_pages {
-        return Err(anyhow!("Page out of range."));
+        return Err(anyhow!(format!(
+            "Page out of range. Valid range is 1 to {}",
+            max_pages
+        )));
     }
 
     let end_blocknum = num_ds_blocks - ((page_requested - 1) * 10);
