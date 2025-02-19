@@ -344,6 +344,9 @@ impl Consensus {
             new_transaction_hashes: broadcast::Sender::new(128),
         };
 
+        consensus.db.set_view(start_view)?;
+        consensus.set_finalized_view(finalized_view)?;
+
         // If we started from a checkpoint, execute the checkpointed block now
         if let Some((block, transactions, parent)) = checkpoint_data {
             consensus.execute_block(
@@ -358,7 +361,7 @@ impl Consensus {
 
             consensus.sync.set_checkpoint(&block);
             consensus.set_finalized_view(block.view())?;
-            consensus.set_view(block.view())?;
+            consensus.set_view(block.view() + 1)?;
         } else {
             // If we're at genesis, add the genesis block and return
             if latest_block_view == 0 {
@@ -373,8 +376,6 @@ impl Consensus {
                 consensus.set_finalized_view(latest_block_view)?;
                 return Ok(consensus);
             }
-            consensus.db.set_view(start_view)?;
-            consensus.set_finalized_view(finalized_view)?;
         }
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
