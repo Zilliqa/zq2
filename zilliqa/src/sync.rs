@@ -201,8 +201,6 @@ impl Sync {
                 }
                 _ => {}
             }
-        } else {
-            tracing::warn!("sync::RequestFailure : spurious {from}");
         }
         Ok(())
     }

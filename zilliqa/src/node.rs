@@ -945,7 +945,7 @@ impl Node {
                 self.message_sender.broadcast_proposal(message)?;
             }
         } else {
-            self.consensus.sync.sync_from_proposal(proposal)?; // proposal is already verified
+            self.consensus.sync.sync_from_proposal(proposal)?;
         }
 
         Ok(())
