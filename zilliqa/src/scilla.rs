@@ -456,7 +456,7 @@ impl Scilla {
         } else {
             serde_json::from_value(response)?
         };
-        if !fork.init_data_preserve_order {
+        if !fork.scilla_json_preserve_order {
             response.sort_all_objects();
         }
 
