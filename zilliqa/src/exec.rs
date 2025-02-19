@@ -1838,6 +1838,7 @@ pub fn scilla_call(
                     .as_ref()
                     .ok_or_else(|| anyhow!("call to a Scilla contract without a message"))?,
                 &ext_libs_dir_in_scilla,
+                fork,
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 
