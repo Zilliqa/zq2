@@ -1538,7 +1538,7 @@ fn scilla_create(
     let contract_address = zil_contract_address(from_addr, txn.nonce - 1);
 
     let mut init_data: Vec<ParamValue> = serde_json::from_str(&txn.data)?;
-    if !fork.init_data_preserve_order {
+    if !fork.scilla_json_preserve_order {
         for param_value in init_data.iter_mut() {
             param_value.value.sort_all_objects();
         }
@@ -1838,6 +1838,7 @@ pub fn scilla_call(
                     .as_ref()
                     .ok_or_else(|| anyhow!("call to a Scilla contract without a message"))?,
                 &ext_libs_dir_in_scilla,
+                fork,
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 
