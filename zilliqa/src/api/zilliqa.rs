@@ -930,11 +930,14 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     let node = node.lock().unwrap();
     let num_tx_blocks = node.get_latest_finalized_block_number()?;
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
-    let max_pages = num_ds_blocks / 10;
+    let max_pages = num_ds_blocks / 10 + if num_ds_blocks % 10 == 0 { 0 } else { 1 };
     let page_requested: u64 = params.one()?;
+    if page_requested == 0 || page_requested > max_pages {
+        return Err(anyhow!("Page out of range."));
+    }
 
-    let base_blocknum = page_requested * 10;
-    let end_blocknum = num_ds_blocks.min(base_blocknum + 10);
+    let end_blocknum = num_ds_blocks - ((page_requested - 1) * 10);
+    let base_blocknum = end_blocknum.saturating_sub(10);
     let listings: Vec<DSBlockListing> = (base_blocknum..end_blocknum)
         .rev()
         .map(|blocknum| DSBlockListing {
@@ -949,7 +952,7 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     })
 }
 
-// utilitiy function to calculate the tx block rate for get_ds_block_rate and get_tx_block_rate
+// utility function to calculate the tx block rate for get_ds_block_rate and get_tx_block_rate
 pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
     let node = node.lock().unwrap();
     let max_measurement_blocks = 5;
