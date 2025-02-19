@@ -315,7 +315,7 @@ impl SignedTransaction {
             SignedTransaction::Eip1559 { tx, .. } => tx
                 .max_priority_fee_per_gas
                 .min(tx.max_fee_per_gas - base_fee_per_gas),
-            _ => 0,
+            _ => self.gas_price_per_evm_gas(),
         }
     }
 
