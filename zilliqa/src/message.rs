@@ -280,6 +280,7 @@ pub enum ExternalMessage {
     MetaDataResponse(Vec<BlockHeader>),
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),
+    SyncBlockHeaders(Vec<SyncBlockHeader>),
 }
 
 impl ExternalMessage {
@@ -295,6 +296,9 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::SyncBlockHeaders(r) => {
+                write!(f, "SyncBlockHeaders({})", r.len())
+            }
             ExternalMessage::MultiBlockRequest(r) => {
                 write!(f, "MultiBlockRequest({})", r.len())
             }
@@ -531,6 +535,12 @@ pub enum BlockRef {
     Hash(Hash),
     View(u64),
     Number(u64),
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SyncBlockHeader {
+    pub header: BlockHeader,
+    pub size_estimate: usize,
 }
 
 /// The [Copy]-able subset of a block.
