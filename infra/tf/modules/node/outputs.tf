@@ -25,6 +25,11 @@ output "network_ip" {
   value       = { for instance in google_compute_instance.this : instance.name => instance.network_interface[0].network_ip }
 }
 
+output "external_ip" {
+  description = "The provisioned instances network IPs"
+  value       = { for instance in google_compute_instance.this : instance.name => instance.network_interface[0].access_config[0].nat_ip }
+}
+
 output "zones" {
   description = "The GCP zones where the instances are deployed in"
   value = distinct(flatten([

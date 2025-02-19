@@ -17,7 +17,11 @@ Commands:
   upgrade                Update the network defined in the deployer config file
   get-config-file        Generate in output the validator config file to join the network
   get-deposit-commands   Generate in output the commands to deposit stake amount to all the validators
-  deposit                Deposit the stake amounts to all the validators
+  deposit                Deposit stake amounts to the internal validators
+  deposit-top-up         Top up stake to the internal validators
+  unstake                Unstake funds of the internal validators
+  withdraw               Withdraw unstaked funds to the internal validators
+  stakers                Show network stake information
   rpc                    Run RPC calls over the internal network nodes
   ssh                    Run command over SSH in the internal network nodes
   backup                 Backup a node data dir in the persistence bucket
@@ -67,11 +71,10 @@ Options:
           - bootstrap:   Virtual machine bootstrap
           - validator:   Virtual machine validator
           - api:         Virtual machine api
+          - private-api: Virtual machine private api
           - apps:        Virtual machine apps
           - checkpoint:  Virtual machine checkpoint
           - persistence: Virtual machine persistence
-          - query:       Virtual machine query
-          - graph:       Virtual machine graph
           - sentry:      Virtual machine sentry
 
   -v, --verbose...
@@ -303,7 +306,7 @@ z2 deployer deposit --help
 ```
 
 ```bash
-Deposit the stake amounts to all the validators
+Deposit stake amounts to the internal validators
 
 Usage: z2 deployer deposit [OPTIONS] [CONFIG_FILE]
 
@@ -332,6 +335,151 @@ Configuration file: zq2-prototestnet.yaml
 z2 deployer deposit zq2-prototestnet.yaml
 ```
 
+## Top up stake deposit to the internal validators
+
+```bash
+z2 deployer deposit-top-up --help
+```
+
+```bash
+Top up stake to the internal validators
+
+Usage: z2 deployer deposit-top-up [OPTIONS] --amount <AMOUNT> [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+      --select           Enable nodes selection
+      --amount <AMOUNT>  Specify the amount in millions
+  -v, --verbose...       Increase logging verbosity
+  -q, --quiet...         Decrease logging verbosity
+  -h, --help             Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Top up the stake deposit amounts to the `zq2-prototestnet` validators
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer deposit-top-up --amount 10 zq2-prototestnet.yaml
+```
+
+## Unstake funds of the internal validators
+
+```bash
+z2 deployer unstake --help
+```
+
+```bash
+Unstake funds of the internal validators
+
+Usage: z2 deployer unstake [OPTIONS] --amount <AMOUNT> [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+      --select           Enable nodes selection
+      --amount <AMOUNT>  Specify the amount in millions
+  -v, --verbose...       Increase logging verbosity
+  -q, --quiet...         Decrease logging verbosity
+  -h, --help             Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Unstake deposit amounts to the `zq2-prototestnet` validators
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer unstake --amount 10 zq2-prototestnet.yaml
+```
+
+## Withdraw unstaked funds to the internal validators
+
+```bash
+z2 deployer withdraw --help
+```
+
+```bash
+Withdraw unstaked funds to the internal validators
+
+Usage: z2 deployer withdraw [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+      --select      Enable nodes selection
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Withdraw unstaked funds to the `zq2-prototestnet` validators
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer withdraw zq2-prototestnet.yaml
+```
+
+## Show network stake information
+
+```bash
+z2 deployer stakers --help
+```
+
+```bash
+Show network stake information
+
+Usage: z2 deployer stakers [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  The network deployer config file
+
+Options:
+  -v, --verbose...  Increase logging verbosity
+  -q, --quiet...    Decrease logging verbosity
+  -h, --help        Print help
+```
+
+### Usage example
+
+#### Scenario
+
+Show the stake and future stake amount of the `zq2-prototestnet` network
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer stakers zq2-prototestnet.yaml
+```
+
 ## Run RPC calls over all the nodes
 
 ```bash
@@ -349,9 +497,9 @@ Arguments:
 Options:
       --timeout <TIMEOUT>  Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
   -m, --method <METHOD>    Method to run
-  -p, --params <PARAMS>    List of parameters for the method. ie "[\"string_value\",true]"
+      --params <PARAMS>    List of parameters for the method. ie "[\"string_value\",true]"
       --select             Enable nodes selection
-      --port <PORT>        The port where to run the rpc call on [possible values: default, admin]
+  -p, --port <PORT>        The port where to run the rpc call on [possible values: default, admin]
   -v, --verbose...         Increase logging verbosity
   -q, --quiet...           Decrease logging verbosity
   -h, --help               Print help
@@ -432,12 +580,14 @@ Options:
           - bootstrap:   Virtual machine bootstrap
           - validator:   Virtual machine validator
           - api:         Virtual machine api
+          - private-api: Virtual machine private api
           - apps:        Virtual machine apps
           - checkpoint:  Virtual machine checkpoint
           - persistence: Virtual machine persistence
-          - query:       Virtual machine query
-          - graph:       Virtual machine graph
           - sentry:      Virtual machine sentry
+
+      --out <OUT>
+          File to output to
 
   -v, --verbose...
           Increase logging verbosity
@@ -462,6 +612,19 @@ Configuration file: zq2-prototestnet.yaml
 
 ```bash
 z2 deployer get-config-file --role api zq2-prototestnet.yaml
+```
+
+#### Scenario
+
+Save the config file for a node role `validator` in the `zq2-prototestnet` nodes
+
+```yaml
+Network name: zq2-prototestnet
+Configuration file: zq2-prototestnet.yaml
+```
+
+```bash
+z2 deployer get-config-file --role validator zq2-prototestnet.yaml --out ./z2/resources/chain-specs/zq2-prototestnet.toml
 ```
 
 ## Backup a node data dir

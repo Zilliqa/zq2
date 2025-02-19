@@ -19,6 +19,7 @@ use alloy::{
     },
 };
 use anyhow::{anyhow, Result};
+use itertools::Itertools;
 use libp2p::{request_response::OutboundFailure, PeerId};
 use revm::{primitives::ExecutionResult, Inspector};
 use revm_inspectors::tracing::{
@@ -37,7 +38,7 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockResponse, ExternalMessage, InjectedProposal, InternalMessage,
-        IntershardCall, Proposal,
+        IntershardCall, Proposal, SyncBlockHeader,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -334,7 +335,7 @@ impl Node {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         debug!(from = %self.peer_id, %to, ?failure, "handling message failure");
-        self.consensus.sync.handle_request_failure(failure)?;
+        self.consensus.sync.handle_request_failure(to, failure)?;
         Ok(())
     }
 
@@ -344,12 +345,24 @@ impl Node {
             ExternalMessage::MultiBlockResponse(response) => self
                 .consensus
                 .sync
-                .handle_multiblock_response(from, response)?,
-
-            ExternalMessage::MetaDataResponse(response) => self
+                .handle_multiblock_response(from, Some(response))?,
+            ExternalMessage::SyncBlockHeaders(response) => self
                 .consensus
                 .sync
-                .handle_metadata_response(from, response)?,
+                .handle_metadata_response(from, Some(response))?,
+            // FIXME: 0.6.0 compatibility, to be removed after all nodes >= 0.7.0
+            ExternalMessage::MetaDataResponse(response) => {
+                let response = response
+                    .into_iter()
+                    .map(|bh| SyncBlockHeader {
+                        header: bh,
+                        size_estimate: usize::MIN,
+                    })
+                    .collect_vec();
+                self.consensus
+                    .sync
+                    .handle_metadata_response(from, Some(response))?
+            }
             ExternalMessage::BlockResponse(response) => {
                 self.consensus.sync.handle_block_response(from, response)?
             }

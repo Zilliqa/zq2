@@ -129,3 +129,26 @@ pub fn string_decimal_to_hex(input: &str) -> Result<String> {
 
     Err(anyhow!("Invalid decimal number provided."))
 }
+
+pub fn format_amount(number: f64) -> String {
+    // Separate the integer and fractional parts
+    let integer_part = number.trunc() as u64; // Get the integer part
+    let fractional_part = number.fract(); // Get the fractional part
+
+    // Format the integer part with commas
+    let mut integer_str = integer_part.to_string();
+    let mut formatted_integer = String::new();
+    while integer_str.len() > 3 {
+        let len = integer_str.len();
+        formatted_integer = format!(",{}{}", &integer_str[len - 3..], formatted_integer);
+        integer_str.truncate(len - 3);
+    }
+    formatted_integer = format!("{}{}", integer_str, formatted_integer);
+
+    // Format the fractional part with six decimal places
+    let formatted_fractional = format!("{:.18}", fractional_part);
+    let formatted_fractional = formatted_fractional.trim_start_matches('0');
+
+    // Combine the integer and fractional parts
+    format!("{}{}", formatted_integer, formatted_fractional)
+}

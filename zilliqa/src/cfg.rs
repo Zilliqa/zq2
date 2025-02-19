@@ -491,6 +491,7 @@ pub struct Fork {
     pub call_mode_1_sets_caller_to_parent_caller: bool,
     pub scilla_messages_can_call_evm_contracts: bool,
     pub scilla_contract_creation_increments_account_balance: bool,
+    pub init_data_preserve_order: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -518,6 +519,8 @@ pub struct ForkDelta {
     /// the contract balance will be sum of the existing balance and the amount sent in the deployment transaction.
     /// If false, the contract balance will be the amount sent in the deployment transaction.
     pub scilla_contract_creation_increments_account_balance: Option<bool>,
+    // If true then the compiled code is using serde_json with feature "preserve_order"
+    pub init_data_preserve_order: Option<bool>,
 }
 
 impl Fork {
@@ -536,6 +539,9 @@ impl Fork {
             scilla_contract_creation_increments_account_balance: delta
                 .scilla_contract_creation_increments_account_balance
                 .unwrap_or(self.scilla_contract_creation_increments_account_balance),
+            init_data_preserve_order: delta
+                .init_data_preserve_order
+                .unwrap_or(self.init_data_preserve_order),
         }
     }
 }
@@ -603,6 +609,7 @@ pub fn genesis_fork_default() -> Fork {
         call_mode_1_sets_caller_to_parent_caller: true,
         scilla_messages_can_call_evm_contracts: true,
         scilla_contract_creation_increments_account_balance: true,
+        init_data_preserve_order: true,
     }
 }
 
@@ -669,6 +676,7 @@ mod tests {
                 call_mode_1_sets_caller_to_parent_caller: Some(false),
                 scilla_messages_can_call_evm_contracts: None,
                 scilla_contract_creation_increments_account_balance: Some(false),
+                init_data_preserve_order: None,
             }],
             ..Default::default()
         };
@@ -696,6 +704,7 @@ mod tests {
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: Some(true),
                     scilla_contract_creation_increments_account_balance: None,
+                    init_data_preserve_order: Some(true),
                 },
                 ForkDelta {
                     at_height: 20,
@@ -703,6 +712,7 @@ mod tests {
                     call_mode_1_sets_caller_to_parent_caller: Some(true),
                     scilla_messages_can_call_evm_contracts: Some(false),
                     scilla_contract_creation_increments_account_balance: Some(true),
+                    init_data_preserve_order: Some(true),
                 },
             ],
             ..Default::default()
@@ -744,6 +754,7 @@ mod tests {
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
+                    init_data_preserve_order: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -751,6 +762,7 @@ mod tests {
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
+                    init_data_preserve_order: None,
                 },
             ],
             ..Default::default()
@@ -783,6 +795,7 @@ mod tests {
                 call_mode_1_sets_caller_to_parent_caller: true,
                 scilla_messages_can_call_evm_contracts: true,
                 scilla_contract_creation_increments_account_balance: true,
+                init_data_preserve_order: true,
             },
             forks: vec![],
             ..Default::default()
@@ -803,6 +816,7 @@ mod tests {
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
+                    init_data_preserve_order: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -810,6 +824,7 @@ mod tests {
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
+                    init_data_preserve_order: None,
                 },
             ],
             ..Default::default()

@@ -31,9 +31,6 @@ module "apis" {
     subdomain = base64encode(var.subdomain)
   }
 
-  node_dns_subdomain       = var.node_dns_subdomain
-  node_dns_zone_project_id = var.node_dns_zone_project_id
-
   service_account_iam = local.default_service_account_iam
 }
 

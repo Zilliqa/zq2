@@ -103,17 +103,3 @@ resource "google_compute_instance" "this" {
     ]
   }
 }
-
-resource "google_dns_record_set" "this" {
-  for_each = local.instances_map
-
-  project      = var.node_dns_zone_project_id
-  managed_zone = local.node_dns_zone_name
-  name         = "${google_compute_instance.this[each.value.resource_id].name}.${var.node_dns_subdomain}."
-  type         = "A"
-  ttl          = "60"
-
-  rrdatas = [google_compute_instance.this[each.value.resource_id].network_interface[0].access_config[0].nat_ip]
-
-  depends_on = [google_compute_instance.this]
-}
