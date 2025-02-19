@@ -1006,10 +1006,17 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
 
     let node = node.lock().unwrap();
     let num_tx_blocks = node.get_latest_finalized_block_number()?;
-    let num_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
+    let max_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
 
-    let start_block = page_number * 10;
-    let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
+    if page_number == 0 || page_number > max_pages {
+        return Err(anyhow!(format!(
+            "Page out of range. Valid range is 1 to {}",
+            max_pages
+        )));
+    }
+
+    let end_block = num_tx_blocks - ((page_number - 1) * 10);
+    let start_block = end_block.saturating_sub(10);
 
     let listings: Vec<TxBlockListing> = (start_block..end_block)
         .rev()
@@ -1026,7 +1033,7 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
 
     Ok(TxBlockListingResult {
         data: listings,
-        max_pages: num_pages,
+        max_pages,
     })
 }
 
