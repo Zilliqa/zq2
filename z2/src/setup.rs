@@ -27,10 +27,11 @@ use zilliqa::{
     cfg::{
         self, allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, block_time_default, consensus_timeout_default,
-        eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
-        max_blocks_in_flight_default, scilla_address_default, scilla_ext_libs_path_default,
-        scilla_stdlib_dir_default, state_rpc_limit_default, total_native_token_supply_default,
-        Amount, ConsensusConfig, ContractUpgradesBlockHeights, GenesisDeposit,
+        default_genesis_block_at_height, eth_chain_id_default,
+        failed_request_sleep_duration_default, local_address_default, max_blocks_in_flight_default,
+        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
+        state_rpc_limit_default, total_native_token_supply_default, Amount, ConsensusConfig,
+        ContractUpgradesBlockHeights, GenesisDeposit,
     },
     transaction::EvmGas,
 };
@@ -541,6 +542,7 @@ impl Setup {
                     contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
+                    genesis_block_at_height: default_genesis_block_at_height(),
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
