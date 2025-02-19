@@ -185,7 +185,7 @@ impl Chain {
                 "failed_scilla_call_from_gas_exempt_caller_causes_revert": false,
                 "scilla_messages_can_call_evm_contracts": false,
                 "scilla_contract_creation_increments_account_balance": false,
-                "init_data_preserve_order": false
+                "scilla_json_preserve_order": false
             })),
             _ => None,
         }
@@ -199,13 +199,13 @@ impl Chain {
                 // estimated: 2025-01-15T09:10:37Z
                 json!({ "at_height": 10200000, "scilla_messages_can_call_evm_contracts": true }),
                 // estimated: 2025-02-12T12:08:37Z
-                json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true, "init_data_preserve_order": true }),
+                json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
                 // estimated: 2024-12-20T23:33:12Z
                 json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
                 // estimated: 2025-02-12T13:25:00Z
-                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true, "init_data_preserve_order": true }),
+                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
             ]),
             _ => None,
         }
