@@ -1850,7 +1850,7 @@ async fn tx_block_listing(mut network: Network) {
 
     let response: Value = wallet
         .provider()
-        .request("TxBlockListing", [0])
+        .request("TxBlockListing", [1])
         .await
         .expect("Failed to call TxBlockListing API");
 
