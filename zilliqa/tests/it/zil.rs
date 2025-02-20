@@ -1750,7 +1750,7 @@ async fn get_current_ds_epoch(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn ds_block_listing(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
     network.run_until_block_finalized(2u64, 50).await.unwrap();
 
