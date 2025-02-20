@@ -89,6 +89,9 @@ fn process_empty(c: &mut Criterion) {
                         "0x0000000000000000000000000000000000000001",
                     ],
                 ]
+                txn_pool.maximum_global_size = 100000
+                txn_pool.maximum_txn_count_per_sender = 2000
+                txn_pool.total_slots_for_all_senders = 5000
             "#,
             secret_key.node_public_key()
         ))
