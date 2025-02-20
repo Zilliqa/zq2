@@ -826,6 +826,18 @@ impl TxZilliqa {
             Err(anyhow!("Unknown transaction type"))
         }
     }
+
+    pub fn get_contract_address(&self, signer: &Address) -> Result<Address> {
+        let mut hasher = Sha256::new();
+        hasher.update(signer.as_slice());
+        if self.nonce > 0 {
+            hasher.update((self.nonce - 1).to_be_bytes());
+        } else {
+            return Err(anyhow!("Nonce must be greater than 0"));
+        }
+        let hashed = hasher.finalize();
+        Ok(Address::from_slice(&hashed[12..]))
+    }
 }
 
 /// A wrapper for ZIL amounts in the Zilliqa API. These are represented in units of (10^-12) ZILs, rather than (10^-18)

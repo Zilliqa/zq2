@@ -4,7 +4,6 @@ use anyhow::{anyhow, Ok, Result};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
-use rand::seq::SliceRandom;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -43,6 +42,8 @@ pub enum Components {
     StatsDashboard,
     #[serde(rename = "stats_agent")]
     StatsAgent,
+    #[serde(rename = "zq2_metrics")]
+    ZQ2Metrics,
 }
 
 impl FromStr for Components {
@@ -55,6 +56,7 @@ impl FromStr for Components {
             "spout" => Ok(Components::Spout),
             "stats_dashboard" => Ok(Components::StatsDashboard),
             "stats_agent" => Ok(Components::StatsAgent),
+            "zq2_metrics" => Ok(Components::ZQ2Metrics),
             _ => Err(anyhow!("Component not supported")),
         }
     }
@@ -80,6 +82,7 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
                 Err(anyhow!("Invalid version for ZQ2"))
             }
         }
+        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
         Components::Spout => Ok(format!(
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
             version
@@ -92,12 +95,15 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:{}",
             version
         )),
-        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
+        Components::ZQ2Metrics => Ok(format!(
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2-metrics:{}",
+            version
+        )),
     }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum NodeRole {
     /// Virtual machine bootstrap
     Bootstrap,
@@ -105,16 +111,14 @@ pub enum NodeRole {
     Validator,
     /// Virtual machine api
     Api,
+    /// Virtual machine private api
+    PrivateApi,
     /// Virtual machine apps
     Apps,
     /// Virtual machine checkpoint
     Checkpoint,
     /// Virtual machine persistence
     Persistence,
-    /// Virtual machine query
-    Query,
-    /// Virtual machine graph
-    Graph,
     /// Virtual machine sentry
     Sentry,
 }
@@ -128,9 +132,8 @@ impl FromStr for NodeRole {
             "apps" => Ok(NodeRole::Apps),
             "validator" => Ok(NodeRole::Validator),
             "checkpoint" => Ok(NodeRole::Checkpoint),
+            "private-api" => Ok(NodeRole::PrivateApi),
             "persistence" => Ok(NodeRole::Persistence),
-            "query" => Ok(NodeRole::Query),
-            "graph" => Ok(NodeRole::Graph),
             "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
@@ -145,9 +148,8 @@ impl fmt::Display for NodeRole {
             NodeRole::Apps => write!(f, "apps"),
             NodeRole::Validator => write!(f, "validator"),
             NodeRole::Checkpoint => write!(f, "checkpoint"),
+            NodeRole::PrivateApi => write!(f, "private-api"),
             NodeRole::Persistence => write!(f, "persistence"),
-            NodeRole::Query => write!(f, "query"),
-            NodeRole::Graph => write!(f, "graph"),
             NodeRole::Sentry => write!(f, "sentry"),
         }
     }
@@ -587,6 +589,26 @@ impl ChainNode {
         Ok(private_key.value().await?)
     }
 
+    pub async fn get_validator_identities(&self) -> Result<String> {
+        let validator_identities_items = retrieve_secret_by_role(
+            &self.chain.name(),
+            &self.machine.project_id,
+            "validator-identities",
+        )
+        .await?;
+        let validator_identities =
+            if let Some(validator_identities) = validator_identities_items.first() {
+                validator_identities
+            } else {
+                return Err(anyhow!(
+                    "No validator_identities for the chain {}",
+                    &self.chain.name()
+                ));
+            };
+
+        Ok(validator_identities.value().await?)
+    }
+
     async fn tag_machine(&self) -> Result<()> {
         if self.role == NodeRole::Apps {
             return Ok(());
@@ -791,42 +813,32 @@ impl ChainNode {
 
     pub async fn get_config_toml(&self) -> Result<String> {
         let spec_config = include_str!("../../resources/config.tera.toml");
-        let mut bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
+        let bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
+        let subdomain = self.chain()?.get_subdomain()?;
 
-        let set_bootstrap_address = if self.role != NodeRole::Bootstrap || bootstrap_nodes.len() > 1
-        {
-            "true"
-        } else {
-            "false"
+        if bootstrap_nodes.is_empty() {
+            return Err(anyhow!(
+                "No bootstrap instances found in the network {}",
+                &self.chain.name()
+            ));
         };
 
-        if bootstrap_nodes.len() > 1 {
-            bootstrap_nodes.retain(|node| node.name() != self.name());
+        let mut bootstrap_addresses = Vec::new();
+        for (idx, n) in bootstrap_nodes.into_iter().enumerate() {
+            let private_key = n.get_private_key().await?;
+            let eth_address = EthereumAddress::from_private_key(&private_key)?;
+            let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/tcp/3333");
+            bootstrap_addresses.push((endpoint, eth_address));
         }
-
-        // Pick a random element among the bootstrap nodes
-        let selected_bootstrap =
-            if let Some(random_item) = bootstrap_nodes.choose(&mut rand::thread_rng()) {
-                println!("Bootstrap picked: {}", random_item.name().bold());
-                random_item.to_owned()
-            } else {
-                return Err(anyhow!(
-                    "No bootstrap instances found in the network {}",
-                    &self.chain.name()
-                ));
-            };
 
         let genesis_account =
             EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
-        let bootstrap_node =
-            EthereumAddress::from_private_key(&selected_bootstrap.get_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
-        let bootstrap_endpoint = self.chain()?.get_bootstrap_endpoint()?;
         let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
-        let public_api = if self.role == NodeRole::Api {
+        let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
             // Enable all APIs, except `admin_` for API nodes.
             json!({ "port": 4201, "enabled_apis": ["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] })
         } else {
@@ -838,23 +850,36 @@ impl ChainNode {
         let api_servers = json!([public_api, private_api]);
 
         // Enable Otterscan indices on API nodes.
-        let enable_ots_indices = self.role == NodeRole::Api;
-
-        let max_rpc_response_size = if self.role == NodeRole::Query {
-            u32::MAX
-        } else {
-            10 * 1024 * 1024
-        };
+        let enable_ots_indices = self.role == NodeRole::Api || self.role == NodeRole::PrivateApi;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
         ctx.insert("eth_chain_id", &eth_chain_id);
-        ctx.insert("bootstrap_endpoint", bootstrap_endpoint);
-        ctx.insert("bootstrap_peer_id", &bootstrap_node.peer_id);
-        ctx.insert("bootstrap_bls_public_key", &bootstrap_node.bls_public_key);
-        ctx.insert("set_bootstrap_address", set_bootstrap_address);
+
+        let bootstrap_address = if bootstrap_addresses.len() > 1 {
+            serde_json::to_value(
+                bootstrap_addresses
+                    .iter()
+                    .map(|(e, a)| (a.peer_id, e))
+                    .collect::<Vec<_>>(),
+            )?
+        } else {
+            serde_json::to_value((
+                bootstrap_addresses[0].1.peer_id,
+                format!("/dns/bootstrap.{subdomain}/tcp/3333"),
+            ))?
+        };
+
+        ctx.insert(
+            "bootstrap_address",
+            &serde_json::to_string_pretty(&bootstrap_address)?,
+        );
+        ctx.insert("bootstrap_peer_id", &bootstrap_addresses[0].1.peer_id);
+        ctx.insert(
+            "bootstrap_bls_public_key",
+            &bootstrap_addresses[0].1.bls_public_key,
+        );
         ctx.insert("genesis_address", &genesis_account.address);
-        ctx.insert("max_rpc_response_size", &max_rpc_response_size);
         ctx.insert(
             "whitelisted_evm_contract_addresses",
             &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
@@ -939,8 +964,15 @@ impl ChainNode {
         let rendered_template = self.get_config_toml().await?;
         let config_file = rendered_template.as_str();
 
+        // Adding the OpenTelemetry collector endpoint to all nodes configurations
+        let otlp_collector_endpoint = "http://localhost:4317";
+        let config_file_with_otlp = format!(
+            "otlp_collector_endpoint = \"{otlp_collector_endpoint}\"\n{}",
+            config_file
+        );
+
         let mut fh = File::create(filename).await?;
-        fh.write_all(config_file.as_bytes()).await?;
+        fh.write_all(config_file_with_otlp.as_bytes()).await?;
         println!("Configuration file created: {filename}");
 
         Ok(filename.to_owned())
@@ -978,6 +1010,14 @@ impl ChainNode {
             ""
         };
 
+        let zq2_metrics_image =
+            &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
+        let validator_identities = if *role_name == NodeRole::PrivateApi.to_string() {
+            &self.get_validator_identities().await?
+        } else {
+            ""
+        };
+
         let stats_dashboard_key = &self.chain.stats_dashboard_key().await?;
 
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
@@ -995,6 +1035,8 @@ impl ChainNode {
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
+        var_map.insert("zq2_metrics_image", zq2_metrics_image);
+        var_map.insert("validator_identities", validator_identities);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;

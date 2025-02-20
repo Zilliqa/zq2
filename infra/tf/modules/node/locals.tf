@@ -18,7 +18,7 @@ locals {
         count           = node.count
         region          = node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region)
         zone            = node.zone != null ? node.zone : ([for region in data.google_compute_zones.available : region if region.region == node.region][0].names[n % length([for region in data.google_compute_zones.available : region if region.region == node.region][0].names)])
-        resource_name   = format("%s-%s-%s-%s-%s", var.chain_name, var.role, var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n, random_id.name_suffix.hex)
+        resource_name   = format("%s-%s-%s-%s-%s", var.chain_name, lookup(local.labels, "private-api", var.role), var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n, random_id.name_suffix.hex)
         resource_id     = format("%s-%s-%s-%s", var.chain_name, var.role, var.region_mappings[(node.region != null ? node.region : ([for region in data.google_compute_zones.available : region if contains(region.names, node.zone)][0].region))], n)
       }
     ]

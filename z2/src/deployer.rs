@@ -1,12 +1,21 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Add,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Result};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
+use ethers::{
+    middleware::Middleware,
+    prelude::{Bytes, TransactionRequest},
+};
+use primitive_types::{H160, H256, U256};
 use strum::Display;
 use tokio::{fs, sync::Semaphore, task};
-use zilliqa::crypto::SecretKey;
+use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 
 use crate::{
     address::EthereumAddress,
@@ -16,7 +25,9 @@ use crate::{
         node::{ChainNode, NodePort, NodeRole},
     },
     secret::Secret,
+    utils::format_amount,
     validators,
+    validators::SignerClient,
 };
 
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
@@ -86,8 +97,12 @@ pub async fn install_or_upgrade(
     });
 
     let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade, max_parallel).await;
-    let _ = execute_install_or_upgrade(chain_nodes, is_upgrade, max_parallel).await;
+    let _ = execute_install_or_upgrade(chain_nodes.clone(), is_upgrade, max_parallel).await;
     let _ = execute_install_or_upgrade(apps_nodes, is_upgrade, max_parallel).await;
+
+    if !is_upgrade {
+        post_install(chain).await?;
+    }
 
     Ok(())
 }
@@ -121,7 +136,7 @@ async fn execute_install_or_upgrade(
 
     for result in results {
         match result? {
-            (node, Ok(())) => successes.push(node.name()),
+            (node, Ok(())) => successes.push(node),
             (node, Err(err)) => {
                 println!("Node {} failed with error: {}", node.name(), err);
                 failures.push(node.name());
@@ -129,8 +144,8 @@ async fn execute_install_or_upgrade(
         }
     }
 
-    for success in successes {
-        log::info!("SUCCESS: {}", success);
+    for success in &successes {
+        log::info!("SUCCESS: {}", success.name());
     }
 
     for failure in failures {
@@ -138,6 +153,52 @@ async fn execute_install_or_upgrade(
     }
 
     Ok(())
+}
+
+async fn post_install(chain: ChainInstance) -> Result<()> {
+    if chain.name().contains("prototestnet") || chain.name().contains("protomainnet") {
+        log::info!("Skipping post install actions for chain: {}", chain.name());
+        return anyhow::Ok(());
+    }
+
+    let genesis_private_key = chain.genesis_private_key().await?;
+    let url = chain.chain()?.get_api_endpoint()?;
+
+    let genesis_address = EthereumAddress::from_private_key(&genesis_private_key)?;
+
+    let client = SignerClient::new(&url, &genesis_private_key)?
+        .get_signer()
+        .await?;
+
+    let gas_price = client.get_gas_price().await?;
+
+    let mut start_nonce = client
+        .get_transaction_count(H160(genesis_address.address.0.into()), None)
+        .await?;
+    for blessed_txns in BLESSED_TRANSACTIONS {
+        if let Ok(Some(_)) = client
+            .get_transaction_receipt(H256(blessed_txns.hash.0))
+            .await
+        {
+            continue;
+        }
+
+        let tx = TransactionRequest::new()
+            .to(H160(blessed_txns.sender.0.into()))
+            .nonce(start_nonce)
+            .value(U256::from(blessed_txns.gas_limit) * gas_price);
+
+        start_nonce = start_nonce.add(1);
+
+        let funding_txn = client.send_transaction(tx, None).await?;
+        _ = funding_txn.await?;
+
+        // Send blessed transaction itself
+        let payload = Bytes::from(blessed_txns.payload.to_vec());
+        _ = client.send_raw_transaction(payload).await?;
+    }
+
+    anyhow::Ok(())
 }
 
 pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str>) -> Result<()> {
@@ -159,6 +220,7 @@ pub async fn get_config_file(config_file: &str, role: NodeRole, out: Option<&str
         let content = node.get_config_toml().await?;
         if let Some(out) = out {
             std::fs::write(out, content)?;
+            log::info!("Config file {out} successfully written");
         } else {
             println!("Config file for a node role {} in {}", role, chain.name());
             println!("---");
@@ -253,6 +315,69 @@ pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNo
     Ok(())
 }
 
+pub async fn run_stakers(config_file: &str) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config.clone()).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Bootstrap || node.role == NodeRole::Validator);
+
+    println!("Retrieving the stakers info in the chain {}", chain.name());
+
+    let genesis_private_key = chain.genesis_private_key().await?;
+    let signer_client =
+        validators::SignerClient::new(&chain.chain()?.get_api_endpoint()?, &genesis_private_key)?;
+    println!("Loading the stakers...");
+    let stakers = signer_client.get_stakers().await?;
+
+    println!("Loading the internal nodes...");
+    let mut internal_validators = HashMap::<String, String>::new();
+    for node in validators {
+        let private_keys = node.get_private_key().await?;
+        let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+
+        internal_validators.insert(
+            node_ethereum_address.bls_public_key.to_string(),
+            node.name(),
+        );
+
+        if !stakers.contains(&node_ethereum_address.bls_public_key)
+            && node.role == NodeRole::Validator
+        {
+            log::warn!("{} is NOT a validator", node.name());
+        }
+    }
+
+    for public_key in stakers {
+        let stake = signer_client.get_stake(&public_key).await? as f64 / 10f64.powi(18);
+        let future_stake =
+            signer_client.get_future_stake(&public_key).await? as f64 / 10f64.powi(18);
+        let public_key = &public_key.to_string();
+        let name = internal_validators.get(public_key).unwrap_or(public_key);
+
+        println!("---\n{}:", name.bold());
+
+        println!(
+            "\tStake        {:>width$} $ZIL",
+            if stake != future_stake {
+                format_amount(stake).red()
+            } else {
+                format_amount(stake).normal()
+            },
+            width = 30
+        );
+
+        if stake != future_stake {
+            println!(
+                "\tFuture stake {:>width$} $ZIL",
+                format_amount(future_stake).green(),
+                width = 30
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config.clone()).await?;
@@ -295,23 +420,24 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
             SecretKey::from_hex(&genesis_private_key)?.to_evm_address(),
         );
 
-        println!("Validator {}:", node.name());
+        println!("{}", format!("Validator {}:", node.name()).yellow());
 
         let validator = validators::Validator::new(
             node_ethereum_address.peer_id,
             node_ethereum_address.bls_public_key,
             deposit_auth_signature,
         )?;
-        let stake = validators::StakeDeposit::new(
-            validator,
-            VALIDATOR_DEPOSIT_IN_MILLIONS,
-            chain.chain()?.get_api_endpoint()?,
+        let signer_client = validators::SignerClient::new(
+            &chain.chain()?.get_api_endpoint()?,
             &genesis_private_key,
+        )?;
+        let deposit_params = validators::DepositParams::new(
+            VALIDATOR_DEPOSIT_IN_MILLIONS,
             ZERO_ACCOUNT,
             ZERO_ACCOUNT,
         )?;
 
-        let result = validators::deposit_stake(&stake).await;
+        let result = signer_client.deposit(&validator, &deposit_params).await;
 
         match result {
             Ok(()) => successes.push(node.name()),
@@ -331,6 +457,216 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
             log::error!("FAILURE: {}", failure);
         }
         log::error!("Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node");
+    }
+
+    Ok(())
+}
+
+pub async fn run_deposit_top_up(config_file: &str, node_selection: bool, amount: u8) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config.clone()).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Validator);
+
+    let validator_names = validators
+        .iter()
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let selected_machines = if !node_selection {
+        validator_names
+    } else {
+        let mut multi_select = cliclack::multiselect("Select nodes");
+
+        for name in validator_names {
+            multi_select = multi_select.item(name.clone(), name, "");
+        }
+
+        multi_select.interact()?
+    };
+
+    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+
+    println!(
+        "Running stake deposit top-up for the validators in the chain {}",
+        chain.name()
+    );
+
+    let mut successes = vec![];
+    let mut failures = vec![];
+
+    for node in validators {
+        let genesis_private_key = chain.genesis_private_key().await?;
+        let private_keys = node.get_private_key().await?;
+        let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+
+        let signer_client = validators::SignerClient::new(
+            &chain.chain()?.get_api_endpoint()?,
+            &genesis_private_key,
+        )?;
+
+        println!("{}", format!("Validator {}:", node.name()).yellow());
+        let result = signer_client
+            .deposit_top_up(&node_ethereum_address.bls_public_key, amount)
+            .await;
+
+        match result {
+            Ok(()) => successes.push(node.name()),
+            Err(err) => {
+                println!("Node {} failed with error: {}", node.name(), err);
+                failures.push(node.name());
+            }
+        }
+    }
+
+    for success in successes {
+        log::info!("SUCCESS: {}", success);
+    }
+
+    if !failures.is_empty() {
+        for failure in failures {
+            log::error!("FAILURE: {}", failure);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn run_unstake(config_file: &str, node_selection: bool, amount: u8) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config.clone()).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Validator);
+
+    let validator_names = validators
+        .iter()
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let selected_machines = if !node_selection {
+        validator_names
+    } else {
+        let mut multi_select = cliclack::multiselect("Select nodes");
+
+        for name in validator_names {
+            multi_select = multi_select.item(name.clone(), name, "");
+        }
+
+        multi_select.interact()?
+    };
+
+    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+
+    println!(
+        "Running unstake for the validators in the chain {}",
+        chain.name()
+    );
+
+    let mut successes = vec![];
+    let mut failures = vec![];
+
+    for node in validators {
+        let genesis_private_key = chain.genesis_private_key().await?;
+        let private_keys = node.get_private_key().await?;
+        let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+
+        let signer_client = validators::SignerClient::new(
+            &chain.chain()?.get_api_endpoint()?,
+            &genesis_private_key,
+        )?;
+
+        println!("{}", format!("Validator {}:", node.name()).yellow());
+        let result = signer_client
+            .unstake(&node_ethereum_address.bls_public_key, amount)
+            .await;
+
+        match result {
+            Ok(()) => successes.push(node.name()),
+            Err(err) => {
+                println!("Node {} failed with error: {}", node.name(), err);
+                failures.push(node.name());
+            }
+        }
+    }
+
+    for success in successes {
+        log::info!("SUCCESS: {}", success);
+    }
+
+    if !failures.is_empty() {
+        for failure in failures {
+            log::error!("FAILURE: {}", failure);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn run_withdraw(config_file: &str, node_selection: bool) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config.clone()).await?;
+    let mut validators = chain.nodes().await?;
+    validators.retain(|node| node.role == NodeRole::Validator);
+
+    let validator_names = validators
+        .iter()
+        .map(|n| n.name().clone())
+        .collect::<Vec<_>>();
+
+    let selected_machines = if !node_selection {
+        validator_names
+    } else {
+        let mut multi_select = cliclack::multiselect("Select nodes");
+
+        for name in validator_names {
+            multi_select = multi_select.item(name.clone(), name, "");
+        }
+
+        multi_select.interact()?
+    };
+
+    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+
+    println!(
+        "Running withdraw for the validators in the chain {}",
+        chain.name()
+    );
+
+    let mut successes = vec![];
+    let mut failures = vec![];
+
+    for node in validators {
+        let genesis_private_key = chain.genesis_private_key().await?;
+        let private_keys = node.get_private_key().await?;
+        let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
+
+        let signer_client = validators::SignerClient::new(
+            &chain.chain()?.get_api_endpoint()?,
+            &genesis_private_key,
+        )?;
+
+        println!("{}", format!("Validator {}:", node.name()).yellow());
+        let result = signer_client
+            .withdraw(&node_ethereum_address.bls_public_key, 0)
+            .await;
+
+        match result {
+            Ok(()) => successes.push(node.name()),
+            Err(err) => {
+                println!("Node {} failed with error: {}", node.name(), err);
+                failures.push(node.name());
+            }
+        }
+    }
+
+    for success in successes {
+        log::info!("SUCCESS: {}", success);
+    }
+
+    if !failures.is_empty() {
+        for failure in failures {
+            log::error!("FAILURE: {}", failure);
+        }
     }
 
     Ok(())

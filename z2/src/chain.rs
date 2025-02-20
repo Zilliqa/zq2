@@ -17,8 +17,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-richard",
         props(
-            bootstrap_endpoint = "bootstrap.zq2-richard.zilstg.dev",
-            api_endpoint = "https://api.zq2-richard.zilstg.dev",
+            subdomain = "zq2-richard.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -27,8 +26,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-uccbtest",
         props(
-            bootstrap_endpoint = "bootstrap.zq2-uccbtest.zilstg.dev",
-            api_endpoint = "https://api.zq2-uccbtest.zilstg.dev",
+            subdomain = "zq2-uccbtest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -37,8 +35,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-infratest",
         props(
-            bootstrap_endpoint = "bootstrap.zq2-infratest.zilstg.dev",
-            api_endpoint = "https://api.zq2-infratest.zilstg.dev",
+            subdomain = "zq2-infratest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -47,8 +44,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-perftest",
         props(
-            bootstrap_endpoint = "bootstrap.zq2-perftest.zilstg.dev",
-            api_endpoint = "https://api.zq2-perftest.zilstg.dev",
+            subdomain = "zq2-perftest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -57,8 +53,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-devnet",
         props(
-            bootstrap_endpoint = "bootstrap.zq2-devnet.zilliqa.com",
-            api_endpoint = "https://api.zq2-devnet.zilliqa.com",
+            subdomain = "zq2-devnet.zilliqa.com",
             project_id = "prj-d-zq2-devnet-c83bkpsd"
         )
     )]
@@ -67,8 +62,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-prototestnet",
         props(
-            bootstrap_endpoint = "bootstrap.zq2-prototestnet.zilliqa.com",
-            api_endpoint = "https://api.zq2-prototestnet.zilliqa.com",
+            subdomain = "zq2-prototestnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8"
         )
     )]
@@ -77,8 +71,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-protomainnet",
         props(
-            bootstrap_endpoint = "bootstrap.zq2-protomainnet.zilliqa.com",
-            api_endpoint = "https://api.zq2-protomainnet.zilliqa.com",
+            subdomain = "zq2-protomainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl"
         )
     )]
@@ -87,8 +80,7 @@ pub enum Chain {
     // #[strum(
     //     serialize = "zq2-testnet",
     //     props(
-    //         bootstrap_endpoint = "bootstrap.zq2-testnet.zilliqa.com",
-    //         api_endpoint = "https://api.zq2-testnet.zilliqa.com",
+    //         subdomain = "zq2-testnet.zilliqa.com",
     //         project_id = "prj-d-zq2-testnet-g13pnaa8"
     //     )
     // )]
@@ -97,8 +89,7 @@ pub enum Chain {
     // #[strum(
     //     serialize = "zq2-mainnet",
     //     props(
-    //         bootstrap_endpoint = "bootstrap.zq2-mainnet.zilliqa.com",
-    //         api_endpoint = "https://api.zq2-mainnet.zilliqa.com",
+    //         subdomain = "zq2-mainnet.zilliqa.com",
     //         project_id = "prj-p-zq2-mainnet-sn5n8wfl"
     //     )
     // )]
@@ -194,6 +185,7 @@ impl Chain {
                 "failed_scilla_call_from_gas_exempt_caller_causes_revert": false,
                 "scilla_messages_can_call_evm_contracts": false,
                 "scilla_contract_creation_increments_account_balance": false,
+                "scilla_json_preserve_order": false
             })),
             _ => None,
         }
@@ -207,47 +199,33 @@ impl Chain {
                 // estimated: 2025-01-15T09:10:37Z
                 json!({ "at_height": 10200000, "scilla_messages_can_call_evm_contracts": true }),
                 // estimated: 2025-02-12T12:08:37Z
-                json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true }),
+                json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
                 // estimated: 2024-12-20T23:33:12Z
                 json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
                 // estimated: 2025-02-12T13:25:00Z
-                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true }),
+                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
             ]),
             _ => None,
         }
     }
 
-    pub fn get_bootstrap_endpoint(&self) -> Result<&'static str> {
-        let endpoint = self.get_str("bootstrap_endpoint");
+    pub fn get_subdomain(&self) -> Result<&'static str> {
+        let endpoint = self.get_str("subdomain");
 
         if let Some(endpoint) = endpoint {
-            println!(
-                "{}",
-                format!("Using the bootstrap endpoint {}", endpoint).green()
-            );
             return Ok(endpoint);
         }
 
         Err(anyhow!(
             "{}",
-            format!("bootstrap endpoint not available for the chain {}", self).red()
+            format!("Subdomain not available for the chain {}", self).red()
         ))
     }
 
-    pub fn get_api_endpoint(&self) -> Result<&'static str> {
-        let endpoint = self.get_str("api_endpoint");
-
-        if let Some(endpoint) = endpoint {
-            println!("{}", format!("Using the API endpoint {}", endpoint).green());
-            return Ok(endpoint);
-        }
-
-        Err(anyhow!(
-            "{}",
-            format!("API endpoint not available for the chain {}", self).red()
-        ))
+    pub fn get_api_endpoint(&self) -> Result<String> {
+        Ok(format!("https://api.{}", self.get_subdomain()?))
     }
 
     pub fn get_project_id(&self) -> Result<&'static str> {

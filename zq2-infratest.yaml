@@ -7,11 +7,11 @@ roles:
 - apps
 - checkpoint
 - persistence
-- query
-- graph
+- private-api
 versions:
-  zq2: 1d146079
+  zq2: v0.6.1
   otterscan: develop
   spout: main
   stats_dashboard: v0.0.4
   stats_agent: v0.0.2
+  zq2_metrics: v0.0.1

@@ -379,15 +379,27 @@ fn get_contract_address_from_transaction_id(
 ) -> Result<String> {
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    let receipt = node
-        .lock()
-        .unwrap()
-        .get_transaction_receipt(hash)?
-        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let (receipt, signed_transaction) = {
+        let node = node.lock().unwrap();
+        let receipt = node
+            .get_transaction_receipt(hash)?
+            .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+        let signed_transaction = node
+            .get_transaction_by_hash(hash)?
+            .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+        (receipt, signed_transaction)
+    };
 
     let contract_address = receipt
         .contract_address
         .ok_or_else(|| anyhow!("ID is not a contract txn"))?;
+
+    let contract_address = match signed_transaction.tx {
+        SignedTransaction::Zilliqa { tx, .. } => {
+            tx.get_contract_address(&signed_transaction.signer)?
+        }
+        _ => contract_address,
+    };
 
     Ok(contract_address.to_hex_no_prefix())
 }

@@ -27,7 +27,7 @@ async-trait = "0.1.86"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
-clap = {version = "4.5.27", features = ["derive"]}
+clap = {version = "4.5.28", features = ["derive"]}
 clap-verbosity-flag = "3.0.2"
 cliclack = "0.3.5"
 colored = "3.0.0"
@@ -58,26 +58,26 @@ reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "chars
 revm = {version = "19.4.0", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 rustls = "0.23.22"
+scopeguard = "1.2.0"
 serde = {version = "1.0.217", features = ["derive"]}
 serde_json = { version = "1.0.138", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 strum = { version = "0.26", features = ["derive"] }
-strum_macros = "0.26"
+strum_macros = "0.27"
 tempfile = "3.16.0"
 tera = "1.19.1"
 thiserror = "2.0.11"
 tokio = {version = "1.43.0", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
 tokio-stream = "0.1.17"
-toml = { version = "0.8.19", features = ["preserve_order"] }
+toml = { version = "0.8.20", features = ["preserve_order"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.18"
 url = "2.5.4"
 zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.2"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
-scopeguard = "1.2.0"
 
 [build-dependencies]
 prost-build = "0.13.3"
