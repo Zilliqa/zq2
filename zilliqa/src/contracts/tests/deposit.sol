@@ -8,21 +8,24 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 // Testing contract for deposit_v4 development
 /* solhint-disable no-console,func-name-mixedcase,explicit-types */
 
-
 contract PopVerifyPrecompile {
-    function popVerify(bytes memory, bytes memory) public pure returns(bool) {
+    function popVerify(bytes memory, bytes memory) public pure returns (bool) {
         return true;
     }
 }
 
 contract BlsVerifyPrecompile {
-    function blsVerify(bytes memory, bytes memory, bytes memory) public pure returns(bool) {
+    function blsVerify(
+        bytes memory,
+        bytes memory,
+        bytes memory
+    ) public pure returns (bool) {
         return true;
     }
 }
 
 contract DepositTest is Test {
-    address payable internal  proxy;
+    address payable internal proxy;
     DepositInit internal depositInitContract;
     Deposit internal depositContract;
     uint8 internal contractVersion = 5;
@@ -35,10 +38,17 @@ contract DepositTest is Test {
         0x092E5E57955437876dA9Df998C96e2BE19341670
     ];
     bytes[2] internal blsPubKeys = [
-        bytes(hex"92370645a6ad97d8a4e4b44b8e6db63ab8409473310ac7b21063809450192bace7fb768d60c697a18bbf98b4ddb511f1"),
-        bytes(hex"92370645a6ad97d8a4e4b44b8e6db63ab8409473310ac7b21063809450192bace7fb768d60c697a18bbf98b4ddb511f2")
+        bytes(
+            hex"92370645a6ad97d8a4e4b44b8e6db63ab8409473310ac7b21063809450192bace7fb768d60c697a18bbf98b4ddb511f1"
+        ),
+        bytes(
+            hex"92370645a6ad97d8a4e4b44b8e6db63ab8409473310ac7b21063809450192bace7fb768d60c697a18bbf98b4ddb511f2"
+        )
     ];
-    bytes internal peerId = bytes(hex"002408011220bed0be7a6dfa10c2335148e04927155a726174d6bac61a09ad8e2f72ac697eda");
+    bytes internal peerId =
+        bytes(
+            hex"002408011220bed0be7a6dfa10c2335148e04927155a726174d6bac61a09ad8e2f72ac697eda"
+        );
 
     // bytes[] expected_stakerKeys_storage;
     // uint256[] expected_indices_storage;
@@ -160,7 +170,10 @@ contract DepositTest is Test {
         unstake(0, unstakeAmount2);
 
         checkGetStake(blsPubKeys[ownerInt], depositAmount);
-        checkGetFutureStake(blsPubKeys[ownerInt], depositAmount - unstakeAmount1 - unstakeAmount2);
+        checkGetFutureStake(
+            blsPubKeys[ownerInt],
+            depositAmount - unstakeAmount1 - unstakeAmount2
+        );
         checkGetStakerDataWithdrawals(blsPubKeys[ownerInt], 1);
 
         // Roll ahead one block
@@ -171,20 +184,29 @@ contract DepositTest is Test {
         unstake(0, unstakeAmount3);
 
         checkGetStake(blsPubKeys[ownerInt], depositAmount);
-        checkGetFutureStake(blsPubKeys[ownerInt], depositAmount - unstakeAmount1 - unstakeAmount2 - unstakeAmount3);
+        checkGetFutureStake(
+            blsPubKeys[ownerInt],
+            depositAmount - unstakeAmount1 - unstakeAmount2 - unstakeAmount3
+        );
         // should now be 2 withdrawals
         checkGetStakerDataWithdrawals(blsPubKeys[ownerInt], 2);
 
         // Roll ahead withdrawal period
         vm.roll(block.number + depositContract.withdrawalPeriod());
 
-        checkGetStake(blsPubKeys[ownerInt], depositAmount - unstakeAmount1 - unstakeAmount2 - unstakeAmount3);
+        checkGetStake(
+            blsPubKeys[ownerInt],
+            depositAmount - unstakeAmount1 - unstakeAmount2 - unstakeAmount3
+        );
 
         // Withdraw only one of the unstakings
         uint256 balanceBefore = owners[ownerInt].balance;
         withdraw(ownerInt, 1);
 
-        assertEq(balanceBefore + unstakeAmount1 + unstakeAmount2, owners[ownerInt].balance);
+        assertEq(
+            balanceBefore + unstakeAmount1 + unstakeAmount2,
+            owners[ownerInt].balance
+        );
     }
 
     function test_getters() public {
@@ -240,24 +262,31 @@ contract DepositTest is Test {
         checkGetStakerData(blsPubKeys[1], 2, depositOwner1Amount);
 
         // getRewardAddress
-        assertEq(depositContract.getRewardAddress(blsPubKeys[0]),stakers[0]);
-        assertEq(depositContract.getRewardAddress(blsPubKeys[1]),stakers[1]);
+        assertEq(depositContract.getRewardAddress(blsPubKeys[0]), stakers[0]);
+        assertEq(depositContract.getRewardAddress(blsPubKeys[1]), stakers[1]);
         // getSigningAddress
-        assertEq(depositContract.getSigningAddress(blsPubKeys[0]),stakers[0]);
-        assertEq(depositContract.getSigningAddress(blsPubKeys[1]),stakers[1]);
+        assertEq(depositContract.getSigningAddress(blsPubKeys[0]), stakers[0]);
+        assertEq(depositContract.getSigningAddress(blsPubKeys[1]), stakers[1]);
         // getControlAddress
-        assertEq(depositContract.getSigningAddress(blsPubKeys[0]),stakers[0]);
-        assertEq(depositContract.getSigningAddress(blsPubKeys[1]),stakers[1]);
+        assertEq(depositContract.getSigningAddress(blsPubKeys[0]), stakers[0]);
+        assertEq(depositContract.getSigningAddress(blsPubKeys[1]), stakers[1]);
         // getPeerId
-        assertEq(depositContract.getPeerId(blsPubKeys[0]),peerId);
-        assertEq(depositContract.getPeerId(blsPubKeys[1]),peerId);
+        assertEq(depositContract.getPeerId(blsPubKeys[0]), peerId);
+        assertEq(depositContract.getPeerId(blsPubKeys[1]), peerId);
     }
 
-    function checkGetStake(bytes memory blsPubKey, uint256 expectedAmount) public view {
+    function checkGetStake(
+        bytes memory blsPubKey,
+        uint256 expectedAmount
+    ) public view {
         uint256 gasBefore = gasleft();
         uint256 stake = depositContract.getStake(blsPubKey);
         if (printGasUsage) {
-            console.log("\ngetStake(): %s   Gas used: %s", stake, gasBefore - gasleft());
+            console.log(
+                "\ngetStake(): %s   Gas used: %s",
+                stake,
+                gasBefore - gasleft()
+            );
         }
         assertEq(stake, expectedAmount);
     }
@@ -266,16 +295,27 @@ contract DepositTest is Test {
         uint256 gasBefore = gasleft();
         uint256 totalStake = depositContract.getTotalStake();
         if (printGasUsage) {
-            console.log("\ngetTotalStake(): %s   Gas used: %s", totalStake, gasBefore - gasleft());
+            console.log(
+                "\ngetTotalStake(): %s   Gas used: %s",
+                totalStake,
+                gasBefore - gasleft()
+            );
         }
         assertEq(totalStake, expectedAmount);
     }
 
-    function checkGetFutureStake(bytes memory blsPubKey, uint256 expectedAmount) public view {
+    function checkGetFutureStake(
+        bytes memory blsPubKey,
+        uint256 expectedAmount
+    ) public view {
         uint256 gasBefore = gasleft();
         uint256 stake = depositContract.getFutureStake(blsPubKey);
         if (printGasUsage) {
-            console.log("\ngetFutureStake(): %s   Gas used: %s", stake, gasBefore - gasleft());
+            console.log(
+                "\ngetFutureStake(): %s   Gas used: %s",
+                stake,
+                gasBefore - gasleft()
+            );
         }
         assertEq(stake, expectedAmount);
     }
@@ -284,23 +324,24 @@ contract DepositTest is Test {
         uint256 gasBefore = gasleft();
         uint256 totalStake = depositContract.getFutureTotalStake();
         if (printGasUsage) {
-            console.log("\ngetFutureTotalStake(): %s   Gas used: %s", totalStake, gasBefore - gasleft());
+            console.log(
+                "\ngetFutureTotalStake(): %s   Gas used: %s",
+                totalStake,
+                gasBefore - gasleft()
+            );
         }
         assertEq(totalStake, expectedAmount);
     }
 
     function checkGetStakerData(
         bytes memory blsPubKey,
-        uint256 expectedIndex, 
+        uint256 expectedIndex,
         uint256 expectedBalance
-        // Staker memory expectedStakers
-    ) public view {
+    ) public view // Staker memory expectedStakers
+    {
         uint256 gasBefore = gasleft();
-        (
-            uint256 index,
-            uint256 balance,
-            // Staker memory stakerData
-        ) = depositContract.getStakerData(blsPubKey);
+        (uint256 index, uint256 balance, ) = // Staker memory stakerData
+        depositContract.getStakerData(blsPubKey);
         if (printGasUsage) {
             console.log("\ngetStakerData Gas used: %s", gasBefore - gasleft());
         }
@@ -314,11 +355,9 @@ contract DepositTest is Test {
         uint256 withdrawals
     ) public view {
         uint256 gasBefore = gasleft();
-        (
-            ,
-            ,
-            Staker memory stakerData
-        ) = depositContract.getStakerData(blsPubKey);
+        (, , Staker memory stakerData) = depositContract.getStakerData(
+            blsPubKey
+        );
         if (printGasUsage) {
             console.log("\ngetStakerData Gas used: %s", gasBefore - gasleft());
         }
@@ -326,59 +365,67 @@ contract DepositTest is Test {
     }
 
     // function checkGetStakersData(
-    //     bytes[] memory expected_stakerKeys, 
-    //     uint256[] memory expected_indices, 
+    //     bytes[] memory expected_stakerKeys,
+    //     uint256[] memory expected_indices,
     //     uint256[] memory expectedBalances
     //     // Staker[] memory expectedStakers
     // ) public view {
     //     uint256 gasBefore = gasleft();
-        // (
-        //     bytes[] memory stakerKeys,
-        //     uint256[] memory indices,
-        //     uint256[] memory balances,
-        //     // Staker[] memory stakerData
-        // ) = deposit_contract.getStakersData();
-        // if (print_gas_usage) {
-        //     console.log("\ngetStakersData length: %s Gas used: %s", stakerKeys.length, gasBefore - gasleft());
-        // }
-        // for (uint256 i = 0; i < stakerKeys.length; i++) {
-        //     assertEq(stakerKeys[i], expected_stakerKeys[i]);
-        //     assertEq(indices[i], expected_indices[i]);
-        //     assertEq(balances[i], expectedBalances[i]);
+    // (
+    //     bytes[] memory stakerKeys,
+    //     uint256[] memory indices,
+    //     uint256[] memory balances,
+    //     // Staker[] memory stakerData
+    // ) = deposit_contract.getStakersData();
+    // if (print_gas_usage) {
+    //     console.log("\ngetStakersData length: %s Gas used: %s", stakerKeys.length, gasBefore - gasleft());
+    // }
+    // for (uint256 i = 0; i < stakerKeys.length; i++) {
+    //     assertEq(stakerKeys[i], expected_stakerKeys[i]);
+    //     assertEq(indices[i], expected_indices[i]);
+    //     assertEq(balances[i], expectedBalances[i]);
 
-        //     // assertEq(stakerData[i], expectedStakers[i]);
-        //     console.log("stakerKey");
-        //     console.logBytes(stakerKeys[i]);
-        //     console.log("indices %s", indices[i]);
-        //     console.log("balances %s", balances[i]);        
-        // }
+    //     // assertEq(stakerData[i], expectedStakers[i]);
+    //     console.log("stakerKey");
+    //     console.logBytes(stakerKeys[i]);
+    //     console.log("indices %s", indices[i]);
+    //     console.log("balances %s", balances[i]);
+    // }
     // }
 
     function deposit(uint ownerInt, uint amount) public {
         vm.startPrank(owners[ownerInt]);
         uint256 gasBefore = gasleft();
-        depositContract.deposit{
-            value: amount
-        }(
+        depositContract.deposit{value: amount}(
             blsPubKeys[ownerInt],
             peerId,
-            bytes(hex"90ec9a22e030a42d9b519b322d31b8090f796b3f75fc74261b04d0dcc632fd8c5b7a074c5ba61f0845b310fa9931d01c079eebe82813d7021ef4172e01a7d3710a5f9a4634e9a03a51e985836021c356a1eb476a14f558cbae1f4264edca5dac"),
+            bytes(
+                hex"90ec9a22e030a42d9b519b322d31b8090f796b3f75fc74261b04d0dcc632fd8c5b7a074c5ba61f0845b310fa9931d01c079eebe82813d7021ef4172e01a7d3710a5f9a4634e9a03a51e985836021c356a1eb476a14f558cbae1f4264edca5dac"
+            ),
             address(stakers[ownerInt]),
             address(stakers[ownerInt])
         );
         if (printGasUsage) {
-            console.log("\ndeposit owner%s. Amount: %s   Gas used: %s", ownerInt, amount, gasBefore - gasleft());
+            console.log(
+                "\ndeposit owner%s. Amount: %s   Gas used: %s",
+                ownerInt,
+                amount,
+                gasBefore - gasleft()
+            );
         }
     }
 
     function depositTopUp(uint ownerInt, uint amount) public {
         vm.startPrank(owners[ownerInt]);
         uint256 gasBefore = gasleft();
-        depositContract.depositTopup{
-            value: amount
-        }(blsPubKeys[ownerInt]);
+        depositContract.depositTopup{value: amount}(blsPubKeys[ownerInt]);
         if (printGasUsage) {
-            console.log("\ndepositTopUp owner%s. Amount: %s Gas used: %s", ownerInt, amount, gasBefore - gasleft());
+            console.log(
+                "\ndepositTopUp owner%s. Amount: %s Gas used: %s",
+                ownerInt,
+                amount,
+                gasBefore - gasleft()
+            );
         }
     }
 
@@ -387,7 +434,12 @@ contract DepositTest is Test {
         uint256 gasBefore = gasleft();
         depositContract.unstake(blsPubKeys[ownerInt], amount);
         if (printGasUsage) {
-            console.log("\nunstake owner%s. Amount: %s Gas used: %s", ownerInt, amount, gasBefore - gasleft());
+            console.log(
+                "\nunstake owner%s. Amount: %s Gas used: %s",
+                ownerInt,
+                amount,
+                gasBefore - gasleft()
+            );
         }
     }
 
@@ -396,7 +448,12 @@ contract DepositTest is Test {
         uint256 gasBefore = gasleft();
         depositContract.withdraw(blsPubKeys[ownerInt], count);
         if (printGasUsage) {
-            console.log("\nwithdraw owner%s. Count: %s Gas used: %s", ownerInt, count, gasBefore - gasleft());
+            console.log(
+                "\nwithdraw owner%s. Count: %s Gas used: %s",
+                ownerInt,
+                count,
+                gasBefore - gasleft()
+            );
         }
     }
 }

@@ -153,7 +153,9 @@ contract Deposit is UUPSUpgradeable {
 
     // explicitly set version number in contract code
     // solhint-disable-next-line no-empty-blocks
-    function reinitialize(uint256 _withdrawalPeriod) public reinitializer(VERSION) {
+    function reinitialize(
+        uint256 _withdrawalPeriod
+    ) public reinitializer(VERSION) {
         DepositStorage storage $ = _getDepositStorage();
         $.withdrawalPeriod = _withdrawalPeriod;
     }
@@ -677,7 +679,6 @@ contract Deposit is UUPSUpgradeable {
     function withdrawalPeriod() public view returns (uint256) {
         DepositStorage storage $ = _getDepositStorage();
         return $.withdrawalPeriod;
-
     }
 
     function _withdraw(
