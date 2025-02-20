@@ -8,7 +8,7 @@ use alloy::{
     primitives::{Address, B256, U256, U64},
     rpc::types::{
         pubsub::{self, SubscriptionKind},
-        FilteredParams,
+        FeeHistory, FilteredParams,
     },
 };
 use anyhow::{anyhow, Result};
@@ -1037,8 +1037,98 @@ fn blob_base_fee(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 
 /// eth_feeHistory
 /// Returns the collection of historical gas information
-fn fee_history(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!("API method eth_feeHistory is not implemented yet"))
+fn fee_history(params: Params, node: &Arc<Mutex<Node>>) -> Result<FeeHistory> {
+    let mut params = params.sequence();
+    let block_count: String = params.next()?;
+    let block_count = if let Some(block_count) = block_count.strip_prefix("0x") {
+        u64::from_str_radix(block_count, 16)?
+    } else {
+        block_count.parse::<u64>()?
+    };
+
+    let block_count = block_count.min(1024);
+
+    if block_count == 0 {
+        return Ok(FeeHistory::default());
+    }
+
+    let newest_block: BlockNumberOrTag = params.next()?;
+    let reward_percentiles: Option<Vec<f64>> = params.optional_next()?;
+    if let Some(ref percentiles) = reward_percentiles {
+        if !percentiles.windows(2).all(|w| w[0] <= w[1])
+            || percentiles.iter().any(|&p| !(0.0..=100.0).contains(&p))
+        {
+            return Err(anyhow!(
+                "reward_percentiles must be in ascending order and within the range [0, 100]"
+            ));
+        }
+    }
+    expect_end_of_params(&mut params, 2, 3)?;
+
+    let node = node.lock().unwrap();
+    let newest_block_number = node
+        .resolve_block_number(newest_block)?
+        .ok_or_else(|| anyhow!("block not found"))?
+        .number();
+
+    if newest_block_number < block_count {
+        return Err(anyhow!("block_count is greater than newest_block"));
+    }
+
+    let oldest_block = newest_block_number - block_count + 1;
+    let (reward, gas_used_ratio) = (oldest_block..=newest_block_number)
+        .map(|block_number| {
+            let block = node
+                .get_block(BlockNumberOrTag::Number(block_number))?
+                .ok_or_else(|| anyhow!("block not found"))?;
+
+            let reward = if let Some(reward_percentiles) = reward_percentiles.as_ref() {
+                let mut effective_priority_fees = block
+                    .transactions
+                    .iter()
+                    .map(|tx_hash| {
+                        let tx = node
+                            .get_transaction_by_hash(*tx_hash)?
+                            .ok_or_else(|| anyhow!("transaction not found: {}", tx_hash))?;
+                        Ok(tx.tx.effective_priority_fee(block.header.base_fee_per_gas))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                effective_priority_fees.sort_unstable();
+
+                let fees_len = effective_priority_fees.len() as f64;
+
+                reward_percentiles
+                    .iter()
+                    .map(|x| {
+                        // Calculate the index in the sorted effective priority fees based on the percentile
+                        let i = ((x / 100_f64) * fees_len) as usize;
+
+                        // Get the fee at the calculated index, or default to 0 if the index is out of bounds
+                        effective_priority_fees.get(i).cloned().unwrap_or_default()
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+
+            let gas_limit = block.gas_limit().0 as f64;
+            if gas_limit == 0.0 {
+                return Err(anyhow!("gas limit is zero"));
+            }
+
+            Ok((reward, (block.gas_used().0 as f64) / gas_limit))
+        })
+        .collect::<Result<(Vec<Vec<_>>, Vec<_>)>>()?;
+
+    Ok(FeeHistory {
+        oldest_block,
+        reward: reward_percentiles.map(|_| reward),
+        gas_used_ratio,
+        base_fee_per_gas: vec![0; (block_count + 1) as usize],
+        base_fee_per_blob_gas: vec![0; (block_count + 1) as usize],
+        blob_gas_used_ratio: vec![0.0; block_count as usize],
+    })
 }
 
 /// eth_getAccount
@@ -1077,10 +1167,9 @@ fn hashrate(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 
 /// eth_maxPriorityFeePerGas
 /// Get the priority fee needed to be included in a block.
-fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!(
-        "API method eth_maxPriorityFeePerGas is not implemented yet"
-    ))
+fn max_priority_fee_per_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+    expect_end_of_params(&mut params.sequence(), 0, 0)?;
+    Ok(node.lock().unwrap().get_gas_price().to_hex())
 }
 
 /// eth_newBlockFilter
