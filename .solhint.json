@@ -5,6 +5,7 @@
     "avoid-low-level-calls": "off",
     "reason-string": ["warn",{"maxLength":70}],
     "func-visibility": ["warn", { "ignoreConstructors": true }],
-    "gas-custom-errors": "off" 
+    "gas-custom-errors": "off",
+    "one-contract-per-file": "off" 
   }
 }
