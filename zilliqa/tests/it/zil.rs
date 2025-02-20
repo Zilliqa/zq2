@@ -1750,7 +1750,24 @@ async fn get_current_ds_epoch(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn ds_block_listing(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
 
     network.run_until_block_finalized(2u64, 50).await.unwrap();
 
