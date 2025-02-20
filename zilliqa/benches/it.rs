@@ -73,7 +73,7 @@ fn process_empty(c: &mut Criterion) {
                 consensus.genesis_fork.call_mode_1_sets_caller_to_parent_caller = true
                 consensus.genesis_fork.scilla_messages_can_call_evm_contracts = true
                 consensus.genesis_fork.scilla_contract_creation_increments_account_balance = true
-                consensus.genesis_fork.init_data_preserve_order = true
+                consensus.genesis_fork.scilla_json_preserve_order = true
                 consensus.genesis_accounts = [
                     [
                         "0x0000000000000000000000000000000000000000",
@@ -199,7 +199,7 @@ fn consensus(
             consensus.genesis_fork.call_mode_1_sets_caller_to_parent_caller = true
             consensus.genesis_fork.scilla_messages_can_call_evm_contracts = true
             consensus.genesis_fork.scilla_contract_creation_increments_account_balance = true
-            consensus.genesis_fork.init_data_preserve_order = true
+            consensus.genesis_fork.scilla_json_preserve_order = true
         "#,
     )
     .unwrap();
