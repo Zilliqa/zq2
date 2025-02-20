@@ -367,6 +367,7 @@ impl Sync {
         // remove the last segment from the chain metadata
         let (meta, _) = self.db.last_sync_segment()?.unwrap();
         self.db.pop_sync_segment()?;
+        self.inject_at = None;
         self.state = SyncState::Phase1(meta);
         Ok(())
     }
@@ -958,14 +959,20 @@ impl Sync {
             .get_highest_canonical_block_number()?
             .unwrap_or_default();
 
-        // Output some stats, check for stuck node.
+        // Output some stats
         if let Some((when, injected, prev_highest)) = self.inject_at {
             let diff = injected - self.in_pipeline;
             let rate = diff as f32 / when.elapsed().as_secs_f32();
             tracing::debug!("sync::InjectProposals : synced {rate} block/s");
-            // Detect if node is stuck.
-            // Some blocks would have been processed in-between injections.
-            if highest_number == prev_highest {
+            // Detect if node is stuck i.e. we're not making progress
+            if highest_number == prev_highest
+                && proposals
+                    .first()
+                    .unwrap()
+                    .number()
+                    .saturating_sub(highest_number)
+                    .gt(&(self.max_blocks_in_flight as u64))
+            {
                 tracing::warn!("sync::InjectProposals : node is stuck");
                 return Ok(false);
             }
