@@ -927,10 +927,7 @@ pub fn get_current_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<
 // DSBlockListing
 pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockListingResult> {
     // Dummy implementation
-    let num_tx_blocks = {
-        let node = node.lock().unwrap();
-        node.get_latest_finalized_block_number()?
-    };
+    let num_tx_blocks = node.lock().unwrap().get_latest_finalized_block_number()?;
 
     let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK)
         + if num_tx_blocks % TX_BLOCKS_PER_DS_BLOCK == 0 {
