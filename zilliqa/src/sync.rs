@@ -421,7 +421,7 @@ impl Sync {
         Ok(())
     }
 
-    pub fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<()> {
+    fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<()> {
         let SyncState::Phase2((check_sum, _)) = self.state else {
             anyhow::bail!("sync::MultiBlockResponse : invalid state");
         };
@@ -448,10 +448,10 @@ impl Sync {
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
-        self.db.pop_sync_segment()?;
-
-        // txns are verified when processing InjectedProposal.
-        if !self.inject_proposals(proposals)? {
+        if self.inject_proposals(proposals)? {
+            self.db.pop_sync_segment()?;
+        } else {
+            self.state = SyncState::Retry1;
             return Ok(());
         };
 
@@ -778,7 +778,9 @@ impl Sync {
             start: request.from_height,
             end: request.to_height,
         };
-        tracing::debug!("sync::MetadataRequest : received metadata {range:?} request from {from}",);
+        tracing::debug!(
+            "sync::MetadataRequest : received metadata [{range:?}] request from {from}",
+        );
 
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()? > Duration::from_secs(10) {
@@ -956,16 +958,15 @@ impl Sync {
             .get_highest_canonical_block_number()?
             .unwrap_or_default();
 
-        // Output some stats
+        // Output some stats, check for stuck node.
         if let Some((when, injected, prev_highest)) = self.inject_at {
             let diff = injected - self.in_pipeline;
             let rate = diff as f32 / when.elapsed().as_secs_f32();
-            tracing::debug!("sync::InjectProposals : synced {} block/s", rate);
+            tracing::debug!("sync::InjectProposals : synced {rate} block/s");
             // Detect if node is stuck.
             // Some blocks would have been processed in-between injections.
             if highest_number == prev_highest {
                 tracing::warn!("sync::InjectProposals : node is stuck");
-                self.state = SyncState::Retry1;
                 return Ok(false);
             }
         }
@@ -1020,20 +1021,16 @@ impl Sync {
             return Ok(None);
         }
 
-        let highest_block = self
+        let current_block = self
             .db
-            .get_canonical_block_by_number(
-                self.db
-                    .get_highest_canonical_block_number()?
-                    .expect("no highest block"),
-            )?
-            .expect("missing highest block");
+            .get_highest_canonical_block_number()?
+            .expect("no highest block");
 
         let peer_count = self.peers.count() + self.in_flight.len();
 
         Ok(Some(SyncingStruct {
             starting_block: self.started_at,
-            current_block: highest_block.number(),
+            current_block,
             highest_block: self.highest_block_seen,
             status: SyncingMeta {
                 peer_count,
