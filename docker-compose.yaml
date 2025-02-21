@@ -4,7 +4,7 @@ services:
   node0:
     depends_on:
       - node2
-      - node3 
+      - node3
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info
