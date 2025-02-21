@@ -8,7 +8,7 @@ use std::{
 
 use alloy::{
     consensus::SignableTransaction,
-    eips::BlockId,
+    eips::{BlockId, BlockNumberOrTag},
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
@@ -32,9 +32,9 @@ use super::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
         RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, StateProofResponse,
-        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionStatusResponse,
-        TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
-        TxnsForTxBlockExResponse,
+        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionState,
+        TransactionStatusResponse, TxBlockListing, TxBlockListingResult,
+        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -44,7 +44,7 @@ use crate::{
     exec::zil_contract_address,
     message::Block,
     node::Node,
-    pool::TxAddResult,
+    pool::{PendingOrQueued, TxAddResult},
     schnorr,
     scilla::{split_storage_key, storage_key, ParamValue},
     state::Code,
@@ -1520,23 +1520,39 @@ fn get_transaction_status(
                 "Txn Hash not found".to_string(),
                 jsonrpc_error_data.clone(),
             ))?;
-    let receipt =
-        node.get_transaction_receipt(hash)?
-            .ok_or(jsonrpsee::types::ErrorObject::owned(
-                RPCErrorCode::RpcDatabaseError as i32,
-                "Txn receipt not found".to_string(),
-                jsonrpc_error_data.clone(),
-            ))?;
-    let block = node
-        .get_block(receipt.block_hash)?
-        .ok_or(jsonrpsee::types::ErrorObject::owned(
-            RPCErrorCode::RpcDatabaseError as i32,
-            "Block not found".to_string(),
-            jsonrpc_error_data.clone(),
-        ))?;
+    let receipt = node.get_transaction_receipt(hash)?;
 
-    let res = TransactionStatusResponse::new(transaction, receipt, block)?;
-    Ok(res)
+    let (block, success) = if let Some(receipt) = &receipt {
+        (node.get_block(receipt.block_hash)?, receipt.success)
+    } else {
+        (None, false)
+    };
+
+    // Determine transaction state
+    let state = if receipt.is_some_and(|receipt| !receipt.errors.is_empty()) {
+        TransactionState::Error
+    } else {
+        match &block {
+            Some(block) => {
+                let newest_finalized_block =
+                    node.resolve_block_number(BlockNumberOrTag::Finalized)?;
+                if newest_finalized_block.is_some()
+                    && block.number() >= newest_finalized_block.unwrap().number()
+                {
+                    TransactionState::Finalized
+                } else {
+                    TransactionState::Pending
+                }
+            }
+            None => match node.consensus.get_pending_or_queued(&transaction)? {
+                Some(PendingOrQueued::Pending) => TransactionState::Pending,
+                Some(PendingOrQueued::Queued) => TransactionState::Queued,
+                None => panic!("Transaction not found in block or pending/queued"),
+            },
+        }
+    };
+
+    TransactionStatusResponse::new(transaction, success, block, state)
 }
 
 #[cfg(test)]
