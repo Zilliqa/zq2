@@ -18,7 +18,8 @@ pub enum Chain {
         serialize = "zq2-richard",
         props(
             subdomain = "zq2-richard.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2Richard,
@@ -27,7 +28,8 @@ pub enum Chain {
         serialize = "zq2-uccbtest",
         props(
             subdomain = "zq2-uccbtest.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2UccbTest,
@@ -36,7 +38,8 @@ pub enum Chain {
         serialize = "zq2-infratest",
         props(
             subdomain = "zq2-infratest.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=info"
         )
     )]
     Zq2InfraTest,
@@ -45,7 +48,8 @@ pub enum Chain {
         serialize = "zq2-perftest",
         props(
             subdomain = "zq2-perftest.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2PerfTest,
@@ -54,7 +58,8 @@ pub enum Chain {
         serialize = "zq2-devnet",
         props(
             subdomain = "zq2-devnet.zilliqa.com",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2Devnet,
@@ -63,7 +68,8 @@ pub enum Chain {
         serialize = "zq2-prototestnet",
         props(
             subdomain = "zq2-prototestnet.zilliqa.com",
-            project_id = "prj-d-zq2-testnet-g13pnaa8"
+            project_id = "prj-d-zq2-testnet-g13pnaa8",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2ProtoTestnet,
@@ -72,7 +78,8 @@ pub enum Chain {
         serialize = "zq2-protomainnet",
         props(
             subdomain = "zq2-protomainnet.zilliqa.com",
-            project_id = "prj-p-zq2-mainnet-sn5n8wfl"
+            project_id = "prj-p-zq2-mainnet-sn5n8wfl",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2ProtoMainnet,
@@ -81,7 +88,8 @@ pub enum Chain {
     //     serialize = "zq2-testnet",
     //     props(
     //         subdomain = "zq2-testnet.zilliqa.com",
-    //         project_id = "prj-d-zq2-testnet-g13pnaa8"
+    //         project_id = "prj-d-zq2-testnet-g13pnaa8",
+    //         log_level = "zilliqa=trace"
     //     )
     // )]
     // Zq2Testnet,
@@ -90,7 +98,8 @@ pub enum Chain {
     //     serialize = "zq2-mainnet",
     //     props(
     //         subdomain = "zq2-mainnet.zilliqa.com",
-    //         project_id = "prj-p-zq2-mainnet-sn5n8wfl"
+    //         project_id = "prj-p-zq2-mainnet-sn5n8wfl",
+    //         log_level = "zilliqa=trace"
     //     )
     // )]
     // Zq2Mainnet,
@@ -240,5 +249,11 @@ impl Chain {
             "{}",
             format!("project_id not available for the chain {}", self).red()
         ))
+    }
+
+    pub fn get_log_level(&self) -> Result<&'static str> {
+        let log_level = self.get_str("log_level");
+
+        Ok(log_level.unwrap_or("zilliqa=trace"))
     }
 }
