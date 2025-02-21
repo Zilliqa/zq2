@@ -97,7 +97,7 @@ jobs:
           export JSON_PARAMS='${{ github.event.inputs.json_params || '{"id":"1","jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x${__RandomString(5,abcdef0123456789)}",false]}' }}'
           export RESPONSE_TIMEOUT=10000
           export CONNECT_TIMEOUT=300
-          export THREADS=200
+          export THREADS=2000
           export DURATION=1800
 
           jmeter -n -e -Dlog_level.jmeter=DEBUG \
