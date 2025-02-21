@@ -12,7 +12,10 @@ use libp2p::PeerId;
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 use crate::{
-    api::types::eth::{SyncingMeta, SyncingStruct},
+    api::{
+        to_hex::ToHex,
+        types::eth::{SyncingMeta, SyncingStruct},
+    },
     cfg::NodeConfig,
     crypto::Hash,
     db::Db,
@@ -1039,18 +1042,18 @@ impl Sync {
         let peer_count = self.peers.count() + self.in_flight.len();
 
         Ok(Some(SyncingStruct {
-            starting_block: self.started_at,
-            current_block,
-            highest_block: self.highest_block_seen,
+            starting_block: self.started_at.to_hex(),
+            current_block: current_block.to_hex(),
+            highest_block: self.highest_block_seen.to_hex(),
             status: SyncingMeta {
-                peer_count,
+                peer_count: peer_count.to_hex(),
                 current_phase: self.state.to_string(),
-                retry_count: self.retry_count,
-                timeout_count: self.timeout_count,
-                empty_count: self.empty_count,
-                header_downloads: self.headers_downloaded,
-                block_downloads: self.blocks_downloaded,
-                buffered_blocks: self.in_pipeline,
+                retry_count: self.retry_count.to_hex(),
+                timeout_count: self.timeout_count.to_hex(),
+                empty_count: self.empty_count.to_hex(),
+                header_downloads: self.headers_downloaded.to_hex(),
+                block_downloads: self.blocks_downloaded.to_hex(),
+                buffered_blocks: self.in_pipeline.to_hex(),
             },
         }))
     }
