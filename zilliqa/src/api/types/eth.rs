@@ -463,26 +463,27 @@ pub struct TxPoolContent {
 #[serde(rename_all = "camelCase")]
 pub struct SyncingMeta {
     pub current_phase: String,
-    pub peer_count: usize,
-    pub header_downloads: u64,
-    pub block_downloads: u64,
-    pub buffered_blocks: usize,
-    pub empty_count: u64,
-    pub retry_count: u64,
-    pub timeout_count: u64,
+    pub peer_count: String,
+    pub header_downloads: String,
+    pub block_downloads: String,
+    pub buffered_blocks: String,
+    pub empty_count: String,
+    pub retry_count: String,
+    pub timeout_count: String,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncingStruct {
-    pub starting_block: u64,
-    pub current_block: u64,
-    pub highest_block: u64,
+    pub starting_block: String,
+    pub current_block: String,
+    pub highest_block: String,
     pub status: SyncingMeta,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum SyncingResult {
     Bool(bool),
     Struct(SyncingStruct),
