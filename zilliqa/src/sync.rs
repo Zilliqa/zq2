@@ -669,7 +669,9 @@ impl Sync {
                 }
                 // failure fall-thru - fire one request
                 self.do_missing_metadata(None, 1)?;
-                self.in_flight.rotate_right(1); // adjust request order, do_missing_metadata() pushes peer to the back.
+                if !self.in_flight.is_empty() {
+                    self.in_flight.rotate_right(1); // adjust request order, do_missing_metadata() pushes peer to the back.
+                }
             } else {
                 break;
             }
@@ -964,6 +966,7 @@ impl Sync {
             let diff = injected - self.in_pipeline;
             let rate = diff as f32 / when.elapsed().as_secs_f32();
             tracing::debug!("sync::InjectProposals : synced {rate} block/s");
+            // Earlier retry if stuck - https://github.com/Zilliqa/zq2/issues/2354
             // Detect if node is stuck i.e. we're not making progress
             if highest_number == prev_highest
                 && proposals
@@ -971,6 +974,7 @@ impl Sync {
                     .unwrap()
                     .number()
                     .saturating_sub(self.max_blocks_in_flight as u64)
+                    .saturating_sub(self.in_pipeline as u64)
                     .gt(&highest_number)
             {
                 tracing::warn!("sync::InjectProposals : node is stuck");
@@ -1002,7 +1006,6 @@ impl Sync {
         }
 
         self.inject_at = Some((std::time::Instant::now(), self.in_pipeline, highest_number));
-        // return last proposal
         Ok(true)
     }
 
