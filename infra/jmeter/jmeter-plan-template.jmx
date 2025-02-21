@@ -12,7 +12,7 @@
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Scenario 1">
         <stringProp name="TestPlan.comments">Virtual Users Running Scenario 1.
 Make test last 1 minute (see Scheduler)</stringProp>
-        <intProp name="ThreadGroup.num_threads">${THREADS}</intProp>
+        <stringProp name="ThreadGroup.num_threads">${THREADS}</stringProp>
         <intProp name="ThreadGroup.ramp_time">10</intProp>
         <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
         <longProp name="ThreadGroup.delay">0</longProp>
