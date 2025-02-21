@@ -1,6 +1,7 @@
 name: "Jmeter tests"
 
 on:
+  push:
   workflow_dispatch:
     inputs:
       network:
@@ -15,17 +16,17 @@ on:
           - "richard"
           - "uccbtest"
         required: false
-        default: "prototestnet"
+        default: "protomainnet"
       target_host:
         description: "Target host"
         type: string
         required: false
-        default: "api.zq2-prototestnet.zilliqa.com"
+        default: "thegraph.zq2-protomainnet.zilliqa.com"
       target_port:
         description: "Target port"
         type: string
         required: false
-        default: "443"
+        default: "4201"
       protocol:
         description: "Protocol (http/https)"
         type: choice
@@ -33,7 +34,7 @@ on:
           - "https"
           - "http"
         required: false
-        default: "https"
+        default: "http"
       json_params:
         description: "JSON RPC parameters"
         type: string
@@ -53,7 +54,7 @@ on:
         description: "Number of concurrent threads"
         type: number
         required: false
-        default: 20
+        default: 300
       duration:
         description: "Test duration in seconds"
         type: number
