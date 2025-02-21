@@ -259,4 +259,11 @@ impl Chain {
 
         Ok(log_level.unwrap_or("zilliqa=trace"))
     }
+    
+    pub fn get_staker_withdrawal_period(&self) -> Option<u64> {
+        match self {
+            Chain::Zq2Devnet => Some(5 * 60), // 5 minutes
+            _ => None,
+        }
+    }
 }

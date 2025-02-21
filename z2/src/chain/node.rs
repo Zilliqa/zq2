@@ -888,6 +888,10 @@ impl ChainNode {
                     .collect::<Result<Vec<_>>>()?,
             );
         }
+        ctx.insert(
+            "staker_withdrawal_period",
+            &self.chain()?.get_staker_withdrawal_period(),
+        );
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator {
