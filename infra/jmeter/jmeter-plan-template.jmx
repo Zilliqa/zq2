@@ -42,9 +42,9 @@ Connect to 300ms</stringProp>
         </ConfigTestElement>
         <hashTree/>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="ZQ2 load tests">
-          <stringProp name="HTTPSampler.domain">api.zq2-prototestnet.zilliqa.com</stringProp>
-          <stringProp name="HTTPSampler.port">443</stringProp>
-          <stringProp name="HTTPSampler.protocol">https</stringProp>
+          <stringProp name="HTTPSampler.domain">${TARGET_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${TARGET_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
           <stringProp name="HTTPSampler.path">/</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
