@@ -19,6 +19,7 @@ use ethers::{
 use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
 
@@ -1472,4 +1473,236 @@ async fn get_block_receipts(mut network: Network) {
         .unwrap();
 
     assert!(receipts.contains(&individual1));
+}
+
+#[zilliqa_macros::test]
+async fn test_block_filter(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new block filter
+    let filter_id: u128 = provider.request("eth_newBlockFilter", [""]).await.unwrap();
+
+    // Generate some blocks
+    network.run_until_block(&wallet, 3.into(), 50).await;
+
+    // Get filter changes - should return the new block hashes
+    let changes: Vec<H256> = provider
+        .request("eth_getFilterChanges", [filter_id.clone()])
+        .await
+        .unwrap();
+
+    // We should have at least 2 new blocks (not counting the block at which we created the filter)
+    assert!(!changes.is_empty());
+    assert!(changes.len() >= 2);
+
+    // Changes should be valid block hashes
+    for hash in &changes {
+        let block = provider
+            .get_block(BlockId::Hash(*hash))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(block.number.unwrap().as_u64() > 0);
+    }
+
+    // Calling get_filter_changes again should return empty as we've already retrieved the changes
+    let changes: Vec<H256> = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    assert!(changes.is_empty());
+
+    let filter_removed_successfully: bool = provider
+        .request("eth_uninstallFilter", [filter_id])
+        .await
+        .unwrap();
+    assert!(filter_removed_successfully);
+}
+
+#[zilliqa_macros::test]
+async fn test_pending_transaction_filter(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new pending transaction filter
+    let filter_id: u128 = provider
+        .request("eth_newPendingTransactionFilter", [""])
+        .await
+        .unwrap();
+
+    // Send some transactions
+    let tx1 = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    let tx2 = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 20), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Get filter changes - should return the pending transaction hashes
+    let changes: Vec<H256> = provider
+        .request("eth_getFilterChanges", [filter_id.clone()])
+        .await
+        .unwrap();
+
+    assert!(!changes.is_empty());
+    assert!(changes.contains(&tx1));
+    assert!(changes.contains(&tx2));
+
+    // Calling get_filter_changes again should return empty
+    let changes: Vec<H256> = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    assert!(changes.is_empty());
+
+    let filter_removed_successfully: bool = provider
+        .request("eth_uninstallFilter", [filter_id])
+        .await
+        .unwrap();
+    assert!(filter_removed_successfully);
+}
+
+#[zilliqa_macros::test]
+async fn test_log_filter(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Deploy a contract that emits events
+    let (hash, contract) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    // Create a filter for contract events
+    let filter = json!({
+        "fromBlock": "latest",
+        "address": contract_address,
+    });
+    let filter_id: u128 = provider.request("eth_newFilter", [filter]).await.unwrap();
+
+    // Generate some events
+    let emit_events = contract.function("emitEvents").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_events.encode_input(&[]).unwrap());
+
+    let tx_hash = wallet
+        .send_transaction(call_tx, None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Wait for transaction to be mined
+    network.run_until_receipt(&wallet, tx_hash, 50).await;
+
+    // Get filter changes
+    let logs: Vec<zilliqa::api::types::eth::Log> = provider
+        .request("eth_getFilterChanges", [filter_id.clone()])
+        .await
+        .unwrap();
+
+    assert_eq!(logs.len(), 2); // EmitEvents contract emits 2 events
+    assert_eq!(logs[0].address.0, contract_address.0);
+    assert_eq!(logs[1].address.0, contract_address.0);
+
+    // Test get_filter_logs
+    let logs_via_get: Vec<zilliqa::api::types::eth::Log> = provider
+        .request("eth_getFilterLogs", [filter_id.clone()])
+        .await
+        .unwrap();
+
+    assert_eq!(logs, logs_via_get);
+
+    // Calling get_filter_changes again should return empty
+    let changes: Vec<zilliqa::api::types::eth::Log> = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    assert!(changes.is_empty());
+
+    let filter_removed_successfully: bool = provider
+        .request("eth_uninstallFilter", [filter_id])
+        .await
+        .unwrap();
+    assert!(filter_removed_successfully);
+}
+
+#[zilliqa_macros::test]
+async fn test_filter_expiration(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new block filter
+    let filter_id: String = provider.request("eth_newBlockFilter", [""]).await.unwrap();
+
+    // Wait for filter to expire (default timeout is 300 seconds)
+    // You might want to reduce the timeout in the test environment
+    tokio::time::sleep(std::time::Duration::from_secs(301)).await;
+
+    // Attempt to get changes from expired filter should fail
+    let result = provider
+        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[zilliqa_macros::test]
+async fn test_invalid_filter_id(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Try to get changes for non-existent filter
+    let result = provider
+        .request::<_, Value>("eth_getFilterChanges", ["0x123"])
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[zilliqa_macros::test]
+async fn test_uninstall_filter(mut network: Network) {
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new filter
+    let filter_id: String = provider.request("eth_newBlockFilter", [""]).await.unwrap();
+
+    // Verify filter exists by using it
+    let _changes: Vec<H256> = provider
+        .request("eth_getFilterChanges", [filter_id.clone()])
+        .await
+        .unwrap();
+
+    // Successfully uninstall the filter
+    let filter_removed: bool = provider
+        .request("eth_uninstallFilter", [filter_id.clone()])
+        .await
+        .unwrap();
+    assert!(filter_removed);
+
+    // Verify filter no longer exists
+    let result = provider
+        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .await;
+    assert!(result.is_err());
+
+    // Try to uninstall non-existent filter
+    let filter_removed: bool = provider
+        .request("eth_uninstallFilter", ["0x123"])
+        .await
+        .unwrap();
+    assert!(!filter_removed);
 }

@@ -1194,8 +1194,9 @@ fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 
 /// eth_uninstallFilter
 /// It uninstalls a filter with the given filter id.
-fn uninstall_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!(
-        "API method eth_uninstallFilter is not implemented yet"
-    ))
+fn uninstall_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+    let filter_id: U256 = params.one()?;
+    let filter_id = filter_id.to::<u128>();
+
+    Ok(node.lock().unwrap().remove_filter(filter_id))
 }
