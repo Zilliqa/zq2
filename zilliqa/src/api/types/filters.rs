@@ -63,27 +63,33 @@ impl Filter {
 #[derive(Clone, Debug, Deserialize, Default, Serialize)]
 pub struct Filters {
     filters: HashMap<u128, Filter>,
+    actions_since_cleanup: usize,
 }
 
 impl Filters {
     pub fn new() -> Self {
         Self {
             filters: HashMap::new(),
+            actions_since_cleanup: 0,
         }
     }
 
-    pub fn insert(&mut self, kind: FilterKind) -> u128 {
+    pub fn add_filter(&mut self, kind: FilterKind) -> u128 {
+        self.cleanup_forced();
         let id = rand::random::<u128>();
-
         self.filters.insert(id, Filter::new(kind));
         id
     }
 
-    pub fn get(&self, id: &u128) -> Option<&Filter> {
-        self.filters.get(id)
+    pub fn remove_filter(&mut self, id: u128) -> bool {
+        let result = self.filters.remove(&id).is_some();
+        self.cleanup();
+        result
     }
 
     pub fn get_mut(&mut self, id: &u128) -> Option<&mut Filter> {
+        self.touch(id);
+        self.cleanup();
         self.filters.get_mut(id)
     }
 
@@ -91,13 +97,18 @@ impl Filters {
         if let Some(filter) = self.filters.get_mut(id) {
             filter.touch();
         }
-    }
-
-    pub fn remove(&mut self, id: &u128) -> Option<Filter> {
-        self.filters.remove(id)
+        self.cleanup();
     }
 
     pub fn cleanup(&mut self) {
+        self.actions_since_cleanup += 1;
+        if self.actions_since_cleanup > 100 {
+            self.cleanup_forced();
+            self.actions_since_cleanup = 0;
+        }
+    }
+
+    pub fn cleanup_forced(&mut self) {
         self.filters.retain(|_, filter| {
             SystemTime::now()
                 .duration_since(filter.last_poll)

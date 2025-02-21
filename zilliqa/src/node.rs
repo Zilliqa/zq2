@@ -1,6 +1,6 @@
 use std::{
     fmt::Debug,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{atomic::AtomicUsize, Arc, Mutex},
     time::Duration,
 };
 
@@ -30,7 +30,7 @@ use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
-    api::types::filters::{Filter, FilterKind, Filters},
+    api::types::filters::Filters,
     cfg::NodeConfig,
     consensus::Consensus,
     crypto::{Hash, SecretKey},
@@ -159,7 +159,7 @@ pub struct Node {
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
-    filters: Filters,
+    pub filters: Arc<Mutex<Filters>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -219,24 +219,9 @@ impl Node {
                 peers,
             )?,
             peer_num,
-            filters: Filters::new(),
+            filters: Arc::new(Mutex::new(Filters::new())),
         };
         Ok(node)
-    }
-
-    pub fn add_filter(&mut self, kind: FilterKind) -> u128 {
-        self.filters.cleanup();
-        self.filters.insert(kind)
-    }
-
-    pub fn remove_filter(&mut self, id: u128) -> bool {
-        self.filters.cleanup();
-        self.filters.remove(&id).is_some()
-    }
-
-    pub fn get_filter_mut(&mut self, id: u128) -> Option<&mut Filter> {
-        self.filters.touch(&id);
-        self.filters.get_mut(&id)
     }
 
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {

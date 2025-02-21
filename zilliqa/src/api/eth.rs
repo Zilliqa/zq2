@@ -1036,77 +1036,77 @@ fn get_account(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 /// eth_getFilterChanges
 /// Polling method for a filter, which returns an array of events that have occurred since the last poll.
 fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
-    let filter_id: U256 = params.one()?;
-    let filter_id = filter_id.to::<u128>();
+    let filter_id: u128 = params.one()?;
 
-    if let Some(filter) = node.lock().unwrap().get_filter_mut(filter_id) {
-        match &mut filter.kind {
-            FilterKind::Block(block_filter) => {
-                let last_block = block_filter.last_block;
-                let endpoint = match node
-                    .lock()
-                    .unwrap()
-                    .resolve_block_number(BlockNumberOrTag::Latest)?
-                {
-                    Some(x) => x.number() + 1,
-                    None => 0,
-                };
-                let mut results = Vec::new();
-                let mut i = last_block.unwrap_or(0);
-                while i < endpoint {
-                    if let Some(block) = node
-                        .lock()
-                        .unwrap()
-                        .resolve_block_number(BlockNumberOrTag::Number(i))?
-                    {
-                        block_filter.last_block = Some(i);
-                        results.push(block.hash());
-                    }
-                    i += 1;
+    let node = node.lock().unwrap();
+
+    let mut filters = node.filters.lock().unwrap();
+
+    let filter = filters
+        .get_mut(&filter_id)
+        .ok_or(anyhow!("filter not found"))?;
+
+    match &mut filter.kind {
+        FilterKind::Block(block_filter) => {
+            let mut i = match block_filter.last_block {
+                Some(x) => x + 1,
+                None => 0,
+            };
+            let endpoint = match node.resolve_block_number(BlockNumberOrTag::Latest)? {
+                Some(x) => x.number(),
+                None => return Ok(json!(Vec::<String>::new())),
+            };
+
+            let mut results = Vec::new();
+            while i <= endpoint {
+                if let Some(block) = node.resolve_block_number(BlockNumberOrTag::Number(i))? {
+                    block_filter.last_block = Some(i);
+                    results.push(B256::from(block.hash()).to_hex());
                 }
-                Ok(json!(results))
+                i += 1;
             }
-            FilterKind::PendingTx(pending_tx_filter) => {
-                let node = node.lock().unwrap();
-                let pending_txns = node.consensus.txpool_content()?.pending;
-                let result: Vec<_> = pending_txns
-                    .iter()
-                    .filter(|txn| !pending_tx_filter.seen_txs.contains(&txn.hash))
-                    .map(|txn| txn.hash)
-                    .collect();
-                pending_tx_filter.seen_txs = pending_txns.into_iter().map(|txn| txn.hash).collect();
-                Ok(json!(result))
-            }
-            FilterKind::Log(log_filter) => {
-                let params = log_filter.criteria.clone();
-                let all_logs = get_logs_inner(params, &node.lock().unwrap())?;
-                let result: Vec<eth::Log> = all_logs
-                    .iter()
-                    .filter(|log| !log_filter.seen_logs.contains(log))
-                    .cloned()
-                    .collect();
-                log_filter.seen_logs = all_logs.into_iter().collect();
-                Ok(json!(result))
-            }
+            Ok(json!(results))
         }
-    } else {
-        Err(anyhow!("filter not found"))
+
+        FilterKind::PendingTx(pending_tx_filter) => {
+            let pending_txns = node.consensus.txpool_content()?.pending;
+            let result: Vec<_> = pending_txns
+                .iter()
+                .filter(|txn| !pending_tx_filter.seen_txs.contains(&txn.hash))
+                .map(|txn| B256::from(txn.hash).to_hex())
+                .collect();
+            pending_tx_filter.seen_txs = pending_txns.into_iter().map(|txn| txn.hash).collect();
+            Ok(json!(result))
+        }
+
+        FilterKind::Log(log_filter) => {
+            let params = log_filter.criteria.clone();
+            let all_logs = get_logs_inner(params, &node)?;
+            let result: Vec<eth::Log> = all_logs
+                .iter()
+                .filter(|log| !log_filter.seen_logs.contains(log))
+                .cloned()
+                .collect();
+            log_filter.seen_logs = all_logs.into_iter().collect();
+            Ok(json!(result))
+        }
     }
 }
 
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
 fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
-    let filter_id: U256 = params.one()?;
-    let filter_id = filter_id.to::<u128>();
+    let filter_id: u128 = params.one()?;
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
 
-    if let Some(filter) = node.lock().unwrap().get_filter_mut(filter_id) {
+    if let Some(filter) = filters.get_mut(&filter_id) {
         match &mut filter.kind {
             FilterKind::Block(_) => Err(anyhow!("pending tx filter not supported")),
             FilterKind::PendingTx(_) => Err(anyhow!("pending tx filter not supported")),
             FilterKind::Log(log_filter) => {
                 let params = log_filter.criteria.clone();
-                let result = get_logs_inner(params, &node.lock().unwrap())?;
+                let result = get_logs_inner(params, &node)?;
                 Ok(json!(result))
             }
         }
@@ -1137,39 +1137,43 @@ fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result
 
 /// eth_newBlockFilter
 /// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
-fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    let mut node = node.lock().unwrap();
+
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
 
     let filter = BlockFilter { last_block: None };
-    let id = node.add_filter(FilterKind::Block(filter));
-    Ok(id.to_hex())
+    let id = filters.add_filter(FilterKind::Block(filter));
+    Ok(id)
 }
 
 /// eth_newFilter
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
-fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
     let criteria: GetLogsParams = params.one()?;
-    let mut node = node.lock().unwrap();
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
 
-    let id = node.add_filter(FilterKind::Log(LogFilter {
+    let id = filters.add_filter(FilterKind::Log(LogFilter {
         criteria,
         seen_logs: std::collections::HashSet::new(),
     }));
-    Ok(id.to_hex())
+    Ok(id)
 }
 
 /// eth_newPendingTransactionFilter
 /// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
-fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
+fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    let mut node = node.lock().unwrap();
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
 
     let filter = PendingTxFilter {
         seen_txs: std::collections::HashSet::new(),
     };
-    let id = node.add_filter(FilterKind::PendingTx(filter));
-    Ok(id.to_hex())
+    let id = filters.add_filter(FilterKind::PendingTx(filter));
+    Ok(id)
 }
 
 /// eth_signTransaction
@@ -1195,8 +1199,10 @@ fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 /// eth_uninstallFilter
 /// It uninstalls a filter with the given filter id.
 fn uninstall_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
-    let filter_id: U256 = params.one()?;
-    let filter_id = filter_id.to::<u128>();
+    let filter_id: u128 = params.one()?;
 
-    Ok(node.lock().unwrap().remove_filter(filter_id))
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
+
+    Ok(filters.remove_filter(filter_id))
 }
