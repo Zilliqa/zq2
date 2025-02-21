@@ -15,7 +15,7 @@ z2 deposit \
   --signing-address <SIGNING_ADDRESS>
 
 
-Usage: z2 deposit --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --deposit-auth-signature <DEPOSIT_AUTH_SIGNATURE> --amount <AMOUNT_IN_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR> --signing-address <SIGNING_ADDRESS_OF_VALIDATOR> 
+Usage: z2 deposit --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --deposit-auth-signature <DEPOSIT_AUTH_SIGNATURE> --amount <AMOUNT_IN_MILLION_OF_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR> --signing-address <SIGNING_ADDRESS_OF_VALIDATOR> 
 ```
 ## Parameters
 * `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
@@ -23,7 +23,7 @@ Usage: z2 deposit --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET_WITH
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
 * `--peer-id <PEER_ID>`: The peer ID of the validator node.
 * `--deposit-auth-signature <DEPOSIT_AUTH_SIGNATURE>`: BLS signature of the validator node signing over control address and chain Id.
-* `--amount <AMOUNT_IN_MILLION_ZIL>`: The amount in ZIL to deposit. The valid range is from 10 million to 255 million ZIL, allowing a deposit of up to 255 million ZIL.
+* `--amount <AMOUNT_IN_MILLION_ZIL>`: The amount in millions of ZIL to deposit. The valid range is from 10 million to 255 million ZIL, allowing a deposit of up to 255 million ZIL.
 * `--reward-address <REWARD_ADDRESS>`: Specifies the address to receive rewards. You can generate a new wallet address to receive the rewards.
 * `--signing-address <SIGNING_ADDRESS>`: Specifies the address which signs cross-chain events.
 
@@ -68,7 +68,7 @@ $ echo '{"secret_key":"96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e029
   --private-key 96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419 \
   --reward-address 0xe29a3e99a6997B1571DA24d6517e7b3acaFB5d9e \
   --signing-address 0x3946f9872247af2eb4fe44c81c463e801925b8d4 \
-  --amount 100 \
+  --amount 10 \
   --public-key 825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804 \
   --deposit-auth-signature  b4770471f1b6b798b3a5cf19b6f574724777f2fbf7b7f520e75fc8461cafcfd84114316fe2aeaf35b52b9ca519310f8c0bf5cd941426e4a78cc7e10c6da80f245a9ddadc42de3f8a35db42d633b2b03847b33883f702eb13c332988d34d68d90 
 ```
@@ -84,14 +84,14 @@ z2 deposit-top-up \
   --public-key <PUBLIC_KEY>
   --amount <AMOUNT>
 
-Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_ZIL>
+Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_MILLION_OF_ZIL>
 ```
 
 ## Parameters
 * `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
 * `--private-key <PRIVATE_KEY_OF_WALLET>`: The private key of the wallet.
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
-* `--amount <AMOUNT_IN_MILLION_ZIL>`: The amount in ZIL to top up.
+* `--amount <AMOUNT_IN_MILLION_OF_ZIL>`: The amount in millions of ZILs to top up.
 
 #### Sample run
 ```bash
@@ -112,14 +112,14 @@ z2 unstake \
   --public-key <PUBLIC_KEY>
   --amount <AMOUNT>
 
-Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_ZIL>
+Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_MILLION_OF_ZIL>
 ```
 
 ## Parameters
 * `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
 * `--private-key <PRIVATE_KEY_OF_WALLET>`: The private key of the wallet.
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
-* `--amount <AMOUNT_IN_MILLION_ZIL>`: The amount in ZIL to unstake.
+* `--amount <AMOUNT_IN_MILLION_OF_ZIL>`: The amount in millions of ZILs to unstake.
 
 #### Sample run
 ```bash
