@@ -170,7 +170,8 @@ impl Chain {
                 deposit_v3: Some(3600),
                 // estimated: 2025-01-28T20:25:00Z
                 deposit_v4: Some(428400),
-                deposit_v5: None,
+                // estimated: 2025-02-21T18:56:00Z
+                deposit_v5: Some(1731600),
             },
             Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
@@ -259,7 +260,7 @@ impl Chain {
 
         Ok(log_level.unwrap_or("zilliqa=trace"))
     }
-    
+
     pub fn get_staker_withdrawal_period(&self) -> Option<u64> {
         match self {
             Chain::Zq2Devnet => Some(5 * 60), // 5 minutes

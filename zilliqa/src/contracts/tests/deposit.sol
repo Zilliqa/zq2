@@ -336,12 +336,14 @@ contract DepositTest is Test {
     function checkGetStakerData(
         bytes memory blsPubKey,
         uint256 expectedIndex,
-        uint256 expectedBalance
-    ) public view // Staker memory expectedStakers
-    {
+        uint256 expectedBalance // Staker memory expectedStakers
+    ) public view {
         uint256 gasBefore = gasleft();
-        (uint256 index, uint256 balance, ) = // Staker memory stakerData
-        depositContract.getStakerData(blsPubKey);
+        (
+            uint256 index,
+            uint256 balance, // Staker memory stakerData
+
+        ) = depositContract.getStakerData(blsPubKey);
         if (printGasUsage) {
             console.log("\ngetStakerData Gas used: %s", gasBefore - gasleft());
         }
