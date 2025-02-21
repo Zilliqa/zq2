@@ -375,6 +375,10 @@ contract Deposit is UUPSUpgradeable {
         bytes calldata blsPubKey,
         address signingAddress
     ) public onlyControlAddress(blsPubKey) {
+        require(
+            signingAddress != address(0),
+            "signingAddress cannot be set to zero address"
+        );
         DepositStorage storage $ = _getDepositStorage();
         $._stakersMap[blsPubKey].signingAddress = signingAddress;
         emit StakerUpdated(blsPubKey);
