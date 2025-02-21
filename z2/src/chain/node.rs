@@ -589,26 +589,6 @@ impl ChainNode {
         Ok(private_key.value().await?)
     }
 
-    pub async fn get_validator_identities(&self) -> Result<String> {
-        let validator_identities_items = retrieve_secret_by_role(
-            &self.chain.name(),
-            &self.machine.project_id,
-            "validator-identities",
-        )
-        .await?;
-        let validator_identities =
-            if let Some(validator_identities) = validator_identities_items.first() {
-                validator_identities
-            } else {
-                return Err(anyhow!(
-                    "No validator_identities for the chain {}",
-                    &self.chain.name()
-                ));
-            };
-
-        Ok(validator_identities.value().await?)
-    }
-
     async fn tag_machine(&self) -> Result<()> {
         if self.role == NodeRole::Apps {
             return Ok(());
@@ -987,7 +967,6 @@ impl ChainNode {
 
         let provisioning_script = include_str!("../../resources/node_provision.tera.py");
         let role_name = &self.role.to_string();
-
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
@@ -997,31 +976,24 @@ impl ChainNode {
         )?;
         let stats_agent_image =
             &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
-
         let private_key = if *role_name == NodeRole::Apps.to_string() {
             ""
         } else {
             &self.get_private_key().await?
         };
-
         let genesis_key = if *role_name == NodeRole::Apps.to_string() {
             &self.chain.genesis_private_key().await?
         } else {
             ""
         };
-
         let zq2_metrics_image =
             &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
-        let validator_identities = if *role_name == NodeRole::PrivateApi.to_string() {
-            &self.get_validator_identities().await?
-        } else {
-            ""
-        };
 
         let stats_dashboard_key = &self.chain.stats_dashboard_key().await?;
 
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
         let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
+        let log_level = self.chain()?.get_log_level()?;
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
@@ -1036,7 +1008,7 @@ impl ChainNode {
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
         var_map.insert("zq2_metrics_image", zq2_metrics_image);
-        var_map.insert("validator_identities", validator_identities);
+        var_map.insert("log_level", log_level);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;
