@@ -970,8 +970,8 @@ impl Sync {
                     .first()
                     .unwrap()
                     .number()
-                    .saturating_sub(highest_number)
-                    .gt(&(self.max_blocks_in_flight as u64))
+                    .saturating_sub(self.max_blocks_in_flight as u64)
+                    .gt(&highest_number)
             {
                 tracing::warn!("sync::InjectProposals : node is stuck");
                 return Ok(false);
