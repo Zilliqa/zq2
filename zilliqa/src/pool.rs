@@ -175,9 +175,7 @@ impl TransactionPool {
         state: &State,
         txn: &VerifiedTransaction,
     ) -> Result<Option<PendingOrQueued>> {
-        if txn.tx.nonce().ok_or(anyhow!("Transaction missing nonce"))?
-            == state.get_account(txn.signer)?.nonce
-        {
+        if txn.tx.nonce() == Some(state.get_account(txn.signer)?.nonce) {
             Ok(Some(PendingOrQueued::Pending))
         } else if self.hash_to_index.contains_key(&txn.hash) {
             Ok(Some(PendingOrQueued::Queued))
