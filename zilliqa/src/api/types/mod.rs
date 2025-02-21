@@ -7,6 +7,7 @@ use super::to_hex::ToHex;
 use crate::crypto;
 
 pub mod eth;
+pub mod filters;
 pub mod ots;
 pub mod zil;
 pub fn hex<S: Serializer, T: ToHex>(data: T, serializer: S) -> Result<S::Ok, S::Error> {

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use alloy::{
     consensus::TxEip1559,
+    eips::BlockNumberOrTag,
     primitives::{Address, B256, U128, U256, U64},
     rpc::types::TransactionInput,
 };
@@ -46,6 +47,25 @@ impl QuorumCertificate {
             block_hash: qc.block_hash.into(),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Default, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GetLogsParams {
+    pub from_block: Option<BlockNumberOrTag>,
+    pub to_block: Option<BlockNumberOrTag>,
+    pub address: Option<OneOrMany<Address>>,
+
+    /// elements represent an alternative that matches any of the contained topics.
+    ///
+    /// Examples (from Erigon):
+    /// * `[]`                          matches any topic list
+    /// * `[[A]]`                       matches topic A in first position
+    /// * `[[], [B]]` or `[None, [B]]`  matches any topic in first position AND B in second position
+    /// * `[[A], [B]]`                  matches topic A in first position AND B in second position
+    /// * `[[A, B], [C, D]]`            matches topic (A OR B) in first position AND (C OR D) in second position
+    pub topics: Vec<OneOrMany<B256>>,
+    pub block_hash: Option<B256>,
 }
 
 #[derive(Clone)]
@@ -345,7 +365,7 @@ pub struct TransactionReceipt {
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Log {
     pub removed: bool,
@@ -412,7 +432,7 @@ fn m3_2048(bloom: &mut [u8; 256], data: &[u8]) {
 }
 
 /// A type for representing null, a single item or an array of items.
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum OneOrMany<T> {
     Null,
