@@ -239,7 +239,10 @@ impl P2pNode {
         for (peer, address) in &self.config.bootstrap_address.0 {
             if self.swarm.local_peer_id() != peer {
                 self.swarm.dial(address.clone())?;
-                self.swarm.add_peer_address(*peer, address.clone());
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(peer, address.clone());
             }
         }
 
