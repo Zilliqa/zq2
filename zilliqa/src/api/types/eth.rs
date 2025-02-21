@@ -165,6 +165,8 @@ pub struct Header {
     pub timestamp: u64,
     #[serde(serialize_with = "hex")]
     pub mix_hash: B256,
+    #[serde(serialize_with = "hex")]
+    pub base_fee_per_gas: u128,
 }
 
 impl Header {
@@ -196,6 +198,7 @@ impl Header {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            base_fee_per_gas: 0,
         }
     }
 }
