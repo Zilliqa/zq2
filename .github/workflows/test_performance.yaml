@@ -1,6 +1,7 @@
 name: "Jmeter tests"
 
 on:
+  push:
   workflow_dispatch:
     inputs:
       network:
@@ -90,14 +91,14 @@ jobs:
       - name: Run tests
         working-directory: infra/jmeter
         run: |
-          export TARGET_HOST=${{ github.event.inputs.target_host || 'query.zq2-prototestnet.zilliqa.com' }}
-          export TARGET_PORT=${{ github.event.inputs.target_port || '443' }}
-          export PROTOCOL=${{ github.event.inputs.protocol || 'https' }}
+          export TARGET_HOST=thegraph.zq2-protomainnet.zilliqa.com
+          export TARGET_PORT=4201
+          export PROTOCOL=http
           export JSON_PARAMS='${{ github.event.inputs.json_params || '{"id":"1","jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x${__RandomString(5,abcdef0123456789)}",false]}' }}'
-          export RESPONSE_TIMEOUT=${{ github.event.inputs.response_timeout || 10000 }}
-          export CONNECT_TIMEOUT=${{ github.event.inputs.connect_timeout || 300 }}
-          export THREADS=${{ github.event.inputs.threads || 20 }}
-          export DURATION=${{ github.event.inputs.duration || 60 }}
+          export RESPONSE_TIMEOUT=10000
+          export CONNECT_TIMEOUT=300
+          export THREADS=200
+          export DURATION=1800
 
           jmeter -n -e -Dlog_level.jmeter=DEBUG \
             -JTARGET_HOST=${TARGET_HOST} \
