@@ -170,17 +170,21 @@ impl Chain {
                 deposit_v3: Some(3600),
                 // estimated: 2025-01-28T20:25:00Z
                 deposit_v4: Some(428400),
+                // estimated: 2025-02-21T18:56:00Z
+                deposit_v5: Some(1731600),
             },
             Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
                 deposit_v3: Some(5342400),
                 // estimated: 2025-02-12T13:25:00Z
                 deposit_v4: Some(7966800),
+                deposit_v5: None,
             },
             Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
                 // estimated: 2025-02-03T13:55:00Z
                 deposit_v4: Some(10890000),
+                deposit_v5: None,
             },
             _ => ContractUpgradesBlockHeights::default(),
         }
@@ -255,5 +259,12 @@ impl Chain {
         let log_level = self.get_str("log_level");
 
         Ok(log_level.unwrap_or("zilliqa=trace"))
+    }
+
+    pub fn get_staker_withdrawal_period(&self) -> Option<u64> {
+        match self {
+            Chain::Zq2Devnet => Some(5 * 60), // 5 minutes
+            _ => None,
+        }
     }
 }
