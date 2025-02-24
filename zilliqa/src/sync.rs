@@ -12,10 +12,7 @@ use libp2p::PeerId;
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 use crate::{
-    api::{
-        to_hex::ToHex,
-        types::eth::{SyncingMeta, SyncingStruct},
-    },
+    api::types::eth::{SyncingMeta, SyncingStruct},
     cfg::NodeConfig,
     crypto::Hash,
     db::Db,
@@ -88,11 +85,11 @@ pub struct Sync {
     // record data for eth_syncing() RPC call.
     started_at: u64,
     highest_block_seen: u64,
-    retry_count: u64,
-    timeout_count: u64,
-    empty_count: u64,
-    headers_downloaded: u64,
-    blocks_downloaded: u64,
+    retry_count: usize,
+    timeout_count: usize,
+    empty_count: usize,
+    headers_downloaded: usize,
+    blocks_downloaded: usize,
 }
 
 impl Sync {
@@ -403,8 +400,7 @@ impl Sync {
                     "sync::MultiBlockResponse : received [{:?}] blocks from {from}",
                     range,
                 );
-                self.blocks_downloaded =
-                    self.blocks_downloaded.saturating_add(response.len() as u64);
+                self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
                 return self.do_multiblock_response(from, response);
@@ -642,9 +638,8 @@ impl Sync {
                             range,
                             peer_id
                         );
-                        self.headers_downloaded = self
-                            .headers_downloaded
-                            .saturating_add(response.len() as u64);
+                        self.headers_downloaded =
+                            self.headers_downloaded.saturating_add(response.len());
                         let peer = peer.clone();
 
                         if response.len() == self.max_batch_size {
@@ -1042,18 +1037,18 @@ impl Sync {
         let peer_count = self.peers.count() + self.in_flight.len();
 
         Ok(Some(SyncingStruct {
-            starting_block: self.started_at.to_hex(),
-            current_block: current_block.to_hex(),
-            highest_block: self.highest_block_seen.to_hex(),
+            starting_block: self.started_at,
+            current_block,
+            highest_block: self.highest_block_seen,
             status: SyncingMeta {
-                peer_count: peer_count.to_hex(),
+                peer_count,
                 current_phase: self.state.to_string(),
-                retry_count: self.retry_count.to_hex(),
-                timeout_count: self.timeout_count.to_hex(),
-                empty_count: self.empty_count.to_hex(),
-                header_downloads: self.headers_downloaded.to_hex(),
-                block_downloads: self.blocks_downloaded.to_hex(),
-                buffered_blocks: self.in_pipeline.to_hex(),
+                retry_count: self.retry_count,
+                timeout_count: self.timeout_count,
+                empty_count: self.empty_count,
+                header_downloads: self.headers_downloaded,
+                block_downloads: self.blocks_downloaded,
+                buffered_blocks: self.in_pipeline,
             },
         }))
     }
