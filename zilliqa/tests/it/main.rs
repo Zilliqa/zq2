@@ -72,7 +72,7 @@ use zilliqa::{
         scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
         staker_withdrawal_period_default, state_cache_size_default, state_rpc_limit_default,
         total_native_token_supply_default, Amount, ApiServer, Checkpoint, ConsensusConfig,
-        ContractUpgradesBlockHeights, GenesisDeposit, NodeConfig, TxnPoolConfig
+        ContractUpgradesBlockHeights, GenesisDeposit, NodeConfig, TxnPoolConfig,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
