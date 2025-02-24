@@ -307,23 +307,6 @@ impl Sync {
                     .expect("no highest canonical block"),
             )?
             .expect("missing canonical block");
-
-        if let Some(finalized_view) = self.db.get_finalized_view()? {
-            // Cleanup tip of chain - https://github.com/Zilliqa/zq2/issues/2354
-            while let Some(head_block) = self.db.get_highest_recorded_block()? {
-                if head_block.view() <= highest_block.view()
-                    || head_block.view() <= finalized_view
-                    || head_block.parent_hash() == Hash::ZERO
-                {
-                    break;
-                }
-                tracing::warn!("sync::StartAt : revert block {}", head_block.number());
-                self.db
-                    .remove_transactions_executed_in_block(&head_block.hash())?;
-                self.db.remove_block(&head_block)?;
-            }
-        }
-
         self.started_at = highest_block.number();
         Ok(())
     }
