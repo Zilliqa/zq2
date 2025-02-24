@@ -58,6 +58,7 @@ reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "chars
 revm = {version = "19.4.0", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 rustls = "0.23.22"
+scopeguard = "1.2.0"
 serde = {version = "1.0.217", features = ["derive"]}
 serde_json = { version = "1.0.138", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
@@ -77,7 +78,6 @@ url = "2.5.4"
 zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.2"
 zqutils = {git = "https://github.com/zilliqa/zq-base"}
-scopeguard = "1.2.0"
 
 [build-dependencies]
 prost-build = "0.13.3"
