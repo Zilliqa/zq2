@@ -203,6 +203,9 @@ fn consensus(
             consensus.genesis_fork.scilla_messages_can_call_evm_contracts = true
             consensus.genesis_fork.scilla_contract_creation_increments_account_balance = true
             consensus.genesis_fork.scilla_json_preserve_order = true
+            txn_pool.maximum_global_size = 100000
+            txn_pool.maximum_txn_count_per_sender = 2000
+            txn_pool.total_slots_for_all_senders = 5000
         "#,
     )
     .unwrap();
