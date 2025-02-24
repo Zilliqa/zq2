@@ -23,7 +23,7 @@ templatefile() vars:
 - stats_agent_image, the Stats agent docker image (incl. version)
 - subdomain, the ZQ2 network domain name
 - zq2_metrics_image, the ZQ2 metrics docker image (incl. version)
-- validator_identities, the ZQ2 network validator identities to be used for metrics collection
+- log_level, the ZQ2 network service log level
 """
 
 def query_metadata_key(key: str) -> str:
@@ -53,7 +53,7 @@ CHECKPOINT_URL="{{ checkpoint_url }}"
 SUBDOMAIN=query_metadata_key("subdomain")
 ZQ2_METRICS_ENABLED=query_metadata_key("private-api") == "metrics"
 ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
-VALIDATOR_IDENTITIES='{{ validator_identities }}'
+LOG_LEVEL='{{ log_level }}'
 
 def mount_checkpoint_file():
     if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
@@ -233,7 +233,7 @@ start() {
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
-        -e RUST_LOG="zilliqa=trace" -e RUST_BACKTRACE=1 \
+        -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
     """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} ${1} --log-json
 }
@@ -260,9 +260,6 @@ ExecStop=/usr/local/bin/zq2.sh stop
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
-
-Environment="RUST_LOG=zilliqa=debug"
-Environment="RUST_BACKTRACE=1"
 StandardOutput=append:/zilliqa.log
 
 [Install]
@@ -457,7 +454,6 @@ start() {
     cat > .env << 'EOL'
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4317
 ZQ2_METRICS_RPC_URL=ws://localhost:4201
-ZQ2_METRICS_VALIDATOR_IDENTITIES='""" + VALIDATOR_IDENTITIES + """'
 EOL
     docker rm zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ &> /dev/null || echo 0
     docker run -td --name zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ \
