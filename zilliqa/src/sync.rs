@@ -959,7 +959,7 @@ impl Sync {
                     .saturating_sub(self.in_pipeline as u64)
                     .gt(&highest_number)
             {
-                tracing::warn!("sync::InjectProposals : node is stuck");
+                tracing::warn!("sync::InjectProposals : node is stuck at {prev_highest}");
                 return Ok(false);
             }
         }

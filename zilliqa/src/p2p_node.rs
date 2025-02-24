@@ -191,7 +191,8 @@ impl P2pNode {
     }
 
     pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
-        let topic = Self::shard_id_to_topic(config.eth_chain_id);
+        let shard_id = config.eth_chain_id;
+        let topic = Self::shard_id_to_topic(shard_id);
         if self.shard_nodes.contains_key(&topic.hash()) {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
             return Ok(());
@@ -356,7 +357,7 @@ impl P2pNode {
                         }
                         InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, path) => {
                             self.task_threads.spawn(async move { db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, path) });
-                        }
+                        }                    
                     }
                 },
                 message = self.request_responses_receiver.next() => {
