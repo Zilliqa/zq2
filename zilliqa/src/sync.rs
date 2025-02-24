@@ -434,7 +434,8 @@ impl Sync {
         if self.inject_proposals(proposals)? {
             self.db.pop_sync_segment()?;
         } else {
-            self.state = SyncState::Retry1;
+            // sync is stuck, cancel sync and restart, should be fast for peers that are already near the tip.
+            self.state = SyncState::Phase3;
             return Ok(());
         };
 
