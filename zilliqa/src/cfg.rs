@@ -351,6 +351,10 @@ pub struct ConsensusConfig {
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     #[serde(default = "consensus_timeout_default")]
     pub consensus_timeout: Duration,
+    /// The minimum number of blocks a staker must wait before being able to withdraw unstaked funds
+    /// Note that this is the withdrawal period that the deposit_v5 contract is initialised with. Previous versions of the deposit contract will not use this value.
+    #[serde(default = "staker_withdrawal_period_default")]
+    pub staker_withdrawal_period: u64,
     /// The initially staked deposits in the deposit contract at genesis, composed of
     /// (public key, peerId, amount, reward address) tuples.
     #[serde(default)]
@@ -447,6 +451,7 @@ impl Default for ConsensusConfig {
             is_main: default_true(),
             main_shard_id: None,
             consensus_timeout: consensus_timeout_default(),
+            staker_withdrawal_period: staker_withdrawal_period_default(),
             genesis_deposits: vec![],
             genesis_accounts: vec![],
             block_time: block_time_default(),
@@ -636,6 +641,11 @@ pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
 }
 
+pub fn staker_withdrawal_period_default() -> u64 {
+    // 2 weeks worth of blocks with 1 second block time
+    2 * 7 * 24 * 60 * 60
+}
+
 /// The default implementation returns a single fork at the genesis block, with the most up-to-date
 /// execution logic.
 pub fn genesis_fork_default() -> Fork {
@@ -653,9 +663,21 @@ pub fn genesis_fork_default() -> Fork {
 pub struct ContractUpgradesBlockHeights {
     pub deposit_v3: Option<u64>,
     pub deposit_v4: Option<u64>,
+    pub deposit_v5: Option<u64>,
 }
 
 impl ContractUpgradesBlockHeights {
+    pub fn new(
+        deposit_v3: Option<u64>,
+        deposit_v4: Option<u64>,
+        deposit_v5: Option<u64>,
+    ) -> ContractUpgradesBlockHeights {
+        Self {
+            deposit_v3,
+            deposit_v4,
+            deposit_v5,
+        }
+    }
     // toml doesn't like Option types. Map items in struct and remove keys for None values
     pub fn to_toml(&self) -> toml::Value {
         toml::Value::Table(
@@ -680,7 +702,8 @@ impl Default for ContractUpgradesBlockHeights {
     fn default() -> Self {
         Self {
             deposit_v3: None,
-            deposit_v4: Some(0),
+            deposit_v4: None,
+            deposit_v5: Some(0),
         }
     }
 }
