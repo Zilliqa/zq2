@@ -74,6 +74,7 @@ pub struct Sync {
     in_pipeline: usize,
     // our peer id
     peer_id: PeerId,
+    chain_id: u64,
     // internal sync state
     state: SyncState,
     // fixed-size queue of the most recent proposals
@@ -130,6 +131,7 @@ impl Sync {
             db,
             message_sender,
             peer_id,
+            chain_id: config.eth_chain_id,
             peers,
             max_batch_size,
             max_blocks_in_flight,
@@ -434,8 +436,10 @@ impl Sync {
         if self.inject_proposals(proposals)? {
             self.db.pop_sync_segment()?;
         } else {
-            // sync is stuck, cancel sync and restart, should be fast for peers that are already near the tip.
-            self.state = SyncState::Phase3;
+            // Sync is stuck bad, cancel sync and restart node
+            self.message_sender.send_message_to_coordinator(
+                crate::message::InternalMessage::RestartShard(self.chain_id),
+            )?;
             return Ok(());
         };
 

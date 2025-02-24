@@ -388,12 +388,15 @@ pub enum InternalMessage {
         TrieStorage,
         Box<Path>,
     ),
+    /// Restart the node
+    RestartShard(u64),
 }
 
 /// Returns a terse, human-readable summary of a message.
 impl Display for InternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            InternalMessage::RestartShard(id) => write!(f, "RestartShard({id})"),
             InternalMessage::LaunchShard(id) => write!(f, "LaunchShard({id})"),
             InternalMessage::LaunchLink(dest) => write!(f, "LaunchLink({dest})"),
             InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),

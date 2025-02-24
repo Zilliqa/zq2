@@ -877,6 +877,7 @@ impl Network {
             AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
                 trace!("Handling internal message from node in shard {source_shard}, targetting {destination_shard}");
                 match internal_message {
+                    InternalMessage::RestartShard(_) => todo!(),
                     InternalMessage::LaunchShard(new_network_id) => {
                         let secret_key = self.find_node(source).unwrap().1.secret_key;
                         if let Some(child_network) = self.children.get_mut(new_network_id) {

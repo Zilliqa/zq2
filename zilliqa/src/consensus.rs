@@ -1128,6 +1128,11 @@ impl Consensus {
     /// This should only run after majority QC or aggQC are available.
     /// It applies the rewards and produces the final Proposal.
     fn early_proposal_finish_at(&mut self, mut proposal: Block) -> Result<Option<Block>> {
+        // If we are syncing, we don't finalise and send the proposal
+        if self.sync.am_syncing()? {
+            return Ok(None);
+        }
+
         // Retrieve parent block data
         let parent_block = self
             .get_block(&proposal.parent_hash())?
@@ -1661,7 +1666,7 @@ impl Consensus {
         Ok(Some(pending_block))
     }
 
-    fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
+    pub fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
         match self.leader_for_view(parent_hash, view) {
             Some(leader) => leader == self.public_key(),
             None => false,

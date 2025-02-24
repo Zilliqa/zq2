@@ -388,7 +388,9 @@ impl Node {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(source))?;
             }
-            InternalMessage::LaunchShard(..) | InternalMessage::ExportBlockCheckpoint(..) => {
+            InternalMessage::LaunchShard(..)
+            | InternalMessage::ExportBlockCheckpoint(..)
+            | InternalMessage::RestartShard(..) => {
                 warn!(
                     "{message} type messages should be handled by the coordinator, not forwarded to a node.",
                 );
@@ -944,7 +946,10 @@ impl Node {
             } else {
                 self.message_sender.broadcast_proposal(message)?;
             }
-        } else {
+        } else if !self
+            .consensus
+            .are_we_leader_for_view(proposal.hash(), proposal.view() + 1)
+        {
             self.consensus.sync.sync_from_proposal(proposal)?;
         }
 
