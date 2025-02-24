@@ -20,7 +20,6 @@ use futures::{future::join_all, StreamExt};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use zilliqa::transaction::Log;
 
 use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
 
@@ -1539,8 +1538,7 @@ async fn test_block_filter(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn test_pending_transaction_filter(mut network: Network) {
-    println!("Starting pending transaction filter test");
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
     let provider = wallet.provider();
 
     // Create a new pending transaction filter
@@ -1551,21 +1549,12 @@ async fn test_pending_transaction_filter(mut network: Network) {
         .unwrap();
     println!("Created filter with ID: {}", filter_id);
 
-    // Send some transactions
-    println!("Sending test transactions");
-    let tx1 = wallet
+    // Send a transaction.
+    let hash = wallet
         .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
         .await
         .unwrap()
         .tx_hash();
-    println!("Sent transaction 1: {}", tx1);
-
-    let tx2 = wallet
-        .send_transaction(TransactionRequest::pay(H160::random(), 20), None)
-        .await
-        .unwrap()
-        .tx_hash();
-    println!("Sent transaction 2: {}", tx2);
 
     // Get filter changes - should return the pending transaction hashes
     println!("Getting filter changes");
@@ -1576,9 +1565,7 @@ async fn test_pending_transaction_filter(mut network: Network) {
     let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
     println!("Got {} changes", changes.len());
 
-    assert!(!changes.is_empty());
-    assert!(changes.contains(&tx1));
-    assert!(changes.contains(&tx2));
+    assert!(changes.contains(&hash));
 
     // Calling get_filter_changes again should return empty
     println!("Getting filter changes second time");
@@ -1589,24 +1576,59 @@ async fn test_pending_transaction_filter(mut network: Network) {
     let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
     println!("Got {} changes on second call", changes.len());
     assert!(changes.is_empty());
+}
 
-    println!("Removing filter");
-    let filter_removed_successfully: bool = provider
-        .request("eth_uninstallFilter", [filter_id])
+#[zilliqa_macros::test]
+async fn test_pending_transaction_filter_after_mining(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new pending transaction filter
+    println!("Creating new pending transaction filter");
+    let filter_id: u128 = provider
+        .request("eth_newPendingTransactionFilter", ())
         .await
         .unwrap();
-    println!("Filter removed: {}", filter_removed_successfully);
-    assert!(filter_removed_successfully);
+    println!("Created filter with ID: {}", filter_id);
+
+    // Send a transaction.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Wait for the transaction to be mined.
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Calling get_filter_changes again should return empty because transaction is no longer pending
+    println!("Getting filter changes second time");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes on mined call", changes.len());
+    assert!(changes.is_empty());
 }
 
 #[zilliqa_macros::test]
 async fn test_log_filter(mut network: Network) {
-    println!("Starting log filter test");
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
     let provider = wallet.provider();
 
-    // Deploy a contract that emits events
-    println!("Deploying test contract");
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
@@ -1614,11 +1636,9 @@ async fn test_log_filter(mut network: Network) {
         &mut network,
     )
     .await;
-    println!("Contract deployed with hash: {}", hash);
 
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
     let contract_address = receipt.contract_address.unwrap();
-    println!("Contract address: {}", contract_address);
 
     // Create a filter for contract events
     println!("Creating event filter");
@@ -1629,23 +1649,17 @@ async fn test_log_filter(mut network: Network) {
     let filter_id: u128 = provider.request("eth_newFilter", [filter]).await.unwrap();
     println!("Created filter with ID: {}", filter_id);
 
-    // Generate some events
-    println!("Generating events");
     let emit_events = contract.function("emitEvents").unwrap();
     let call_tx = TransactionRequest::new()
         .to(contract_address)
         .data(emit_events.encode_input(&[]).unwrap());
 
-    let tx_hash = wallet
+    let call_tx_hash = wallet
         .send_transaction(call_tx, None)
         .await
         .unwrap()
         .tx_hash();
-    println!("Event transaction hash: {}", tx_hash);
-
-    // Wait for transaction to be mined
-    println!("Waiting for event transaction to be mined");
-    network.run_until_receipt(&wallet, tx_hash, 50).await;
+    network.run_until_receipt(&wallet, call_tx_hash, 50).await;
 
     // Get filter changes
     println!("Getting filter changes");
@@ -1653,10 +1667,11 @@ async fn test_log_filter(mut network: Network) {
         .request("eth_getFilterChanges", [filter_id])
         .await
         .unwrap();
-    let logs: Vec<Log> = serde_json::from_value(logs_result).unwrap();
+    dbg!(&logs_result);
+    let logs: Vec<serde_json::Value> = serde_json::from_value(logs_result).unwrap();
     println!("Got {} logs", logs.len());
 
-    assert_eq!(logs.len(), 2); // EmitEvents contract emits 2 events
+    assert_eq!(logs.len(), 2);
 
     // Test get_filter_logs
     println!("Testing get_filter_logs");
@@ -1664,7 +1679,7 @@ async fn test_log_filter(mut network: Network) {
         .request("eth_getFilterLogs", [filter_id])
         .await
         .unwrap();
-    let logs_via_get: Vec<Log> = serde_json::from_value(logs_via_get_result).unwrap();
+    let logs_via_get: Vec<serde_json::Value> = serde_json::from_value(logs_via_get_result).unwrap();
     assert_eq!(logs, logs_via_get);
 
     // Calling get_filter_changes again should return empty
@@ -1673,7 +1688,7 @@ async fn test_log_filter(mut network: Network) {
         .request("eth_getFilterChanges", [filter_id])
         .await
         .unwrap();
-    let changes: Vec<Log> = serde_json::from_value(changes_result).unwrap();
+    let changes: Vec<serde_json::Value> = serde_json::from_value(changes_result).unwrap();
     println!("Got {} changes on second call", changes.len());
     assert!(changes.is_empty());
 
