@@ -946,10 +946,7 @@ impl Node {
             } else {
                 self.message_sender.broadcast_proposal(message)?;
             }
-        } else if !self
-            .consensus
-            .are_we_leader_for_view(proposal.hash(), proposal.view() + 1)
-        {
+        } else {
             self.consensus.sync.sync_from_proposal(proposal)?;
         }
 

@@ -370,7 +370,7 @@ impl P2pNode {
                                 .cloned()
                                 .unwrap_or_else(
                                     || Self::generate_child_config(self.config.nodes.first().unwrap(), shard_id));
-                            self.add_shard_node(shard_config.clone()).await?;
+                            self.add_shard_node(shard_config).await?;
                         },
                     }
                 },

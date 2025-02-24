@@ -1666,7 +1666,7 @@ impl Consensus {
         Ok(Some(pending_block))
     }
 
-    pub fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
+    fn are_we_leader_for_view(&mut self, parent_hash: Hash, view: u64) -> bool {
         match self.leader_for_view(parent_hash, view) {
             Some(leader) => leader == self.public_key(),
             None => false,

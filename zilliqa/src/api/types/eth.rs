@@ -493,7 +493,6 @@ pub struct SyncingStruct {
 
 #[derive(Clone, Serialize)]
 #[serde(untagged)]
-#[allow(clippy::large_enum_variant)]
 pub enum SyncingResult {
     Bool(bool),
     Struct(SyncingStruct),
