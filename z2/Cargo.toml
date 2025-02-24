@@ -47,7 +47,7 @@ jsonrpsee = {version = "0.24.8", features = ["client"]}
 k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "930118ef5a6566f058d22e1614a8e96b4c287262", features = ["identify"]}
-log = "0.4.25"
+log = "0.4.26"
 octocrab = "0.43.0"
 primitive-types = "0.12.2"
 prost = "0.13.4"
