@@ -167,11 +167,9 @@ impl Chain {
     pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgradesBlockHeights {
         match self {
             Self::Zq2Devnet => ContractUpgradesBlockHeights {
-                deposit_v3: Some(3600),
-                // estimated: 2025-01-28T20:25:00Z
-                deposit_v4: Some(428400),
-                // estimated: 2025-02-21T18:56:00Z
-                deposit_v5: Some(1731600),
+                deposit_v3: None,
+                deposit_v4: None,
+                deposit_v5: Some(0),
             },
             Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
