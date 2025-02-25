@@ -1,0 +1,11 @@
+[profile.default]
+src='.'
+out='out'
+libs=['vendor']
+test='tests'
+cache_path='cache-foundry'
+via_ir=true
+auto_detect_solc=true
+build_info=true
+extra_ouptut=['storageLayout']
+solc='0.8.28'
