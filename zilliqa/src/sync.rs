@@ -379,9 +379,8 @@ impl Sync {
                 let SyncState::Phase2((_, range)) = &self.state else {
                     unimplemented!("sync:MultiBlockResponse");
                 };
-                tracing::info!(
-                    "sync::MultiBlockResponse : received [{:?}] blocks from {from}",
-                    range,
+                tracing::info!(?range, %from,
+                    "sync::MultiBlockResponse : received",
                 );
                 self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
@@ -521,10 +520,8 @@ impl Sync {
                 };
 
                 // Fire request, to the original peer that sent the segment metadata
-                tracing::info!(
-                    "sync::MissingBlocks : requesting [{:?}] from {}",
-                    range,
-                    peer_info.peer_id,
+                tracing::info!(?range, from = %peer_info.peer_id,
+                    "sync::MissingBlocks : requesting",
                 );
                 self.state = SyncState::Phase2((checksum, range));
 
@@ -617,10 +614,8 @@ impl Sync {
                             start: response.last().unwrap().header.number,
                             end: response.first().unwrap().header.number,
                         };
-                        tracing::info!(
-                            "sync::MetadataResponse : received [{:?}] from {}",
-                            range,
-                            peer_id
+                        tracing::info!(?range, from = %peer_id,
+                            "sync::MetadataResponse : received",
                         );
                         self.headers_downloaded =
                             self.headers_downloaded.saturating_add(response.len());
@@ -763,8 +758,8 @@ impl Sync {
             start: request.from_height,
             end: request.to_height,
         };
-        tracing::debug!(
-            "sync::MetadataRequest : received metadata [{range:?}] request from {from}",
+        tracing::debug!(?range, %from,
+            "sync::MetadataRequest : received",
         );
 
         // Do not respond to stale requests as the client has probably timed-out
@@ -906,10 +901,8 @@ impl Sync {
                     _ => unimplemented!("sync::DoMissingMetadata"),
                 };
 
-                tracing::info!(
-                    "sync::MissingMetadata : requesting [{:?}] from {} ({num}/{num_peers})",
-                    range,
-                    peer_info.peer_id
+                tracing::info!(?range, from = %peer_info.peer_id,
+                    "sync::MissingMetadata : requesting ({num}/{num_peers})",
                 );
                 offset += self.max_batch_size as u64;
 
@@ -994,7 +987,8 @@ impl Sync {
     /// Mark a received proposal
     ///
     /// Mark a proposal as received, and remove it from the chain.
-    pub fn mark_received_proposal(&mut self) -> Result<()> {
+    pub fn mark_received_proposal(&mut self, number: u64) -> Result<()> {
+        tracing::trace!(%number, "sync::MarkReceivedProposal : received");
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
         Ok(())
     }

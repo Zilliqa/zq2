@@ -957,7 +957,10 @@ impl Node {
             return Ok(());
         }
         trace!("Handling proposal for view {0}", req.block.header.view);
-        self.consensus.sync.mark_received_proposal()?; // decrement first, to avoid getting stuck at Retry1
+        // decrement first, to avoid getting stuck at Retry1
+        self.consensus
+            .sync
+            .mark_received_proposal(req.block.number())?;
         let proposal = self.consensus.receive_block(from, req.block)?;
         if let Some(proposal) = proposal {
             trace!(
