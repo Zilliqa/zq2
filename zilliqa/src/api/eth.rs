@@ -24,7 +24,6 @@ use jsonrpsee::{
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use tracing::*;
 
 use super::{
@@ -756,7 +755,15 @@ pub(super) fn get_transaction_receipt_inner(
         })
         .collect();
 
-    let is_zilliqa_txn = matches!(signed_transaction.tx, SignedTransaction::Zilliqa { .. });
+    let (is_zilliqa_txn, contract_address) =
+        if let SignedTransaction::Zilliqa { ref tx, .. } = signed_transaction.tx {
+            (
+                true,
+                Some(tx.get_contract_address(&signed_transaction.signer)?),
+            )
+        } else {
+            (false, None)
+        };
 
     let from = signed_transaction.signer;
     let v = signed_transaction.tx.sig_v();
@@ -764,14 +771,9 @@ pub(super) fn get_transaction_receipt_inner(
     let s = signed_transaction.tx.sig_s();
     let transaction = signed_transaction.tx.into_transaction();
 
-    // Temporary on-the-fly fix for returning proper contract address for deployments from zil transactions
     let contract_address = {
         if is_zilliqa_txn && transaction.to_addr().is_none() {
-            let mut hasher = Sha256::new();
-            hasher.update(signed_transaction.signer.as_slice());
-            hasher.update(transaction.nonce().unwrap().to_be_bytes());
-            let hashed = hasher.finalize();
-            Some(Address::from_slice(&hashed[12..]))
+            contract_address
         } else {
             receipt.contract_address
         }

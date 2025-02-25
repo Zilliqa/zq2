@@ -35,7 +35,7 @@ use tokio::runtime;
 use tracing::trace;
 
 use crate::{
-    cfg::ScillaExtLibsPathInScilla,
+    cfg::{Fork, ScillaExtLibsPathInScilla},
     crypto::Hash,
     exec::{PendingState, StorageValue},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
@@ -417,6 +417,7 @@ impl Scilla {
         init: &ContractInit,
         msg: &Value,
         ext_libs_dir: &ScillaExtLibsPathInScilla,
+        fork: Fork,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .init(init.to_string())
@@ -450,11 +451,14 @@ impl Scilla {
         trace!("Invoke response: {response}");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
-        let response = if let Some(response) = response.as_str() {
+        let mut response: Value = if let Some(response) = response.as_str() {
             serde_json::from_str(response)?
         } else {
             serde_json::from_value(response)?
         };
+        if !fork.scilla_json_preserve_order {
+            response.sort_all_objects();
+        }
 
         #[derive(Deserialize)]
         #[serde(untagged)]
