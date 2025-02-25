@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet, HashMap},
+    time::Duration,
 };
 
 use alloy::primitives::Address;
@@ -10,6 +11,7 @@ use tracing::debug;
 use crate::{
     crypto::Hash,
     state::State,
+    time::SystemTime,
     transaction::{SignedTransaction, ValidationOutcome, VerifiedTransaction},
 };
 
@@ -89,6 +91,8 @@ pub struct TransactionPool {
     /// Keeps transactions sorted by gas_price, each gas_price index can contain more than one txn
     /// These are candidates to be included in the next block
     gas_index: GasCollection,
+    /// Keeps track of timestamp and txn hash when transaction was added
+    insertion_times: BTreeSet<(SystemTime, Hash)>,
 }
 
 /// A wrapper for (gas price, sender, nonce), stored in the `ready` heap of [TransactionPool].
@@ -256,6 +260,7 @@ impl TransactionPool {
         &mut self,
         txn: VerifiedTransaction,
         account_nonce: u64,
+        now: SystemTime,
     ) -> TxAddResult {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             debug!("Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
@@ -293,6 +298,7 @@ impl TransactionPool {
 
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
+        self.insertion_times.insert((now, txn.hash));
         self.transactions.insert(txn.mempool_index(), txn);
         TxAddResult::AddedToMempool
     }
@@ -381,6 +387,29 @@ impl TransactionPool {
         }
     }
 
+    /// Remove expired transactions
+    pub fn remove_expired(&mut self, now: SystemTime) -> Result<()> {
+        let cutoff = now
+            .checked_sub(Duration::from_secs(24 * 3600))
+            .ok_or(anyhow!("Error while calculating cutoff point"))?;
+        let expired_items = self
+            .insertion_times
+            .iter()
+            .take_while(|(insertion_time, _)| insertion_time < &cutoff)
+            .cloned()
+            .collect::<Vec<_>>();
+        for expired in expired_items {
+            self.insertion_times.remove(&expired);
+            if let Some(tx_index) = self.hash_to_index.get(&expired.1) {
+                if let Some(txn) = self.transactions.remove(tx_index) {
+                    self.mark_executed(&txn);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Clear the transaction pool, returning all remaining transactions in an unspecified order.
     pub fn drain(&mut self) -> impl Iterator<Item = VerifiedTransaction> {
         self.hash_to_index.clear();
@@ -411,6 +440,7 @@ mod tests {
         crypto::Hash,
         db::Db,
         state::State,
+        time::SystemTime,
         transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
     };
 
@@ -486,13 +516,13 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 1, 1), 0);
+        pool.insert_transaction(transaction(from, 1, 1), 0, SystemTime::now());
 
         let tx = pool.best_transaction(&state)?;
         assert_eq!(tx, None);
 
-        pool.insert_transaction(transaction(from, 2, 2), 0);
-        pool.insert_transaction(transaction(from, 0, 0), 0);
+        pool.insert_transaction(transaction(from, 2, 2), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 0, 0), 0, SystemTime::now());
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
@@ -536,7 +566,11 @@ mod tests {
         nonces.shuffle(&mut rng);
 
         for i in 0..COUNT {
-            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), 0);
+            pool.insert_transaction(
+                transaction(from, nonces[i as usize] as u8, 3),
+                0,
+                SystemTime::now(),
+            );
         }
 
         for i in 0..COUNT {
@@ -563,11 +597,11 @@ mod tests {
         create_acc(&mut state, from2, 100, 0)?;
         create_acc(&mut state, from3, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 1), 0);
-        pool.insert_transaction(transaction(from1, 0, 2), 0);
-        pool.insert_transaction(transaction(from2, 0, 3), 0);
-        pool.insert_transaction(transaction(from3, 0, 0), 0);
-        pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
+        pool.insert_transaction(intershard_transaction(0, 0, 1), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from1, 0, 2), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from2, 0, 3), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from3, 0, 0), 0, SystemTime::now());
+        pool.insert_transaction(intershard_transaction(0, 1, 5), 0, SystemTime::now());
         assert_eq!(pool.transactions.len(), 5);
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
@@ -602,8 +636,8 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 0), 0);
-        pool.insert_transaction(transaction(from, 1, 0), 0);
+        pool.insert_transaction(transaction(from, 0, 0), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 1, 0), 0, SystemTime::now());
 
         pool.mark_executed(&transaction(from, 0, 0));
         state.mutate_account(from, |acc| {
@@ -626,8 +660,8 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 1), 0);
-        pool.insert_transaction(transaction(from, 1, 200), 0);
+        pool.insert_transaction(transaction(from, 0, 1), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 1, 200), 0, SystemTime::now());
 
         assert_eq!(
             pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
@@ -662,12 +696,12 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 100), 0);
-        pool.insert_transaction(transaction(from, 0, 1), 0);
-        pool.insert_transaction(transaction(from, 1, 1), 1);
-        pool.insert_transaction(transaction(from, 2, 1), 2);
-        pool.insert_transaction(transaction(from, 3, 200), 3);
-        pool.insert_transaction(transaction(from, 10, 1), 3);
+        pool.insert_transaction(intershard_transaction(0, 0, 100), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 0, 1), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 1, 1), 1, SystemTime::now());
+        pool.insert_transaction(transaction(from, 2, 1), 2, SystemTime::now());
+        pool.insert_transaction(transaction(from, 3, 200), 3, SystemTime::now());
+        pool.insert_transaction(transaction(from, 10, 1), 3, SystemTime::now());
 
         let content = pool.preview_content(&state)?;
 

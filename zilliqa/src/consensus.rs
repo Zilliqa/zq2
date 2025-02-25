@@ -1610,9 +1610,11 @@ impl Consensus {
         // them into the pool - this is because upon broadcasting the proposal, we will
         // have to re-execute it ourselves (in order to vote on it) and thus will
         // need those transactions again
+        let now = SystemTime::now();
         for tx in opaque_transactions {
             let account_nonce = self.state.get_account(tx.signer)?.nonce;
-            self.transaction_pool.insert_transaction(tx, account_nonce);
+            self.transaction_pool
+                .insert_transaction(tx, account_nonce, now);
         }
 
         // finalise the proposal
@@ -1885,10 +1887,10 @@ impl Consensus {
         }
 
         let txn_hash = txn.hash;
-
+        let now = SystemTime::now();
         let insert_result = self
             .transaction_pool
-            .insert_transaction(txn, early_account.nonce);
+            .insert_transaction(txn, early_account.nonce, now);
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -2752,12 +2754,14 @@ impl Consensus {
             // Ensure the transaction pool is consistent by recreating it. This is moderately costly, but forks are
             // rare.
             let existing_txns = self.transaction_pool.drain();
-
+            let now = SystemTime::now();
             for txn in existing_txns {
                 let account_nonce = self.state.get_account(txn.signer)?.nonce;
-                self.transaction_pool.insert_transaction(txn, account_nonce);
+                self.transaction_pool
+                    .insert_transaction(txn, account_nonce, now);
             }
 
+            let now = SystemTime::now();
             // block transactions need to be removed from self.transactions and re-injected
             for tx_hash in &head_block.transactions {
                 let orig_tx = self.get_transaction_by_hash(*tx_hash)?.unwrap();
@@ -2765,7 +2769,7 @@ impl Consensus {
                 // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
                 self.transaction_pool
-                    .insert_transaction(orig_tx, account_nonce);
+                    .insert_transaction(orig_tx, account_nonce, now);
             }
             // then purge them all from the db, including receipts and indexes
             self.db
@@ -2864,6 +2868,8 @@ impl Consensus {
             }
             // fast-forward state
             self.state.set_to_root(block.state_root_hash().into());
+
+            self.transaction_pool.remove_expired(SystemTime::now())?;
 
             // broadcast/commit receipts
             return self.broadcast_commit_receipts(from, block, block_receipts);
@@ -3018,6 +3024,8 @@ impl Consensus {
                 self.state.root_hash()
             ));
         }
+
+        self.transaction_pool.remove_expired(SystemTime::now())?;
 
         self.broadcast_commit_receipts(from, block, block_receipts)
     }
