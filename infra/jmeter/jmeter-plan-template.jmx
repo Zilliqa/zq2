@@ -5,15 +5,13 @@
       <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
         <collectionProp name="Arguments.arguments"/>
       </elementProp>
-      <boolProp name="TestPlan.functional_mode">false</boolProp>
-      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
     </TestPlan>
     <hashTree>
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Scenario 1">
         <stringProp name="TestPlan.comments">Virtual Users Running Scenario 1.
 Make test last 1 minute (see Scheduler)</stringProp>
         <stringProp name="ThreadGroup.num_threads">${THREADS}</stringProp>
-        <intProp name="ThreadGroup.ramp_time">10</intProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_TIME}</stringProp>
         <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
         <longProp name="ThreadGroup.delay">0</longProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
@@ -25,7 +23,7 @@ Make test last 1 minute (see Scheduler)</stringProp>
         </elementProp>
       </ThreadGroup>
       <hashTree>
-        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults" enabled="true">
+        <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults">
           <stringProp name="TestPlan.comments">Notice Timeouts:
 Read to 1s
 Connect to 300ms</stringProp>
@@ -41,7 +39,7 @@ Connect to 300ms</stringProp>
           <stringProp name="HTTPSampler.implementation">HttpClient4</stringProp>
         </ConfigTestElement>
         <hashTree/>
-        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="ZQ2 load tests" enabled="true">
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="ZQ2 load tests">
           <stringProp name="HTTPSampler.domain">${TARGET_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${TARGET_PORT}</stringProp>
           <stringProp name="HTTPSampler.protocol">${PROTOCOL}</stringProp>
@@ -60,7 +58,7 @@ Connect to 300ms</stringProp>
           </elementProp>
         </HTTPSamplerProxy>
         <hashTree>
-          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager">
             <collectionProp name="HeaderManager.headers">
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Content-Type</stringProp>
@@ -70,10 +68,10 @@ Connect to 300ms</stringProp>
           </HeaderManager>
           <hashTree/>
         </hashTree>
-        <TestAction guiclass="TestActionGui" testclass="TestAction" testname="ThinkTime1s" enabled="true">
+        <TestAction guiclass="TestActionGui" testclass="TestAction" testname="ThinkTime1s">
           <intProp name="ActionProcessor.action">1</intProp>
           <intProp name="ActionProcessor.target">0</intProp>
-          <stringProp name="ActionProcessor.duration">0</stringProp>
+          <stringProp name="ActionProcessor.duration">200</stringProp>
         </TestAction>
         <hashTree>
           <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="URT" enabled="true">
@@ -116,13 +114,19 @@ Connect to 300ms</stringProp>
             </elementProp>
             <elementProp name="THREADS" elementType="Argument">
               <stringProp name="Argument.name">THREADS</stringProp>
-              <stringProp name="Argument.value">${__P(THREADS,2)}</stringProp>
+              <stringProp name="Argument.value">${__P(THREADS,20)}</stringProp>
               <stringProp name="Argument.desc">Number of concurrent threads</stringProp>
+              <stringProp name="Argument.metadata">=</stringProp>
+            </elementProp>
+            <elementProp name="RAMP_TIME" elementType="Argument">
+              <stringProp name="Argument.name">RAMP_TIME</stringProp>
+              <stringProp name="Argument.value">${__P(RAMP_TIME,10)}</stringProp>
+              <stringProp name="Argument.desc">Threads ramp up period</stringProp>
               <stringProp name="Argument.metadata">=</stringProp>
             </elementProp>
             <elementProp name="DURATION" elementType="Argument">
               <stringProp name="Argument.name">DURATION</stringProp>
-              <stringProp name="Argument.value">${__P(DURATION,10)}</stringProp>
+              <stringProp name="Argument.value">${__P(DURATION,60)}</stringProp>
               <stringProp name="Argument.desc">Number of samples to run</stringProp>
               <stringProp name="Argument.metadata">=</stringProp>
             </elementProp>
