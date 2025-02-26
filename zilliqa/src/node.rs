@@ -945,7 +945,7 @@ impl Node {
                 self.message_sender.broadcast_proposal(message)?;
             }
         } else {
-            self.consensus.sync.sync_from_proposal(proposal)?; // proposal is already verified
+            self.consensus.sync.sync_from_proposal(proposal)?;
         }
 
         Ok(())
@@ -957,8 +957,10 @@ impl Node {
             return Ok(());
         }
         trace!("Handling proposal for view {0}", req.block.header.view);
+        let block_number = req.block.number();
         let proposal = self.consensus.receive_block(from, req.block)?;
-        self.consensus.sync.mark_received_proposal()?;
+        // decrement after - if there are issues in receive_block() it will stop syncing;
+        self.consensus.sync.mark_received_proposal(block_number)?;
         if let Some(proposal) = proposal {
             trace!(
                 " ... broadcasting proposal for view {0}",
