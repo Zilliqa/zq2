@@ -48,22 +48,22 @@ on:
         description: "Response timeout in milliseconds"
         type: number
         required: false
-        default: 15000
+        default: 60000
       threads:
         description: "Number of concurrent threads"
         type: number
         required: false
-        default: 600
+        default: 1000
       ramp_time:
         description: "Threads ramp up period"
         type: number
         required: false
-        default: 300
+        default: 500
       duration:
         description: "Test duration in seconds"
         type: number
         required: false
-        default: 600
+        default: 900
 
 jobs:
   jmeter-test:

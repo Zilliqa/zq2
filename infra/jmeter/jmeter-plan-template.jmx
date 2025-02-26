@@ -132,13 +132,13 @@ Connect to 300ms</stringProp>
             </elementProp>
             <elementProp name="CONNECT_TIMEOUT" elementType="Argument">
               <stringProp name="Argument.name">CONNECT_TIMEOUT</stringProp>
-              <stringProp name="Argument.value">${__P(CONNECT_TIMEOUT,5000)}</stringProp>
+              <stringProp name="Argument.value">${__P(CONNECT_TIMEOUT,60000)}</stringProp>
               <stringProp name="Argument.desc">Connect timeout</stringProp>
               <stringProp name="Argument.metadata">=</stringProp>
             </elementProp>
             <elementProp name="RESPONSE_TIMEOUT" elementType="Argument">
               <stringProp name="Argument.name">RESPONSE_TIMEOUT</stringProp>
-              <stringProp name="Argument.value">${__P(RESPONSE_TIMEOUT,15000)}</stringProp>
+              <stringProp name="Argument.value">${__P(RESPONSE_TIMEOUT,60000)}</stringProp>
               <stringProp name="Argument.desc">Response timeout</stringProp>
               <stringProp name="Argument.metadata">=</stringProp>
             </elementProp>
