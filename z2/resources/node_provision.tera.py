@@ -130,8 +130,8 @@ def check_sync_status():
     
     # If syncing response is a JSON object
     if isinstance(sync_status, dict):
-        current_block = int(sync_status["currentBlock"])
-        highest_block = int(sync_status["highestBlock"])
+        current_block = int(sync_status["currentBlock"], 16)
+        highest_block = int(sync_status["highestBlock"], 16)
         
         if current_block >= highest_block - 5:
             return jsonify({"message": f"Node is syncing at block {block_number} but behind highest block {highest_block}", "code": 200})
