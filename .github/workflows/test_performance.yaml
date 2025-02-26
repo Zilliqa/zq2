@@ -20,12 +20,12 @@ on:
         description: "Target host"
         type: string
         required: false
-        default: "api.zq2-prototestnet.zilliqa.com"
+        default: "thegraph.zq2-protomainnet.zilliqa.com"
       target_port:
         description: "Target port"
         type: string
         required: false
-        default: "443"
+        default: "4201"
       protocol:
         description: "Protocol (http/https)"
         type: choice
@@ -33,7 +33,7 @@ on:
           - "https"
           - "http"
         required: false
-        default: "https"
+        default: "http"
       rpc_method:
         description: "RPC method"
         type: string
@@ -53,17 +53,17 @@ on:
         description: "Number of concurrent threads"
         type: number
         required: false
-        default: 20
+        default: 600
       ramp_time:
         description: "Threads ramp up period"
         type: number
         required: false
-        default: 10
+        default: 300
       duration:
         description: "Test duration in seconds"
         type: number
         required: false
-        default: 60
+        default: 600
 
 jobs:
   jmeter-test:
