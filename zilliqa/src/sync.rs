@@ -90,6 +90,7 @@ pub struct Sync {
     empty_count: usize,
     headers_downloaded: usize,
     blocks_downloaded: usize,
+    active_sync_count: usize,
 }
 
 impl Sync {
@@ -145,6 +146,7 @@ impl Sync {
             empty_count: 0,
             headers_downloaded: 0,
             blocks_downloaded: 0,
+            active_sync_count: 0,
             p1_response: BTreeMap::new(),
             checkpoint_at: u64::MIN,
         })
@@ -244,6 +246,7 @@ impl Sync {
             SyncState::Phase0 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
                 if !self.db.contains_block(&parent_hash)? {
+                    self.active_sync_count += self.active_sync_count.saturating_add(1);
                     // No parent block, trigger sync
                     tracing::debug!("sync::DoSync : syncing from {parent_hash}",);
                     self.update_started_at()?;
@@ -941,8 +944,7 @@ impl Sync {
             let diff = injected - self.in_pipeline;
             let rate = diff as f32 / when.elapsed().as_secs_f32();
             tracing::debug!("sync::InjectProposals : synced {rate} block/s");
-            // Earlier retry if stuck - https://github.com/Zilliqa/zq2/issues/2354
-            // Detect if node is stuck i.e. we're not making progress
+            // Detect if node is stuck i.e. active-sync is not making progress
             if highest_number == prev_highest
                 && proposals
                     .first()
@@ -1027,6 +1029,7 @@ impl Sync {
                 header_downloads: self.headers_downloaded,
                 block_downloads: self.blocks_downloaded,
                 buffered_blocks: self.in_pipeline,
+                active_sync_count: self.active_sync_count,
             },
         }))
     }

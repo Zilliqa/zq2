@@ -357,7 +357,7 @@ impl P2pNode {
                         },
                         InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, path) => {
                             self.task_threads.spawn(async move { db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, path) });
-                        }                    
+                        }
                     }
                 },
                 message = self.request_responses_receiver.next() => {
