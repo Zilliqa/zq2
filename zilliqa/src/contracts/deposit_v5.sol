@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {Deque, Withdrawal} from "./utils/deque.sol";
+import {Deque, Withdrawal} from "./utils/deque_v2.sol";
 
 using Deque for Deque.Withdrawals;
 
@@ -242,6 +242,14 @@ contract Deposit is UUPSUpgradeable {
         return $._committee[$.latestComputedEpoch % 3].totalStake;
     }
 
+    struct StakerData {
+        address controlAddress;
+        address rewardAddress;
+        bytes peerId;
+        Withdrawal[] withdrawals;
+        address signingAddress;
+    }
+
     function getStakersData()
         public
         view
@@ -249,7 +257,7 @@ contract Deposit is UUPSUpgradeable {
             bytes[] memory stakerKeys,
             uint256[] memory indices,
             uint256[] memory balances,
-            Staker[] memory stakers
+            StakerData[] memory stakers
         )
     {
         DepositStorage storage $ = _getDepositStorage();
@@ -258,7 +266,7 @@ contract Deposit is UUPSUpgradeable {
         stakerKeys = currentCommittee.stakerKeys;
         indices = new uint256[](stakerKeys.length);
         balances = new uint256[](stakerKeys.length);
-        stakers = new Staker[](stakerKeys.length);
+        stakers = new StakerData[](stakerKeys.length);
         for (uint256 i = 0; i < stakerKeys.length; i++) {
             bytes memory key = stakerKeys[i];
             // The stakerKeys are not sorted by the stakers'
@@ -268,7 +276,24 @@ contract Deposit is UUPSUpgradeable {
             // BLS aggregate signatures
             indices[i] = currentCommittee.stakers[key].index;
             balances[i] = currentCommittee.stakers[key].balance;
-            stakers[i] = $._stakersMap[key];
+            StakerData memory stakerData;
+            stakerData.controlAddress = $._stakersMap[key].controlAddress;
+            stakerData.rewardAddress = $._stakersMap[key].rewardAddress;
+            stakerData.peerId = $._stakersMap[key].peerId;
+            stakerData.signingAddress = $._stakersMap[key].signingAddress;
+            stakerData.withdrawals = new Withdrawal[](
+                $._stakersMap[key].withdrawals.length()
+            );
+            for (
+                uint256 j = 0;
+                j < $._stakersMap[key].withdrawals.length();
+                j++
+            ) {
+                stakerData.withdrawals[j] = $._stakersMap[key].withdrawals.get(
+                    j
+                );
+            }
+            stakers[i] = stakerData;
         }
     }
 
@@ -277,13 +302,29 @@ contract Deposit is UUPSUpgradeable {
     )
         public
         view
-        returns (uint256 index, uint256 balance, Staker memory staker)
+        returns (uint256 index, uint256 balance, StakerData memory stakerData)
     {
         DepositStorage storage $ = _getDepositStorage();
         Committee storage currentCommittee = committee();
         index = currentCommittee.stakers[blsPubKey].index;
         balance = currentCommittee.stakers[blsPubKey].balance;
-        staker = $._stakersMap[blsPubKey];
+        stakerData.controlAddress = $._stakersMap[blsPubKey].controlAddress;
+        stakerData.rewardAddress = $._stakersMap[blsPubKey].rewardAddress;
+        stakerData.peerId = $._stakersMap[blsPubKey].peerId;
+        stakerData.signingAddress = $._stakersMap[blsPubKey].signingAddress;
+        stakerData.withdrawals = new Withdrawal[](
+            $._stakersMap[blsPubKey].withdrawals.length()
+        );
+        for (
+            uint256 j = 0;
+            j < $._stakersMap[blsPubKey].withdrawals.length();
+            j++
+        ) {
+            stakerData.withdrawals[j] = $
+                ._stakersMap[blsPubKey]
+                .withdrawals
+                .get(j);
+        }
     }
 
     function getStake(bytes calldata blsPubKey) public view returns (uint256) {
