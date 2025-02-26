@@ -416,6 +416,9 @@ pub struct ConsensusConfig {
     /// difference applies.
     #[serde(default)]
     pub forks: Vec<ForkDelta>,
+    /// Overwrites genesis block (useful for syncing if you don't want to sync to block 0 or pruning in the future)
+    #[serde(default = "default_genesis_block_at_height")]
+    pub genesis_block_at_height: u64,
 }
 
 impl ConsensusConfig {
@@ -468,6 +471,7 @@ impl Default for ConsensusConfig {
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
             forks: vec![],
             genesis_fork: genesis_fork_default(),
+            genesis_block_at_height: 0,
         }
     }
 }
@@ -603,6 +607,10 @@ fn default_true() -> bool {
 
 pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
+}
+
+pub fn default_genesis_block_at_height() -> u64 {
+    0
 }
 
 pub fn staker_withdrawal_period_default() -> u64 {
