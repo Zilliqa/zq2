@@ -451,7 +451,9 @@ impl TransactionPool {
     /// Remove expired transactions
     pub fn remove_expired(&mut self, now: SystemTime) -> Result<()> {
         let cutoff = now
-            .checked_sub(Duration::from_secs(24 * 3600))
+            .checked_sub(Duration::from_secs(
+                3600 * self.config.remove_expired_txns_after_hrs,
+            ))
             .ok_or(anyhow!("Error while calculating cutoff point"))?;
         let expired_items = self
             .insertion_times
@@ -486,7 +488,7 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::{ops::Add, path::PathBuf, sync::Arc, time::Duration};
 
     use alloy::{
         consensus::TxLegacy,
@@ -576,6 +578,7 @@ mod tests {
             maximum_txn_count_per_sender: 5,
             maximum_global_size: 10,
             total_slots_for_all_senders: 5,
+            remove_expired_txns_after_hrs: 24,
         };
         TransactionPool::new(config)
     }
@@ -934,6 +937,40 @@ mod tests {
             TxAddResult::AddedToMempool,
             pool.insert_transaction(transaction(rand_addr, 0, 1), 0, SystemTime::now())
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn expired_txns_are_removed() -> Result<()> {
+        let mut pool = get_pool();
+        let from = "0x0000000000000000000000000000000000001234".parse()?;
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 100, 0)?;
+
+        let now = SystemTime::UNIX_EPOCH;
+
+        pool.insert_transaction(transaction(from, 0, 1), 0, now);
+
+        let tx = pool.best_transaction(&state)?;
+        assert!(tx.is_some());
+
+        let cutoff_time = now.add(Duration::from_secs(3601 * 24));
+
+        pool.insert_transaction(
+            transaction(from, 1, 1),
+            0,
+            cutoff_time.add(Duration::from_secs(1)),
+        );
+
+        pool.remove_expired(cutoff_time)?;
+
+        assert_eq!(pool.transactions.len(), 1);
+
+        pool.remove_expired(cutoff_time.add(Duration::from_secs(3601 * 24)))?;
+
+        assert_eq!(pool.transactions.len(), 0);
 
         Ok(())
     }

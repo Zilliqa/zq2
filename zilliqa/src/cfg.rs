@@ -482,8 +482,10 @@ pub struct TxnPoolConfig {
     pub maximum_global_size: u64,
     /// Maximum number of transactions per single sender
     pub maximum_txn_count_per_sender: u64,
-    /// total slots for all senders
+    /// Total slots for all senders
     pub total_slots_for_all_senders: u64,
+    /// Remove pending txns after this many hours
+    pub remove_expired_txns_after_hrs: u64,
 }
 
 pub fn maximum_txn_pool_global_size() -> u64 {
@@ -498,12 +500,17 @@ pub fn total_slots_for_all_senders() -> u64 {
     1_000_000
 }
 
+pub fn remove_expired_txns_after_hours() -> u64 {
+    24
+}
+
 impl Default for TxnPoolConfig {
     fn default() -> Self {
         Self {
             maximum_global_size: maximum_txn_pool_global_size(),
             maximum_txn_count_per_sender: maximum_txn_pool_txn_count_per_user(),
             total_slots_for_all_senders: total_slots_for_all_senders(),
+            remove_expired_txns_after_hrs: remove_expired_txns_after_hours(),
         }
     }
 }
