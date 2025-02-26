@@ -29,3 +29,7 @@ consensus.forks = [
     { at_height = 10200000, scilla_messages_can_call_evm_contracts = true },
     { at_height = 11152000, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true },
 ]
+
+txn_pool.maximum_global_size = 100000
+txn_pool.maximum_txn_count_per_sender = 200
+txn_pool.total_slots_for_all_senders = 50000

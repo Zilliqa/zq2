@@ -338,7 +338,10 @@ fn create_transaction(
                 | ValidationOutcome::InsufficientGasEvm(_, _)
                 | ValidationOutcome::NonceTooLow(_, _)
                 | ValidationOutcome::InsufficientFunds(_, _)
-                | ValidationOutcome::BlockGasLimitExceeded(_, _) => {
+                | ValidationOutcome::BlockGasLimitExceeded(_, _)
+                | ValidationOutcome::TotalNumberOfSlotsExceeded
+                | ValidationOutcome::GlobalTransactionCountExceeded
+                | ValidationOutcome::TransactionCountExceededForSender => {
                     RPCErrorCode::RpcInvalidParameter
                 }
                 _ => RPCErrorCode::RpcVerifyRejected,

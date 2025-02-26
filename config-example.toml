@@ -60,3 +60,8 @@ consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
 
 consensus.genesis_fork = { at_height = 0, call_mode_1_sets_caller_to_parent_caller = false, failed_scilla_call_from_gas_exempt_caller_causes_revert = false, scilla_messages_can_call_evm_contracts = false, scilla_contract_creation_increments_account_balance = false, scilla_json_preserve_order = false }
+
+txn_pool.maximum_global_size = 100000
+txn_pool.maximum_txn_count_per_sender = 20
+txn_pool.total_slots_for_all_senders = 50000
+
