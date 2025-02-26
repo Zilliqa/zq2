@@ -108,7 +108,7 @@ impl TransactionPool {
             hash_to_index: BTreeMap::new(),
             gas_index: GasCollection::new(),
             sender_txn_counter: HashMap::new(),
-            insertion_times: BTreeSet::new()
+            insertion_times: BTreeSet::new(),
         }
     }
 }
@@ -502,7 +502,6 @@ mod tests {
         db::Db,
         state::State,
         time::SystemTime,
-        transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
         transaction::{
             EvmGas, SignedTransaction, TxIntershard, ValidationOutcome, VerifiedTransaction,
         },
@@ -807,7 +806,7 @@ mod tests {
             for nonce in 0..2 {
                 assert_eq!(
                     TxAddResult::AddedToMempool,
-                    pool.insert_transaction(transaction(*address, nonce, 1), 0)
+                    pool.insert_transaction(transaction(*address, nonce, 1), 0, SystemTime::now())
                 );
             }
         }
@@ -817,7 +816,7 @@ mod tests {
         create_acc(&mut state, rand_addr, 100, 0)?;
         assert_eq!(
             TxAddResult::ValidationFailed(ValidationOutcome::GlobalTransactionCountExceeded),
-            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, SystemTime::now())
         );
 
         // Remove all txns sent by one sender
@@ -826,7 +825,7 @@ mod tests {
         // And try to insert again - it should succeed
         assert_eq!(
             TxAddResult::AddedToMempool,
-            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, SystemTime::now())
         );
 
         Ok(())
@@ -846,14 +845,14 @@ mod tests {
         for nonce in 0..COUNT {
             assert_eq!(
                 TxAddResult::AddedToMempool,
-                pool.insert_transaction(transaction(address, nonce, 1), 0)
+                pool.insert_transaction(transaction(address, nonce, 1), 0, SystemTime::now())
             );
         }
 
         // Can't add the following one due to per user limit being exceeded
         assert_eq!(
             TxAddResult::ValidationFailed(ValidationOutcome::TransactionCountExceededForSender),
-            pool.insert_transaction(transaction(address, COUNT, 1), 0)
+            pool.insert_transaction(transaction(address, COUNT, 1), 0, SystemTime::now())
         );
 
         // Remove a single txn
@@ -861,7 +860,7 @@ mod tests {
         // And try to insert again - it should succeed
         assert_eq!(
             TxAddResult::AddedToMempool,
-            pool.insert_transaction(transaction(address, COUNT, 1), 0)
+            pool.insert_transaction(transaction(address, COUNT, 1), 0, SystemTime::now())
         );
 
         Ok(())
@@ -881,20 +880,20 @@ mod tests {
         for nonce in 0..COUNT {
             assert_eq!(
                 TxAddResult::AddedToMempool,
-                pool.insert_transaction(transaction(address, nonce, 1), 0)
+                pool.insert_transaction(transaction(address, nonce, 1), 0, SystemTime::now())
             );
         }
 
         // Can't add the following one due to per user limit being exceeded
         assert_eq!(
             TxAddResult::ValidationFailed(ValidationOutcome::TransactionCountExceededForSender),
-            pool.insert_transaction(transaction(address, COUNT, 1), 0)
+            pool.insert_transaction(transaction(address, COUNT, 1), 0, SystemTime::now())
         );
 
         // Try replacing existing one with higher gas price
         assert_eq!(
             TxAddResult::AddedToMempool,
-            pool.insert_transaction(transaction(address, 0, 2), 0)
+            pool.insert_transaction(transaction(address, 0, 2), 0, SystemTime::now())
         );
 
         Ok(())
@@ -916,7 +915,7 @@ mod tests {
             create_acc(&mut state, *address, 100, 0)?;
             assert_eq!(
                 TxAddResult::AddedToMempool,
-                pool.insert_transaction(transaction(*address, 0, 1), 0)
+                pool.insert_transaction(transaction(*address, 0, 1), 0, SystemTime::now())
             );
         }
 
@@ -925,7 +924,7 @@ mod tests {
         create_acc(&mut state, rand_addr, 100, 0)?;
         assert_eq!(
             TxAddResult::ValidationFailed(ValidationOutcome::TotalNumberOfSlotsExceeded),
-            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, SystemTime::now())
         );
 
         // Remove a single txn
@@ -933,7 +932,7 @@ mod tests {
         // And try to insert again - it should succeed
         assert_eq!(
             TxAddResult::AddedToMempool,
-            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, SystemTime::now())
         );
 
         Ok(())
