@@ -463,20 +463,32 @@ pub struct TxPoolContent {
 #[serde(rename_all = "camelCase")]
 pub struct SyncingMeta {
     pub current_phase: String,
+    #[serde(serialize_with = "hex")]
     pub peer_count: usize,
-    pub header_downloads: u64,
-    pub block_downloads: u64,
+    #[serde(serialize_with = "hex")]
+    pub header_downloads: usize,
+    #[serde(serialize_with = "hex")]
+    pub block_downloads: usize,
+    #[serde(serialize_with = "hex")]
     pub buffered_blocks: usize,
-    pub empty_count: u64,
-    pub retry_count: u64,
-    pub timeout_count: u64,
+    #[serde(serialize_with = "hex")]
+    pub empty_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub retry_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub timeout_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub active_sync_count: usize,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncingStruct {
+    #[serde(serialize_with = "hex")]
     pub starting_block: u64,
+    #[serde(serialize_with = "hex")]
     pub current_block: u64,
+    #[serde(serialize_with = "hex")]
     pub highest_block: u64,
     pub status: SyncingMeta,
 }
