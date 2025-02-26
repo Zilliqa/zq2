@@ -34,11 +34,16 @@ on:
           - "http"
         required: false
         default: "https"
-      json_params:
-        description: "JSON RPC parameters"
+      rpc_method:
+        description: "RPC method"
         type: string
         required: false
-        default: '{"id":"1","jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x${__RandomString(5,abcdef0123456789)}",false]}'
+        default: "eth_blockNumber"
+      rpc_params:
+        description: "RPC method params"
+        type: string
+        required: false
+        default: '[]'
       response_timeout:
         description: "Response timeout in milliseconds"
         type: number
@@ -72,7 +77,16 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     timeout-minutes: 1440
     env:
-      TEST_ID: "jmeter-test-zq2-${{ github.run_id }}"
+      TARGET_HOST: ${{ github.event.inputs.target_host || 'api.zq2-prototestnet.zilliqa.com' }}
+      TARGET_PORT: ${{ github.event.inputs.target_port || '443' }}
+      PROTOCOL: ${{ github.event.inputs.protocol || 'https' }}
+      RPC_METHOD: ${{ github.event.inputs.rpc_method || 'eth_blockNumber' }}
+      RPC_PARAMS: ${{ github.event.inputs.rpc_params || '[]' }}
+      THREADS: ${{ github.event.inputs.threads || 20 }}
+      DURATION: ${{ github.event.inputs.duration || 60 }}
+      CONNECT_TIMEOUT: ${{ github.event.inputs.connect_timeout || 300 }}
+      RESPONSE_TIMEOUT: ${{ github.event.inputs.response_timeout || 10000 }}
+      RESULTS_FILE: results.jtl
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -87,32 +101,31 @@ jobs:
         with:
           version: '>= 363.0.0'
 
+      - name: Test ID
+        id: build-test-id
+        run: |
+          echo "TEST_ID=jmeter-test-zq2-$(date +"%Y%m%d%H%M")-${TARGET_HOST//./-}-${RPC_METHOD//_/-}-${THREADS}-${DURATION}-${{ github.run_id }}" >> $GITHUB_OUTPUT
+        shell: bash
+
       - name: Run tests
         working-directory: infra/jmeter
         run: |
-          export TARGET_HOST=${{ github.event.inputs.target_host || 'query.zq2-prototestnet.zilliqa.com' }}
-          export TARGET_PORT=${{ github.event.inputs.target_port || '443' }}
-          export PROTOCOL=${{ github.event.inputs.protocol || 'https' }}
-          export JSON_PARAMS='${{ github.event.inputs.json_params || '{"id":"1","jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x${__RandomString(5,abcdef0123456789)}",false]}' }}'
-          export RESPONSE_TIMEOUT=${{ github.event.inputs.response_timeout || 10000 }}
-          export CONNECT_TIMEOUT=${{ github.event.inputs.connect_timeout || 300 }}
-          export THREADS=${{ github.event.inputs.threads || 20 }}
-          export DURATION=${{ github.event.inputs.duration || 60 }}
-
           jmeter -n -e -Dlog_level.jmeter=DEBUG \
-            -JTARGET_HOST=${TARGET_HOST} \
-            -JTARGET_PORT=${TARGET_PORT} \
-            -JPROTOCOL=${PROTOCOL} \
-            -JJSON_PARAMS=${JSON_PARAMS} \
-            -JTHREADS=${THREADS} \
-            -JDURATION=${DURATION} \
-            -JCONNECT_TIMEOUT=${CONNECT_TIMEOUT} \
-            -JRESPONSE_TIMEOUT=${RESPONSE_TIMEOUT} \
+            -JTARGET_HOST=${{ env.TARGET_HOST }} \
+            -JTARGET_PORT=${{ env.TARGET_PORT }} \
+            -JPROTOCOL=${{ env.PROTOCOL }} \
+            -JRPC_METHOD=${{ env.RPC_METHOD }} \
+            -JRPC_PARAMS='${{ env.RPC_PARAMS }}' \
+            -JTHREADS=${{ env.THREADS }} \
+            -JDURATION=${{ env.DURATION }} \
+            -JCONNECT_TIMEOUT=${{ env.CONNECT_TIMEOUT }} \
+            -JRESPONSE_TIMEOUT=${{ env.RESPONSE_TIMEOUT }} \
+            -JRESULTS_FILE=${{ env.RESULTS_FILE }} \
             -t jmeter-plan-template.jmx \
-            -l ${TEST_ID}.jtl \
-            -o ${TEST_ID}
-          echo "Test results for ${TEST_ID}:"
-          cat "${TEST_ID}.jtl"
+            -l ${{ steps.build-test-id.outputs.TEST_ID }}.jtl \
+            -o ${{ steps.build-test-id.outputs.TEST_ID }}
+          echo "Test results for ${{ steps.build-test-id.outputs.TEST_ID }}:"
+          head -n 100 ${{ env.RESULTS_FILE }}
 
       - name: "Configure GCP Credentials"
         id: google-auth
@@ -127,5 +140,5 @@ jobs:
         uses: 'google-github-actions/upload-cloud-storage@v2'
         with:
           process_gcloudignore: false
-          path: "infra/jmeter/${{ env.TEST_ID }}"
+          path: "infra/jmeter/${{ steps.build-test-id.outputs.TEST_ID }}"
           destination: "zq2-${{ github.event.inputs.network || 'prototestnet' }}-performance-tests"
