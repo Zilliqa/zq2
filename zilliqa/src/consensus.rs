@@ -3104,19 +3104,6 @@ impl Consensus {
         Ok(count)
     }
 
-    pub fn tick(&mut self) -> Result<()> {
-        trace!("consensus::tick()");
-        trace!("request_missing_blocks from timer");
-
-        // TODO: Drive passive-sync from Timeouts
-        if !self.sync.am_syncing()? {
-            self.sync.sync_to_genesis()?;
-        } else {
-            trace!("not syncing ...");
-        }
-        Ok(())
-    }
-
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
         self.sync.get_sync_data()
     }

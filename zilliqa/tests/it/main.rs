@@ -614,7 +614,6 @@ impl Network {
         loop {
             for node in &self.nodes {
                 // Trigger a tick so that block fetching can operate.
-                node.inner.lock().unwrap().consensus.tick().unwrap();
                 if node.inner.lock().unwrap().handle_timeout().unwrap() {
                     return;
                 }
@@ -775,10 +774,6 @@ impl Network {
         if self.consensus_tick_countdown == 0 {
             for (index, node) in self.nodes.iter().enumerate() {
                 let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
-
-                span.in_scope(|| {
-                    node.inner.lock().unwrap().consensus.tick().unwrap();
-                });
             }
             self.consensus_tick_countdown = 10;
         }

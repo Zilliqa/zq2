@@ -228,11 +228,6 @@ impl Sync {
         Ok(())
     }
 
-    // TODO: Passive-sync place-holder - https://github.com/Zilliqa/zq2/issues/2232
-    pub fn sync_to_genesis(&mut self) -> Result<()> {
-        Ok(())
-    }
-
     /// Phase 0: Sync a block proposal.
     ///
     /// This is the main entry point for active-syncing a block proposal.
