@@ -27,3 +27,4 @@ api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["bloc
 txn_pool.maximum_global_size = 100000
 txn_pool.maximum_txn_count_per_sender = 200
 txn_pool.total_slots_for_all_senders = 50000
+txn_pool.remove_expired_txns_after_hrs = 24
