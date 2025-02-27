@@ -52,7 +52,7 @@ octocrab = "0.43.0"
 primitive-types = "0.12.2"
 prost = "0.13.4"
 rand = "0.8.5"
-rand_core = "0.6.4"
+rand_core = "0.9.2"
 regex = "1.11.1"
 reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
 revm = {version = "19.5.0", features = ["optional_balance_check"]}
