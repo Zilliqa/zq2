@@ -952,23 +952,30 @@ impl Node {
     }
 
     fn handle_injected_proposal(&mut self, from: PeerId, req: InjectedProposal) -> Result<()> {
+        let InjectedProposal { block, .. } = req;
         if from != self.consensus.peer_id() {
             warn!("Someone ({from}) sent me a InjectedProposal; illegal- ignoring");
             return Ok(());
         }
-        trace!("Handling proposal for view {0}", req.block.header.view);
-        let block_number = req.block.number();
-        let proposal = self.consensus.receive_block(from, req.block)?;
+        trace!("Handling proposal for view {0}", block.header.view);
+        let block_number = block.number();
+
+        if block.header.state_root_hash != Hash::ZERO {
+            let proposal = self.consensus.receive_block(from, block)?;
+            if let Some(proposal) = proposal {
+                trace!(
+                    " ... broadcasting proposal for view {0}",
+                    proposal.header.view
+                );
+                self.message_sender
+                    .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
+            }
+        } else {
+            // Store ZQ1 block
+            self.consensus.sync.store_proposal(block)?;
+        }
         // decrement after - if there are issues in receive_block() it will stop syncing;
         self.consensus.sync.mark_received_proposal(block_number)?;
-        if let Some(proposal) = proposal {
-            trace!(
-                " ... broadcasting proposal for view {0}",
-                proposal.header.view
-            );
-            self.message_sender
-                .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
-        }
         Ok(())
     }
 }

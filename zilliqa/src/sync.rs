@@ -1055,6 +1055,21 @@ impl Sync {
         Ok(())
     }
 
+    /// Just store a proposal
+    ///
+    /// Used when storing old blocks, that should not be executed such as ZQ1 blocks, or pre-checkpoint blocks.
+    pub fn store_proposal(&mut self, proposal: Proposal) -> Result<()> {
+        let (blk, txns) = proposal.into_parts();
+        self.db.with_sqlite_tx(|sqlite_tx| {
+            self.db.insert_block_with_db_tx(sqlite_tx, &blk)?;
+            for (txh, txn) in blk.transactions.iter().zip(txns.iter()) {
+                self.db.insert_transaction_with_db_tx(sqlite_tx, txh, txn)?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     fn store_proposals(&mut self, proposals: Vec<Proposal>) -> Result<()> {
         if proposals.is_empty() {
             return Ok(());
@@ -1067,18 +1082,6 @@ impl Sync {
             );
             self.store_proposal(p)?;
         }
-        Ok(())
-    }
-
-    fn store_proposal(&mut self, proposal: Proposal) -> Result<()> {
-        let (blk, txns) = proposal.into_parts();
-        self.db.with_sqlite_tx(|sqlite_tx| {
-            self.db.insert_block_with_db_tx(sqlite_tx, &blk)?;
-            for (txh, txn) in blk.transactions.iter().zip(txns.iter()) {
-                self.db.insert_transaction_with_db_tx(sqlite_tx, txh, txn)?;
-            }
-            Ok(())
-        })?;
         Ok(())
     }
 
