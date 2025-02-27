@@ -1044,7 +1044,7 @@ impl Db {
             }
             BlockFilter::MinHeight => {
                 query_block!("TRUE ORDER BY height ASC LIMIT 1")
-            }   
+            }
         })
     }
 

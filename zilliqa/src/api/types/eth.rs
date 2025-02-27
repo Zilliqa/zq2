@@ -479,6 +479,8 @@ pub struct SyncingMeta {
     pub timeout_count: usize,
     #[serde(serialize_with = "hex")]
     pub active_sync_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub passive_sync_count: usize,
 }
 
 #[derive(Clone, Serialize)]

@@ -1192,6 +1192,7 @@ impl Sync {
                 block_downloads: self.blocks_downloaded,
                 buffered_blocks: self.in_pipeline,
                 active_sync_count: self.active_sync_count,
+                passive_sync_count: self.passive_sync_count,
             },
         }))
     }
