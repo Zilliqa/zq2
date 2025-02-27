@@ -97,7 +97,7 @@ fs_extra = "1.3.0"
 indicatif = "0.17.11"
 pprof = { version = "0.14.0", default-features = false, features = ["criterion", "flamegraph"] }
 primitive-types = { version = "0.12.2" }
-ureq = "3.0.5"
+ureq = "3.0.6"
 zilliqa = { path = ".", default-features = false, features = ["fake_response_channel", "fake_time"] }
 zilliqa-macros = { path = "../zilliqa-macros" }
 
