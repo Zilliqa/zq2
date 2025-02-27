@@ -16,11 +16,12 @@ use revm::{
 };
 use scilla_parser::{
     ast::nodes::{
-        NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey, NodeTypeMapValue,
-        NodeTypeMapValueAllowingTypeArguments, NodeTypeNameIdentifier,
+        NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
+        NodeTypeMapValue, NodeTypeMapValueAllowingTypeArguments, NodeTypeNameIdentifier,
     },
     parser::{lexer::Lexer, parser::ScillaTypeParser},
 };
+use tracing::trace;
 
 use crate::{
     cfg::scilla_ext_libs_path_default,
@@ -49,6 +50,27 @@ enum ScillaType {
     String,
 }
 
+impl ScillaType {
+    /// Returns the Scilla representation of this type, assuming it is a transition parameter. Note this may not be
+    /// exactly the same as the type in the contract (e.g. `ByStr20 with contract end` types are truncated to just
+    /// `ByStr20`).
+    fn param_type(&self) -> Option<&'static str> {
+        match self {
+            ScillaType::ByStr20 => Some("ByStr20"),
+            ScillaType::Int32 => Some("Int32"),
+            ScillaType::Int64 => Some("Int64"),
+            ScillaType::Int128 => Some("Int128"),
+            ScillaType::Int256 => Some("Int256"),
+            ScillaType::Uint32 => Some("Uint32"),
+            ScillaType::Uint64 => Some("Uint64"),
+            ScillaType::Uint128 => Some("Uint128"),
+            ScillaType::Uint256 => Some("Uint256"),
+            ScillaType::String => Some("String"),
+            ScillaType::Map(_, _) => None,
+        }
+    }
+}
+
 trait ToScillaType {
     fn to_scilla_type(self) -> Option<ScillaType>;
 }
@@ -61,6 +83,7 @@ impl ToScillaType for NodeScillaType {
                 ident.node.to_scilla_type()
             }
             NodeScillaType::EnclosedType(ty) => ty.node.to_scilla_type(),
+            NodeScillaType::ScillaAddresseType(ty) => ty.node.to_scilla_type(),
             _ => None,
         }
     }
@@ -105,31 +128,39 @@ impl ToScillaType for (NodeTypeMapKey, NodeTypeMapValue) {
 impl ToScillaType for NodeMetaIdentifier {
     fn to_scilla_type(self) -> Option<ScillaType> {
         match self {
-            NodeMetaIdentifier::MetaName(ty) => match ty.node {
-                NodeTypeNameIdentifier::ByteStringType(NodeByteStr::Type(s)) => {
-                    match s.node.as_str() {
-                        "ByStr20" => Some(ScillaType::ByStr20),
-                        _ => None,
-                    }
-                }
-                NodeTypeNameIdentifier::TypeOrEnumLikeIdentifier(ident) => {
-                    match ident.node.as_str() {
-                        "Int32" => Some(ScillaType::Int32),
-                        "Int64" => Some(ScillaType::Int64),
-                        "Int128" => Some(ScillaType::Int128),
-                        "Int256" => Some(ScillaType::Int256),
-                        "Uint32" => Some(ScillaType::Uint32),
-                        "Uint64" => Some(ScillaType::Uint64),
-                        "Uint128" => Some(ScillaType::Uint128),
-                        "Uint256" => Some(ScillaType::Uint256),
-                        "String" => Some(ScillaType::String),
-                        _ => None,
-                    }
-                }
+            NodeMetaIdentifier::MetaName(ty) => ty.node.to_scilla_type(),
+            _ => None,
+        }
+    }
+}
+
+impl ToScillaType for NodeTypeNameIdentifier {
+    fn to_scilla_type(self) -> Option<ScillaType> {
+        match self {
+            NodeTypeNameIdentifier::ByteStringType(NodeByteStr::Type(s)) => match s.node.as_str() {
+                "ByStr20" => Some(ScillaType::ByStr20),
+                _ => None,
+            },
+            NodeTypeNameIdentifier::TypeOrEnumLikeIdentifier(ident) => match ident.node.as_str() {
+                "Int32" => Some(ScillaType::Int32),
+                "Int64" => Some(ScillaType::Int64),
+                "Int128" => Some(ScillaType::Int128),
+                "Int256" => Some(ScillaType::Int256),
+                "Uint32" => Some(ScillaType::Uint32),
+                "Uint64" => Some(ScillaType::Uint64),
+                "Uint128" => Some(ScillaType::Uint128),
+                "Uint256" => Some(ScillaType::Uint256),
+                "String" => Some(ScillaType::String),
                 _ => None,
             },
             _ => None,
         }
+    }
+}
+
+impl ToScillaType for NodeAddressType {
+    fn to_scilla_type(self) -> Option<ScillaType> {
+        self.identifier.node.to_scilla_type()
     }
 }
 
@@ -180,19 +211,33 @@ fn get_indices(
 
 pub(crate) struct ScillaRead;
 
+#[track_caller]
 fn oog<T>() -> Result<T, PrecompileErrors> {
+    let location = std::panic::Location::caller();
+    trace!(%location, "scilla_call out of gas");
     Err(PrecompileErrors::Error(PrecompileError::OutOfGas))
 }
 
+#[track_caller]
 fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
+    let location = std::panic::Location::caller();
+    let message = message.into();
+    trace!(%location, message, "scilla_call failed");
     Err(err_inner(message))
 }
 
+#[track_caller]
 fn err_inner(message: impl Into<String>) -> PrecompileErrors {
+    let location = std::panic::Location::caller();
+    let message = message.into();
+    trace!(%location, message, "scilla_call failed");
     PrecompileErrors::Error(PrecompileError::other(message))
 }
 
+#[track_caller]
 fn fatal<T>(message: &'static str) -> Result<T, PrecompileErrors> {
+    let location = std::panic::Location::caller();
+    trace!(%location, message, "scilla_call failed");
     Err(PrecompileErrors::Fatal {
         msg: message.to_owned(),
     })
@@ -487,6 +532,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
     } else {
         return err("call mode should be either 0 or 1");
     };
+    trace!(%address, transition, %keep_origin, "scilla_call");
 
     let account = match evmctx.db.pre_state.get_account(address) {
         Ok(account) => account,
@@ -517,6 +563,9 @@ fn scilla_call_precompile<I: ScillaInspector>(
             let Some(ty) = parsed.node.to_scilla_type() else {
                 return err(format!("unsupported scilla type: {}", param.ty));
             };
+            let Some(param_type) = ty.param_type() else {
+                return err(format!("unexpected scilla type as a parameter: {ty:?}"));
+            };
 
             let Ok(value) = read_index(ty, &mut decoder) else {
                 return fatal("failed to get value");
@@ -524,7 +573,8 @@ fn scilla_call_precompile<I: ScillaInspector>(
             let Ok(value) = serde_json::from_slice::<serde_json::Value>(&value) else {
                 return fatal("failed to parse value");
             };
-            let param = serde_json::json!({"vname": param.name, "type": param.ty, "value": value});
+            let param =
+                serde_json::json!({"vname": param.name, "type": param_type, "value": value});
 
             Ok(param)
         })
@@ -570,6 +620,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
     ) else {
         return fatal("scilla call failed");
     };
+    trace!(?result, "scilla_call complete");
     if !&result.success {
         if result.errors.values().any(|errs| {
             errs.iter()
