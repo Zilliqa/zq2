@@ -178,6 +178,7 @@ enum BlockFilter {
     View(u64),
     Height(u64),
     MaxHeight,
+    MinHeight,
 }
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -1041,6 +1042,9 @@ impl Db {
             BlockFilter::MaxHeight => {
                 query_block!("TRUE ORDER BY height DESC LIMIT 1")
             }
+            BlockFilter::MinHeight => {
+                query_block!("TRUE ORDER BY height ASC LIMIT 1")
+            }   
         })
     }
 
@@ -1073,6 +1077,10 @@ impl Db {
 
     pub fn get_highest_recorded_block(&self) -> Result<Option<Block>> {
         self.get_block(BlockFilter::MaxHeight)
+    }
+
+    pub fn get_lowest_recorded_block(&self) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::MinHeight)
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {

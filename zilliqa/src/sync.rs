@@ -206,6 +206,9 @@ impl Sync {
                 SyncState::Active2(_) => {
                     self.handle_multiblock_response(from, None)?;
                 }
+                SyncState::Passive1(_) => {
+                    self.handle_metadata_response(from, None)?;
+                }
                 _ => {}
             }
         }
@@ -245,18 +248,19 @@ impl Sync {
                     // Ensure started_at_block_number is set before running this.
                     // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
                     let meta = self.recent_proposals.back().unwrap().header;
-                    self.request_missing_metadata(Some(meta))?;
+                    self.request_active_headers(Some(meta))?;
                 } else {
                     // Parent block exists, try PASSIVE-SYNC
                     self.passive_sync_count += self.passive_sync_count.saturating_add(1);
                     tracing::debug!("sync::DoSync : passive-sync",);
+                    self.request_passive_headers()?;
                 }
             }
             // Continue phase 1, until we hit history/genesis.
             SyncState::Active1(_)
                 if self.in_pipeline < self.max_batch_size && self.in_flight.is_empty() =>
             {
-                self.request_missing_metadata(None)?;
+                self.request_active_headers(None)?;
             }
             // Continue phase 2, until we have all segments.
             SyncState::Active2(_)
@@ -589,7 +593,9 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<SyncBlockHeader>>,
     ) -> Result<()> {
-        let SyncState::Active1(_) = &self.state else {
+        if !matches!(self.state, SyncState::Active1(_))
+            && !matches!(self.state, SyncState::Passive1(_))
+        {
             tracing::warn!("sync::MetadataResponse : dropped response {from}");
             return Ok(());
         };
@@ -660,8 +666,10 @@ impl Sync {
         segment_peer: PeerInfo,
         response: Vec<SyncBlockHeader>,
     ) -> Result<()> {
-        let SyncState::Active1(meta) = &self.state else {
-            anyhow::bail!("sync::DoMetadataResponse : invalid state");
+        let meta = match self.state {
+            SyncState::Active1(meta) => meta,
+            SyncState::Passive1(meta) => meta,
+            _ => anyhow::bail!("sync::DoMetadataResponse : invalid state"),
         };
 
         if response.is_empty() {
@@ -697,7 +705,7 @@ impl Sync {
         self.db.insert_sync_metadata(&segment)?;
 
         // Record landmark(s), including peer that has this set of blocks
-        self.db.push_sync_segment(&segment_peer, meta)?;
+        self.db.push_sync_segment(&segment_peer, &meta)?;
 
         // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
         let mut block_size = 0;
@@ -721,23 +729,34 @@ impl Sync {
             self.db.push_sync_segment(&segment_peer, header)?;
         }
 
-        // Record the oldest block in the segment
-        self.state = SyncState::Active1(segment.last().cloned().unwrap());
-
         // If the check-point/starting-point is in this segment
-        let checkpointed = segment.last().as_ref().unwrap().number <= self.checkpoint_at;
+        let turnaround = segment.last().as_ref().unwrap().number <= self.checkpoint_at;
         let block_hash = segment.last().as_ref().unwrap().hash;
 
-        // If the segment hits our history, turnaround to Phase 2.
-        if checkpointed || self.db.contains_block(&block_hash)? {
-            self.state = SyncState::Active2((Hash::ZERO, Range::default()));
-            // drop all pending requests
-            for p in self.in_flight.drain(..) {
-                self.peers.done_with_peer(Some(p), DownGrade::None);
+        match self.state {
+            SyncState::Active1(_) => {
+                if turnaround || self.db.contains_block(&block_hash)? {
+                    // If the segment hits our history, turnaround to Phase 2.
+                    self.state = SyncState::Active2((Hash::ZERO, Range::default()));
+                    // drop all pending requests
+                    for p in self.in_flight.drain(..) {
+                        self.peers.done_with_peer(Some(p), DownGrade::None);
+                    }
+                } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
+                    // Request next set of headers
+                    self.state = SyncState::Active1(*segment.last().unwrap());
+                    self.p1_response.clear();
+                    self.request_active_headers(None)?;
+                } else {
+                    // Wait for pending response
+                    self.state = SyncState::Active1(*segment.last().unwrap());
+                }
             }
-        } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
-            self.p1_response.clear();
-            self.request_missing_metadata(None)?;
+            SyncState::Passive1(_) => {
+                // always turnaround, even if there is only a partial range of headers
+                self.state = SyncState::Passive2((Hash::ZERO, Range::default()));
+            }
+            _ => unimplemented!(), // never happens
         }
 
         Ok(())
@@ -799,20 +818,50 @@ impl Sync {
         Ok(message)
     }
 
-    /// Phase 1: Request chain metadata from a peer.
+    /// Passive Phase 1: Request headers from a peer.
+    ///
+    /// This is similar to `request_active_headers`, but is used in passive-syncing.
+    fn request_passive_headers(&mut self) -> Result<()> {
+        if !matches!(self.state, SyncState::Start) {
+            anyhow::bail!("sync::PassiveHeaders : invalid state");
+        }
+
+        // Early exit if there's a request in-flight; and if it has not expired.
+        if !self.in_flight.is_empty() {
+            tracing::warn!("sync::PassiveHeaders : syncing");
+            return Ok(());
+        }
+
+        // Unlike active sync, passive sync should run in a lower priority than other node work.
+        // Therefore, it does not need to be aggressive like active sync.
+        let Some(lowest_block) = self.db.get_lowest_recorded_block()? else {
+            unimplemented!("the DB is empty!");
+        };
+
+        // When restoring from a checkpoint, passive-sync does not run. Safe to repurpose.
+        self.checkpoint_at = lowest_block
+            .number()
+            .saturating_sub(self.max_batch_size as u64);
+        self.started_at = lowest_block.number();
+
+        self.state = SyncState::Passive1(lowest_block.header);
+        self.do_missing_metadata(None, 1)
+    }
+
+    /// Active Phase 1: Request chain headers from peers.
     ///
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If Phase 1 is in progress, it continues requesting blocks from the last known Phase 1 block.
     /// Otherwise, it requests blocks from the given starting metadata.
-    pub fn request_missing_metadata(&mut self, meta: Option<BlockHeader>) -> Result<()> {
+    fn request_active_headers(&mut self, meta: Option<BlockHeader>) -> Result<()> {
         if !matches!(self.state, SyncState::Active1(_)) && !matches!(self.state, SyncState::Start) {
-            anyhow::bail!("sync::RequestMissingMetadata : invalid state");
+            anyhow::bail!("sync::ActiveHeaders : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
         if !self.in_flight.is_empty() || self.in_pipeline > self.max_batch_size {
             // anything more than this and we cannot be sure whether the segment hits history
             tracing::debug!(
-                "sync::RequestMissingMetadata : syncing {}/{} blocks",
+                "sync::ActiveHeaders : syncing {}/{} blocks",
                 self.in_pipeline,
                 self.max_batch_size
             );
@@ -825,14 +874,14 @@ impl Sync {
             self.peers.count_good_peers().saturating_sub(1) // leave one spare, for handling issues
         };
         if good_set == 0 {
-            tracing::warn!("sync::RequestMissingMetadata : no good peers to handle request");
+            tracing::warn!("sync::ActiveHeaders : no good peers to handle request");
             return Ok(());
         }
 
         self.do_missing_metadata(meta, good_set)
     }
 
-    /// Phase 1: Request chain metadata from a peer.
+    /// Phase 1: Request chain headers from N peers.
     ///
     /// This fires concurrent requests to N peers, to fetch different segments of chain metadata.
     /// The number of requests is limited by:
@@ -840,13 +889,37 @@ impl Sync {
     /// - hitting the starting point
     /// - encountering a V1 peer
     fn do_missing_metadata(&mut self, meta: Option<BlockHeader>, num_peers: usize) -> Result<()> {
-        if !matches!(self.state, SyncState::Active1(_)) && !matches!(self.state, SyncState::Start) {
+        if !matches!(self.state, SyncState::Active1(_))
+            && !matches!(self.state, SyncState::Start)
+            && !matches!(self.state, SyncState::Passive1(_))
+        {
             anyhow::bail!("sync::DoMissingMetadata : invalid state");
         }
         let mut offset = u64::MIN;
         for num in 1..=num_peers {
             if let Some(peer_info) = self.peers.get_next_peer() {
                 let (message, done, range) = match (&self.state, &peer_info.version) {
+                    (
+                        SyncState::Passive1(BlockHeader {
+                            number: block_number,
+                            ..
+                        }),
+                        PeerVer::V2,
+                    ) => {
+                        let range = Range {
+                            start: block_number
+                                .saturating_sub(offset)
+                                .saturating_sub(self.max_batch_size as u64)
+                                .max(self.checkpoint_at),
+                            end: block_number.saturating_sub(offset).saturating_sub(1),
+                        };
+                        let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
+                            request_at: SystemTime::now(),
+                            to_height: range.end,
+                            from_height: range.start,
+                        });
+                        (message, range.start <= self.started_at, range)
+                    }
                     (
                         SyncState::Active1(BlockHeader {
                             number: block_number,
@@ -886,7 +959,9 @@ impl Sync {
                         });
                         (message, range.start <= self.started_at, range)
                     }
-                    (SyncState::Start, PeerVer::V1) | (SyncState::Active1(_), PeerVer::V1) => {
+                    (SyncState::Start, PeerVer::V1)
+                    | (SyncState::Active1(_), PeerVer::V1)
+                    | (SyncState::Passive1(_), PeerVer::V1) => {
                         // Fire a V1 query as a V2 negotiation/hello.
                         if let Some(meta) = meta {
                             self.state = SyncState::Active1(meta);
@@ -1211,25 +1286,25 @@ impl PartialOrd for DownGrade {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 enum SyncState {
-    Start,                       // initial state
-    Active1(BlockHeader),        // active-sync, fetching metadata
-    Active2((Hash, Range<u64>)), // active-sync, fetching blocks
-    Active3,                     // active-sync, finishing up
-    ActiveR,                     // active-sync, retrying a segment
-    Passive1,                    // passive-sync, fetching metadata
-    Passive2,                    // passive-sync, fetching blocks
+    Start,                        // initial state
+    Active1(BlockHeader),         // active-sync, fetching metadata
+    Active2((Hash, Range<u64>)),  // active-sync, fetching blocks
+    Active3,                      // active-sync, finishing up
+    ActiveR,                      // active-sync, retrying a segment
+    Passive1(BlockHeader),        // passive-sync, fetching metadata
+    Passive2((Hash, Range<u64>)), // passive-sync, fetching blocks
 }
 
 impl std::fmt::Display for SyncState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SyncState::Start => write!(f, "start"),
-            SyncState::Active1(_) => write!(f, "active1"),
-            SyncState::Active2(_) => write!(f, "active2"),
-            SyncState::Active3 => write!(f, "active3"),
-            SyncState::ActiveR => write!(f, "activeR"),
-            SyncState::Passive1 => write!(f, "passive1"),
-            SyncState::Passive2 => write!(f, "passive2"),
+            SyncState::Active1(_) => write!(f, "active_headers"),
+            SyncState::Active2(_) => write!(f, "active_blocks"),
+            SyncState::Active3 => write!(f, "active_cache"),
+            SyncState::ActiveR => write!(f, "active_retry"),
+            SyncState::Passive1(_) => write!(f, "passive_headers"),
+            SyncState::Passive2(_) => write!(f, "passive_blocks"),
         }
     }
 }
