@@ -2160,6 +2160,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "crypto-bigint"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96272c2ff28b807e09250b180ad1fb7889a3258f7455759b5c3c58b719467130"
+dependencies = [
+ "num-traits",
+ "rand_core",
+ "subtle",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2571,7 +2582,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47"
 dependencies = [
  "base16ct",
- "crypto-bigint",
+ "crypto-bigint 0.5.5",
  "digest 0.10.7",
  "ff",
  "generic-array 0.14.7",
@@ -9710,7 +9721,7 @@ version = "4.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fabeca519a296f0b39428cfe496b600c0179c9498687986449d61fa40e60806"
 dependencies = [
- "crypto-bigint",
+ "crypto-bigint 0.5.5",
  "elliptic-curve",
  "generic-array 1.2.0",
  "rand_core",
@@ -10397,7 +10408,7 @@ dependencies = [
  "clap-verbosity-flag",
  "cliclack",
  "colored",
- "crypto-bigint",
+ "crypto-bigint 0.6.1",
  "env_logger",
  "eth_trie",
  "ethabi",
@@ -10549,7 +10560,7 @@ dependencies = [
  "cfg-if",
  "clap",
  "criterion",
- "crypto-bigint",
+ "crypto-bigint 0.6.1",
  "eth_trie",
  "ethabi",
  "ethers",
