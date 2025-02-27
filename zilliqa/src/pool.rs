@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet, HashMap},
+    time::Duration,
 };
 
 use alloy::primitives::Address;
@@ -8,14 +9,17 @@ use anyhow::{anyhow, Result};
 use tracing::debug;
 
 use crate::{
+    cfg::TxnPoolConfig,
     crypto::Hash,
+    pool::TxAddResult::ValidationFailed,
     state::State,
+    time::SystemTime,
     transaction::{SignedTransaction, ValidationOutcome, VerifiedTransaction},
 };
 
 /// The result of trying to add a transaction to the mempool. The argument is
 /// a human-readable string to be returned to the user.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TxAddResult {
     /// Transaction was successfully added to the mempool
     AddedToMempool,
@@ -84,8 +88,9 @@ type GasCollection = BTreeMap<u128, BTreeSet<TxIndex>>;
 /// A pool that manages uncommitted transactions.
 ///
 /// It provides transactions to the chain via [`TransactionPool::best_transaction`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TransactionPool {
+    config: TxnPoolConfig,
     /// All transactions in the pool. These transactions are all valid, or might become
     /// valid at some point in the future.
     transactions: BTreeMap<TxIndex, VerifiedTransaction>,
@@ -95,6 +100,23 @@ pub struct TransactionPool {
     /// Keeps transactions sorted by gas_price, each gas_price index can contain more than one txn
     /// These are candidates to be included in the next block
     gas_index: GasCollection,
+    /// Tracks number of transactions per sender
+    sender_txn_counter: HashMap<Address, u64>,
+    /// Keeps track of timestamp and txn hash when transaction was added
+    insertion_times: BTreeSet<(SystemTime, Hash)>,
+}
+
+impl TransactionPool {
+    pub fn new(config: TxnPoolConfig) -> Self {
+        Self {
+            config,
+            transactions: BTreeMap::new(),
+            hash_to_index: BTreeMap::new(),
+            gas_index: GasCollection::new(),
+            sender_txn_counter: HashMap::new(),
+            insertion_times: BTreeSet::new(),
+        }
+    }
 }
 
 /// A wrapper for (gas price, sender, nonce), stored in the `ready` heap of [TransactionPool].
@@ -278,6 +300,7 @@ impl TransactionPool {
         &mut self,
         txn: VerifiedTransaction,
         account_nonce: u64,
+        now: SystemTime,
     ) -> TxAddResult {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             debug!("Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
@@ -286,7 +309,8 @@ impl TransactionPool {
             return TxAddResult::NonceTooLow(txn.tx.nonce().unwrap(), account_nonce);
         }
 
-        if let Some(existing_txn) = self.transactions.get(&txn.mempool_index()) {
+        let is_replacement = if let Some(existing_txn) = self.transactions.get(&txn.mempool_index())
+        {
             // Only proceed if the new transaction is better. Note that if they are
             // equally good, we prioritise the existing transaction to avoid the need
             // to broadcast a new transaction to the network.
@@ -302,6 +326,35 @@ impl TransactionPool {
             Self::remove_from_gas_index(&mut self.gas_index, existing_txn);
             // Remove the existing transaction from `hash_to_index` if we're about to replace it.
             self.hash_to_index.remove(&existing_txn.hash);
+            // Decrease the count of transactions tracked by this sender
+            self.decrease_counter_for_user(existing_txn.signer);
+            true
+        } else {
+            false
+        };
+
+        // If it's a transaction that will increase the count in the pool
+        if !is_replacement {
+            // Check global counter
+            if self.transactions.len() + 1 > self.config.maximum_global_size as usize {
+                return ValidationFailed(ValidationOutcome::GlobalTransactionCountExceeded);
+            }
+            // Check total number of slots for senders
+            if !self.sender_txn_counter.contains_key(&txn.signer)
+                && self.sender_txn_counter.len() + 1
+                    > self.config.total_slots_for_all_senders as usize
+            {
+                return ValidationFailed(ValidationOutcome::TotalNumberOfSlotsExceeded);
+            }
+            // Check per sender counter
+            let sender_counter = self
+                .sender_txn_counter
+                .get(&txn.signer)
+                .copied()
+                .unwrap_or_default();
+            if sender_counter + 1 > self.config.maximum_txn_count_per_sender {
+                return ValidationFailed(ValidationOutcome::TransactionCountExceededForSender);
+            }
         }
 
         // If this transaction either has a nonce equal to the account's current nonce,
@@ -313,8 +366,11 @@ impl TransactionPool {
 
         debug!("Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
 
+        // Increase the counter for a sender
+        *self.sender_txn_counter.entry(txn.signer).or_insert(0) += 1;
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
+        self.insertion_times.insert((now, txn.hash));
         self.transactions.insert(txn.mempool_index(), txn);
         TxAddResult::AddedToMempool
     }
@@ -377,6 +433,7 @@ impl TransactionPool {
             Self::remove_from_gas_index(&mut self.gas_index, txn);
         }
 
+        *self.sender_txn_counter.entry(txn.signer).or_insert(0) += 1;
         Self::add_to_gas_index(&mut self.gas_index, &txn);
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
         self.transactions.insert(txn.mempool_index(), txn);
@@ -398,9 +455,44 @@ impl TransactionPool {
         self.hash_to_index.remove(&txn.hash);
         Self::remove_from_gas_index(&mut self.gas_index, txn);
 
+        self.decrease_counter_for_user(txn.signer);
         if let Some(next) = tx_index.next().and_then(|idx| self.transactions.get(&idx)) {
             Self::add_to_gas_index(&mut self.gas_index, next);
         }
+    }
+
+    fn decrease_counter_for_user(&mut self, sender: Address) {
+        if let Some(counter) = self.sender_txn_counter.get_mut(&sender) {
+            *counter = counter.saturating_sub(1);
+            if *counter == 0 {
+                self.sender_txn_counter.remove(&sender);
+            }
+        }
+    }
+
+    /// Remove expired transactions
+    pub fn remove_expired(&mut self, now: SystemTime) -> Result<()> {
+        let cutoff = now
+            .checked_sub(Duration::from_secs(
+                3600 * self.config.remove_expired_txns_after_hrs,
+            ))
+            .ok_or(anyhow!("Error while calculating cutoff point"))?;
+        let expired_items = self
+            .insertion_times
+            .iter()
+            .take_while(|(insertion_time, _)| insertion_time < &cutoff)
+            .cloned()
+            .collect::<Vec<_>>();
+        for expired in expired_items {
+            self.insertion_times.remove(&expired);
+            if let Some(tx_index) = self.hash_to_index.get(&expired.1) {
+                if let Some(txn) = self.transactions.remove(tx_index) {
+                    self.mark_executed(&txn);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Clear the transaction pool, returning all remaining transactions in an unspecified order.
@@ -418,7 +510,7 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::{ops::Add, path::PathBuf, sync::Arc, time::Duration};
 
     use alloy::{
         consensus::TxLegacy,
@@ -427,13 +519,16 @@ mod tests {
     use anyhow::Result;
     use rand::{seq::SliceRandom, thread_rng};
 
-    use super::TransactionPool;
+    use super::{TransactionPool, TxAddResult};
     use crate::{
-        cfg::NodeConfig,
+        cfg::{NodeConfig, TxnPoolConfig},
         crypto::Hash,
         db::Db,
         state::State,
-        transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
+        time::SystemTime,
+        transaction::{
+            EvmGas, SignedTransaction, TxIntershard, ValidationOutcome, VerifiedTransaction,
+        },
     };
 
     fn transaction(from_addr: Address, nonce: u8, gas_price: u128) -> VerifiedTransaction {
@@ -500,21 +595,31 @@ mod tests {
         state.save_account(address, acc)
     }
 
+    fn get_pool() -> TransactionPool {
+        let config = TxnPoolConfig {
+            maximum_txn_count_per_sender: 5,
+            maximum_global_size: 10,
+            total_slots_for_all_senders: 5,
+            remove_expired_txns_after_hrs: 24,
+        };
+        TransactionPool::new(config)
+    }
+
     #[test]
     fn nonces_returned_in_order() -> Result<()> {
-        let mut pool = TransactionPool::default();
+        let mut pool = get_pool();
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 1, 1), 0);
+        pool.insert_transaction(transaction(from, 1, 1), 0, SystemTime::now());
 
         let tx = pool.best_transaction(&state)?;
         assert_eq!(tx, None);
 
-        pool.insert_transaction(transaction(from, 2, 2), 0);
-        pool.insert_transaction(transaction(from, 0, 0), 0);
+        pool.insert_transaction(transaction(from, 2, 2), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 0, 0), 0, SystemTime::now());
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
@@ -545,20 +650,24 @@ mod tests {
 
     #[test]
     fn nonces_returned_in_order_same_gas() -> Result<()> {
-        let mut pool = TransactionPool::default();
+        let mut pool = get_pool();
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        const COUNT: u64 = 100;
+        const COUNT: u64 = 5;
 
         let mut nonces = (0..COUNT).collect::<Vec<_>>();
         let mut rng = thread_rng();
         nonces.shuffle(&mut rng);
 
         for i in 0..COUNT {
-            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), 0);
+            pool.insert_transaction(
+                transaction(from, nonces[i as usize] as u8, 3),
+                0,
+                SystemTime::now(),
+            );
         }
 
         for i in 0..COUNT {
@@ -575,7 +684,7 @@ mod tests {
 
     #[test]
     fn ordered_by_gas_price() -> Result<()> {
-        let mut pool = TransactionPool::default();
+        let mut pool = get_pool();
         let from1 = "0x0000000000000000000000000000000000000001".parse()?;
         let from2 = "0x0000000000000000000000000000000000000002".parse()?;
         let from3 = "0x0000000000000000000000000000000000000003".parse()?;
@@ -585,11 +694,11 @@ mod tests {
         create_acc(&mut state, from2, 100, 0)?;
         create_acc(&mut state, from3, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 1), 0);
-        pool.insert_transaction(transaction(from1, 0, 2), 0);
-        pool.insert_transaction(transaction(from2, 0, 3), 0);
-        pool.insert_transaction(transaction(from3, 0, 0), 0);
-        pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
+        pool.insert_transaction(intershard_transaction(0, 0, 1), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from1, 0, 2), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from2, 0, 3), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from3, 0, 0), 0, SystemTime::now());
+        pool.insert_transaction(intershard_transaction(0, 1, 5), 0, SystemTime::now());
         assert_eq!(pool.transactions.len(), 5);
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
@@ -618,14 +727,14 @@ mod tests {
 
     #[test]
     fn update_nonce_discards_invalid_transaction() -> Result<()> {
-        let mut pool = TransactionPool::default();
+        let mut pool = get_pool();
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 0), 0);
-        pool.insert_transaction(transaction(from, 1, 0), 0);
+        pool.insert_transaction(transaction(from, 0, 0), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 1, 0), 0, SystemTime::now());
 
         pool.mark_executed(&transaction(from, 0, 0));
         state.mutate_account(from, |acc| {
@@ -642,14 +751,14 @@ mod tests {
 
     #[test]
     fn too_expensive_tranactions_are_not_proposed() -> Result<()> {
-        let mut pool = TransactionPool::default();
+        let mut pool = get_pool();
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 1), 0);
-        pool.insert_transaction(transaction(from, 1, 200), 0);
+        pool.insert_transaction(transaction(from, 0, 1), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 1, 200), 0, SystemTime::now());
 
         assert_eq!(
             pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
@@ -678,18 +787,18 @@ mod tests {
 
     #[test]
     fn preview_content_test() -> Result<()> {
-        let mut pool = TransactionPool::default();
+        let mut pool = get_pool();
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 100), 0);
-        pool.insert_transaction(transaction(from, 0, 1), 0);
-        pool.insert_transaction(transaction(from, 1, 1), 1);
-        pool.insert_transaction(transaction(from, 2, 1), 2);
-        pool.insert_transaction(transaction(from, 3, 200), 3);
-        pool.insert_transaction(transaction(from, 10, 1), 3);
+        pool.insert_transaction(intershard_transaction(0, 0, 100), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 0, 1), 0, SystemTime::now());
+        pool.insert_transaction(transaction(from, 1, 1), 1, SystemTime::now());
+        pool.insert_transaction(transaction(from, 2, 1), 2, SystemTime::now());
+        pool.insert_transaction(transaction(from, 3, 200), 3, SystemTime::now());
+        pool.insert_transaction(transaction(from, 10, 1), 3, SystemTime::now());
 
         let content = pool.preview_content(&state)?;
 
@@ -701,6 +810,189 @@ mod tests {
         assert_eq!(content.queued.len(), 2);
         assert_eq!(content.queued[0].tx.nonce().unwrap(), 3);
         assert_eq!(content.queued[1].tx.nonce().unwrap(), 10);
+
+        Ok(())
+    }
+
+    #[test]
+    fn global_counter_exceeded() -> Result<()> {
+        let mut pool = get_pool();
+
+        let mut state = get_in_memory_state()?;
+
+        const COUNT: usize = 5;
+
+        let addresses = std::iter::repeat_with(|| Address::random())
+            .take(COUNT)
+            .collect::<Vec<_>>();
+
+        for address in addresses.iter() {
+            create_acc(&mut state, *address, 100, 0)?;
+            for nonce in 0..2 {
+                assert_eq!(
+                    TxAddResult::AddedToMempool,
+                    pool.insert_transaction(transaction(*address, nonce, 1), 0, SystemTime::now())
+                );
+            }
+        }
+
+        // Can't add the following one due to global limit being exceeded
+        let rand_addr = Address::random();
+        create_acc(&mut state, rand_addr, 100, 0)?;
+        assert_eq!(
+            TxAddResult::ValidationFailed(ValidationOutcome::GlobalTransactionCountExceeded),
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, SystemTime::now())
+        );
+
+        // Remove all txns sent by one sender
+        pool.mark_executed(&transaction(addresses[0], 0, 1));
+        pool.mark_executed(&transaction(addresses[0], 1, 1));
+        // And try to insert again - it should succeed
+        assert_eq!(
+            TxAddResult::AddedToMempool,
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, SystemTime::now())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn per_sender_counter_exceeded() -> Result<()> {
+        let mut pool = get_pool();
+
+        let mut state = get_in_memory_state()?;
+
+        const COUNT: u8 = 5;
+
+        let address = Address::random();
+        create_acc(&mut state, address, 100, 0)?;
+
+        for nonce in 0..COUNT {
+            assert_eq!(
+                TxAddResult::AddedToMempool,
+                pool.insert_transaction(transaction(address, nonce, 1), 0, SystemTime::now())
+            );
+        }
+
+        // Can't add the following one due to per user limit being exceeded
+        assert_eq!(
+            TxAddResult::ValidationFailed(ValidationOutcome::TransactionCountExceededForSender),
+            pool.insert_transaction(transaction(address, COUNT, 1), 0, SystemTime::now())
+        );
+
+        // Remove a single txn
+        pool.mark_executed(&transaction(address, 0, 1));
+        // And try to insert again - it should succeed
+        assert_eq!(
+            TxAddResult::AddedToMempool,
+            pool.insert_transaction(transaction(address, COUNT, 1), 0, SystemTime::now())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn replacement_not_affect_counter() -> Result<()> {
+        let mut pool = get_pool();
+
+        let mut state = get_in_memory_state()?;
+
+        const COUNT: u8 = 5;
+
+        let address = Address::random();
+        create_acc(&mut state, address, 100, 0)?;
+
+        for nonce in 0..COUNT {
+            assert_eq!(
+                TxAddResult::AddedToMempool,
+                pool.insert_transaction(transaction(address, nonce, 1), 0, SystemTime::now())
+            );
+        }
+
+        // Can't add the following one due to per user limit being exceeded
+        assert_eq!(
+            TxAddResult::ValidationFailed(ValidationOutcome::TransactionCountExceededForSender),
+            pool.insert_transaction(transaction(address, COUNT, 1), 0, SystemTime::now())
+        );
+
+        // Try replacing existing one with higher gas price
+        assert_eq!(
+            TxAddResult::AddedToMempool,
+            pool.insert_transaction(transaction(address, 0, 2), 0, SystemTime::now())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn total_slots_per_senders_exceeded() -> Result<()> {
+        let mut pool = get_pool();
+
+        let mut state = get_in_memory_state()?;
+
+        const COUNT: usize = 5;
+
+        let addresses = std::iter::repeat_with(|| Address::random())
+            .take(COUNT)
+            .collect::<Vec<_>>();
+
+        for address in addresses.iter() {
+            create_acc(&mut state, *address, 100, 0)?;
+            assert_eq!(
+                TxAddResult::AddedToMempool,
+                pool.insert_transaction(transaction(*address, 0, 1), 0, SystemTime::now())
+            );
+        }
+
+        // Can't add the following one due to total number of slots per all senders being exceeded
+        let rand_addr = Address::random();
+        create_acc(&mut state, rand_addr, 100, 0)?;
+        assert_eq!(
+            TxAddResult::ValidationFailed(ValidationOutcome::TotalNumberOfSlotsExceeded),
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, SystemTime::now())
+        );
+
+        // Remove a single txn
+        pool.mark_executed(&transaction(addresses[0], 0, 1));
+        // And try to insert again - it should succeed
+        assert_eq!(
+            TxAddResult::AddedToMempool,
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, SystemTime::now())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn expired_txns_are_removed() -> Result<()> {
+        let mut pool = get_pool();
+        let from = "0x0000000000000000000000000000000000001234".parse()?;
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 100, 0)?;
+
+        let now = SystemTime::UNIX_EPOCH;
+
+        pool.insert_transaction(transaction(from, 0, 1), 0, now);
+
+        let tx = pool.best_transaction(&state)?;
+        assert!(tx.is_some());
+
+        let cutoff_time = now.add(Duration::from_secs(3601 * 24));
+
+        pool.insert_transaction(
+            transaction(from, 1, 1),
+            0,
+            cutoff_time.add(Duration::from_secs(1)),
+        );
+
+        pool.remove_expired(cutoff_time)?;
+
+        assert_eq!(pool.transactions.len(), 1);
+
+        pool.remove_expired(cutoff_time.add(Duration::from_secs(3601 * 24)))?;
+
+        assert_eq!(pool.transactions.len(), 0);
 
         Ok(())
     }
