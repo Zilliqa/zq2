@@ -101,8 +101,6 @@ pub struct Block {
     pub quorum_certificate: QuorumCertificate,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate_quorum_certificate: Option<AggregateQc>,
-    #[serde(serialize_with = "hex")]
-    pub logs_bloom: [u8; 256],
 }
 
 impl Block {
@@ -113,7 +111,7 @@ impl Block {
         logs_bloom: [u8; 256],
     ) -> Self {
         Block {
-            header: Header::from_header(block.header, miner, block_gas_limit),
+            header: Header::from_header(block.header, miner, block_gas_limit, logs_bloom),
             size: block.size() as u64,
             transactions: block
                 .transactions
@@ -123,7 +121,6 @@ impl Block {
             uncles: vec![], // Uncles do not exist in ZQ2
             quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
-            logs_bloom,
         }
     }
 }
@@ -165,6 +162,8 @@ pub struct Header {
     pub timestamp: u64,
     #[serde(serialize_with = "hex")]
     pub mix_hash: B256,
+    #[serde(serialize_with = "hex")]
+    pub logs_bloom: [u8; 256],
 }
 
 impl Header {
@@ -172,6 +171,7 @@ impl Header {
         header: message::BlockHeader,
         miner: Address,
         block_gas_limit: EvmGas,
+        logs_bloom: [u8; 256],
     ) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
@@ -196,6 +196,7 @@ impl Header {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            logs_bloom,
         }
     }
 }
