@@ -171,6 +171,12 @@ impl Sync {
                 SyncState::Active2(_) => {
                     self.handle_multiblock_response(from, Some(vec![]))?;
                 }
+                SyncState::Passive1(_) => {
+                    self.handle_metadata_response(from, Some(vec![]))?;
+                }
+                SyncState::Passive2(_) => {
+                    self.handle_multiblock_response(from, Some(vec![]))?;
+                }
                 _ => {}
             }
         }
@@ -208,6 +214,9 @@ impl Sync {
                 }
                 SyncState::Passive1(_) => {
                     self.handle_metadata_response(from, None)?;
+                }
+                SyncState::Passive2(_) => {
+                    self.handle_multiblock_response(from, None)?;
                 }
                 _ => {}
             }
@@ -290,9 +299,14 @@ impl Sync {
                 // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
             }
-            _ => {
-                tracing::debug!("sync::DoSync : syncing {} blocks", self.in_pipeline);
+            SyncState::Passive2(_) if self.in_flight.is_empty() => {
+                self.request_missing_blocks()?;
             }
+            SyncState::Passive3 if self.in_flight.is_empty() => {
+                self.db.empty_sync_metadata()?;
+                self.state = SyncState::Start;
+            }
+            _ => {}
         }
 
         Ok(())
@@ -367,7 +381,9 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<Proposal>>,
     ) -> Result<()> {
-        let SyncState::Active2(_) = &self.state else {
+        if !matches!(self.state, SyncState::Active2(_))
+            && !matches!(self.state, SyncState::Passive2(_))
+        {
             tracing::warn!("sync::MultiBlockResponse : dropped response {from}");
             return Ok(());
         };
@@ -379,8 +395,10 @@ impl Sync {
         // Only process a full response
         if let Some(response) = response {
             if !response.is_empty() {
-                let SyncState::Active2((_, range)) = &self.state else {
-                    unimplemented!("sync:MultiBlockResponse");
+                let range = match &self.state {
+                    SyncState::Active2((_, range)) => range,
+                    SyncState::Passive2((_, range)) => range,
+                    _ => unreachable!(),
                 };
                 tracing::info!(?range, %from,
                     "sync::MultiBlockResponse : received",
@@ -402,13 +420,23 @@ impl Sync {
                 .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
         }
         // failure fall-thru
-        self.state = SyncState::ActiveR;
+        match self.state {
+            SyncState::Active2(_) => {
+                self.state = SyncState::ActiveR;
+            }
+            SyncState::Passive2(_) => {
+                self.state = SyncState::Passive3;
+            }
+            _ => unreachable!(),
+        }
         Ok(())
     }
 
     fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<()> {
-        let SyncState::Active2((check_sum, _)) = self.state else {
-            anyhow::bail!("sync::MultiBlockResponse : invalid state");
+        let check_sum = match self.state {
+            SyncState::Active2((check_sum, _)) => check_sum,
+            SyncState::Passive2((check_sum, _)) => check_sum,
+            _ => unreachable!(),
         };
 
         // If the checksum does not match, retry phase 1. Maybe the node has pruned the segment.
@@ -488,8 +516,10 @@ impl Sync {
     /// This is phase 2 of the syncing algorithm.
     /// ** MAKE ONLY ONE REQUEST AT A TIME **
     fn request_missing_blocks(&mut self) -> Result<()> {
-        if !matches!(self.state, SyncState::Active2(_)) {
-            anyhow::bail!("sync::MissingBlocks : invalid state");
+        if !matches!(self.state, SyncState::Active2(_))
+            && !matches!(self.state, SyncState::Passive2(_))
+        {
+            unimplemented!("sync::MissingBlocks : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
         if !self.in_flight.is_empty() || self.in_pipeline > self.max_blocks_in_flight {
@@ -526,7 +556,12 @@ impl Sync {
                 tracing::info!(?range, from = %peer_info.peer_id,
                     "sync::MissingBlocks : requesting",
                 );
-                self.state = SyncState::Active2((checksum, range));
+
+                self.state = match self.state {
+                    SyncState::Active2(_) => SyncState::Active2((checksum, range)),
+                    SyncState::Passive2(_) => SyncState::Passive2((checksum, range)),
+                    _ => unreachable!(),
+                };
 
                 let (peer_info, message) = match peer_info.version {
                     PeerVer::V2 => {
@@ -540,7 +575,7 @@ impl Sync {
                             ExternalMessage::MultiBlockRequest(request_hashes),
                         )
                     }
-                    _ => unimplemented!("Deprecated V1 in Phase 2"),
+                    _ => unimplemented!(),
                 };
                 let request_id = self
                     .message_sender
@@ -576,6 +611,12 @@ impl Sync {
                 self.handle_metadata_response(from, Some(vec![]))?;
             }
             SyncState::Active2(_) => {
+                self.handle_multiblock_response(from, Some(vec![]))?;
+            }
+            SyncState::Passive1(_) => {
+                self.handle_metadata_response(from, Some(vec![]))?;
+            }
+            SyncState::Passive2(_) => {
                 self.handle_multiblock_response(from, Some(vec![]))?;
             }
             _ => {}
@@ -669,7 +710,7 @@ impl Sync {
         let meta = match self.state {
             SyncState::Active1(meta) => meta,
             SyncState::Passive1(meta) => meta,
-            _ => anyhow::bail!("sync::DoMetadataResponse : invalid state"),
+            _ => unreachable!(),
         };
 
         if response.is_empty() {
@@ -756,7 +797,7 @@ impl Sync {
                 // always turnaround, even if there is only a partial range of headers
                 self.state = SyncState::Passive2((Hash::ZERO, Range::default()));
             }
-            _ => unimplemented!(), // never happens
+            _ => unreachable!(),
         }
 
         Ok(())
@@ -823,7 +864,7 @@ impl Sync {
     /// This is similar to `request_active_headers`, but is used in passive-syncing.
     fn request_passive_headers(&mut self) -> Result<()> {
         if !matches!(self.state, SyncState::Start) {
-            anyhow::bail!("sync::PassiveHeaders : invalid state");
+            unimplemented!();
         }
 
         // Early exit if there's a request in-flight; and if it has not expired.
@@ -855,7 +896,7 @@ impl Sync {
     /// Otherwise, it requests blocks from the given starting metadata.
     fn request_active_headers(&mut self, meta: Option<BlockHeader>) -> Result<()> {
         if !matches!(self.state, SyncState::Active1(_)) && !matches!(self.state, SyncState::Start) {
-            anyhow::bail!("sync::ActiveHeaders : invalid state");
+            unimplemented!();
         }
         // Early exit if there's a request in-flight; and if it has not expired.
         if !self.in_flight.is_empty() || self.in_pipeline > self.max_batch_size {
@@ -893,7 +934,7 @@ impl Sync {
             && !matches!(self.state, SyncState::Start)
             && !matches!(self.state, SyncState::Passive1(_))
         {
-            anyhow::bail!("sync::DoMissingMetadata : invalid state");
+            unimplemented!();
         }
         let mut offset = u64::MIN;
         for num in 1..=num_peers {
@@ -972,7 +1013,7 @@ impl Sync {
                         });
                         (message, true, Range::default())
                     }
-                    _ => unimplemented!("sync::DoMissingMetadata"),
+                    _ => unimplemented!(),
                 };
 
                 tracing::info!(?range, from = %peer_info.peer_id,
@@ -1293,6 +1334,7 @@ enum SyncState {
     ActiveR,                      // active-sync, retrying a segment
     Passive1(BlockHeader),        // passive-sync, fetching metadata
     Passive2((Hash, Range<u64>)), // passive-sync, fetching blocks
+    Passive3,                     // passive-sync, finishing up
 }
 
 impl std::fmt::Display for SyncState {
@@ -1301,10 +1343,11 @@ impl std::fmt::Display for SyncState {
             SyncState::Start => write!(f, "start"),
             SyncState::Active1(_) => write!(f, "active_headers"),
             SyncState::Active2(_) => write!(f, "active_blocks"),
-            SyncState::Active3 => write!(f, "active_cache"),
+            SyncState::Active3 => write!(f, "active_finish"),
             SyncState::ActiveR => write!(f, "active_retry"),
             SyncState::Passive1(_) => write!(f, "passive_headers"),
             SyncState::Passive2(_) => write!(f, "passive_blocks"),
+            SyncState::Passive3 => write!(f, "passive_finish"),
         }
     }
 }
