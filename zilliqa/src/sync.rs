@@ -255,7 +255,7 @@ impl Sync {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
                 if !self.db.contains_block(&parent_hash)? {
                     // No parent block, trigger ACTIVE-SYNC
-                    self.active_sync_count += self.active_sync_count.saturating_add(1);
+                    self.active_sync_count = self.active_sync_count.saturating_add(1);
                     tracing::debug!(hash = %parent_hash, "sync::DoSync : active-sync",);
                     self.update_started_at()?;
                     // Ensure started_at_block_number is set before running this.
@@ -808,7 +808,7 @@ impl Sync {
                     self.state = SyncState::Active1(*segment.last().unwrap());
                 }
             }
-            SyncState::Passive1(_) => {
+            SyncState::Passive1(_) if self.in_flight.is_empty() => {
                 // always turnaround, even if there is only a partial range of headers
                 self.state = SyncState::Passive2((Hash::ZERO, Range::default()));
             }
@@ -907,7 +907,7 @@ impl Sync {
             return Ok(());
         }
 
-        self.passive_sync_count += self.passive_sync_count.saturating_add(1);
+        self.passive_sync_count = self.passive_sync_count.saturating_add(1);
         self.state = SyncState::Passive1(lowest_block.header);
         self.do_missing_metadata(None, 1)
     }
