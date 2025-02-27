@@ -23,9 +23,10 @@ consensus.scilla_call_gas_exempt_addrs = ["0x60E6b5b1B8D3E373E1C04dC0b4f5624776b
 consensus.contract_upgrade_block_heights = { deposit_v3 = 8406000, deposit_v4 = 10890000 }
 
 api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
-consensus.genesis_fork = { at_height = 0, call_mode_1_sets_caller_to_parent_caller = false, failed_scilla_call_from_gas_exempt_caller_causes_revert = false, scilla_messages_can_call_evm_contracts = false, scilla_contract_creation_increments_account_balance = false, scilla_json_preserve_order = false }
+consensus.genesis_fork = { at_height = 0, call_mode_1_sets_caller_to_parent_caller = false, failed_scilla_call_from_gas_exempt_caller_causes_revert = false, scilla_messages_can_call_evm_contracts = false, scilla_contract_creation_increments_account_balance = false, scilla_json_preserve_order = false, scilla_call_respects_evm_state_changes = false }
 consensus.forks = [
     { at_height = 8404000, failed_scilla_call_from_gas_exempt_caller_causes_revert = true, call_mode_1_sets_caller_to_parent_caller = true },
     { at_height = 10200000, scilla_messages_can_call_evm_contracts = true },
     { at_height = 11152000, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true },
+    { at_height = 12693600, scilla_call_respects_evm_state_changes = true },
 ]
