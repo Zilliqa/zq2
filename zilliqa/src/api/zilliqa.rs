@@ -8,7 +8,7 @@ use std::{
 
 use alloy::{
     consensus::SignableTransaction,
-    eips::BlockId,
+    eips::{BlockId, BlockNumberOrTag},
     primitives::{Address, B256},
 };
 use anyhow::{anyhow, Result};
@@ -32,9 +32,9 @@ use super::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
         RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, StateProofResponse,
-        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionStatusResponse,
-        TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
-        TxnsForTxBlockExResponse,
+        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionState,
+        TransactionStatusResponse, TxBlockListing, TxBlockListingResult,
+        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -44,7 +44,7 @@ use crate::{
     exec::zil_contract_address,
     message::Block,
     node::Node,
-    pool::TxAddResult,
+    pool::{PendingOrQueued, TxAddResult},
     schnorr,
     scilla::{split_storage_key, storage_key, ParamValue},
     state::Code,
@@ -376,15 +376,27 @@ fn get_contract_address_from_transaction_id(
 ) -> Result<String> {
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
-    let receipt = node
-        .lock()
-        .unwrap()
-        .get_transaction_receipt(hash)?
-        .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+    let (receipt, signed_transaction) = {
+        let node = node.lock().unwrap();
+        let receipt = node
+            .get_transaction_receipt(hash)?
+            .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+        let signed_transaction = node
+            .get_transaction_by_hash(hash)?
+            .ok_or_else(|| anyhow!("Txn Hash not Present"))?;
+        (receipt, signed_transaction)
+    };
 
     let contract_address = receipt
         .contract_address
         .ok_or_else(|| anyhow!("ID is not a contract txn"))?;
+
+    let contract_address = match signed_transaction.tx {
+        SignedTransaction::Zilliqa { tx, .. } => {
+            tx.get_contract_address(&signed_transaction.signer)?
+        }
+        _ => contract_address,
+    };
 
     Ok(contract_address.to_hex_no_prefix())
 }
@@ -915,14 +927,26 @@ pub fn get_current_ds_epoch(_params: Params, node: &Arc<Mutex<Node>>) -> Result<
 // DSBlockListing
 pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlockListingResult> {
     // Dummy implementation
-    let node = node.lock().unwrap();
-    let num_tx_blocks = node.get_latest_finalized_block_number()?;
-    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK) + 1;
-    let max_pages = num_ds_blocks / 10;
+    let num_tx_blocks = node.lock().unwrap().get_latest_finalized_block_number()?;
+
+    let num_ds_blocks = (num_tx_blocks / TX_BLOCKS_PER_DS_BLOCK)
+        + if num_tx_blocks % TX_BLOCKS_PER_DS_BLOCK == 0 {
+            0
+        } else {
+            1
+        };
+    let max_pages = num_ds_blocks / 10 + if num_ds_blocks % 10 == 0 { 0 } else { 1 };
     let page_requested: u64 = params.one()?;
 
-    let base_blocknum = page_requested * 10;
-    let end_blocknum = num_ds_blocks.min(base_blocknum + 10);
+    if page_requested == 0 || page_requested > max_pages {
+        return Err(anyhow!(format!(
+            "Page out of range. Valid range is 1 to {}",
+            max_pages
+        )));
+    }
+
+    let end_blocknum = num_ds_blocks - ((page_requested - 1) * 10);
+    let base_blocknum = end_blocknum.saturating_sub(10);
     let listings: Vec<DSBlockListing> = (base_blocknum..end_blocknum)
         .rev()
         .map(|blocknum| DSBlockListing {
@@ -937,7 +961,7 @@ pub fn ds_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<DSBlo
     })
 }
 
-// utilitiy function to calculate the tx block rate for get_ds_block_rate and get_tx_block_rate
+// utility function to calculate the tx block rate for get_ds_block_rate and get_tx_block_rate
 pub fn calculate_tx_block_rate(node: &Arc<Mutex<Node>>) -> Result<f64> {
     let node = node.lock().unwrap();
     let max_measurement_blocks = 5;
@@ -979,10 +1003,17 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
 
     let node = node.lock().unwrap();
     let num_tx_blocks = node.get_latest_finalized_block_number()?;
-    let num_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
+    let max_pages = (num_tx_blocks / 10) + if num_tx_blocks % 10 == 0 { 0 } else { 1 };
 
-    let start_block = page_number * 10;
-    let end_block = std::cmp::min(start_block + 10, num_tx_blocks);
+    if page_number == 0 || page_number > max_pages {
+        return Err(anyhow!(format!(
+            "Page out of range. Valid range is 1 to {}",
+            max_pages
+        )));
+    }
+
+    let end_block = num_tx_blocks - ((page_number - 1) * 10);
+    let start_block = end_block.saturating_sub(10);
 
     let listings: Vec<TxBlockListing> = (start_block..end_block)
         .rev()
@@ -999,7 +1030,7 @@ fn tx_block_listing(params: Params, node: &Arc<Mutex<Node>>) -> Result<TxBlockLi
 
     Ok(TxBlockListingResult {
         data: listings,
-        max_pages: num_pages,
+        max_pages,
     })
 }
 
@@ -1489,23 +1520,39 @@ fn get_transaction_status(
                 "Txn Hash not found".to_string(),
                 jsonrpc_error_data.clone(),
             ))?;
-    let receipt =
-        node.get_transaction_receipt(hash)?
-            .ok_or(jsonrpsee::types::ErrorObject::owned(
-                RPCErrorCode::RpcDatabaseError as i32,
-                "Txn receipt not found".to_string(),
-                jsonrpc_error_data.clone(),
-            ))?;
-    let block = node
-        .get_block(receipt.block_hash)?
-        .ok_or(jsonrpsee::types::ErrorObject::owned(
-            RPCErrorCode::RpcDatabaseError as i32,
-            "Block not found".to_string(),
-            jsonrpc_error_data.clone(),
-        ))?;
+    let receipt = node.get_transaction_receipt(hash)?;
 
-    let res = TransactionStatusResponse::new(transaction, receipt, block)?;
-    Ok(res)
+    let (block, success) = if let Some(receipt) = &receipt {
+        (node.get_block(receipt.block_hash)?, receipt.success)
+    } else {
+        (None, false)
+    };
+
+    // Determine transaction state
+    let state = if receipt.is_some_and(|receipt| !receipt.errors.is_empty()) {
+        TransactionState::Error
+    } else {
+        match &block {
+            Some(block) => {
+                let newest_finalized_block =
+                    node.resolve_block_number(BlockNumberOrTag::Finalized)?;
+                if newest_finalized_block.is_some()
+                    && block.number() >= newest_finalized_block.unwrap().number()
+                {
+                    TransactionState::Finalized
+                } else {
+                    TransactionState::Pending
+                }
+            }
+            None => match node.consensus.get_pending_or_queued(&transaction)? {
+                Some(PendingOrQueued::Pending) => TransactionState::Pending,
+                Some(PendingOrQueued::Queued) => TransactionState::Queued,
+                None => panic!("Transaction not found in block or pending/queued"),
+            },
+        }
+    };
+
+    TransactionStatusResponse::new(transaction, success, block, state)
 }
 
 #[cfg(test)]

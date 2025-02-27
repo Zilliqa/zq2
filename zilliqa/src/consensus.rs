@@ -33,7 +33,7 @@ use crate::{
         MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage},
-    pool::{TransactionPool, TxAddResult, TxPoolContent},
+    pool::{PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent},
     state::State,
     sync::{Sync, SyncPeers},
     time::SystemTime,
@@ -943,6 +943,14 @@ impl Consensus {
         self.transaction_pool.preview_content(&self.state)
     }
 
+    pub fn get_pending_or_queued(
+        &self,
+        txn: &VerifiedTransaction,
+    ) -> Result<Option<PendingOrQueued>> {
+        self.transaction_pool
+            .get_pending_or_queued(&self.state, txn)
+    }
+
     pub fn pending_transaction_count(&self, account: Address) -> u64 {
         let current_nonce = self.state.must_get_account(account).nonce;
 
@@ -1198,10 +1206,7 @@ impl Consensus {
 
         if self.block_is_first_in_epoch(proposal.header.number) {
             // Update state with any contract upgrades for this block
-            state.contract_upgrade_apply_state_change(
-                &self.config.consensus.contract_upgrade_block_heights,
-                proposal.header,
-            )?;
+            state.contract_upgrade_apply_state_change(&self.config.consensus, proposal.header)?;
         }
 
         // Finalise the proposal with final QC and state.
@@ -3009,10 +3014,8 @@ impl Consensus {
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
             let mut state_clone = self.state.clone();
-            state_clone.contract_upgrade_apply_state_change(
-                &self.config.consensus.contract_upgrade_block_heights,
-                block.header,
-            )?;
+            state_clone
+                .contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
             self.state = state_clone;
         }
 

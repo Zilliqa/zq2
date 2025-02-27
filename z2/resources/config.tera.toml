@@ -8,6 +8,9 @@ allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 consensus.genesis_accounts = [ ["{{ genesis_address }}", "900_000_000_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = [ ["{{ bootstrap_bls_public_key }}", "{{ bootstrap_peer_id }}", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "{{ genesis_address }}"] ]
+{%- if staker_withdrawal_period %}
+consensus.staker_withdrawal_period = {{ staker_withdrawal_period }}
+{%- endif %}
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
@@ -24,11 +27,6 @@ consensus.contract_upgrade_block_heights = {{ contract_upgrade_block_heights }}
 do_checkpoints=true
 consensus.blocks_per_epoch=3600
 consensus.epochs_per_checkpoint=24
-{%- endif %}
-
-{%- if role == "query" %}
-# Query node configuration
-max_rpc_response_size={{ max_rpc_response_size }}
 {%- endif %}
 
 api_servers = {{ api_servers }}

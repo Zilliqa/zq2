@@ -31,6 +31,12 @@ pub enum TxAddResult {
     SameNonceButLowerGasPrice,
 }
 
+/// For transaction status returns
+pub enum PendingOrQueued {
+    Pending,
+    Queued,
+}
+
 impl TxAddResult {
     pub fn was_added(&self) -> bool {
         matches!(self, Self::AddedToMempool)
@@ -161,6 +167,22 @@ impl TransactionPool {
             }
         }
         Ok(None)
+    }
+
+    /// Returns whether the transaction is pending or queued
+    pub fn get_pending_or_queued(
+        &self,
+        state: &State,
+        txn: &VerifiedTransaction,
+    ) -> Result<Option<PendingOrQueued>> {
+        if txn.tx.nonce() == Some(state.get_account(txn.signer)?.nonce) || txn.tx.nonce().is_none()
+        {
+            Ok(Some(PendingOrQueued::Pending))
+        } else if self.hash_to_index.contains_key(&txn.hash) {
+            Ok(Some(PendingOrQueued::Queued))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Returns a list of txns that are pending for inclusion in the next block

@@ -42,6 +42,8 @@ pub enum Components {
     StatsDashboard,
     #[serde(rename = "stats_agent")]
     StatsAgent,
+    #[serde(rename = "zq2_metrics")]
+    ZQ2Metrics,
 }
 
 impl FromStr for Components {
@@ -54,6 +56,7 @@ impl FromStr for Components {
             "spout" => Ok(Components::Spout),
             "stats_dashboard" => Ok(Components::StatsDashboard),
             "stats_agent" => Ok(Components::StatsAgent),
+            "zq2_metrics" => Ok(Components::ZQ2Metrics),
             _ => Err(anyhow!("Component not supported")),
         }
     }
@@ -79,6 +82,7 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
                 Err(anyhow!("Invalid version for ZQ2"))
             }
         }
+        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
         Components::Spout => Ok(format!(
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
             version
@@ -91,12 +95,15 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
             "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:{}",
             version
         )),
-        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
+        Components::ZQ2Metrics => Ok(format!(
+            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2-metrics:{}",
+            version
+        )),
     }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum NodeRole {
     /// Virtual machine bootstrap
     Bootstrap,
@@ -104,16 +111,14 @@ pub enum NodeRole {
     Validator,
     /// Virtual machine api
     Api,
+    /// Virtual machine private api
+    PrivateApi,
     /// Virtual machine apps
     Apps,
     /// Virtual machine checkpoint
     Checkpoint,
     /// Virtual machine persistence
     Persistence,
-    /// Virtual machine query
-    Query,
-    /// Virtual machine graph
-    Graph,
     /// Virtual machine sentry
     Sentry,
 }
@@ -127,9 +132,8 @@ impl FromStr for NodeRole {
             "apps" => Ok(NodeRole::Apps),
             "validator" => Ok(NodeRole::Validator),
             "checkpoint" => Ok(NodeRole::Checkpoint),
+            "private-api" => Ok(NodeRole::PrivateApi),
             "persistence" => Ok(NodeRole::Persistence),
-            "query" => Ok(NodeRole::Query),
-            "graph" => Ok(NodeRole::Graph),
             "sentry" => Ok(NodeRole::Sentry),
             _ => Err(anyhow!("Node role not supported")),
         }
@@ -144,9 +148,8 @@ impl fmt::Display for NodeRole {
             NodeRole::Apps => write!(f, "apps"),
             NodeRole::Validator => write!(f, "validator"),
             NodeRole::Checkpoint => write!(f, "checkpoint"),
+            NodeRole::PrivateApi => write!(f, "private-api"),
             NodeRole::Persistence => write!(f, "persistence"),
-            NodeRole::Query => write!(f, "query"),
-            NodeRole::Graph => write!(f, "graph"),
             NodeRole::Sentry => write!(f, "sentry"),
         }
     }
@@ -815,7 +818,7 @@ impl ChainNode {
         let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
-        let public_api = if self.role == NodeRole::Api {
+        let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
             // Enable all APIs, except `admin_` for API nodes.
             json!({ "port": 4201, "enabled_apis": ["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] })
         } else {
@@ -827,13 +830,7 @@ impl ChainNode {
         let api_servers = json!([public_api, private_api]);
 
         // Enable Otterscan indices on API nodes.
-        let enable_ots_indices = self.role == NodeRole::Api;
-
-        let max_rpc_response_size = if self.role == NodeRole::Query {
-            u32::MAX
-        } else {
-            10 * 1024 * 1024
-        };
+        let enable_ots_indices = self.role == NodeRole::Api || self.role == NodeRole::PrivateApi;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
@@ -863,7 +860,6 @@ impl ChainNode {
             &bootstrap_addresses[0].1.bls_public_key,
         );
         ctx.insert("genesis_address", &genesis_account.address);
-        ctx.insert("max_rpc_response_size", &max_rpc_response_size);
         ctx.insert(
             "whitelisted_evm_contract_addresses",
             &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
@@ -892,6 +888,10 @@ impl ChainNode {
                     .collect::<Result<Vec<_>>>()?,
             );
         }
+        ctx.insert(
+            "staker_withdrawal_period",
+            &self.chain()?.get_staker_withdrawal_period(),
+        );
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator {
@@ -971,7 +971,6 @@ impl ChainNode {
 
         let provisioning_script = include_str!("../../resources/node_provision.tera.py");
         let role_name = &self.role.to_string();
-
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
@@ -981,23 +980,24 @@ impl ChainNode {
         )?;
         let stats_agent_image =
             &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
-
         let private_key = if *role_name == NodeRole::Apps.to_string() {
             ""
         } else {
             &self.get_private_key().await?
         };
-
         let genesis_key = if *role_name == NodeRole::Apps.to_string() {
             &self.chain.genesis_private_key().await?
         } else {
             ""
         };
+        let zq2_metrics_image =
+            &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
 
         let stats_dashboard_key = &self.chain.stats_dashboard_key().await?;
 
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
         let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
+        let log_level = self.chain()?.get_log_level()?;
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
@@ -1011,6 +1011,8 @@ impl ChainNode {
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
+        var_map.insert("zq2_metrics_image", zq2_metrics_image);
+        var_map.insert("log_level", log_level);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;
