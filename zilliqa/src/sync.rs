@@ -461,18 +461,31 @@ impl Sync {
             .sorted_by_key(|p| p.number())
             .collect_vec();
 
-        if self.inject_proposals(proposals)? {
-            self.db.pop_sync_segment()?;
-        } else {
-            // sync is stuck, cancel sync and restart, should be fast for peers that are already near the tip.
-            self.state = SyncState::Active3;
-            return Ok(());
-        };
-
-        if self.db.count_sync_segments()? == 0 {
-            self.state = SyncState::Active3;
-        } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
-            self.request_missing_blocks()?;
+        match self.state {
+            SyncState::Active2(_) => {
+                if self.inject_proposals(proposals)? {
+                    self.db.pop_sync_segment()?;
+                } else {
+                    // sync is stuck, cancel sync and restart, should be fast for peers that are already near the tip.
+                    self.state = SyncState::Active3;
+                    return Ok(());
+                };
+                if self.db.count_sync_segments()? == 0 {
+                    self.state = SyncState::Active3;
+                } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
+                    self.request_missing_blocks()?;
+                }
+            }
+            SyncState::Passive2(_) => {
+                self.store_proposals(proposals)?;
+                self.db.pop_sync_segment()?;
+                if self.db.count_sync_segments()? == 0 {
+                    self.state = SyncState::Passive3;
+                } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
+                    self.request_missing_blocks()?;
+                }
+            }
+            _ => unreachable!(),
         }
 
         Ok(())
@@ -1037,6 +1050,33 @@ impl Sync {
         Ok(())
     }
 
+    fn store_proposals(&mut self, proposals: Vec<Proposal>) -> Result<()> {
+        if proposals.is_empty() {
+            return Ok(());
+        }
+
+        for p in proposals {
+            tracing::trace!(
+                number = %p.number(), hash = %p.hash(),
+                "sync::StoreProposals : applying",
+            );
+            self.store_proposal(p)?;
+        }
+        Ok(())
+    }
+
+    fn store_proposal(&mut self, proposal: Proposal) -> Result<()> {
+        let (blk, txns) = proposal.into_parts();
+        self.db.with_sqlite_tx(|sqlite_tx| {
+            self.db.insert_block_with_db_tx(sqlite_tx, &blk)?;
+            for (txh, txn) in blk.transactions.iter().zip(txns.iter()) {
+                self.db.insert_transaction_with_db_tx(sqlite_tx, txh, txn)?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     /// Phase 2 / 3: Inject the proposals into the chain.
     ///
     /// It adds the list of proposals into the pipeline for execution.
@@ -1053,7 +1093,7 @@ impl Sync {
 
         // Output some stats
         if let Some((when, injected, prev_highest)) = self.inject_at {
-            let diff = injected - self.in_pipeline;
+            let diff = injected.abs_diff(self.in_pipeline);
             let rate = diff as f32 / when.elapsed().as_secs_f32();
             tracing::debug!("sync::InjectProposals : synced {rate} block/s");
             // Detect if node is stuck i.e. active-sync is not making progress
