@@ -2250,7 +2250,13 @@ impl Consensus {
         }
 
         // Derive the proposer from the block's view
-        let proposer = self.leader_at_block(&parent, block.view()).unwrap();
+        let Some(proposer) = self.leader_at_block(&parent, block.view()) else {
+            return Err(anyhow!(
+                "Failed to find leader. Block number {}, Parent number {}",
+                block.number(),
+                parent.number(),
+            ));
+        };
 
         // Verify the proposer's signature on the block
         let verified = proposer
