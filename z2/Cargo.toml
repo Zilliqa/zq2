@@ -57,7 +57,7 @@ regex = "1.11.1"
 reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
 revm = {version = "19.5.0", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
-rustls = "0.23.22"
+rustls = "0.23.23"
 scopeguard = "1.2.0"
 serde = {version = "1.0.218", features = ["derive"]}
 serde_json = { version = "1.0.139", features = ["preserve_order"] }
