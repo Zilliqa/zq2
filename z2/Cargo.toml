@@ -50,7 +50,7 @@ libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "930118ef5a6
 log = "0.4.26"
 octocrab = "0.43.0"
 primitive-types = "0.12.2"
-prost = "0.13.4"
+prost = "0.13.5"
 rand = "0.8.5"
 rand_core = "0.6.4"
 regex = "1.11.1"
