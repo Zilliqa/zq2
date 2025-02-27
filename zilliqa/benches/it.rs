@@ -89,6 +89,9 @@ fn process_empty(c: &mut Criterion) {
                         "0x0000000000000000000000000000000000000001",
                     ],
                 ]
+                txn_pool.maximum_global_size = 10000000000
+                txn_pool.maximum_txn_count_per_sender = 200000000
+                txn_pool.total_slots_for_all_senders = 50000000
             "#,
             secret_key.node_public_key()
         ))
@@ -200,6 +203,9 @@ fn consensus(
             consensus.genesis_fork.scilla_messages_can_call_evm_contracts = true
             consensus.genesis_fork.scilla_contract_creation_increments_account_balance = true
             consensus.genesis_fork.scilla_json_preserve_order = true
+            txn_pool.maximum_global_size = 10000000000
+            txn_pool.maximum_txn_count_per_sender = 200000000
+            txn_pool.total_slots_for_all_senders = 50000000
         "#,
     )
     .unwrap();
