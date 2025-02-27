@@ -70,6 +70,8 @@ pub struct Sync {
     max_batch_size: usize,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
+    // how far back to passive-sync
+    sync_base_height: u64,
     // count of proposals pending in the pipeline
     in_pipeline: usize,
     // our peer id
@@ -116,6 +118,7 @@ impl Sync {
         let max_blocks_in_flight = config
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
+        let sync_base_height = config.sync_base_height;
 
         // Start from reset, or continue sync
         let state = if db.count_sync_segments()? == 0 {
@@ -135,6 +138,7 @@ impl Sync {
             peers,
             max_batch_size,
             max_blocks_in_flight,
+            sync_base_height,
             in_flight: VecDeque::with_capacity(Self::MAX_CONCURRENT_PEERS),
             in_pipeline: usize::MIN,
             state,
@@ -258,10 +262,8 @@ impl Sync {
                     // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
                     let meta = self.recent_proposals.back().unwrap().header;
                     self.request_active_headers(Some(meta))?;
-                } else {
+                } else if self.sync_base_height < self.recent_proposals.back().unwrap().number() {
                     // Parent block exists, try PASSIVE-SYNC
-                    self.passive_sync_count += self.passive_sync_count.saturating_add(1);
-                    tracing::debug!("sync::DoSync : passive-sync",);
                     self.request_passive_headers()?;
                 }
             }
@@ -895,9 +897,17 @@ impl Sync {
         // When restoring from a checkpoint, passive-sync does not run. Safe to repurpose.
         self.checkpoint_at = lowest_block
             .number()
-            .saturating_sub(self.max_batch_size as u64);
+            .saturating_sub(self.max_batch_size as u64)
+            .max(self.sync_base_height);
         self.started_at = lowest_block.number();
 
+        if self.started_at <= self.sync_base_height {
+            // stop passive-sync
+            self.sync_base_height = u64::MAX;
+            return Ok(());
+        }
+
+        self.passive_sync_count += self.passive_sync_count.saturating_add(1);
         self.state = SyncState::Passive1(lowest_block.header);
         self.do_missing_metadata(None, 1)
     }

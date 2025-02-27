@@ -159,6 +159,9 @@ pub struct NodeConfig {
     /// Maximum allowed RPC response size
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
+    /// Lowest block to sync history from
+    #[serde(default = "sync_base_height_default")]
+    pub sync_base_height: u64,
 }
 
 impl Default for NodeConfig {
@@ -179,6 +182,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            sync_base_height: sync_base_height_default(),
         }
     }
 }
@@ -227,6 +231,10 @@ where
     Hash::try_from(bytes.as_slice()).map_err(|_| {
         de::Error::invalid_value(de::Unexpected::Bytes(&bytes), &"a 32-byte hex value")
     })
+}
+
+pub fn sync_base_height_default() -> u64 {
+    u64::MAX
 }
 
 pub fn allowed_timestamp_skew_default() -> Duration {
