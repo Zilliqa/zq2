@@ -1157,9 +1157,14 @@ impl Sync {
 
     /// Returns (am_syncing, current_highest_block)
     pub fn am_syncing(&self) -> Result<bool> {
-        Ok(self.in_pipeline != 0
-            || !matches!(self.state, SyncState::Start)
-            || self.db.count_sync_segments()? != 0)
+        let sync_state = match self.state {
+            SyncState::Start
+            | SyncState::Passive1(_)
+            | SyncState::Passive2(_)
+            | SyncState::Passive3 => false,
+            _ => self.db.count_sync_segments()? != 0,
+        };
+        Ok(self.in_pipeline != 0 || sync_state)
     }
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,

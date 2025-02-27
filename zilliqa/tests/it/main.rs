@@ -250,7 +250,6 @@ struct Network {
     scilla_stdlib_dir: String,
     do_checkpoints: bool,
     blocks_per_epoch: u64,
-    consensus_tick_countdown: u64,
     deposit_v3_upgrade_block_height: Option<u64>,
 }
 
@@ -443,7 +442,6 @@ impl Network {
             do_checkpoints,
             blocks_per_epoch,
             scilla_stdlib_dir,
-            consensus_tick_countdown: 10,
             deposit_v3_upgrade_block_height,
         }
     }
@@ -768,15 +766,6 @@ impl Network {
         // Advance time.
         zilliqa::time::advance(Duration::from_millis(1));
 
-        // Every 10ms send a consensus tick, since most of our tests are too short to otherwise
-        // be able to sync.
-        self.consensus_tick_countdown -= 1;
-        if self.consensus_tick_countdown == 0 {
-            for (index, node) in self.nodes.iter().enumerate() {
-                let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
-            }
-            self.consensus_tick_countdown = 10;
-        }
         // Take all the currently ready messages from the stream.
         let mut messages = self.collect_messages();
 
