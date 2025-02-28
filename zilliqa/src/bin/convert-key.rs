@@ -2,7 +2,6 @@ use std::io;
 
 use alloy::primitives::Address;
 use anyhow::Result;
-use crypto_bigint::generic_array::GenericArray;
 use serde::Deserialize;
 use serde_json::json;
 use zilliqa::crypto::{SecretKey, TransactionPublicKey};
@@ -23,8 +22,7 @@ fn main() -> Result<()> {
     let secret_key = SecretKey::from_hex(&input.secret_key)?;
 
     let key_bytes = secret_key.as_bytes();
-    let ecdsa_key =
-        k256::ecdsa::SigningKey::from_bytes(GenericArray::from_slice(&key_bytes)).unwrap();
+    let ecdsa_key = k256::ecdsa::SigningKey::from_slice(&key_bytes).unwrap();
 
     let tx_pubkey = TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
 

@@ -31,14 +31,11 @@ clap = {version = "4.5.30", features = ["derive"]}
 clap-verbosity-flag = "3.0.2"
 cliclack = "0.3.5"
 colored = "3.0.0"
-crypto-bigint = "=0.5.5"
 env_logger = "0.11.6"
 eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
 ethabi = "18.0.0"
-ethereum = "0.15.0"
 ethers = {version="2.0.14", features = ["ws"]}
 futures = "0.3.31"
-git2 = "0.18.3"
 hex = "0.4.3"
 home = "0.5.11"
 indicatif = "0.17.11"
@@ -52,7 +49,6 @@ octocrab = "0.43.0"
 primitive-types = "0.12.2"
 prost = "0.13.5"
 rand = "0.8.5"
-rand_core = "0.6.4"
 regex = "1.11.1"
 reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
 revm = {version = "19.5.0", features = ["optional_balance_check"]}
@@ -73,7 +69,6 @@ tokio = {version = "1.43.0", features = ["macros", "rt-multi-thread", "sync", "i
 tokio-stream = "0.1.17"
 toml = { version = "0.8.20", features = ["preserve_order"] }
 tracing = "0.1.41"
-tracing-subscriber = "0.3.18"
 url = "2.5.4"
 zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.2"
