@@ -694,6 +694,7 @@ impl State {
         // If the txn doesn't fail, increment the nonce.
         let from = new_state.load_account(from_addr)?;
         from.account.nonce += 1;
+        from.mark_touch();
 
         trace!("scilla_txn completed successfully");
         Ok((result, new_state.finalize()))
@@ -754,6 +755,10 @@ impl State {
     /// Applies a state delta from a Scilla execution to the state.
     fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
         for (&address, account) in state {
+            if !account.touched {
+                continue;
+            }
+
             let mut storage = self.get_account_trie(address)?;
 
             /// Recursively called internal function which assigns `value` at the correct key to `storage`.
@@ -817,6 +822,10 @@ impl State {
         state: &revm::primitives::HashMap<Address, revm::primitives::Account>,
     ) -> Result<()> {
         for (&address, account) in state {
+            if !account.is_touched() {
+                continue;
+            }
+
             let mut storage = self.get_account_trie(address)?;
 
             for (index, value) in account.changed_storage_slots() {
@@ -1209,6 +1218,12 @@ impl PendingState {
         self.pre_state.get_highest_canonical_block_number()
     }
 
+    pub fn touch(&mut self, address: Address) {
+        if let Some(account) = self.new_state.get_mut(&address) {
+            account.mark_touch();
+        }
+    }
+
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
         load_account(&self.pre_state, &mut self.new_state, address)
     }
@@ -1401,6 +1416,7 @@ impl PendingState {
     ) -> Result<Option<ScillaResult>> {
         let caller = std::panic::Location::caller();
         let account = self.load_account(address)?;
+        account.mark_touch();
         trace!(
             "account balance = {0} sub {1}",
             account.account.balance,
@@ -1436,6 +1452,13 @@ pub struct PendingAccount {
     pub account: Account,
     /// Cached values of updated or deleted storage. Note that deletions can happen at any level of a map.
     pub storage: BTreeMap<String, StorageValue>,
+    pub touched: bool,
+}
+
+impl PendingAccount {
+    pub fn mark_touch(&mut self) {
+        self.touched = true;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1469,6 +1492,7 @@ impl From<Account> for PendingAccount {
         PendingAccount {
             account,
             storage: BTreeMap::new(),
+            touched: false,
         }
     }
 }
@@ -1631,6 +1655,7 @@ fn scilla_create(
     let transitions = contract_info.transitions;
 
     let account = state.load_account(contract_address)?;
+    account.mark_touch();
     if fork.scilla_contract_creation_increments_account_balance {
         account.account.balance += txn.amount.get();
     } else {
@@ -1875,6 +1900,7 @@ pub fn scilla_call(
                 }
 
                 let to = new_state.load_account(to_addr)?;
+                to.mark_touch();
                 to.account.balance += amount.get();
 
                 if depth == 0 {
@@ -1948,6 +1974,7 @@ pub fn scilla_call(
             }
 
             let to = current_state.load_account(to_addr)?;
+            to.mark_touch();
             to.account.balance += amount.get();
 
             inspector.transfer(from_addr, to_addr, amount.get(), depth);

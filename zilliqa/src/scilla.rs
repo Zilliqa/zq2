@@ -973,6 +973,7 @@ impl ActiveCall {
             self.state
                 .set_storage(self.sender, &name, &indices, convert(value)?)?;
         }
+        self.state.touch(self.sender);
 
         Ok(())
     }
