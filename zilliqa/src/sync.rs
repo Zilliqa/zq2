@@ -118,7 +118,13 @@ impl Sync {
         let max_blocks_in_flight = config
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
-        let sync_base_height = config.sync_base_height;
+
+        let sync_base_height = if config.consensus.prune_interval == u64::MAX {
+            config.sync_base_height
+        } else {
+            tracing::warn!("sync::New : pruning is enabled, sync_base_height is ignored");
+            u64::MAX
+        };
 
         // Start from reset, or continue sync
         let state = if db.count_sync_segments()? == 0 {

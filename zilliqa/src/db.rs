@@ -518,6 +518,18 @@ impl Db {
         Ok(())
     }
 
+    /// Prunes older history.
+    ///
+    /// This can be useful for Validators who only care about recent history.
+    /// This can reduce disk usage and improve performance.
+    pub fn prune_history(&self, number: u64) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        db.prepare_cached("DELETE FROM blocks WHERE height < ?1")?
+            .execute([number])?;
+        // TODO: implement incremental vacuum? not at this time.
+        Ok(())
+    }
+
     /// Fetch checkpoint data from file and initialise db state
     /// Return checkpointed block and transactions which must be executed after this function
     /// Return None if checkpoint already loaded

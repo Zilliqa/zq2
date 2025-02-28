@@ -20,7 +20,7 @@ use zilliqa::{
     api,
     cfg::{
         genesis_fork_default, max_rpc_response_size_default, staker_withdrawal_period_default,
-        state_cache_size_default, sync_base_height_default, ApiServer,
+        state_cache_size_default, u64_max, ApiServer,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
@@ -543,6 +543,7 @@ impl Setup {
                     contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
+                    prune_interval: u64_max(),
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -551,7 +552,7 @@ impl Setup {
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
-                sync_base_height: sync_base_height_default(),
+                sync_base_height: u64_max(),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 
