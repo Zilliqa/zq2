@@ -1,7 +1,4 @@
-use std::{
-    ops::RangeInclusive,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use alloy::{
     eips::BlockNumberOrTag,
@@ -10,7 +7,6 @@ use alloy::{
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 
-use super::types::eth::SyncingMeta;
 use crate::{cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
@@ -29,20 +25,8 @@ pub fn rpc_module(
             ("debug_traceBlockByNumber", debug_trace_block_by_number),
             ("debug_traceCall", debug_trace_call),
             ("debug_traceTransaction", debug_trace_transaction),
-            ("debug_blockRange", debug_block_range),
-            ("debug_syncStats", debug_sync_stats)
         ]
     )
-}
-
-/// TODO: place-holder for now, feel free to change it.
-fn debug_sync_stats(_params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingMeta> {
-    Ok(node.lock().unwrap().consensus.sync.get_sync_meta())
-}
-
-/// TODO: place-holder for now, feel free to change it.
-fn debug_block_range(_params: Params, node: &Arc<Mutex<Node>>) -> Result<RangeInclusive<u64>> {
-    node.lock().unwrap().db.available_range()
 }
 
 /// debug_getBadBlocks

@@ -1,13 +1,19 @@
 //! An administrative API
 
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::RangeInclusive,
+    sync::{Arc, Mutex},
+};
 
 use alloy::eips::BlockId;
 use anyhow::{anyhow, Result};
 use jsonrpsee::{types::Params, RpcModule};
 use serde::{Deserialize, Serialize};
 
-use super::types::{eth::QuorumCertificate, hex};
+use super::types::{
+    eth::{QuorumCertificate, SyncingMeta},
+    hex,
+};
 use crate::{api::to_hex::ToHex, cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
@@ -20,8 +26,20 @@ pub fn rpc_module(
         [
             ("admin_consensusInfo", consensus_info),
             ("admin_generateCheckpoint", checkpoint),
+            ("admin_blockRange", admin_block_range),
+            ("admin_syncStats", admin_sync_stats)
         ]
     )
+}
+
+/// TODO: place-holder for now, feel free to change it.
+fn admin_sync_stats(_params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingMeta> {
+    Ok(node.lock().unwrap().consensus.sync.get_sync_meta())
+}
+
+/// TODO: place-holder for now, feel free to change it.
+fn admin_block_range(_params: Params, node: &Arc<Mutex<Node>>) -> Result<RangeInclusive<u64>> {
+    node.lock().unwrap().db.available_range()
 }
 
 #[derive(Clone, Debug, Serialize)]
