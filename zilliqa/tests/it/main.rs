@@ -89,6 +89,8 @@ pub struct NewNodeOptions {
     secret_key: Option<SecretKey>,
     onchain_key: Option<SigningKey>,
     checkpoint: Option<Checkpoint>,
+    prune_interval: Option<u64>,
+    sync_base_height: Option<u64>,
 }
 
 impl NewNodeOptions {
@@ -513,8 +515,8 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
-            sync_base_height: u64_max(),
-            prune_interval: u64_max(),
+            sync_base_height: options.sync_base_height.unwrap_or(u64_max()),
+            prune_interval: options.prune_interval.unwrap_or(u64_max()),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());

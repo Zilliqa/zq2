@@ -312,7 +312,7 @@ impl Consensus {
             }
         };
 
-        let prune_interval = config.prune_interval.max(30);
+        let prune_interval = config.prune_interval.max(20) - 1; // clamp value to >= 20, to ensure we don't prune forks.
 
         let sync = Sync::new(
             &config,

@@ -315,3 +315,47 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         zero_acount_balance_change_rewards_only
     );
 }
+
+// Test a pruning node does not hold old blocks.
+#[zilliqa_macros::test]
+async fn pruning(mut network: Network) {
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index)
+                    .get_block(BlockId::latest())
+                    .unwrap()
+                    .map_or(0, |b| b.number())
+                    >= 5
+            },
+            100,
+        )
+        .await
+        .unwrap();
+
+    info!("Adding pruned node.");
+    let index = network.add_node_with_options(crate::NewNodeOptions {
+        prune_interval: Some(20),
+        ..Default::default()
+    });
+    network.run_until_synced(index).await;
+
+    network
+        .run_until(
+            |n| {
+                n.node_at(index)
+                    .get_block(BlockId::latest())
+                    .unwrap()
+                    .map_or(0, |b| b.number())
+                    >= 25
+            },
+            300,
+        )
+        .await
+        .unwrap();
+
+    let range = network.node_at(index).db.available_range().unwrap();
+    info!("Pruned range: {range:?}");
+    assert_eq!(range.count(), 20);
+}
