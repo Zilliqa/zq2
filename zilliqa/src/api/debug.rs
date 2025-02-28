@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::RangeInclusive,
+    sync::{Arc, Mutex},
+};
 
 use alloy::{
     eips::BlockNumberOrTag,
@@ -25,8 +28,17 @@ pub fn rpc_module(
             ("debug_traceBlockByNumber", debug_trace_block_by_number),
             ("debug_traceCall", debug_trace_call),
             ("debug_traceTransaction", debug_trace_transaction),
+            ("debug_storedBlockRange", debug_stored_block_range)
         ]
     )
+}
+
+/// TODO: place-holder for now, feel free to change it.
+fn debug_stored_block_range(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<RangeInclusive<u64>> {
+    node.lock().unwrap().db.available_range()
 }
 
 /// debug_getBadBlocks
