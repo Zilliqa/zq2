@@ -1183,25 +1183,28 @@ impl Sync {
             .get_highest_canonical_block_number()?
             .expect("no highest block");
 
-        let peer_count = self.peers.count() + self.in_flight.len();
-
         Ok(Some(SyncingStruct {
             starting_block: self.started_at,
             current_block,
             highest_block: self.highest_block_seen,
-            status: SyncingMeta {
-                peer_count,
-                current_phase: self.state.to_string(),
-                retry_count: self.retry_count,
-                timeout_count: self.timeout_count,
-                empty_count: self.empty_count,
-                header_downloads: self.headers_downloaded,
-                block_downloads: self.blocks_downloaded,
-                buffered_blocks: self.in_pipeline,
-                active_sync_count: self.active_sync_count,
-                passive_sync_count: self.passive_sync_count,
-            },
+            status: self.get_sync_meta(),
         }))
+    }
+
+    pub fn get_sync_meta(&self) -> SyncingMeta {
+        let peer_count = self.peers.count() + self.in_flight.len();
+        SyncingMeta {
+            peer_count,
+            current_phase: self.state.to_string(),
+            retry_count: self.retry_count,
+            timeout_count: self.timeout_count,
+            empty_count: self.empty_count,
+            header_downloads: self.headers_downloaded,
+            block_downloads: self.blocks_downloaded,
+            buffered_blocks: self.in_pipeline,
+            active_sync_count: self.active_sync_count,
+            passive_sync_count: self.passive_sync_count,
+        }
     }
 
     /// Sets the checkpoint, if node was started from a checkpoint.
