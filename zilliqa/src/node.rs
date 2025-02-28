@@ -959,23 +959,17 @@ impl Node {
         }
         trace!("Handling proposal for view {0}", block.header.view);
         let block_number = block.number();
-
-        if block.header.state_root_hash != Hash::ZERO {
-            let proposal = self.consensus.receive_block(from, block)?;
-            if let Some(proposal) = proposal {
-                trace!(
-                    " ... broadcasting proposal for view {0}",
-                    proposal.header.view
-                );
-                self.message_sender
-                    .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
-            }
-        } else {
-            // Store ZQ1 block
-            self.consensus.sync.store_proposal(block)?;
-        }
+        let proposal = self.consensus.receive_block(from, block)?;
         // decrement after - if there are issues in receive_block() it will stop syncing;
         self.consensus.sync.mark_received_proposal(block_number)?;
+        if let Some(proposal) = proposal {
+            trace!(
+                " ... broadcasting proposal for view {0}",
+                proposal.header.view
+            );
+            self.message_sender
+                .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
+        }
         Ok(())
     }
 }
