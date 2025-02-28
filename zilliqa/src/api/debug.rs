@@ -29,7 +29,7 @@ pub fn rpc_module(
             ("debug_traceBlockByNumber", debug_trace_block_by_number),
             ("debug_traceCall", debug_trace_call),
             ("debug_traceTransaction", debug_trace_transaction),
-            ("debug_storedBlockRange", debug_stored_block_range),
+            ("debug_blockRange", debug_block_range),
             ("debug_syncStats", debug_sync_stats)
         ]
     )
@@ -41,10 +41,7 @@ fn debug_sync_stats(_params: Params, node: &Arc<Mutex<Node>>) -> Result<SyncingM
 }
 
 /// TODO: place-holder for now, feel free to change it.
-fn debug_stored_block_range(
-    _params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<RangeInclusive<u64>> {
+fn debug_block_range(_params: Params, node: &Arc<Mutex<Node>>) -> Result<RangeInclusive<u64>> {
     node.lock().unwrap().db.available_range()
 }
 
