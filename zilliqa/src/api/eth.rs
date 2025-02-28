@@ -396,9 +396,12 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     Ok(block)
 }
 
-pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u8; 256]> {
+pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block_hash: Hash) -> Result<[u8; 256]> {
     let mut logs_bloom = [0; 256];
-    for txn_receipt in node.get_transaction_receipts_in_block(block.hash())?.iter() {
+    let block = node
+        .get_block(block_hash)?
+        .ok_or_else(|| anyhow!("block not found"))?;
+    for txn_receipt in node.get_transaction_receipts_in_block(block_hash)?.iter() {
         // Ideally we'd implement a full blown bloom filter type but this'll do for now
         txn_receipt
             .logs
@@ -429,7 +432,7 @@ pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u
 }
 
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
-    let logs_bloom = get_block_logs_bloom(node, block)?;
+    let logs_bloom = get_block_logs_bloom(node, block.header.hash)?;
     if !full {
         let miner = node.get_proposer_reward_address(block.header)?;
         let block_gas_limit = block.gas_limit();
@@ -925,8 +928,13 @@ async fn subscribe(
             while let Ok(header) = new_blocks.recv().await {
                 let miner = node.lock().unwrap().get_proposer_reward_address(header)?;
                 let block_gas_limit = node.lock().unwrap().config.consensus.eth_block_gas_limit;
-                let header =
-                    eth::Header::from_header(header, miner.unwrap_or_default(), block_gas_limit);
+                let logs_bloom = get_block_logs_bloom(&node.lock().unwrap(), header.hash)?;
+                let header = eth::Header::from_header(
+                    header,
+                    miner.unwrap_or_default(),
+                    block_gas_limit,
+                    logs_bloom,
+                );
                 let _ = sink.send(SubscriptionMessage::from_json(&header)?).await;
             }
         }
