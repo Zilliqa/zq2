@@ -742,12 +742,18 @@ impl Sync {
                 block_hash = meta.qc.block_hash;
                 block_num = meta.number;
             } else {
-                // If something does not match, do nothing and it will retry with another peer.
+                // If something does not match, restart from the last known segment.
+                // This is a safety mechanism to prevent a peer from sending us garbage.
                 tracing::error!(
                     "sync::DoMetadataResponse : unexpected metadata hash={block_hash} != {}, num={block_num} != {}",
                     meta.hash,
                     meta.number,
                 );
+                // Unless, it is the first segment, where it will restart the entire sync.
+                // https://github.com/Zilliqa/zq2/issues/2416
+                if self.db.count_sync_segments()? <= 1 {
+                    self.state = SyncState::Active3; // flush, drop all segments, and restart
+                }
                 return Ok(());
             }
             if meta.hash == response.last().unwrap().header.hash {
