@@ -26,5 +26,6 @@ api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["bloc
 consensus.genesis_fork = { at_height = 0, call_mode_1_sets_caller_to_parent_caller = false, failed_scilla_call_from_gas_exempt_caller_causes_revert = false, scilla_messages_can_call_evm_contracts = false, scilla_contract_creation_increments_account_balance = false, scilla_json_preserve_order = false }
 consensus.forks = [
     { at_height = 5342400, failed_scilla_call_from_gas_exempt_caller_causes_revert = true, call_mode_1_sets_caller_to_parent_caller = true },
-    { at_height = 7966800, scilla_messages_can_call_evm_contracts = true, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true },
+    { at_height = 7685881, scilla_json_preserve_order = true },
+    { at_height = 7966800, scilla_messages_can_call_evm_contracts = true, scilla_contract_creation_increments_account_balance = true },
 ]
