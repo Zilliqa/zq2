@@ -181,7 +181,7 @@ fn read_index(ty: ScillaType, d: &mut Decoder) -> Result<Vec<u8>> {
         ScillaType::Uint64 => serde_json::to_vec(&u64::detokenize(d.decode()?).to_string())?,
         ScillaType::Uint128 => serde_json::to_vec(&u128::detokenize(d.decode()?).to_string())?,
         ScillaType::Uint256 => serde_json::to_vec(&U256::detokenize(d.decode()?).to_string())?,
-        ScillaType::String => String::detokenize(d.decode()?).into_bytes(),
+        ScillaType::String => serde_json::to_vec(&String::detokenize(d.decode()?))?,
         ScillaType::Map(_, _) => {
             return Err(anyhow!("a map cannot be the key of another map"));
         }
