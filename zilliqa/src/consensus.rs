@@ -3045,12 +3045,22 @@ impl Consensus {
 
     /// Prune's history
     ///
-    /// Removes blocks older than the specified block number.
-    /// Decision was made to keep transactions in the database for now.
+    /// Removes older blocks than the specified block number, and their associated transactions.
     fn prune_history(&mut self, number: u64) -> Result<()> {
         if self.prune_interval != u64::MAX {
             let prune_at = number.saturating_sub(self.prune_interval);
-            self.db.prune_history(prune_at)?;
+            // this may take a while, the first time pruning is activated
+            for n in (0..prune_at).rev() {
+                let block = self.db.get_canonical_block_by_number(n)?;
+                if let Some(block) = block {
+                    self.db
+                        .remove_transactions_executed_in_block(&block.hash())?;
+                    self.db.remove_block(&block)?;
+                } else {
+                    // done pruning
+                    break;
+                }
+            }
         }
         Ok(())
     }

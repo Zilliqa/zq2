@@ -518,18 +518,6 @@ impl Db {
         Ok(())
     }
 
-    /// Prunes older history.
-    ///
-    /// This can be useful for Validators who only care about recent history.
-    /// This can reduce disk usage and improve performance.
-    pub fn prune_history(&self, number: u64) -> Result<()> {
-        let db = self.db.lock().unwrap();
-        db.prepare_cached("DELETE FROM blocks WHERE height < ?1")?
-            .execute([number])?;
-        // TODO: implement incremental vacuum? not at this time.
-        Ok(())
-    }
-
     /// Returns the lowest and highest block numbers of stored blocks
     pub fn available_range(&self) -> Result<RangeInclusive<u64>> {
         let db = self.db.lock().unwrap();

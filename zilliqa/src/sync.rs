@@ -1081,6 +1081,7 @@ impl Sync {
             self.db.with_sqlite_tx(|sqlite_tx| {
                 self.db.insert_block_with_db_tx(sqlite_tx, &blk)?;
                 for (txh, txn) in blk.transactions.iter().zip(txns.iter()) {
+                    // INSERT OR IGNORE - safe
                     self.db.insert_transaction_with_db_tx(sqlite_tx, txh, txn)?;
                 }
                 Ok(())
