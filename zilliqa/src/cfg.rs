@@ -497,6 +497,7 @@ pub struct Fork {
     pub scilla_messages_can_call_evm_contracts: bool,
     pub scilla_contract_creation_increments_account_balance: bool,
     pub scilla_json_preserve_order: bool,
+    pub scilla_call_respects_evm_state_changes: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -524,8 +525,14 @@ pub struct ForkDelta {
     /// the contract balance will be sum of the existing balance and the amount sent in the deployment transaction.
     /// If false, the contract balance will be the amount sent in the deployment transaction.
     pub scilla_contract_creation_increments_account_balance: Option<bool>,
-    // If true then the compiled code is using serde_json with feature "preserve_order"
+    /// If true, JSON maps that are passed to Scilla will be in their original order. If false, the entries will be
+    /// sorted by their keys.
     pub scilla_json_preserve_order: Option<bool>,
+    /// If true, interop calls to the `scilla_call` precompile will correctly see state changes already made by the EVM
+    /// before that point in the transaction's execution. Also both Scilla and EVM will be able to update the same
+    /// accounts without state changes being lost. If false, state changes can be lost if Scilla and EVM attempt to
+    /// update the same account. This can sometimes lead to mined transactions which don't increase the caller's nonce.
+    pub scilla_call_respects_evm_state_changes: Option<bool>,
 }
 
 impl Fork {
@@ -547,6 +554,9 @@ impl Fork {
             scilla_json_preserve_order: delta
                 .scilla_json_preserve_order
                 .unwrap_or(self.scilla_json_preserve_order),
+            scilla_call_respects_evm_state_changes: delta
+                .scilla_call_respects_evm_state_changes
+                .unwrap_or(self.scilla_call_respects_evm_state_changes),
         }
     }
 }
@@ -620,6 +630,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_messages_can_call_evm_contracts: true,
         scilla_contract_creation_increments_account_balance: true,
         scilla_json_preserve_order: true,
+        scilla_call_respects_evm_state_changes: true,
     }
 }
 
@@ -700,6 +711,7 @@ mod tests {
                 scilla_messages_can_call_evm_contracts: None,
                 scilla_contract_creation_increments_account_balance: Some(false),
                 scilla_json_preserve_order: None,
+                scilla_call_respects_evm_state_changes: None,
             }],
             ..Default::default()
         };
@@ -728,6 +740,7 @@ mod tests {
                     scilla_messages_can_call_evm_contracts: Some(true),
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: Some(true),
+                    scilla_call_respects_evm_state_changes: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -736,6 +749,7 @@ mod tests {
                     scilla_messages_can_call_evm_contracts: Some(false),
                     scilla_contract_creation_increments_account_balance: Some(true),
                     scilla_json_preserve_order: Some(true),
+                    scilla_call_respects_evm_state_changes: None,
                 },
             ],
             ..Default::default()
@@ -778,6 +792,7 @@ mod tests {
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: None,
+                    scilla_call_respects_evm_state_changes: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -786,6 +801,7 @@ mod tests {
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: None,
+                    scilla_call_respects_evm_state_changes: None,
                 },
             ],
             ..Default::default()
@@ -819,6 +835,7 @@ mod tests {
                 scilla_messages_can_call_evm_contracts: true,
                 scilla_contract_creation_increments_account_balance: true,
                 scilla_json_preserve_order: true,
+                scilla_call_respects_evm_state_changes: true,
             },
             forks: vec![],
             ..Default::default()
@@ -840,6 +857,7 @@ mod tests {
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: None,
+                    scilla_call_respects_evm_state_changes: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -848,6 +866,7 @@ mod tests {
                     scilla_messages_can_call_evm_contracts: None,
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: None,
+                    scilla_call_respects_evm_state_changes: None,
                 },
             ],
             ..Default::default()
