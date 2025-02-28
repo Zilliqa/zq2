@@ -820,7 +820,35 @@ impl ChainNode {
         // 4201 is the publically exposed port - We don't expose everything there.
         let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
             // Enable all APIs, except `admin_` for API nodes.
-            json!({ "port": 4201, "enabled_apis": ["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] })
+            json!({
+                "port": 4201,
+                "enabled_apis": [
+                    "erigon",
+                    "eth",
+                    "net",
+                    {
+                        "namespace": "ots",
+                        // Enable all APIs except `ots_getContractCreator` until #2381 is resolved.
+                        "apis": [
+                            "getApiLevel",
+                            "getBlockDetails",
+                            "getBlockDetailsByHash",
+                            "getBlockTransactions",
+                            "getInternalOperations",
+                            "getTransactionBySenderAndNonce",
+                            "getTransactionError",
+                            "hasCode",
+                            "searchTransactionsAfter",
+                            "searchTransactionsBefore",
+                            "traceTransaction",
+                        ],
+                    },
+                    "trace",
+                    "txpool",
+                    "web3",
+                    "zilliqa",
+                ]
+            })
         } else {
             // Only enable `eth_blockNumber` for other nodes.
             json!({"port": 4201, "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
@@ -867,7 +895,7 @@ impl ChainNode {
         );
         ctx.insert(
             "contract_upgrade_block_heights",
-            &contract_upgrade_block_heights.to_toml().to_string(),
+            &contract_upgrade_block_heights.map(|c| c.to_toml().to_string()),
         );
         // convert json to toml formatting
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;

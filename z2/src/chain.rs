@@ -129,6 +129,7 @@ impl Chain {
                 "0x95347b860Bd49818AFAccCA8403C55C23e7BB9ED",
                 "0xe64cA52EF34FdD7e20C0c7fb2E392cc9b4F6D049",
                 "0x63B991C17010C21250a0eA58C6697F696a48cdf3",
+                "0x9E2349379BB30a6Dec7E39405AE6466d03ac13f7",
                 "0x241c677D9969419800402521ae87C411897A029f",
                 "0x2274005778063684fbB1BfA96a2b725dC37D75f9",
                 "0x598FbD8B68a8B7e75b8B7182c750164f348907Bc",
@@ -164,29 +165,22 @@ impl Chain {
     }
 
     // Warning: Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
-    pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgradesBlockHeights {
+    pub fn get_contract_upgrades_block_heights(&self) -> Option<ContractUpgradesBlockHeights> {
         match self {
-            Self::Zq2Devnet => ContractUpgradesBlockHeights {
-                deposit_v3: Some(3600),
-                // estimated: 2025-01-28T20:25:00Z
-                deposit_v4: Some(428400),
-                // estimated: 2025-02-21T18:56:00Z
-                deposit_v5: Some(1731600),
-            },
-            Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
+            Self::Zq2ProtoMainnet => Some(ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
                 deposit_v3: Some(5342400),
                 // estimated: 2025-02-12T13:25:00Z
                 deposit_v4: Some(7966800),
                 deposit_v5: None,
-            },
-            Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
+            }),
+            Self::Zq2ProtoTestnet => Some(ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
                 // estimated: 2025-02-03T13:55:00Z
                 deposit_v4: Some(10890000),
                 deposit_v5: None,
-            },
-            _ => ContractUpgradesBlockHeights::default(),
+            }),
+            _ => None,
         }
     }
 
@@ -217,8 +211,9 @@ impl Chain {
             Chain::Zq2ProtoMainnet => Some(vec![
                 // estimated: 2024-12-20T23:33:12Z
                 json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
+                json!({ "at_height": 7685881, "scilla_json_preserve_order": true }),
                 // estimated: 2025-02-12T13:25:00Z
-                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
+                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true }),
             ]),
             _ => None,
         }
