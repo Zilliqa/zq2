@@ -165,27 +165,22 @@ impl Chain {
     }
 
     // Warning: Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
-    pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgradesBlockHeights {
+    pub fn get_contract_upgrades_block_heights(&self) -> Option<ContractUpgradesBlockHeights> {
         match self {
-            Self::Zq2Devnet => ContractUpgradesBlockHeights {
-                deposit_v3: None,
-                deposit_v4: None,
-                deposit_v5: Some(0),
-            },
-            Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
+            Self::Zq2ProtoMainnet => Some(ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
                 deposit_v3: Some(5342400),
                 // estimated: 2025-02-12T13:25:00Z
                 deposit_v4: Some(7966800),
                 deposit_v5: None,
-            },
-            Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
+            }),
+            Self::Zq2ProtoTestnet => Some(ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
                 // estimated: 2025-02-03T13:55:00Z
                 deposit_v4: Some(10890000),
                 deposit_v5: None,
-            },
-            _ => ContractUpgradesBlockHeights::default(),
+            }),
+            _ => None,
         }
     }
 
