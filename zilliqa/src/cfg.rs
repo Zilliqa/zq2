@@ -159,9 +159,12 @@ pub struct NodeConfig {
     /// Maximum allowed RPC response size
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
-    /// Lowest block to sync history down to. This cannot be used together with `prune_interval`.
+    /// Lowest block height to sync history down to. This cannot be used together with `prune_interval`.
     #[serde(default = "u64_max")]
     pub sync_base_height: u64,
+    /// The N number of historical blocks to be kept in the DB during pruning. N > 30.
+    #[serde(default = "u64_max")]
+    pub prune_interval: u64,
 }
 
 impl Default for NodeConfig {
@@ -183,6 +186,7 @@ impl Default for NodeConfig {
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
             sync_base_height: u64_max(),
+            prune_interval: u64_max(),
         }
     }
 }
@@ -424,10 +428,6 @@ pub struct ConsensusConfig {
     /// difference applies.
     #[serde(default)]
     pub forks: Vec<ForkDelta>,
-    /// The N number of historical blocks to be kept in the DB during pruning. N > 30.
-    /// This cannot be used together with `sync_base_height`.
-    #[serde(default = "u64_max")]
-    pub prune_interval: u64,
 }
 
 impl ConsensusConfig {
@@ -480,7 +480,6 @@ impl Default for ConsensusConfig {
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
             forks: vec![],
             genesis_fork: genesis_fork_default(),
-            prune_interval: u64_max(),
         }
     }
 }

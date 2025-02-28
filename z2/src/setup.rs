@@ -543,7 +543,6 @@ impl Setup {
                     contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
-                    prune_interval: u64_max(),
                 },
                 block_request_limit: block_request_limit_default(),
                 max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -553,6 +552,7 @@ impl Setup {
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
                 sync_base_height: u64_max(),
+                prune_interval: u64_max(),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 

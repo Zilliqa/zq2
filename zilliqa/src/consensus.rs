@@ -312,7 +312,7 @@ impl Consensus {
             }
         };
 
-        let prune_interval = config.consensus.prune_interval.max(30);
+        let prune_interval = config.prune_interval.max(30);
 
         let sync = Sync::new(
             &config,

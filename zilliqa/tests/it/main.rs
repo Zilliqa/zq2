@@ -361,7 +361,6 @@ impl Network {
                 contract_upgrade_block_heights,
                 forks: vec![],
                 genesis_fork: genesis_fork_default(),
-                prune_interval: u64_max(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -380,6 +379,7 @@ impl Network {
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
             sync_base_height: u64_max(),
+            prune_interval: u64_max(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -505,7 +505,6 @@ impl Network {
                 contract_upgrade_block_heights,
                 forks: vec![],
                 genesis_fork: genesis_fork_default(),
-                prune_interval: u64_max(),
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
@@ -515,6 +514,7 @@ impl Network {
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
             sync_base_height: u64_max(),
+            prune_interval: u64_max(),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
