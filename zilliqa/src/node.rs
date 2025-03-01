@@ -241,6 +241,11 @@ impl Node {
                         )))?;
                 }
             }
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
+            }
             // `Proposals` are re-routed to `handle_request()`
             _ => {
                 warn!("unexpected message type");
@@ -296,10 +301,10 @@ impl Node {
                 let message = self.consensus.sync.handle_metadata_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
-            // This just breaks down group block messages into individual messages to stop them blocking threads
-            // for long periods.
-            ExternalMessage::InjectedProposal(p) => {
-                self.handle_injected_proposal(from, p)?;
+            // RFC-161 sync algorithm, passive-sync
+            ExternalMessage::PassiveSyncRequest(request) => {
+                let message = self.consensus.sync.handle_passive_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
             }
             // Respond negatively to block request from old nodes
             ExternalMessage::BlockRequest(_) => {
@@ -944,10 +949,8 @@ impl Node {
             } else {
                 self.message_sender.broadcast_proposal(message)?;
             }
-        } else {
-            self.consensus.sync.sync_from_proposal(proposal)?;
         }
-
+        self.consensus.sync.sync_from_proposal(proposal)?;
         Ok(())
     }
 

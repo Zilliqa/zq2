@@ -901,7 +901,7 @@ impl Sync {
         // When restoring from a checkpoint, passive-sync does not run. Safe to repurpose.
         self.checkpoint_at = lowest_block
             .number()
-            .saturating_sub(self.max_batch_size as u64)
+            .saturating_sub(self.max_blocks_in_flight as u64)
             .max(self.sync_base_height);
         self.started_at = lowest_block.number();
 
@@ -977,7 +977,7 @@ impl Sync {
                         let range = RangeInclusive::new(
                             block_number
                                 .saturating_sub(offset)
-                                .saturating_sub(self.max_batch_size as u64)
+                                .saturating_sub(self.max_blocks_in_flight as u64)
                                 .max(self.checkpoint_at),
                             block_number.saturating_sub(offset).saturating_sub(1),
                         );
@@ -1046,7 +1046,7 @@ impl Sync {
                 tracing::info!(?range, from = %peer_info.peer_id,
                     "sync::MissingMetadata : requesting ({num}/{num_peers})",
                 );
-                offset += self.max_batch_size as u64;
+                offset += range.count() as u64;
 
                 let request_id = self
                     .message_sender
