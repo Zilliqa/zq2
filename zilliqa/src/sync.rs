@@ -1188,7 +1188,7 @@ impl Sync {
             starting_block: self.started_at,
             current_block,
             highest_block: self.highest_block_seen,
-            status: self.get_sync_meta(),
+            stats: self.get_sync_meta(),
         }))
     }
 

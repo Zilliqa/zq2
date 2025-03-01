@@ -301,11 +301,6 @@ impl Node {
                 let message = self.consensus.sync.handle_metadata_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
-            // RFC-161 sync algorithm, passive-sync
-            ExternalMessage::PassiveSyncRequest(request) => {
-                let message = self.consensus.sync.handle_passive_request(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
             // Respond negatively to block request from old nodes
             ExternalMessage::BlockRequest(_) => {
                 // respond with an invalid response

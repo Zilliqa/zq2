@@ -493,7 +493,7 @@ pub struct SyncingStruct {
     pub current_block: u64,
     #[serde(serialize_with = "hex")]
     pub highest_block: u64,
-    pub status: SyncingMeta,
+    pub stats: SyncingMeta,
 }
 
 #[derive(Clone, Serialize)]
