@@ -182,6 +182,11 @@ pub struct Consensus {
 }
 
 impl Consensus {
+    // gradual pruning interval
+    const PRUNE_INTERVAL: u64 = 1000;
+    // prune interval > 20 to ensure we don't prune forks
+    const MIN_PRUNE_INTERVAL: u64 = 20;
+
     pub fn new(
         secret_key: SecretKey,
         config: NodeConfig,
@@ -312,7 +317,7 @@ impl Consensus {
             }
         };
 
-        let prune_interval = config.prune_interval.max(20) - 1; // clamp value to >= 20, to ensure we don't prune forks.
+        let prune_interval = config.prune_interval.max(Self::MIN_PRUNE_INTERVAL) - 1;
 
         let sync = Sync::new(
             &config,
@@ -3045,16 +3050,17 @@ impl Consensus {
 
     /// Prune's history
     ///
-    /// Removes older blocks than the specified block number, and their associated transactions.
+    /// Removes older blocks than the specified block number, and their associated transactions, gradually.
     fn prune_history(&mut self, number: u64) -> Result<()> {
         if self.prune_interval != u64::MAX {
             let range = self.db.available_range()?;
-            let prune_at = number.saturating_sub(self.prune_interval);
+            let prune_max = range.start().saturating_add(Self::PRUNE_INTERVAL); // gradually prune N-blocks at a time
+            let prune_at = number.saturating_sub(self.prune_interval).min(prune_max);
             if range.contains(&prune_at) {
-                // this may take a while, the first time pruning is activated
                 for n in *range.start()..prune_at {
                     let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
                     if let Some(block) = block {
+                        tracing::trace!(number = %block.number(), hash=%block.hash(), "Pruning block");
                         self.db
                             .remove_transactions_executed_in_block(&block.hash())?;
                         self.db.remove_block(&block)?;
