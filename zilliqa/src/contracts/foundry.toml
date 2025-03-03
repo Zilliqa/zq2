@@ -1,11 +1,10 @@
 [profile.default]
-src='.'
+src='zilliqa/src/contracts'
 out='out'
-libs=['vendor']
 test='tests'
 cache_path='cache-foundry'
 via_ir=true
 auto_detect_solc=true
 build_info=true
-extra_ouptut=['storageLayout']
+extra_output=['storageLayout']
 solc='0.8.28'
