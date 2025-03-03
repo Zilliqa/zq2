@@ -601,11 +601,9 @@ impl Docs {
             id_path.push(v);
         }
         id_path.push(SUPPORTED_APIS_PATH_NAME);
-        let mkdocs_filename = zqutils::utils::string_from_path(&mkdocs_path)?;
 
         context.insert("apis", &all_apis);
-        let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
-        context.insert("_id", &prefixed_id);
+        context.insert("_id", &id_path);
         macros.inject_into(&mut context)?;
 
         list_tera.add_raw_template(
@@ -622,9 +620,13 @@ impl Docs {
             // Now write out...
             let contents_map = serde_yaml::from_str(&fs::read_to_string(val).await?)?;
             let base_key = self.get_base_mkdocs_key().await?;
-            let contents_map =
-                replace_first_string_element_of(&contents_map, &base_key, 0, &mkdocs_filename)
-                    .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+            let contents_map = replace_first_string_element_of(
+                &contents_map,
+                &base_key,
+                0,
+                mkdocs_path.to_str().unwrap(),
+            )
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
             fs::write(val, &serde_yaml::to_string(&contents_map)?).await?;
         }
         Ok(all_apis)
@@ -717,7 +719,6 @@ impl Docs {
 
         // First, let's read the input
         let src_contents = fs::read_to_string(src).await?;
-        let src_file = zqutils::utils::string_from_path(src)?;
         let parsed = self.parse_input_sections(&src_contents).await?;
         // If there is "rest" text, complain.
         if !parsed.rest.is_empty() {
@@ -755,8 +756,7 @@ impl Docs {
 
         let Some(page_title) = parsed.sections.get("title") else {
             return Err(anyhow!(
-                "Page {0} does not contain a title section - needed to build the mkdocs index",
-                src_file
+                "Page {src:?} does not contain a title section - needed to build the mkdocs index"
             ));
         };
         let api_name = ApiMethod::JsonRpc {
@@ -808,19 +808,16 @@ impl Docs {
         id_path.push(page_title);
 
         // That is also the mkdocs id of this file.
-        let prefixed_id = zqutils::utils::string_from_path(&id_path)?;
-        final_context.insert("_id", &prefixed_id);
+        final_context.insert("_id", &id_path);
         // Because we need to indent every line in a section by exactly 4
         // spaces or tabs don't work . Grr!
         page_tera.register_filter("indent4", indent4);
         let final_page = page_tera
             .render("api", &final_context)
-            .context(format!("Whilst rendering {0:?}", src_file))?;
+            .context(format!("Whilst rendering {src:?}"))?;
 
         // OK. Now we have some data, let's write it.
         self.write_file(&final_page, &desc_path).await?;
-
-        let mkdocs_filename = zqutils::utils::string_from_path(&mkdocs_path)?;
 
         let id_components = id_path
             .iter()
@@ -828,7 +825,7 @@ impl Docs {
             .collect();
 
         Ok(GeneratedFile {
-            mkdocs_filename,
+            mkdocs_filename: mkdocs_path.into_os_string().into_string().unwrap(),
             id_components,
             api_name,
             page_status,

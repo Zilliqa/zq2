@@ -35,8 +35,6 @@ enum Commands {
     Run(RunStruct),
     /// Run only some components of Zilliqa 2
     Only(OnlyStruct),
-    /// Test
-    Perf(PerfStruct),
     #[clap(subcommand)]
     /// Group of subcommands to deploy and configure a Zilliqa 2 network
     Deployer(DeployerCommands),
@@ -728,7 +726,7 @@ async fn main() -> Result<()> {
     let base_dir = match env::var("ZQ2_BASE") {
         Ok(val) => {
             let canon = tokio::fs::canonicalize(val).await?;
-            zqutils::utils::string_from_path(&canon)?
+            canon.into_os_string().into_string().unwrap()
         }
         _ => {
             return Err(anyhow!(
@@ -840,10 +838,6 @@ async fn main() -> Result<()> {
                 None,
             )
             .await?;
-            Ok(())
-        }
-        Commands::Perf(ref arg) => {
-            plumbing::run_perf_file(&arg.config_dir, &arg.perf_file).await?;
             Ok(())
         }
         Commands::Kpi(ref arg) => {

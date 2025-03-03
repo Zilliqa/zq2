@@ -48,17 +48,17 @@ on:
         description: "Response timeout in milliseconds"
         type: number
         required: false
-        default: 10000
-      connect_timeout:
-        description: "Connection timeout in milliseconds"
-        type: number
-        required: false
-        default: 300
+        default: 15000
       threads:
         description: "Number of concurrent threads"
         type: number
         required: false
         default: 20
+      ramp_time:
+        description: "Threads ramp up period"
+        type: number
+        required: false
+        default: 10
       duration:
         description: "Test duration in seconds"
         type: number
@@ -83,9 +83,9 @@ jobs:
       RPC_METHOD: ${{ github.event.inputs.rpc_method || 'eth_blockNumber' }}
       RPC_PARAMS: ${{ github.event.inputs.rpc_params || '[]' }}
       THREADS: ${{ github.event.inputs.threads || 20 }}
+      RAMP_TIME: ${{ github.event.inputs.ramp_time || 10 }}
       DURATION: ${{ github.event.inputs.duration || 60 }}
-      CONNECT_TIMEOUT: ${{ github.event.inputs.connect_timeout || 300 }}
-      RESPONSE_TIMEOUT: ${{ github.event.inputs.response_timeout || 10000 }}
+      RESPONSE_TIMEOUT: ${{ github.event.inputs.response_timeout || 15000 }}
       RESULTS_FILE: results.jtl
     steps:
       - name: Checkout code
@@ -117,8 +117,8 @@ jobs:
             -JRPC_METHOD=${{ env.RPC_METHOD }} \
             -JRPC_PARAMS='${{ env.RPC_PARAMS }}' \
             -JTHREADS=${{ env.THREADS }} \
+            -JRAMP_TIME=${{ env.RAMP_TIME }} \
             -JDURATION=${{ env.DURATION }} \
-            -JCONNECT_TIMEOUT=${{ env.CONNECT_TIMEOUT }} \
             -JRESPONSE_TIMEOUT=${{ env.RESPONSE_TIMEOUT }} \
             -JRESULTS_FILE=${{ env.RESULTS_FILE }} \
             -t jmeter-plan-template.jmx \

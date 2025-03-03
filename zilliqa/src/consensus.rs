@@ -33,7 +33,7 @@ use crate::{
         MAX_COMMITTEE_SIZE,
     },
     node::{MessageSender, NetworkMessage},
-    pool::{TransactionPool, TxAddResult, TxPoolContent},
+    pool::{PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent},
     state::State,
     sync::{Sync, SyncPeers},
     time::SystemTime,
@@ -941,6 +941,14 @@ impl Consensus {
 
     pub fn txpool_content(&self) -> Result<TxPoolContent> {
         self.transaction_pool.preview_content(&self.state)
+    }
+
+    pub fn get_pending_or_queued(
+        &self,
+        txn: &VerifiedTransaction,
+    ) -> Result<Option<PendingOrQueued>> {
+        self.transaction_pool
+            .get_pending_or_queued(&self.state, txn)
     }
 
     pub fn pending_transaction_count(&self, account: Address) -> u64 {
@@ -2242,7 +2250,13 @@ impl Consensus {
         }
 
         // Derive the proposer from the block's view
-        let proposer = self.leader_at_block(&parent, block.view()).unwrap();
+        let Some(proposer) = self.leader_at_block(&parent, block.view()) else {
+            return Err(anyhow!(
+                "Failed to find leader. Block number {}, Parent number {}",
+                block.number(),
+                parent.number(),
+            ));
+        };
 
         // Verify the proposer's signature on the block
         let verified = proposer

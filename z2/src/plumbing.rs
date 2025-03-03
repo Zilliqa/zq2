@@ -24,7 +24,7 @@ use crate::{
 
 const DEFAULT_API_URL: &str = "https://api.zq2-devnet.zilliqa.com";
 
-use crate::{collector, components::Component, converter, deployer, docgen, perf, setup, zq1};
+use crate::{collector, components::Component, converter, deployer, docgen, setup, zq1};
 
 pub enum NetworkType {
     Local(Option<NodeSpec>),
@@ -145,14 +145,6 @@ pub async fn run_net(
 
     println!("Components running; awaiting termination.");
     collector.complete().await?;
-    Ok(())
-}
-
-pub async fn run_perf_file(_base_dir: &str, config_file: &str) -> Result<()> {
-    let perf = perf::Perf::from_file(config_file)?;
-    let mut rng = perf.make_rng()?;
-    println!("🦆 Running {config_file} .. ");
-    perf.run(&mut rng).await?;
     Ok(())
 }
 
