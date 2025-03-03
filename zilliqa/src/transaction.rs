@@ -727,6 +727,16 @@ impl Transaction {
         }
     }
 
+    pub fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        match self {
+            Transaction::Eip1559(TxEip1559 {
+                max_priority_fee_per_gas,
+                ..
+            }) => Some(*max_priority_fee_per_gas),
+            _ => None,
+        }
+    }
+
     pub fn gas_limit(&self) -> EvmGas {
         match self {
             Transaction::Legacy(TxLegacy { gas_limit, .. }) => EvmGas(*gas_limit),
