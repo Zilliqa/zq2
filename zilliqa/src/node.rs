@@ -354,7 +354,7 @@ impl Node {
             ExternalMessage::MetaDataResponse(response) => {
                 let response = response
                     .into_iter()
-                    .map(|bh: BlockHeader| SyncBlockHeader {
+                    .map(|bh| SyncBlockHeader {
                         header: bh,
                         size_estimate: (1024 * 1024 * bh.gas_used.0 / bh.gas_limit.0) as usize, // guesstimate
                     })

@@ -88,7 +88,7 @@ pub struct Sync {
     started_at: u64,
     highest_block_seen: u64,
     retry_count: usize,
-    timeout_count: usize,
+    error_count: usize,
     empty_count: usize,
     headers_downloaded: usize,
     blocks_downloaded: usize,
@@ -153,7 +153,7 @@ impl Sync {
             started_at: latest_block_number,
             highest_block_seen: latest_block_number,
             retry_count: 0,
-            timeout_count: 0,
+            error_count: 0,
             empty_count: 0,
             headers_downloaded: 0,
             blocks_downloaded: 0,
@@ -167,7 +167,7 @@ impl Sync {
     /// Skip Failure
     ///
     /// We get a plain ACK in certain cases - treated as an empty response.
-    /// FIXME: Remove once all nodes upgraded to next version.
+    // FIXME: 0.6.0 compatibility, to be removed after all nodes >= 0.7.0
     pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
         self.empty_count = self.empty_count.saturating_add(1);
         if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
@@ -201,18 +201,21 @@ impl Sync {
         from: PeerId,
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
-        self.timeout_count = self.timeout_count.saturating_add(1);
+        self.error_count = self.error_count.saturating_add(1);
         if let Some((peer, _)) = self
             .in_flight
             .iter_mut()
             .find(|(p, r)| p.peer_id == from && *r == failure.request_id)
         {
-            // drop the peer, in case of any fatal errors
-            if !matches!(failure.error, libp2p::autonat::OutboundFailure::Timeout) {
-                tracing::warn!("sync::RequestFailure : {} {from}", failure.error);
-                peer.score = u32::MAX;
-            } else {
-                tracing::warn!("sync::RequestFailure : timeout {from}",);
+            // drop the peer, in case of fatal errors
+            match failure.error {
+                libp2p::autonat::OutboundFailure::Timeout => {
+                    tracing::warn!("sync::RequestFailure : timeout {from}",);
+                }
+                _ => {
+                    tracing::warn!("sync::RequestFailure : {} {from}", failure.error);
+                    peer.score = u32::MAX;
+                }
             }
 
             match &self.state {
@@ -1193,7 +1196,7 @@ impl Sync {
             peer_count,
             current_phase: self.state.to_string(),
             retry_count: self.retry_count,
-            timeout_count: self.timeout_count,
+            error_count: self.error_count,
             empty_count: self.empty_count,
             header_downloads: self.headers_downloaded,
             block_downloads: self.blocks_downloaded,

@@ -477,7 +477,7 @@ pub struct SyncingMeta {
     #[serde(serialize_with = "hex")]
     pub retry_count: usize,
     #[serde(serialize_with = "hex")]
-    pub timeout_count: usize,
+    pub error_count: usize,
     #[serde(serialize_with = "hex")]
     pub active_sync_count: usize,
     #[serde(serialize_with = "hex")]
