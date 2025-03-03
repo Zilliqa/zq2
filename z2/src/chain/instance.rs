@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, str::FromStr};
+use std::{collections::BTreeMap, process::Command, str::FromStr};
 
 use anyhow::{anyhow, Ok, Result};
 use serde_json::value::Value;
@@ -22,7 +22,7 @@ impl ChainInstance {
         let chain = Chain::from_str(&config.name.clone())?;
         Ok(Self {
             config: config.clone(),
-            machines: Self::import_machines(&config.name, chain.get_project_id()?).await?,
+            machines: Self::import_machines(&config.name, chain.get_project_id()?)?,
             persistence_url: None,
             checkpoint_url: None,
         })
@@ -79,28 +79,23 @@ impl ChainInstance {
         version.to_owned()
     }
 
-    async fn import_machines(chain_name: &str, project_id: &str) -> Result<Vec<Machine>> {
+    fn import_machines(chain_name: &str, project_id: &str) -> Result<Vec<Machine>> {
         println!("Create the instance list for {chain_name}");
 
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "--project",
-                    project_id,
-                    "compute",
-                    "instances",
-                    "list",
-                    "--format=json",
-                    "--filter",
-                    &format!("labels.zq2-network={chain_name}"),
-                ],
-            )
-            .run()
-            .await?;
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "compute",
+                "instances",
+                "list",
+                "--format=json",
+                "--filter",
+                &format!("labels.zq2-network={chain_name}"),
+            ])
+            .output()?;
 
-        if !output.success {
+        if !output.status.success() {
             return Err(anyhow!("Listing {chain_name} instances failed"));
         }
 
@@ -187,11 +182,10 @@ impl ChainInstance {
             &self.config.name,
             self.chain()?.get_project_id()?,
             "genesis",
-        )
-        .await?;
+        )?;
 
         if let Some(private_key) = private_keys.first() {
-            Ok(private_key.value().await?)
+            Ok(private_key.value()?)
         } else {
             Err(anyhow!(
                 "No secrets with role genesis found in the network {}",
@@ -205,11 +199,10 @@ impl ChainInstance {
             &self.config.name,
             self.chain()?.get_project_id()?,
             "stats-dashboard",
-        )
-        .await?;
+        )?;
 
         if let Some(private_key) = private_keys.first() {
-            Ok(private_key.value().await?)
+            Ok(private_key.value()?)
         } else {
             Err(anyhow!(
                 "No secrets with role stats-dashboard found in the network {}",
@@ -218,7 +211,7 @@ impl ChainInstance {
         }
     }
 
-    pub async fn run_rpc_call(
+    pub fn run_rpc_call(
         &self,
         method: &str,
         params: &Option<String>,
@@ -231,26 +224,22 @@ impl ChainInstance {
             params.clone().unwrap_or("[]".to_string()),
         );
 
-        let args = &[
-            "--max-time",
-            &timeout.to_string(),
-            "-X",
-            "POST",
-            "-H",
-            "Content-Type:application/json",
-            "-H",
-            "accept:application/json,*/*;q=0.5",
-            "--data",
-            &body,
-            &endpoint,
-        ];
-
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("curl", args)
-            .run_for_output()
-            .await?;
-        if !output.success {
+        let output = Command::new("curl")
+            .args([
+                "--max-time",
+                &timeout.to_string(),
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type:application/json",
+                "-H",
+                "accept:application/json,*/*;q=0.5",
+                "--data",
+                &body,
+                &endpoint,
+            ])
+            .output()?;
+        if !output.status.success() {
             return Err(anyhow!(
                 "getting local block number failed: {:?}",
                 output.stderr

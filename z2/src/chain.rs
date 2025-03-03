@@ -165,27 +165,22 @@ impl Chain {
     }
 
     // Warning: Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
-    pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgradesBlockHeights {
+    pub fn get_contract_upgrades_block_heights(&self) -> Option<ContractUpgradesBlockHeights> {
         match self {
-            Self::Zq2Devnet => ContractUpgradesBlockHeights {
-                deposit_v3: None,
-                deposit_v4: None,
-                deposit_v5: Some(0),
-            },
-            Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
+            Self::Zq2ProtoMainnet => Some(ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
                 deposit_v3: Some(5342400),
                 // estimated: 2025-02-12T13:25:00Z
                 deposit_v4: Some(7966800),
                 deposit_v5: None,
-            },
-            Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
+            }),
+            Self::Zq2ProtoTestnet => Some(ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
                 // estimated: 2025-02-03T13:55:00Z
                 deposit_v4: Some(10890000),
                 deposit_v5: None,
-            },
-            _ => ContractUpgradesBlockHeights::default(),
+            }),
+            _ => None,
         }
     }
 
@@ -216,8 +211,9 @@ impl Chain {
             Chain::Zq2ProtoMainnet => Some(vec![
                 // estimated: 2024-12-20T23:33:12Z
                 json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
+                json!({ "at_height": 7685881, "scilla_json_preserve_order": true }),
                 // estimated: 2025-02-12T13:25:00Z
-                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
+                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true }),
             ]),
             _ => None,
         }
