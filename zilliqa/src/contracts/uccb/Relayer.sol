@@ -4,7 +4,8 @@ pragma solidity ^0.8.20;
 import {OwnableUpgradeable, Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
-import {RegistryUpgradeable, IRegistry} from "./Registry.sol";
+import {Registry, IRegistry} from "./Registry.sol";
+
 
 interface IRelayerEvents {
     /**
@@ -17,6 +18,11 @@ interface IRelayerEvents {
         uint gasLimit,
         uint nonce
     );
+}
+
+struct CallMetadata {
+    uint sourceChainId;
+    address sender;
 }
 
 interface IRelayer is IRelayerEvents, IRegistry {
@@ -53,11 +59,11 @@ interface IRelayer is IRelayerEvents, IRegistry {
  *
  * It is able to relay message to any arbitrary chain that is part of the UCCB network
  */
-abstract contract RelayerUpgradeable is
+abstract contract Relayer is
     IRelayer,
     Initializable,
     Ownable2StepUpgradeable,
-    RegistryUpgradeable
+    Registry
 {
     /**
      * @dev Storage of the initializable contract.
