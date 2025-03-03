@@ -73,4 +73,4 @@ zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.2"
 
 [build-dependencies]
-prost-build = "0.13.3"
+prost-build = "0.13.5"
