@@ -101,8 +101,6 @@ pub struct Block {
     pub quorum_certificate: QuorumCertificate,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate_quorum_certificate: Option<AggregateQc>,
-    #[serde(serialize_with = "hex")]
-    pub logs_bloom: [u8; 256],
 }
 
 impl Block {
@@ -113,7 +111,7 @@ impl Block {
         logs_bloom: [u8; 256],
     ) -> Self {
         Block {
-            header: Header::from_header(block.header, miner, block_gas_limit),
+            header: Header::from_header(block.header, miner, block_gas_limit, logs_bloom),
             size: block.size() as u64,
             transactions: block
                 .transactions
@@ -123,7 +121,6 @@ impl Block {
             uncles: vec![], // Uncles do not exist in ZQ2
             quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
-            logs_bloom,
         }
     }
 }
@@ -166,6 +163,8 @@ pub struct Header {
     #[serde(serialize_with = "hex")]
     pub mix_hash: B256,
     #[serde(serialize_with = "hex")]
+    pub logs_bloom: [u8; 256],
+    #[serde(serialize_with = "hex")]
     pub base_fee_per_gas: u128,
 }
 
@@ -174,6 +173,7 @@ impl Header {
         header: message::BlockHeader,
         miner: Address,
         block_gas_limit: EvmGas,
+        logs_bloom: [u8; 256],
     ) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
@@ -198,6 +198,7 @@ impl Header {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            logs_bloom,
             base_fee_per_gas: 0,
         }
     }
@@ -466,20 +467,32 @@ pub struct TxPoolContent {
 #[serde(rename_all = "camelCase")]
 pub struct SyncingMeta {
     pub current_phase: String,
+    #[serde(serialize_with = "hex")]
     pub peer_count: usize,
-    pub header_downloads: u64,
-    pub block_downloads: u64,
+    #[serde(serialize_with = "hex")]
+    pub header_downloads: usize,
+    #[serde(serialize_with = "hex")]
+    pub block_downloads: usize,
+    #[serde(serialize_with = "hex")]
     pub buffered_blocks: usize,
-    pub empty_count: u64,
-    pub retry_count: u64,
-    pub timeout_count: u64,
+    #[serde(serialize_with = "hex")]
+    pub empty_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub retry_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub timeout_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub active_sync_count: usize,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncingStruct {
+    #[serde(serialize_with = "hex")]
     pub starting_block: u64,
+    #[serde(serialize_with = "hex")]
     pub current_block: u64,
+    #[serde(serialize_with = "hex")]
     pub highest_block: u64,
     pub status: SyncingMeta,
 }

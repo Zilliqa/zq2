@@ -18,7 +18,8 @@ pub enum Chain {
         serialize = "zq2-richard",
         props(
             subdomain = "zq2-richard.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2Richard,
@@ -27,7 +28,8 @@ pub enum Chain {
         serialize = "zq2-uccbtest",
         props(
             subdomain = "zq2-uccbtest.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2UccbTest,
@@ -36,7 +38,8 @@ pub enum Chain {
         serialize = "zq2-infratest",
         props(
             subdomain = "zq2-infratest.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=info"
         )
     )]
     Zq2InfraTest,
@@ -45,7 +48,8 @@ pub enum Chain {
         serialize = "zq2-perftest",
         props(
             subdomain = "zq2-perftest.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2PerfTest,
@@ -54,7 +58,8 @@ pub enum Chain {
         serialize = "zq2-devnet",
         props(
             subdomain = "zq2-devnet.zilliqa.com",
-            project_id = "prj-d-zq2-devnet-c83bkpsd"
+            project_id = "prj-d-zq2-devnet-c83bkpsd",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2Devnet,
@@ -63,7 +68,8 @@ pub enum Chain {
         serialize = "zq2-prototestnet",
         props(
             subdomain = "zq2-prototestnet.zilliqa.com",
-            project_id = "prj-d-zq2-testnet-g13pnaa8"
+            project_id = "prj-d-zq2-testnet-g13pnaa8",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2ProtoTestnet,
@@ -72,7 +78,8 @@ pub enum Chain {
         serialize = "zq2-protomainnet",
         props(
             subdomain = "zq2-protomainnet.zilliqa.com",
-            project_id = "prj-p-zq2-mainnet-sn5n8wfl"
+            project_id = "prj-p-zq2-mainnet-sn5n8wfl",
+            log_level = "zilliqa=trace"
         )
     )]
     Zq2ProtoMainnet,
@@ -81,7 +88,8 @@ pub enum Chain {
     //     serialize = "zq2-testnet",
     //     props(
     //         subdomain = "zq2-testnet.zilliqa.com",
-    //         project_id = "prj-d-zq2-testnet-g13pnaa8"
+    //         project_id = "prj-d-zq2-testnet-g13pnaa8",
+    //         log_level = "zilliqa=trace"
     //     )
     // )]
     // Zq2Testnet,
@@ -90,7 +98,8 @@ pub enum Chain {
     //     serialize = "zq2-mainnet",
     //     props(
     //         subdomain = "zq2-mainnet.zilliqa.com",
-    //         project_id = "prj-p-zq2-mainnet-sn5n8wfl"
+    //         project_id = "prj-p-zq2-mainnet-sn5n8wfl",
+    //         log_level = "zilliqa=trace"
     //     )
     // )]
     // Zq2Mainnet,
@@ -120,6 +129,7 @@ impl Chain {
                 "0x95347b860Bd49818AFAccCA8403C55C23e7BB9ED",
                 "0xe64cA52EF34FdD7e20C0c7fb2E392cc9b4F6D049",
                 "0x63B991C17010C21250a0eA58C6697F696a48cdf3",
+                "0x9E2349379BB30a6Dec7E39405AE6466d03ac13f7",
                 "0x241c677D9969419800402521ae87C411897A029f",
                 "0x2274005778063684fbB1BfA96a2b725dC37D75f9",
                 "0x598FbD8B68a8B7e75b8B7182c750164f348907Bc",
@@ -155,25 +165,22 @@ impl Chain {
     }
 
     // Warning: Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
-    pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgradesBlockHeights {
+    pub fn get_contract_upgrades_block_heights(&self) -> Option<ContractUpgradesBlockHeights> {
         match self {
-            Self::Zq2Devnet => ContractUpgradesBlockHeights {
-                deposit_v3: Some(3600),
-                // estimated: 2025-01-28T20:25:00Z
-                deposit_v4: Some(428400),
-            },
-            Self::Zq2ProtoMainnet => ContractUpgradesBlockHeights {
+            Self::Zq2ProtoMainnet => Some(ContractUpgradesBlockHeights {
                 // estimated: 2024-12-20T23:33:12Z
                 deposit_v3: Some(5342400),
                 // estimated: 2025-02-12T13:25:00Z
                 deposit_v4: Some(7966800),
-            },
-            Self::Zq2ProtoTestnet => ContractUpgradesBlockHeights {
+                deposit_v5: None,
+            }),
+            Self::Zq2ProtoTestnet => Some(ContractUpgradesBlockHeights {
                 deposit_v3: Some(8406000),
                 // estimated: 2025-02-03T13:55:00Z
                 deposit_v4: Some(10890000),
-            },
-            _ => ContractUpgradesBlockHeights::default(),
+                deposit_v5: None,
+            }),
+            _ => None,
         }
     }
 
@@ -185,7 +192,7 @@ impl Chain {
                 "failed_scilla_call_from_gas_exempt_caller_causes_revert": false,
                 "scilla_messages_can_call_evm_contracts": false,
                 "scilla_contract_creation_increments_account_balance": false,
-                "init_data_preserve_order": false
+                "scilla_json_preserve_order": false
             })),
             _ => None,
         }
@@ -199,13 +206,14 @@ impl Chain {
                 // estimated: 2025-01-15T09:10:37Z
                 json!({ "at_height": 10200000, "scilla_messages_can_call_evm_contracts": true }),
                 // estimated: 2025-02-12T12:08:37Z
-                json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true, "init_data_preserve_order": true }),
+                json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
                 // estimated: 2024-12-20T23:33:12Z
                 json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
+                json!({ "at_height": 7685881, "scilla_json_preserve_order": true }),
                 // estimated: 2025-02-12T13:25:00Z
-                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true, "init_data_preserve_order": true }),
+                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true }),
             ]),
             _ => None,
         }
@@ -240,5 +248,18 @@ impl Chain {
             "{}",
             format!("project_id not available for the chain {}", self).red()
         ))
+    }
+
+    pub fn get_log_level(&self) -> Result<&'static str> {
+        let log_level = self.get_str("log_level");
+
+        Ok(log_level.unwrap_or("zilliqa=trace"))
+    }
+
+    pub fn get_staker_withdrawal_period(&self) -> Option<u64> {
+        match self {
+            Chain::Zq2Devnet => Some(5 * 60), // 5 minutes
+            _ => None,
+        }
     }
 }

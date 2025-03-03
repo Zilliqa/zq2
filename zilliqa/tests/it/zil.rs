@@ -1750,7 +1750,26 @@ async fn get_current_ds_epoch(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn ds_block_listing(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
+    let wallet = network.random_wallet().await;
+
+    let (secret_key, _address) = zilliqa_account(&mut network).await;
+
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_000,
+        None,
+        None,
+    )
+    .await;
+
+    network.run_until_block_finalized(2u64, 50).await.unwrap();
 
     let response: Value = wallet
         .provider()
@@ -1827,42 +1846,74 @@ async fn get_tx_block_rate_1(mut network: Network) {
 async fn tx_block_listing(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    network.run_until_block_finalized(2u64, 100).await.unwrap();
+    // Create enough blocks to have multiple pages
+    for i in 0..25 {
+        let (secret_key, _) = zilliqa_account(&mut network).await;
 
-    let response: Value = wallet
+        let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+            .parse()
+            .unwrap();
+        send_transaction(
+            &mut network,
+            &secret_key,
+            1,
+            ToAddr::Address(to_addr),
+            200u128 * 10u128.pow(12),
+            50_000,
+            None,
+            None,
+        )
+        .await;
+
+        network.run_until_block_finalized(i, 50).await.unwrap();
+    }
+
+    let total_blocks = network
+        .get_node(0)
+        .get_latest_finalized_block_number()
+        .unwrap();
+    let expected_pages = (total_blocks / 10) + if total_blocks % 10 != 0 { 1 } else { 0 };
+
+    // Get first page
+    let response1: Value = wallet
         .provider()
-        .request("TxBlockListing", [0])
+        .request("TxBlockListing", [1])
         .await
         .expect("Failed to call TxBlockListing API");
 
-    let tx_block_listing: zilliqa::api::types::zil::TxBlockListingResult =
-        serde_json::from_value(response).expect("Failed to deserialize response");
+    let result1 = zilliqa::api::types::zil::TxBlockListingResult::deserialize(&response1).unwrap();
 
-    assert_eq!(
-        tx_block_listing.data.len(),
-        2,
-        "Expected 2 TxBlock listings"
-    );
-    assert!(
-        tx_block_listing.max_pages >= 1,
-        "Expected at least 1 page of TxBlock listings"
-    );
+    // Verify pagination info
+    assert_eq!(result1.max_pages, expected_pages);
 
-    assert!(
-        tx_block_listing.data[0].block_num > 0,
-        "Expected BlockNum to be greater than 0, got: {:?}",
-        tx_block_listing.data[0].block_num
-    );
-    assert!(
-        tx_block_listing.data[1].block_num == 0,
-        "Expected BlockNum to be 0, got: {:?}",
-        tx_block_listing.data[1].block_num
-    );
-    assert!(
-        !tx_block_listing.data[1].hash.is_empty(),
-        "Expected Hash to be non-empty, got: {:?}",
-        tx_block_listing.data[1].hash
-    );
+    // Get second page
+    let response2: Value = wallet
+        .provider()
+        .request("TxBlockListing", [2])
+        .await
+        .expect("Failed to call TxBlockListing API");
+
+    let result2 = zilliqa::api::types::zil::TxBlockListingResult::deserialize(&response2).unwrap();
+
+    // Verify ordering within page (should be descending)
+    for i in 1..result1.data.len() {
+        assert!(result1.data[i - 1].block_num > result1.data[i].block_num);
+    }
+
+    // Verify ordering across pages
+    if !result2.data.is_empty() {
+        assert!(result1.data.last().unwrap().block_num > result2.data[0].block_num);
+    }
+
+    // Test invalid page numbers
+    let response_zero: Result<Value, _> = wallet.provider().request("TxBlockListing", [0]).await;
+    assert!(response_zero.is_err());
+
+    let response_too_high: Result<Value, _> = wallet
+        .provider()
+        .request("TxBlockListing", [expected_pages + 1])
+        .await;
+    assert!(response_too_high.is_err());
 }
 
 #[zilliqa_macros::test]

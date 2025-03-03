@@ -13,3 +13,9 @@ Then compile with `solc`:
 ```sh
 ZQ_CONTRACT_TEST_BLESS=1 cargo test --features test_contract_bytecode -- contracts::tests::compile_all
 ```
+
+## Run Solidity tests
+
+```sh
+    forge test -C zilliqa/src/contracts/tests
+```

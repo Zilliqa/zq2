@@ -58,14 +58,10 @@ pub fn string_from_path(in_path: &Path) -> Result<String> {
 
 /// Get local public IP
 pub async fn get_public_ip() -> Result<String> {
-    let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
-        .silent()
-        .cmd("curl", &["-s", "https://ipinfo.io/ip"])
-        .run_for_output()
-        .await?;
-
-    let stdout = output.stdout;
-    Ok(std::str::from_utf8(&stdout)?.trim().to_owned())
+    let response = reqwest::get("https://ipinfo.io/ip")
+        .await?
+        .error_for_status()?;
+    Ok(response.text().await?)
 }
 
 pub fn compute_log_string(

@@ -17,7 +17,7 @@ use sha3::{Digest, Keccak256};
 use tracing::{debug, info};
 
 use crate::{
-    cfg::{Amount, ContractUpgradesBlockHeights, Forks, NodeConfig, ScillaExtLibsPath},
+    cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
     db::{Db, TrieStorage},
@@ -160,13 +160,10 @@ impl State {
 
         let deposit_contract = Lazy::<contracts::Contract>::force(&contracts::deposit::CONTRACT);
         let block_header = BlockHeader::genesis(Hash::ZERO);
-        state.upgrade_deposit_contract(block_header, deposit_contract)?;
+        state.upgrade_deposit_contract(block_header, deposit_contract, None)?;
 
         // Check if any contracts are to be upgraded from genesis
-        state.contract_upgrade_apply_state_change(
-            &config.consensus.contract_upgrade_block_heights,
-            block_header,
-        )?;
+        state.contract_upgrade_apply_state_change(&config.consensus, block_header)?;
 
         Ok(state)
     }
@@ -174,17 +171,17 @@ impl State {
     /// If there are any contract updates to be performed then apply them to self
     pub fn contract_upgrade_apply_state_change(
         &mut self,
-        contract_upgrade_block_heights: &ContractUpgradesBlockHeights,
+        config: &ConsensusConfig,
         block_header: BlockHeader,
     ) -> Result<()> {
-        if let Some(deposit_v3_deploy_height) = contract_upgrade_block_heights.deposit_v3 {
+        if let Some(deposit_v3_deploy_height) = config.contract_upgrade_block_heights.deposit_v3 {
             if deposit_v3_deploy_height == block_header.number {
                 let deposit_v3_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
-                self.upgrade_deposit_contract(block_header, deposit_v3_contract)?;
+                self.upgrade_deposit_contract(block_header, deposit_v3_contract, None)?;
             }
         }
-        if let Some(deposit_v4_deploy_height) = contract_upgrade_block_heights.deposit_v4 {
+        if let Some(deposit_v4_deploy_height) = config.contract_upgrade_block_heights.deposit_v4 {
             if deposit_v4_deploy_height == block_header.number {
                 // The below account mutation fixes the Zero account's nonce in prototestnet and protomainnet.
                 // Issue #2254 explains how the nonce was incorrect due to a bug in the ZQ1 persistence converter.
@@ -198,7 +195,20 @@ impl State {
                 }
                 let deposit_v4_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v4::CONTRACT);
-                self.upgrade_deposit_contract(block_header, deposit_v4_contract)?;
+                self.upgrade_deposit_contract(block_header, deposit_v4_contract, None)?;
+            }
+        }
+        if let Some(deposit_v5_deploy_height) = config.contract_upgrade_block_heights.deposit_v5 {
+            if deposit_v5_deploy_height == block_header.number {
+                let deposit_v5_contract =
+                    Lazy::<contracts::Contract>::force(&contracts::deposit_v5::CONTRACT);
+                let deposit_v5_reinitialise_data = contracts::deposit_v5::REINITIALIZE
+                    .encode_input(&[Token::Uint(config.staker_withdrawal_period.into())])?;
+                self.upgrade_deposit_contract(
+                    block_header,
+                    deposit_v5_contract,
+                    Some(deposit_v5_reinitialise_data),
+                )?;
             }
         }
         Ok(())
@@ -266,19 +276,20 @@ impl State {
         &mut self,
         current_block: BlockHeader,
         contract: &Contract,
+        reinitialise_data: Option<Vec<u8>>,
     ) -> Result<Address> {
         let current_version = self.deposit_contract_version(current_block)?;
 
         // Deploy latest deposit implementation
         let new_deposit_impl_addr =
             self.force_deploy_contract_evm(contract.bytecode.to_vec(), None, 0)?;
-
-        let new_deposit_impl_reinitialize_data =
-            contracts::deposit::REINITIALIZE.encode_input(&[])?;
         let deposit_upgrade_to_and_call_data =
             contract.abi.function("upgradeToAndCall")?.encode_input(&[
                 Token::Address(ethabi::Address::from(new_deposit_impl_addr.into_array())),
-                Token::Bytes(new_deposit_impl_reinitialize_data),
+                Token::Bytes(
+                    reinitialise_data
+                        .unwrap_or(contracts::deposit::REINITIALIZE.encode_input(&[])?),
+                ),
             ])?;
 
         // Apply update to eip 1967 proxy
@@ -667,7 +678,7 @@ mod tests {
         // Update to deposit v2
         let deposit_v2 = Lazy::<contracts::Contract>::force(&contracts::deposit_v2::CONTRACT);
         let deposit_v2_addr = state
-            .upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO), deposit_v2)
+            .upgrade_deposit_contract(BlockHeader::genesis(Hash::ZERO), deposit_v2, None)
             .unwrap();
 
         let proxy_storage_at = state

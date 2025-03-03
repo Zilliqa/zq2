@@ -30,3 +30,7 @@ perf.*
 # Provisioning files
 provision_*.py
 config.toml
+
+# Solidity Compiler files
+cache/
+out/

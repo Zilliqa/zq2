@@ -12,7 +12,6 @@ use blsful::{
     inner_types::Group, vsss_rs::ShareIdentifier, AggregateSignature, Bls12381G2, Bls12381G2Impl,
     MultiPublicKey, MultiSignature, PublicKey, Signature,
 };
-use crypto_bigint::generic_array::GenericArray;
 use itertools::Itertools;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
 use serde::{
@@ -308,8 +307,7 @@ impl SecretKey {
     }
 
     pub fn to_evm_address(&self) -> Address {
-        let ecdsa_key =
-            k256::ecdsa::SigningKey::from_bytes(GenericArray::from_slice(&self.bytes)).unwrap();
+        let ecdsa_key = k256::ecdsa::SigningKey::from_slice(&self.bytes).unwrap();
         let tx_pubkey =
             TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
         tx_pubkey.into_addr()

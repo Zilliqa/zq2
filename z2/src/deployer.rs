@@ -727,9 +727,8 @@ pub async fn run_rpc_call(
         let current_params = params.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
-            let result = machine
-                .get_rpc_response(&current_method, &current_params, timeout, current_port)
-                .await;
+            let result =
+                machine.get_rpc_response(&current_method, &current_params, timeout, current_port);
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -801,7 +800,7 @@ pub async fn run_ssh_command(
         let current_command = command.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
-            let result = machine.run(&current_command.join(" "), false).await;
+            let result = machine.run(&current_command.join(" "), false);
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -813,7 +812,7 @@ pub async fn run_ssh_command(
     for result in results {
         match result? {
             (machine, Ok(output)) => {
-                let output = if !output.success {
+                let output = if !output.status.success() {
                     format!(
                         "{}: {}",
                         "ERROR".red(),
@@ -1201,7 +1200,7 @@ async fn generate_secret(
 
     // Retrieve existing secret
     progress_bar.start(format!("{}: Retrieving existing secret", name));
-    let mut secrets = Secret::get_secrets(project_id, filters).await?;
+    let mut secrets = Secret::get_secrets(project_id, filters)?;
     if secrets.len() > 1 {
         return Err(anyhow!(
             "Error: found multiple secrets with the filter {filters}"
@@ -1212,7 +1211,7 @@ async fn generate_secret(
     // If force and present delete the old secret before
     if !secrets.is_empty() && force {
         progress_bar.start(format!("{}: Deleting existing secret", name));
-        secrets[0].delete().await?;
+        secrets[0].delete()?;
         secrets.clear();
         progress_bar.inc(1);
     }
@@ -1220,7 +1219,7 @@ async fn generate_secret(
     // Create secret if does not exist
     progress_bar.start(format!("{}: Create secret if does not exist", name));
     if secrets.is_empty() {
-        let secret = Secret::create(project_id, name, labels).await?;
+        let secret = Secret::create(project_id, name, labels)?;
         secrets.push(secret);
     }
     progress_bar.inc(1);
@@ -1230,11 +1229,11 @@ async fn generate_secret(
         "{}: Creating new secret version if not exist",
         name
     ));
-    let secret_value = &Secret::generate_random_secret().await?;
+    let secret_value = Secret::generate_random_secret();
 
-    if let Some(error) = secrets[0].value().await.err() {
+    if let Some(error) = secrets[0].value().err() {
         if error.to_string().contains("has no versions") {
-            secrets[0].add_version(secret_value).await?;
+            secrets[0].add_version(&secret_value)?;
         }
     }
     progress_bar.inc(1);

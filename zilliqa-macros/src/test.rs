@@ -150,7 +150,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
             let seeds_number = seeds.len();
 
             let mut name = format!("scilla-server-{}-", stringify!(#test_name));
-            let rng = <rand::rngs::SmallRng as rand_core::SeedableRng>::from_entropy();
+            let rng = <rand::rngs::SmallRng as rand::SeedableRng>::from_entropy();
 
             name.extend(rand::Rng::sample_iter(rng, &rand::distributions::Alphanumeric).map(char::from).take(8));
 
@@ -255,7 +255,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     };
 
                     async move {
-                        let mut rng = <rand_chacha::ChaCha8Rng as rand_core::SeedableRng>::seed_from_u64(seed);
+                        let mut rng = <rand_chacha::ChaCha8Rng as rand::SeedableRng>::seed_from_u64(seed);
                         let mut deposit_v3_upgrade_block_height_option = Option::None;
                         if #deposit_v3_upgrade_block_height != 0 {
                             deposit_v3_upgrade_block_height_option = Option::Some(#deposit_v3_upgrade_block_height);
