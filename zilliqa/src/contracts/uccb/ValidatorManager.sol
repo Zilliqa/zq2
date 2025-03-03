@@ -6,7 +6,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {OwnableUpgradeable, Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
-import {ISignatureValidatorErrors, SignatureValidator} from "contracts/uccb/SignatureValidator.sol";
+import {ISignatureValidatorErrors, SignatureValidator} from "./SignatureValidator.sol";
 
 interface IValidatorManager is ISignatureValidatorErrors {
     function addValidator(address user) external returns (bool);
@@ -31,7 +31,7 @@ interface IValidatorManager is ISignatureValidatorErrors {
  * It can be used by `ChainGateway` contract to verify the signatures of the validators
  * on incoming dispatch requests
  */
-contract ValidatorManagerUpgradeable is
+contract ValidatorManager is
     IValidatorManager,
     Initializable,
     UUPSUpgradeable,

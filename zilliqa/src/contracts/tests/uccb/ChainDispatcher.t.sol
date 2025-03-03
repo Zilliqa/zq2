@@ -45,7 +45,7 @@ library DispatchArgsBuilder {
 contract ChainDispatcherHarness is
     Initializable,
     UUPSUpgradeable,
-    ChainDispatcherUpgradeable
+    ChainDispatcher
 {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {

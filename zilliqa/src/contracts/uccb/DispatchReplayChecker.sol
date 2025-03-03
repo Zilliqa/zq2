@@ -22,7 +22,7 @@ interface IDispatchReplayChecker is IDispatchReplayCheckerErrors {
  * essentially prevent the same message from being dispatched twice
  * The combination of `(sourceChainId, nonce)` form a unique key pair.
  */
-abstract contract DispatchReplayCheckerUpgradeable is IDispatchReplayChecker {
+abstract contract DispatchReplayChecker is IDispatchReplayChecker {
     /**
      * @dev Storage of the initializable contract.
      *
