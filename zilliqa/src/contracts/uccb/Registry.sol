@@ -33,7 +33,7 @@ interface IRegistry is IRegistryErrors, IRegistryEvents {
  * contract that inherits this one
  * Includes the `isRegistered` modifier that other contracts can leverage
  */
-abstract contract RegistryUpgradeable is IRegistry {
+abstract contract Registry is IRegistry {
     /**
      * @dev Storage of the initializable contract.
      *

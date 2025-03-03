@@ -4,7 +4,8 @@ pragma solidity ^0.8.20;
 import {ValidatorManager} from "../../uccb/ValidatorManager.sol";
 import {Tester, Vm} from "../../test/Tester.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {Upgrades, Options} from "openzeppelin-foundry-upgrades/Upgrades.sol";
+import {Upgrades, Options} from "@openzeppelin/foundry-upgrades/Upgrades.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 library UUPSUpgrader {
     function deploy(
@@ -128,12 +129,15 @@ abstract contract ValidatorManagerFixture is Tester {
             _validators[i] = vm.createWallet(i + 1);
             validatorAddresses[i] = _validators[i].addr;
         }
-        ValidatorManager _validatorManager = new ValidatorManager(
-            address(this)
-        );
-        _validatorManager.initialize(validatorAddresses);
+        address implementation = address(new ValidatorManager());
+        address proxy = address(new ERC1967Proxy(
+            implementation,
+            abi.encodeWithSelector(
+                ValidatorManager.initialize.selector,
+                address(this),
+                validatorAddresses)));
 
-        return (_validators, _validatorManager);
+        return (_validators, ValidatorManager(proxy));
     }
 
     constructor() {
