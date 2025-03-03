@@ -7,3 +7,6 @@
 [submodule "vendor/forge-std"]
 	path = vendor/forge-std
 	url = https://github.com/foundry-rs/forge-std
+[submodule "vendor/openzeppelin-foundry-upgrades"]
+	path = vendor/openzeppelin-foundry-upgrades
+	url = https://github.com/OpenZeppelin/openzeppelin-foundry-upgrades
