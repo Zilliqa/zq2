@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
-use opentelemetry_sdk::{metrics::PeriodicReader, runtime};
+use opentelemetry_sdk::metrics::PeriodicReader;
 use tracing_subscriber::EnvFilter;
 use zilliqa::{cfg::Config, crypto::SecretKey, p2p_node::P2pNode};
 
@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
             .with_tonic()
             .with_export_config(export_config)
             .build()?;
-        let reader = PeriodicReader::builder(exporter, runtime::Tokio).build();
+        let reader = PeriodicReader::builder(exporter).build();
         let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
             .with_reader(reader)
             .build();
