@@ -3052,7 +3052,7 @@ impl Consensus {
             let prune_at = number.saturating_sub(self.prune_interval);
             if range.contains(&prune_at) {
                 // this may take a while, the first time pruning is activated
-                for n in (*range.start()..prune_at).rev() {
+                for n in *range.start()..prune_at {
                     let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
                     if let Some(block) = block {
                         self.db
