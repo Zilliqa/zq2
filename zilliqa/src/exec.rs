@@ -566,7 +566,7 @@ impl State {
                         .as_secs(),
                 ),
                 gas_limit: U256::from(self.block_gas_limit.0),
-                basefee: U256::from(self.gas_price),
+                basefee: U256::from(current_block.base_fee_per_gas),
                 difficulty: U256::from(1),
                 prevrandao: Some(Hash::builder().with(padded_view_number).finalize().into()),
                 blob_excess_gas_and_price: None,
