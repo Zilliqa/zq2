@@ -4,10 +4,10 @@ pragma solidity ^0.8.20;
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {Target, ValidatorManagerFixture, IReentrancy} from "./Helpers.sol";
 
-import {ChainDispatcher, IChainDispatcherEvents, IChainDispatcherErrors} from "contracts/core-upgradeable/ChainDispatcher.sol";
+import {ChainDispatcher, IChainDispatcherEvents, IChainDispatcherErrors} from "../../uccb/ChainDispatcher.sol";
 
-import {ISignatureValidatorErrors} from "../../SignatureValidator.sol";
-import {IDispatchReplayCheckerErrors} from "../../DispatchReplayChecker.sol";
+import {ISignatureValidatorErrors} from "../../uccb/SignatureValidator.sol";
+import {IDispatchReplayCheckerErrors} from "../../uccb/DispatchReplayChecker.sol";
 
 import {OwnableUpgradeable, Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
