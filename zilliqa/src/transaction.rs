@@ -310,11 +310,19 @@ impl SignedTransaction {
         }
     }
 
-    pub fn effective_priority_fee(&self, base_fee_per_gas: u128) -> u128 {
+    pub fn effective_gas_price(&self, base_fee: u128) -> u128 {
         match self {
-            SignedTransaction::Eip1559 { tx, .. } => tx
-                .max_priority_fee_per_gas
-                .min(tx.max_fee_per_gas - base_fee_per_gas),
+            SignedTransaction::Eip1559 { tx, .. } => {
+                // if the tip is greater than the max priority fee per gas, set it to the max
+                // priority fee per gas + base fee
+                let tip = tx.max_fee_per_gas.saturating_sub(base_fee);
+                if tip > tx.max_priority_fee_per_gas {
+                    tx.max_priority_fee_per_gas + base_fee
+                } else {
+                    // otherwise return the max fee per gas
+                    tx.max_fee_per_gas
+                }
+            }
             _ => self.gas_price_per_evm_gas(),
         }
     }
