@@ -357,9 +357,8 @@ contract DepositTest is Test {
         uint256 withdrawals
     ) public view {
         uint256 gasBefore = gasleft();
-        (, , Deposit.StakerData memory stakerData) = depositContract.getStakerData(
-            blsPubKey
-        );
+        (, , Deposit.StakerData memory stakerData) = depositContract
+            .getStakerData(blsPubKey);
         if (printGasUsage) {
             console.log("\ngetStakerData Gas used: %s", gasBefore - gasleft());
         }
