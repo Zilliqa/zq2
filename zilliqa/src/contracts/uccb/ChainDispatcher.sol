@@ -5,8 +5,8 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable, Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
-import {IValidatorManager} from "uccb/ValidatorManager.sol";
-import {IDispatchReplayChecker, DispatchReplayChecker} from "uccb/DispatchReplayChecker.sol";
+import {IValidatorManager} from "./ValidatorManager.sol";
+import {IDispatchReplayChecker, DispatchReplayChecker} from "./DispatchReplayChecker.sol";
 
 interface IChainDispatcherEvents {
     /**
@@ -55,11 +55,11 @@ interface IChainDispatcher is
  * The `dispatch` function will dispatch a message sourcing from a different chain
  * It is able to relay message to any arbitrary chain that is part of the UCCB network
  */
-abstract contract ChainDispatcherUpgradeable is
+abstract contract ChainDispatcher is
     IChainDispatcher,
     Initializable,
     Ownable2StepUpgradeable,
-    DispatchReplayCheckerUpgradeable
+    DispatchReplayChecker
 {
     using MessageHashUtils for bytes;
 

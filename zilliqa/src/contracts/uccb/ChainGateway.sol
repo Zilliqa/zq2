@@ -5,8 +5,8 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 
-import {IChainDispatcher, ChainDispatcher} from "contracts/uccb/ChainDispatcher.sol";
-import {IRelayer, RelayerUpgradeable} from "contracts/uccb/Relayer.sol";
+import {IChainDispatcher, ChainDispatcher} from "./ChainDispatcher.sol";
+import {IRelayer, RelayerUpgradeable} from "./Relayer.sol";
 
 interface IChainGateway is IRelayer, IChainDispatcher {}
 
@@ -19,7 +19,7 @@ interface IChainGateway is IRelayer, IChainDispatcher {}
  * The contract is also UUPS upgradeable.
  * For future upgrades of the contract refer to: https://docs.openzeppelin.com/upgrades-plugins/1.x/writing-upgradeable
  */
-contract ChainGatewayUpgradeable is
+contract ChainGateway is
     Initializable,
     UUPSUpgradeable,
     Ownable2StepUpgradeable,
