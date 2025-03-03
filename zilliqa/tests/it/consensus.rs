@@ -318,7 +318,7 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
 
 // Test a pruning node does not hold old blocks.
 #[zilliqa_macros::test]
-async fn pruning(mut network: Network) {
+async fn prune_interval(mut network: Network) {
     network
         .run_until(
             |n| {
