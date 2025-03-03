@@ -354,9 +354,9 @@ impl Node {
             ExternalMessage::MetaDataResponse(response) => {
                 let response = response
                     .into_iter()
-                    .map(|bh| SyncBlockHeader {
+                    .map(|bh: BlockHeader| SyncBlockHeader {
                         header: bh,
-                        size_estimate: usize::MIN,
+                        size_estimate: (1024 * 1024 * bh.gas_used.0 / bh.gas_limit.0) as usize, // guesstimate
                     })
                     .collect_vec();
                 self.consensus
