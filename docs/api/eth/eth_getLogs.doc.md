@@ -50,5 +50,5 @@ curl -d '{
 | `id`      | string | Required | `"1"`              |
 | `jsonrpc` | string | Required | `"2.0"`            |
 | `method`  | string | Required | `"DSBlockListing"` |
-| `params`  | array  | Requred  | `[ filter ]`       |
+| `params`  | array  | Required  | `[ filter ]`       |
 
