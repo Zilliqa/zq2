@@ -2,17 +2,17 @@ use std::sync::Arc;
 
 use alloy::{
     primitives::{I256, U256},
-    sol_types::{abi::Decoder, SolValue},
+    sol_types::{SolValue, abi::Decoder},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use revm::{
+    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
     handler::register::EvmHandler,
     interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
     precompile::PrecompileError,
     primitives::{
         Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
     },
-    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
 };
 use scilla_parser::{
     ast::nodes::{
@@ -26,7 +26,7 @@ use tracing::trace;
 use crate::{
     cfg::scilla_ext_libs_path_default,
     constants::SCILLA_INVOKE_RUNNER,
-    exec::{scilla_call, ExternalContext, PendingState, ScillaError},
+    exec::{ExternalContext, PendingState, ScillaError, scilla_call},
     inspector::ScillaInspector,
     state::Code,
     transaction::{EvmGas, ZilAmount},

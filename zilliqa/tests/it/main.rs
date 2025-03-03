@@ -5,7 +5,7 @@ use ethers::{
     types::TransactionRequest,
 };
 use primitive_types::U256;
-use serde_json::{value::RawValue, Value};
+use serde_json::{Value, value::RawValue};
 mod admin;
 mod consensus;
 mod eth;
@@ -27,20 +27,20 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, MutexGuard,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use ethers::{
     abi::Contract,
     prelude::{DeploymentTxFactory, SignerMiddleware},
     providers::{HttpClientError, JsonRpcClient, JsonRpcError, Provider},
     signers::LocalWallet,
-    types::{Bytes, TransactionReceipt, H256, U64},
+    types::{Bytes, H256, TransactionReceipt, U64},
     utils::{get_contract_address, secret_key_to_address},
 };
 use foundry_compilers::{
@@ -48,17 +48,17 @@ use foundry_compilers::{
     solc::{Solc, SolcLanguage},
 };
 use fs_extra::dir::*;
-use futures::{stream::BoxStream, Future, FutureExt, Stream, StreamExt};
+use futures::{Future, FutureExt, Stream, StreamExt, stream::BoxStream};
 use itertools::Itertools;
 use jsonrpsee::{
-    types::{Id, Notification, RequestSer, Response, ResponsePayload},
     RpcModule,
+    types::{Id, Notification, RequestSer, Response, ResponsePayload},
 };
 use k256::ecdsa::SigningKey;
 use libp2p::PeerId;
-use rand::{seq::SliceRandom, Rng};
+use rand::{Rng, seq::SliceRandom};
 use rand_chacha::ChaCha8Rng;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
@@ -66,13 +66,13 @@ use tracing::*;
 use zilliqa::{
     api,
     cfg::{
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        genesis_fork_default, max_blocks_in_flight_default, max_rpc_response_size_default,
-        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
-        staker_withdrawal_period_default, state_cache_size_default, state_rpc_limit_default,
-        total_native_token_supply_default, Amount, ApiServer, Checkpoint, ConsensusConfig,
-        ContractUpgradesBlockHeights, GenesisDeposit, NodeConfig,
+        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights,
+        GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
+        block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
+        failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
+        max_rpc_response_size_default, scilla_address_default, scilla_ext_libs_path_default,
+        scilla_stdlib_dir_default, staker_withdrawal_period_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -874,20 +874,26 @@ impl Network {
             .expect("Sender should be on the nodes list");
         let sender_chain_id = sender_node.inner.lock().unwrap().config.eth_chain_id;
         match contents {
-            AnyMessage::Internal(source_shard, destination_shard, ref internal_message) => {
-                trace!("Handling internal message from node in shard {source_shard}, targetting {destination_shard}");
+            AnyMessage::Internal(source_shard, destination_shard, internal_message) => {
+                trace!(
+                    "Handling internal message from node in shard {source_shard}, targetting {destination_shard}"
+                );
                 match internal_message {
                     InternalMessage::LaunchShard(new_network_id) => {
                         let secret_key = self.find_node(source).unwrap().1.secret_key;
                         if let Some(child_network) = self.children.get_mut(new_network_id) {
                             if child_network.find_node(source).is_none() {
-                                trace!("Launching shard node for {new_network_id} - adding new node to shard");
+                                trace!(
+                                    "Launching shard node for {new_network_id} - adding new node to shard"
+                                );
                                 child_network.add_node_with_options(NewNodeOptions {
                                     secret_key: Some(secret_key),
                                     ..Default::default()
                                 });
                             } else {
-                                trace!("Received messaged to launch new node in {new_network_id}, but node {source} already exists in that network");
+                                trace!(
+                                    "Received messaged to launch new node in {new_network_id}, but node {source} already exists in that network"
+                                );
                             }
                         } else {
                             info!("Launching node in new shard network {new_network_id}");
@@ -914,7 +920,10 @@ impl Network {
                             let (destination, _) = destination.expect("Local messages are intended to always have the node's own peerid as destination within in the test harness");
                             let idx_node = self.find_node(destination);
                             if let Some((idx, node)) = idx_node {
-                                trace!("Handling intershard message {:?} from shard {}, in node {} of shard {}", internal_message, source_shard, idx, self.shard_id);
+                                trace!(
+                                    "Handling intershard message {:?} from shard {}, in node {} of shard {}",
+                                    internal_message, source_shard, idx, self.shard_id
+                                );
                                 node.inner
                                     .lock()
                                     .unwrap()
@@ -932,12 +941,13 @@ impl Network {
                         } else if let Some(network) = self.children.get_mut(destination_shard) {
                             trace!(
                                 "Forwarding intershard message from shard {} to subshard {}...",
-                                self.shard_id,
-                                destination_shard
+                                self.shard_id, destination_shard
                             );
                             network.resend_message.send(message).unwrap();
                         } else if let Some(send_to_parent) = self.send_to_parent.as_ref() {
-                            trace!("Found intershard message that matches none of our children, forwarding it to our parent so they may hopefully route it...");
+                            trace!(
+                                "Found intershard message that matches none of our children, forwarding it to our parent so they may hopefully route it..."
+                            );
                             send_to_parent.send(message).unwrap();
                         } else {
                             warn!("Dropping intershard message for shard that does not exist");
@@ -951,7 +961,11 @@ impl Network {
                         trie_storage,
                         output,
                     ) => {
-                        assert!(self.do_checkpoints, "Node requested a checkpoint checkpoint export to {}, despite checkpoints beind disabled in the config", output.to_string_lossy());
+                        assert!(
+                            self.do_checkpoints,
+                            "Node requested a checkpoint checkpoint export to {}, despite checkpoints beind disabled in the config",
+                            output.to_string_lossy()
+                        );
                         trace!("Exporting checkpoint to path {}", output.to_string_lossy());
                         db::checkpoint_block_with_state(
                             block,

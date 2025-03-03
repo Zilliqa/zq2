@@ -1,7 +1,7 @@
 use core::convert::AsRef;
 use std::{env, fs, os::unix::fs::PermissionsExt, path::Path};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
