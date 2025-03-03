@@ -1106,20 +1106,20 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHisto
                 .ok_or_else(|| anyhow!("block not found"))?;
 
             let reward = if let Some(reward_percentiles) = reward_percentiles.as_ref() {
-                let mut effective_priority_fees = block
+                let mut effective_gas_prices = block
                     .transactions
                     .iter()
                     .map(|tx_hash| {
                         let tx = node
                             .get_transaction_by_hash(*tx_hash)?
                             .ok_or_else(|| anyhow!("transaction not found: {}", tx_hash))?;
-                        Ok(tx.tx.effective_priority_fee(block.header.base_fee_per_gas))
+                        Ok(tx.tx.effective_gas_price(block.header.base_fee_per_gas))
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                effective_priority_fees.sort_unstable();
+                effective_gas_prices.sort_unstable();
 
-                let fees_len = effective_priority_fees.len() as f64;
+                let fees_len = effective_gas_prices.len() as f64;
 
                 reward_percentiles
                     .iter()
@@ -1128,7 +1128,7 @@ fn fee_history(params: Params, node: &Arc<RwLock<Node>>) -> Result<eth::FeeHisto
                         let i = ((x / 100_f64) * fees_len) as usize;
 
                         // Get the fee at the calculated index, or default to 0 if the index is out of bounds
-                        effective_priority_fees.get(i).cloned().unwrap_or_default()
+                        effective_gas_prices.get(i).cloned().unwrap_or_default()
                     })
                     .collect()
             } else {
