@@ -329,16 +329,18 @@ impl Network {
             })
             .collect();
 
-        let contract_upgrades = if deposit_v3_upgrade_block_height.is_some() {
-            ContractUpgrades::new(
-                Some(ContractUpgradeConfig::from_height(
-                    deposit_v3_upgrade_block_height.unwrap(),
-                )),
-                None,
-                None,
-            )
-        } else {
-            ContractUpgrades::new(None, None, None)
+        let contract_upgrades = {
+            if let Some(deposit_v3_upgrade_block_height_value) = deposit_v3_upgrade_block_height {
+                ContractUpgrades::new(
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height_value,
+                    )),
+                    None,
+                    None,
+                )
+            } else {
+                ContractUpgrades::new(None, None, None)
+            }
         };
 
         let config = NodeConfig {
