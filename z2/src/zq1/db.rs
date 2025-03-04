@@ -4,8 +4,8 @@ use std::{
 };
 
 use alloy::primitives::{Address, B256};
-use anyhow::{anyhow, Result};
-use eth_trie::{EthTrie, Trie, DB};
+use anyhow::{Result, anyhow};
+use eth_trie::{DB, EthTrie, Trie};
 use hex::FromHex;
 use leveldb::{
     db::Database,

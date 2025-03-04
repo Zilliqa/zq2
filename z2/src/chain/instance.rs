@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, process::Command, str::FromStr};
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Ok, Result, anyhow};
 use serde_json::value::Value;
 
 use super::{
-    config::NetworkConfig,
-    node::{retrieve_secret_by_role, ChainNode, Machine, NodeRole},
     Chain,
+    config::NetworkConfig,
+    node::{ChainNode, Machine, NodeRole, retrieve_secret_by_role},
 };
 
 #[derive(Clone, Debug)]

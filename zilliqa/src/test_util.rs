@@ -13,12 +13,14 @@ pub fn compile_contract(path: &str, contract: &str) -> (JsonAbi, Bytes) {
         SolcLanguage::Solidity,
         Source::read_all_files(vec![path.clone()]).unwrap(),
         Settings {
-            remappings: vec![format!(
-                "@openzeppelin/contracts={}/../vendor/openzeppelin-contracts/contracts",
-                env!("CARGO_MANIFEST_DIR")
-            )
-            .parse()
-            .unwrap()],
+            remappings: vec![
+                format!(
+                    "@openzeppelin/contracts={}/../vendor/openzeppelin-contracts/contracts",
+                    env!("CARGO_MANIFEST_DIR")
+                )
+                .parse()
+                .unwrap(),
+            ],
             optimizer: Optimizer {
                 enabled: Some(true),
                 runs: Some(2usize.pow(32) - 1),

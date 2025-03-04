@@ -1,10 +1,10 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
-use rand::{distributions::Alphanumeric, Rng};
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use rand::{Rng, distributions::Alphanumeric};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::json;
 
 use crate::{
@@ -198,7 +198,12 @@ impl NodeConfig {
         {
             for (contract, block_height) in map {
                 if block_height.as_u64().unwrap_or(0) % self.consensus.blocks_per_epoch != 0 {
-                    return Err(anyhow!("Contract upgrades must be configured to occur at epoch boundaries. blocks_per_epoch: {}, contract {} configured to be upgraded block: {}", self.consensus.blocks_per_epoch, contract, block_height));
+                    return Err(anyhow!(
+                        "Contract upgrades must be configured to occur at epoch boundaries. blocks_per_epoch: {}, contract {} configured to be upgraded block: {}",
+                        self.consensus.blocks_per_epoch,
+                        contract,
+                        block_height
+                    ));
                 }
             }
         }

@@ -1,7 +1,7 @@
 pub mod num_as_str {
     use std::{fmt::Display, str::FromStr};
 
-    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -25,8 +25,8 @@ pub mod num_as_str {
 
 pub mod bool_as_str {
     use serde::{
-        de::{self, Unexpected},
         Deserialize, Deserializer,
+        de::{self, Unexpected},
     };
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
@@ -39,7 +39,7 @@ pub mod bool_as_str {
 }
 
 pub mod json_value_as_str {
-    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
     use serde_json::Value;
 
     pub fn serialize<S>(value: &Value, serializer: S) -> Result<S::Ok, S::Error>
@@ -60,7 +60,7 @@ pub mod json_value_as_str {
 /// Custom (de)serializer for `Vec<ParamValue>` which doesn't rely on `deserialize_any` by serializing the inner
 /// `serde_json::Value` as a string. This means bincode is able to handle it.
 pub mod vec_param_value {
-    use serde::{ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeSeq};
 
     use crate::scilla::ParamValue;
 

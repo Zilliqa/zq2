@@ -1,6 +1,6 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
-use syn::{parse::Parser, ItemFn};
+use syn::{ItemFn, parse::Parser};
 
 // Much of this code is adapted from https://github.com/tokio-rs/tokio/blob/910a1e2fcf8ebafd41c2841144c3a1037af7dc40/tokio-macros/src/lib.rs.
 
@@ -34,7 +34,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         return token_stream_with_error(
                             args,
                             syn::Error::new_spanned(p, "Unknown attribute"),
-                        )
+                        );
                     }
                 }
             }
@@ -88,7 +88,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         return token_stream_with_error(
                             args,
                             syn::Error::new_spanned(a, "Unknown attribute"),
-                        )
+                        );
                     }
                 }
             }
@@ -98,7 +98,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                 return token_stream_with_error(
                     args,
                     syn::Error::new_spanned(other, "Unknown attribute"),
-                )
+                );
             }
         }
     }

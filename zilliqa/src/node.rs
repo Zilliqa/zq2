@@ -1,6 +1,6 @@
 use std::{
     fmt::Debug,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -8,6 +8,7 @@ use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::Address,
     rpc::types::{
+        TransactionInfo,
         trace::{
             geth::{
                 FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
@@ -15,16 +16,15 @@ use alloy::{
             },
             parity::{TraceResults, TraceType},
         },
-        TransactionInfo,
     },
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use itertools::Itertools;
-use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::{primitives::ExecutionResult, Inspector};
+use libp2p::{PeerId, request_response::OutboundFailure};
+use revm::{Inspector, primitives::ExecutionResult};
 use revm_inspectors::tracing::{
-    js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
-    TransactionContext,
+    FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
+    js::JsInspector,
 };
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
