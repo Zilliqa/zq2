@@ -700,7 +700,11 @@ impl Sync {
             }
         }
 
-        // Chain segment is sane
+        // Chain segment is sane, drop redundant blocks already in the DB.
+        let response = response
+            .into_iter()
+            .filter(|b| !self.db.contains_block(&b.header.hash).unwrap_or_default())
+            .collect_vec();
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
         // Record the constructed chain metadata
@@ -734,12 +738,9 @@ impl Sync {
         // Record the oldest block in the segment
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
 
-        // If the check-point/starting-point is in this segment
-        let checkpointed = segment.last().as_ref().unwrap().number <= self.checkpoint_at;
-        let block_hash = segment.last().as_ref().unwrap().hash;
-
         // If the segment hits our history, turnaround to Phase 2.
-        if checkpointed || self.db.contains_block(&block_hash)? {
+        let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
+        if self.db.contains_block(&block_hash).unwrap_or_default() {
             self.state = SyncState::Phase2((Hash::ZERO, Range::default()));
             // drop all pending requests
             for p in self.in_flight.drain(..) {
