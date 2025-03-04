@@ -34,7 +34,7 @@ library SignatureValidator {
      */
     function isSupermajority(
         EnumerableSet.AddressSet storage self,
-        uint count
+        uint256 count
     ) internal view returns (bool) {
         return count * 3 > self.length() * 2;
     }
@@ -51,9 +51,9 @@ library SignatureValidator {
         bytes[] calldata signatures
     ) internal view {
         address lastSigner = address(0);
-        uint signaturesLength = signatures.length;
+        uint256 signaturesLength = signatures.length;
 
-        for (uint i = 0; i < signaturesLength; ) {
+        for (uint256 i = 0; i < signaturesLength; ) {
             address signer = ethSignedMessageHash.recover(signatures[i]);
             if (signer <= lastSigner) {
                 revert ISignatureValidatorErrors
