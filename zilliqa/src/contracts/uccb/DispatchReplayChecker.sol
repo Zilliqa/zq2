@@ -68,7 +68,10 @@ abstract contract DispatchReplayChecker is IDispatchReplayChecker {
     /**
      * @dev Internal function handling the replay check and reverts if the message has been dispatched
      */
-    function _replayDispatchCheck(uint256 sourceChainId, uint256 nonce) internal {
+    function _replayDispatchCheck(
+        uint256 sourceChainId,
+        uint256 nonce
+    ) internal {
         DispatchReplayCheckerStorage
             storage $ = _getDispatchReplayCheckerStorage();
 
