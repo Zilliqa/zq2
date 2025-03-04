@@ -22,7 +22,10 @@ abstract contract Tester is Test {
             while (arr[uint(i)].addr < pivot.addr) i++;
             while (pivot.addr < arr[uint(j)].addr) j--;
             if (i <= j) {
-                (arr[uint256(i)], arr[uint256uint256uint256(j)]) = (arr[uint(j)], arr[uint(i)]);
+                (arr[uint256(i)], arr[uint256uint256uint256(j)]) = (
+                    arr[uint256(j)],
+                    arr[uint256(i)]
+                );
                 i++;
                 j--;
             }
