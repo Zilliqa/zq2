@@ -86,7 +86,7 @@ pub struct Sync {
     started_at: u64,
     highest_block_seen: u64,
     retry_count: usize,
-    timeout_count: usize,
+    error_count: usize,
     empty_count: usize,
     headers_downloaded: usize,
     blocks_downloaded: usize,
@@ -142,7 +142,7 @@ impl Sync {
             started_at: latest_block_number,
             highest_block_seen: latest_block_number,
             retry_count: 0,
-            timeout_count: 0,
+            error_count: 0,
             empty_count: 0,
             headers_downloaded: 0,
             blocks_downloaded: 0,
@@ -183,7 +183,7 @@ impl Sync {
         from: PeerId,
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
-        self.timeout_count = self.timeout_count.saturating_add(1);
+        self.error_count = self.error_count.saturating_add(1);
         if let Some((peer, _)) = self
             .in_flight
             .iter_mut()
@@ -246,7 +246,7 @@ impl Sync {
             SyncState::Phase0 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
                 if !self.db.contains_block(&parent_hash)? {
-                    self.active_sync_count += self.active_sync_count.saturating_add(1);
+                    self.active_sync_count = self.active_sync_count.saturating_add(1);
                     // No parent block, trigger sync
                     tracing::debug!("sync::DoSync : syncing from {parent_hash}",);
                     self.update_started_at()?;
@@ -1022,11 +1022,11 @@ impl Sync {
             starting_block: self.started_at,
             current_block,
             highest_block: self.highest_block_seen,
-            status: SyncingMeta {
+            stats: SyncingMeta {
                 peer_count,
                 current_phase: self.state.to_string(),
                 retry_count: self.retry_count,
-                timeout_count: self.timeout_count,
+                error_count: self.error_count,
                 empty_count: self.empty_count,
                 header_downloads: self.headers_downloaded,
                 block_downloads: self.blocks_downloaded,
