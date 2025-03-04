@@ -177,9 +177,16 @@ pub struct Consensus {
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
+    /// Pruning interval i.e. how many blocks to keep in the database.
+    prune_interval: u64,
 }
 
 impl Consensus {
+    // gradual pruning interval
+    const PRUNE_INTERVAL: u64 = 1000;
+    // prune interval > 20 to ensure we don't prune forks
+    const MIN_PRUNE_INTERVAL: u64 = 20;
+
     pub fn new(
         secret_key: SecretKey,
         config: NodeConfig,
@@ -317,6 +324,8 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let prune_interval = config.prune_interval.max(Self::MIN_PRUNE_INTERVAL) - 1;
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -341,6 +350,7 @@ impl Consensus {
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
+            prune_interval,
         };
         consensus.db.set_view(start_view)?;
         consensus.set_finalized_view(finalized_view)?;
@@ -3091,7 +3101,28 @@ impl Consensus {
             ));
         }
 
+        self.prune_history(block.header.number)?;
         self.broadcast_commit_receipts(from, block, block_receipts)
+    }
+
+    fn prune_history(&mut self, number: u64) -> Result<()> {
+        if self.prune_interval != u64::MAX {
+            let range = self.db.available_range()?;
+            let prune_max = range.start().saturating_add(Self::PRUNE_INTERVAL); // gradually prune N-blocks at a time
+            let prune_at = number.saturating_sub(self.prune_interval).min(prune_max);
+            if range.contains(&prune_at) {
+                for n in *range.start()..prune_at {
+                    let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
+                    if let Some(block) = block {
+                        tracing::trace!(number = %block.number(), hash=%block.hash(), "Pruning block");
+                        self.db
+                            .remove_transactions_executed_in_block(&block.hash())?;
+                        self.db.remove_block(&block)?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn broadcast_commit_receipts(
