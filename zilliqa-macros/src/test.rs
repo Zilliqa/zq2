@@ -260,7 +260,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         if #deposit_v3_upgrade_block_height != 0 {
                             deposit_v3_upgrade_block_height_option = Option::Some(#deposit_v3_upgrade_block_height);
                         };
-                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"),
+                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 1, seed, format!("http://{addr}"),
                                                           scilla_stdlib_dir.to_string(), #do_checkpoints, #blocks_per_epoch, deposit_v3_upgrade_block_height_option);
 
                         // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
