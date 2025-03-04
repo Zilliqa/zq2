@@ -3,7 +3,7 @@ use std::{
     fmt::Debug,
     fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    ops::Range,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -177,6 +177,7 @@ enum BlockFilter {
     View(u64),
     Height(u64),
     MaxHeight,
+    MinHeight,
 }
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -516,6 +517,15 @@ impl Db {
 
         c.commit()?;
         Ok(())
+    }
+
+    /// Returns the lowest and highest block numbers of stored blocks
+    pub fn available_range(&self) -> Result<RangeInclusive<u64>> {
+        let db = self.db.lock().unwrap();
+        let (min, max) = db
+            .prepare_cached("SELECT MIN(height), MAX(height) FROM blocks")?
+            .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(min..=max)
     }
 
     /// Fetch checkpoint data from file and initialise db state
@@ -1050,6 +1060,9 @@ impl Db {
             BlockFilter::MaxHeight => {
                 query_block!("TRUE ORDER BY height DESC LIMIT 1")
             }
+            BlockFilter::MinHeight => {
+                query_block!("TRUE ORDER BY height ASC LIMIT 1")
+            }
         })
     }
 
@@ -1082,6 +1095,10 @@ impl Db {
 
     pub fn get_highest_recorded_block(&self) -> Result<Option<Block>> {
         self.get_block(BlockFilter::MaxHeight)
+    }
+
+    pub fn get_lowest_recorded_block(&self) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::MinHeight)
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {

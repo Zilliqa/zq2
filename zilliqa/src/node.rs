@@ -241,6 +241,11 @@ impl Node {
                         )))?;
                 }
             }
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
+            }
             // `Proposals` are re-routed to `handle_request()`
             _ => {
                 warn!("unexpected message type");
@@ -295,11 +300,6 @@ impl Node {
             ExternalMessage::MetaDataRequest(request) => {
                 let message = self.consensus.sync.handle_metadata_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
-            }
-            // This just breaks down group block messages into individual messages to stop them blocking threads
-            // for long periods.
-            ExternalMessage::InjectedProposal(p) => {
-                self.handle_injected_proposal(from, p)?;
             }
             // Respond negatively to block request from old nodes
             ExternalMessage::BlockRequest(_) => {
@@ -356,7 +356,7 @@ impl Node {
                     .into_iter()
                     .map(|bh| SyncBlockHeader {
                         header: bh,
-                        size_estimate: usize::MIN,
+                        size_estimate: (1024 * 1024 * bh.gas_used.0 / bh.gas_limit.0) as usize, // guesstimate
                     })
                     .collect_vec();
                 self.consensus
@@ -944,21 +944,20 @@ impl Node {
             } else {
                 self.message_sender.broadcast_proposal(message)?;
             }
-        } else {
-            self.consensus.sync.sync_from_proposal(proposal)?;
         }
-
+        self.consensus.sync.sync_from_proposal(proposal)?;
         Ok(())
     }
 
     fn handle_injected_proposal(&mut self, from: PeerId, req: InjectedProposal) -> Result<()> {
+        let InjectedProposal { block, .. } = req;
         if from != self.consensus.peer_id() {
             warn!("Someone ({from}) sent me a InjectedProposal; illegal- ignoring");
             return Ok(());
         }
-        trace!("Handling proposal for view {0}", req.block.header.view);
-        let block_number = req.block.number();
-        let proposal = self.consensus.receive_block(from, req.block)?;
+        trace!("Handling proposal for view {0}", block.header.view);
+        let block_number = block.number();
+        let proposal = self.consensus.receive_block(from, block)?;
         // decrement after - if there are issues in receive_block() it will stop syncing;
         self.consensus.sync.mark_received_proposal(block_number)?;
         if let Some(proposal) = proposal {

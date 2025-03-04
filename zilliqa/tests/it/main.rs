@@ -72,7 +72,7 @@ use zilliqa::{
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
         max_rpc_response_size_default, scilla_address_default, scilla_ext_libs_path_default,
         scilla_stdlib_dir_default, staker_withdrawal_period_default, state_cache_size_default,
-        state_rpc_limit_default, total_native_token_supply_default,
+        state_rpc_limit_default, total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -89,6 +89,8 @@ pub struct NewNodeOptions {
     secret_key: Option<SecretKey>,
     onchain_key: Option<SigningKey>,
     checkpoint: Option<Checkpoint>,
+    prune_interval: Option<u64>,
+    sync_base_height: Option<u64>,
 }
 
 impl NewNodeOptions {
@@ -250,7 +252,6 @@ struct Network {
     scilla_stdlib_dir: String,
     do_checkpoints: bool,
     blocks_per_epoch: u64,
-    consensus_tick_countdown: u64,
     deposit_v3_upgrade_block_height: Option<u64>,
 }
 
@@ -379,6 +380,8 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            sync_base_height: u64_max(),
+            prune_interval: u64_max(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -442,7 +445,6 @@ impl Network {
             do_checkpoints,
             blocks_per_epoch,
             scilla_stdlib_dir,
-            consensus_tick_countdown: 10,
             deposit_v3_upgrade_block_height,
         }
     }
@@ -513,6 +515,8 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
+            sync_base_height: options.sync_base_height.unwrap_or(u64_max()),
+            prune_interval: options.prune_interval.unwrap_or(u64_max()),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());
@@ -612,7 +616,6 @@ impl Network {
         loop {
             for node in &self.nodes {
                 // Trigger a tick so that block fetching can operate.
-                node.inner.lock().unwrap().consensus.tick().unwrap();
                 if node.inner.lock().unwrap().handle_timeout().unwrap() {
                     return;
                 }
@@ -767,19 +770,6 @@ impl Network {
         // Advance time.
         zilliqa::time::advance(Duration::from_millis(1));
 
-        // Every 10ms send a consensus tick, since most of our tests are too short to otherwise
-        // be able to sync.
-        self.consensus_tick_countdown -= 1;
-        if self.consensus_tick_countdown == 0 {
-            for (index, node) in self.nodes.iter().enumerate() {
-                let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
-
-                span.in_scope(|| {
-                    node.inner.lock().unwrap().consensus.tick().unwrap();
-                });
-            }
-            self.consensus_tick_countdown = 10;
-        }
         // Take all the currently ready messages from the stream.
         let mut messages = self.collect_messages();
 
@@ -1003,14 +993,20 @@ impl Network {
                                     self.pending_responses
                                         .insert(response_channel.clone(), source);
 
-                                    inner
-                                        .handle_request(
-                                            source,
-                                            "(synthetic_id)",
-                                            external_message.clone(),
-                                            response_channel,
-                                        )
-                                        .unwrap();
+                                    match external_message {
+                                        // Re-route Injections from Requests to Broadcasts
+                                        ExternalMessage::InjectedProposal(_) => inner
+                                            .handle_broadcast(source, external_message.clone())
+                                            .unwrap(),
+                                        _ => inner
+                                            .handle_request(
+                                                source,
+                                                "(synthetic_id)",
+                                                external_message.clone(),
+                                                response_channel,
+                                            )
+                                            .unwrap(),
+                                    }
                                 }
                             });
                         }
