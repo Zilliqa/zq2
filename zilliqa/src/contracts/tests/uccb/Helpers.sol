@@ -61,13 +61,13 @@ interface IReentrancy {
 }
 
 contract Target is IReentrancy {
-    uint public c = 0;
+    uint256 public c = 0;
 
-    function depositFee(uint amount) external payable {
+    function depositFee(uint256 amount) external payable {
         amount;
     }
 
-    function work(uint num_) external pure returns (uint) {
+    function work(uint256 num_) external pure returns (uint256) {
         require(num_ < 1000, "Too large");
         return num_ + 1;
     }
@@ -78,12 +78,12 @@ contract Target is IReentrancy {
         }
     }
 
-    function finish(bool success, bytes calldata res, uint nonce) external {}
+    function finish(bool success, bytes calldata res, uint256 nonce) external {}
 
     function finishRevert(
         bool success,
         bytes calldata res,
-        uint nonce
+        uint256 nonce
     ) external pure {
         success;
         res;
@@ -114,28 +114,32 @@ contract Target is IReentrancy {
 }
 
 abstract contract ValidatorManagerFixture is Tester {
-    uint constant VALIDATOR_COUNT = 10;
+    uint256 constant VALIDATOR_COUNT = 10;
 
     ValidatorManager validatorManager;
     Vm.Wallet[] public validators = new Vm.Wallet[](VALIDATOR_COUNT);
 
     function generateValidatorManager(
-        uint size
+        uint256 size
     ) internal returns (Vm.Wallet[] memory, ValidatorManager) {
         Vm.Wallet[] memory _validators = new Vm.Wallet[](size);
         address[] memory validatorAddresses = new address[](size);
 
-        for (uint i = 0; i < size; ++i) {
+        for (uint256 i = 0; i < size; ++i) {
             _validators[i] = vm.createWallet(i + 1);
             validatorAddresses[i] = _validators[i].addr;
         }
         address implementation = address(new ValidatorManager());
-        address proxy = address(new ERC1967Proxy(
-            implementation,
-            abi.encodeWithSelector(
-                ValidatorManager.initialize.selector,
-                address(this),
-                validatorAddresses)));
+        address proxy = address(
+            new ERC1967Proxy(
+                implementation,
+                abi.encodeWithSelector(
+                    ValidatorManager.initialize.selector,
+                    address(this),
+                    validatorAddresses
+                )
+            )
+        );
 
         return (_validators, ValidatorManager(proxy));
     }
