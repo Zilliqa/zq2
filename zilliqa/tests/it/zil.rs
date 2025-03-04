@@ -15,6 +15,7 @@ use prost::Message;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tracing::info;
 use zilliqa::{
     api::types::zil::GetTxResponse,
     schnorr,
@@ -3286,4 +3287,250 @@ async fn get_num_tx_blocks_structure(mut network: Network) {
     // Should be a string containing a number
     assert!(response.is_string());
     assert!(response.as_str().unwrap().parse::<u64>().is_ok());
+}
+
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn simple_staking_contract(mut network: Network) {
+    let (secret_key, address) = zilliqa_account(&mut network).await;
+
+    let code = r#"
+        scilla_version 0
+
+        contract HelloWorld
+        ()
+
+        field withdrawal_pending : Map ByStr20 (Map BNum Uint128) = Emp ByStr20 (Map BNum Uint128)
+
+        field welcome_map : Map ByStr20 ByStr20 = Emp ByStr20 ByStr20
+
+        transition AddPendingWithdrawal(initiator: ByStr20, withdraw_number: BNum, amount: Uint128)
+            withdrawal_pending[initiator][withdraw_number] := amount;
+            welcome_map[initiator] := initiator
+        end
+
+        transition foo(initiator: ByStr20)
+            my_map <- welcome_map;
+            is_in_map = builtin contains my_map initiator;
+            value_o <- welcome_map[initiator];
+
+            match value_o with
+            | Some value =>
+              inner = {
+                _eventname: "ValueInMap";
+                val: value
+                };
+                event inner
+            | None =>
+            end;
+
+            inner = {
+                _eventname: "ExistsInMap";
+                is: is_in_map
+            };
+            event inner
+        end
+
+        transition CompleteWithdrawal(initiator: ByStr20)
+            my_map <- welcome_map;
+            my_map_list = builtin to_list my_map;
+
+            inner = {
+                    _eventname: "inner";
+                    my_map_list: my_map_list
+            };
+            event inner;
+
+            withdraw_map_o <- withdrawal_pending[initiator];
+
+            match withdraw_map_o with
+            | Some withdraw_map =>
+                withdraw_list = builtin to_list withdraw_map;
+
+                e = {
+                    _eventname: "FetchedWithdrawMap";
+                    initiator: initiator;
+                    withdraw_list: withdraw_list
+                };
+                event e
+            | None =>
+            end
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+
+
+    // Set nested map to some value
+    {
+        let call = r#"{
+        "_tag": "AddPendingWithdrawal",
+        "params": [
+            {
+                "vname": "initiator",
+                "type": "ByStr20",
+                "value": "0x964d9004b1ba9f362766cd681e9f97837a5cbb85"
+            },
+            {
+                "vname": "withdraw_number",
+                "value": "1",
+                "type": "BNum"
+            },
+            {
+                "vname": "amount",
+                "value": "100",
+                "type": "Uint128"
+            }
+        ]
+    }"#;
+
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            2,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+            .await;
+        //let event = &txn["receipt"]["event_logs"][0];
+        //assert_eq!(event["_eventname"], "setHello");
+        info!("Receipt is: {:?}", txn.to_string());
+    }
+
+    // Set nested map to some value
+    {
+        let call = r#"{
+        "_tag": "foo",
+        "params": [
+            {
+                "vname": "initiator",
+                "type": "ByStr20",
+                "value": "0x964d9004b1ba9f362766cd681e9f97837a5cbb85"
+            }
+        ]
+    }"#;
+
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            3,
+            ToAddr::Address(contract_address),
+            0,
+            150_000,
+            None,
+            Some(call),
+        )
+            .await;
+        //let event = &txn["receipt"]["event_logs"][0];
+        //assert_eq!(event["_eventname"], "setHello");
+        info!("Receipt is: {:?}", txn.to_string());
+    }
+
+    // // Set nested map to some value
+    // {
+    //     let call = r#"{
+    //     "_tag": "CompleteWithdrawal",
+    //     "params": [
+    //         {
+    //             "vname": "initiator",
+    //             "type": "ByStr20",
+    //             "value": "0x964d9004b1ba9f362766cd681e9f97837a5cbb85"
+    //         }
+    //     ]
+    // }"#;
+    //
+    //     let (_, txn) = send_transaction(
+    //         &mut network,
+    //         &secret_key,
+    //         3,
+    //         ToAddr::Address(contract_address),
+    //         0,
+    //         50_000,
+    //         None,
+    //         Some(call),
+    //     )
+    //         .await;
+    //     //let event = &txn["receipt"]["event_logs"][0];
+    //     //assert_eq!(event["_eventname"], "setHello");
+    //     info!("Receipt is: {:?}", txn.to_string());
+    // }
+
+    /*
+    // Confirm the value exists in the nested map
+    {
+        let call = r#"{
+        "_tag": "getHello",
+        "params": []
+    }"#;
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            3,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+            .await;
+        for event in txn["receipt"]["event_logs"].as_array().unwrap() {
+            assert_eq!(event["_eventname"], "getHello");
+            assert_eq!(event["params"][0]["value"], "foobar");
+        }
+    }
+
+    // Remove entry from map
+    {
+        let call = r#"{
+        "_tag": "removeHello",
+        "params": []
+    }"#;
+
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            4,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+            .await;
+        let event = &txn["receipt"]["event_logs"][0];
+        assert_eq!(event["_eventname"], "removeHello");
+    }
+
+    // Check and confirm the entry does not exist anymore
+    {
+        let call = r#"{
+        "_tag": "getHello",
+        "params": []
+    }"#;
+        let (_, txn) = send_transaction(
+            &mut network,
+            &secret_key,
+            5,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(call),
+        )
+            .await;
+        let event = &txn["receipt"]["event_logs"][0];
+        assert_eq!(event["params"][0]["value"], "failed");
+    }
+     */
 }

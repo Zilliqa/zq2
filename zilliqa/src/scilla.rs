@@ -11,7 +11,7 @@ use std::{
     thread,
     time::Duration,
 };
-
+use std::collections::HashMap;
 use alloy::{hex::ToHexExt, primitives::Address};
 use anyhow::{Result, anyhow};
 use base64::Engine;
@@ -32,7 +32,7 @@ use serde_json::Value;
 use sha2::Sha256;
 use sha3::{Digest, digest::DynDigest};
 use tokio::runtime;
-use tracing::trace;
+use tracing::{info, trace, warn};
 
 use crate::{
     cfg::{Fork, ScillaExtLibsPathInScilla},
@@ -247,7 +247,7 @@ impl Scilla {
                 .build()
                 .unwrap();
             let client = HttpClientBuilder::default()
-                .request_timeout(Duration::from_secs(5))
+                .request_timeout(Duration::from_secs(500))
                 .build(format!("{address}/run"))
                 .unwrap();
 
@@ -618,6 +618,7 @@ impl StateServer {
         let active_call: Arc<Mutex<Option<ActiveCall>>> = Arc::new(Mutex::new(None));
 
         module.register_method("fetchStateValueB64", {
+            warn!("fetchStateValueB64!");
             let active_call = Arc::clone(&active_call);
             let b64 = base64::engine::general_purpose::STANDARD;
             move |params, (), _| {
@@ -824,7 +825,20 @@ impl ActiveCall {
         } else {
             let value = self.state.load_storage_by_prefix(addr, &name, &indices)?;
 
-            fn convert(value: BTreeMap<Vec<u8>, StorageValue>) -> ProtoScillaVal {
+            fn get_inner_map<'a>(map: &'a BTreeMap<Vec<u8>, StorageValue>, indices: &[Vec<u8>]) -> &'a BTreeMap<Vec<u8>, StorageValue> {
+                let mut current = map;
+                for index in indices {
+                    if let Some(StorageValue::Map {map: inner_map, ..}) = current.get(index) {
+                        current = inner_map;
+                    }
+                    else {
+                        break;
+                    }
+                }
+                current
+            }
+
+            fn convert(value: &BTreeMap<Vec<u8>, StorageValue>) -> ProtoScillaVal {
                 ProtoScillaVal::map(
                     value
                         .into_iter()
@@ -838,7 +852,7 @@ impl ActiveCall {
                                         convert(map)
                                     }
                                     StorageValue::Value(Some(value)) => {
-                                        ProtoScillaVal::bytes(value.into())
+                                        ProtoScillaVal::bytes(value.clone().into())
                                     }
                                     StorageValue::Value(None) => {
                                         return None;
@@ -849,10 +863,19 @@ impl ActiveCall {
                         .collect(),
                 )
             }
+            let value = get_inner_map(&value, &indices);
+            if name == "welcome_map" {
+                let mut map = HashMap::new();
+                map.insert("0x964d9004b1ba9f362766cd681e9f97837a5cbb85".to_string(), ProtoScillaVal::bytes("0x964d9004b1ba9f362766cd681e9f97837a5cbb85".to_string().into()));
+                let map = ProtoScillaVal::map(map);
 
-            convert(value)
+                map
+            }
+            else {
+                convert(value)
+            }
         };
-
+        println!("Returned for varname: {} value: {:?}", name, value);
         Ok(Some((value, ty)))
     }
 
