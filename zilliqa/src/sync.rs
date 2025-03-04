@@ -701,9 +701,13 @@ impl Sync {
         }
 
         // Chain segment is sane, drop redundant blocks already in the DB.
+        let mut drop = false;
         let response = response
             .into_iter()
-            .filter(|b| !self.db.contains_block(&b.header.hash).unwrap_or_default())
+            .filter(|b| {
+                drop = drop | self.db.contains_block(&b.header.hash).unwrap_or_default();
+                !drop
+            })
             .collect_vec();
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
@@ -737,7 +741,8 @@ impl Sync {
         let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
         if self.db.contains_block(&block_hash).unwrap_or_default() {
             self.state = SyncState::Phase2((Hash::ZERO, Range::default()));
-            // drop all pending requests
+            // drop all pending requests & responses
+            self.p1_response.clear();
             for p in self.in_flight.drain(..) {
                 self.peers.done_with_peer(Some(p), DownGrade::None);
             }
