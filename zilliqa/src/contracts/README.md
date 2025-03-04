@@ -17,5 +17,5 @@ ZQ_CONTRACT_TEST_BLESS=1 cargo test --features test_contract_bytecode -- contrac
 ## Run Solidity tests
 
 ```sh
-    forge test -C zilliqa/src/contracts/tests
+    forge test -C zilliqa/src/contracts/tests --gas-limit 2000000000000 
 ```
