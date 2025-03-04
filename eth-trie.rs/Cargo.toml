@@ -4,7 +4,7 @@ version.workspace = true
 authors = ["Jason Carver <ut96caarrs@snkmail.com>", "Zilliqa <zilliqatech@zilliqa.com>"]
 description = "Ethereum-compatible Merkle-Patricia Trie."
 license = "Apache-2.0"
-edition = "2021"
+edition.workspace = true
 readme = "README.md"
 keywords = ["patricia", "mpt", "evm", "trie", "ethereum"]
 

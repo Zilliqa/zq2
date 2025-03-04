@@ -5,8 +5,8 @@ use std::{
 };
 
 use alloy::primitives::B256;
-use anyhow::{anyhow, Context, Result};
-use clap::{builder::ArgAction, Args, Parser, Subcommand};
+use anyhow::{Context, Result, anyhow};
+use clap::{Args, Parser, Subcommand, builder::ArgAction};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use libp2p::PeerId;
 use z2lib::{
@@ -731,7 +731,7 @@ async fn main() -> Result<()> {
         _ => {
             return Err(anyhow!(
                 "Please run scripts/z2 from the checked out zq2 repository which sets ZQ2_BASE"
-            ))
+            ));
         }
     };
     let cli = Cli::parse();
@@ -742,7 +742,7 @@ async fn main() -> Result<()> {
         .init();
 
     match &cli.command {
-        Commands::Only(ref arg) => {
+        Commands::Only(arg) => {
             let mut to_run: HashSet<Component> = HashSet::new();
 
             if arg.otterscan {
@@ -789,11 +789,11 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Ports(ref arg) => {
+        Commands::Ports(arg) => {
             plumbing::print_ports(arg.base_port, &base_dir, &arg.config_dir).await?;
             Ok(())
         }
-        Commands::Run(ref arg) => {
+        Commands::Run(arg) => {
             let mut to_run: HashSet<Component> = HashSet::new();
 
             if arg.otterscan {
@@ -840,12 +840,12 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Kpi(ref arg) => {
+        Commands::Kpi(arg) => {
             plumbing::run_kpi_collector(&arg.config_file).await?;
             Ok(())
         }
         Commands::Deployer(deployer_command) => match &deployer_command {
-            DeployerCommands::New(ref arg) => {
+            DeployerCommands::New(arg) => {
                 let network_name = arg
                     .network_name
                     .clone()
@@ -864,7 +864,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Install(ref arg) => {
+            DeployerCommands::Install(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -889,7 +889,7 @@ async fn main() -> Result<()> {
                 })?;
                 Ok(())
             }
-            DeployerCommands::Upgrade(ref arg) => {
+            DeployerCommands::Upgrade(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -902,7 +902,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::GetConfigFile(ref arg) => {
+            DeployerCommands::GetConfigFile(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -916,7 +916,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::GetDepositCommands(ref arg) => {
+            DeployerCommands::GetDepositCommands(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -932,7 +932,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Stakers(ref arg) => {
+            DeployerCommands::Stakers(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -945,7 +945,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Deposit(ref arg) => {
+            DeployerCommands::Deposit(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -958,7 +958,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::DepositTopUp(ref arg) => {
+            DeployerCommands::DepositTopUp(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -971,7 +971,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Unstake(ref arg) => {
+            DeployerCommands::Unstake(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -984,7 +984,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Withdraw(ref arg) => {
+            DeployerCommands::Withdraw(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -997,7 +997,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Rpc(ref args) => {
+            DeployerCommands::Rpc(args) => {
                 plumbing::run_deployer_rpc(
                     &args.method,
                     &args.params,
@@ -1010,7 +1010,7 @@ async fn main() -> Result<()> {
                 .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
                 Ok(())
             }
-            DeployerCommands::Ssh(ref args) => {
+            DeployerCommands::Ssh(args) => {
                 plumbing::run_deployer_ssh(args.command.clone(), &args.config_file, args.select)
                     .await
                     .map_err(|err| {
@@ -1018,7 +1018,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Backup(ref arg) => {
+            DeployerCommands::Backup(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -1031,7 +1031,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Restore(ref arg) => {
+            DeployerCommands::Restore(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -1049,7 +1049,7 @@ async fn main() -> Result<()> {
                 })?;
                 Ok(())
             }
-            DeployerCommands::Reset(ref arg) => {
+            DeployerCommands::Reset(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -1062,7 +1062,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Restart(ref arg) => {
+            DeployerCommands::Restart(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -1075,7 +1075,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Monitor(ref arg) => {
+            DeployerCommands::Monitor(arg) => {
                 let config_file: String = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -1093,7 +1093,7 @@ async fn main() -> Result<()> {
                 })?;
                 Ok(())
             }
-            DeployerCommands::GenerateGenesisKey(ref arg) => {
+            DeployerCommands::GenerateGenesisKey(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -1109,7 +1109,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::GeneratePrivateKeys(ref arg) => {
+            DeployerCommands::GeneratePrivateKeys(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -1125,7 +1125,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::GenerateStatsKey(ref arg) => {
+            DeployerCommands::GenerateStatsKey(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -1141,7 +1141,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Api(ref arg) => {
+            DeployerCommands::Api(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -1154,7 +1154,7 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Converter(converter_command) => match &converter_command {
-            ConverterCommands::Convert(ref arg) => {
+            ConverterCommands::Convert(arg) => {
                 plumbing::run_persistence_converter(
                     &arg.zq1_persistence_directory,
                     &arg.zq2_data_dir,
@@ -1164,16 +1164,16 @@ async fn main() -> Result<()> {
                 .await?;
                 Ok(())
             }
-            ConverterCommands::PrintTransactionsInBlock(ref arg) => {
+            ConverterCommands::PrintTransactionsInBlock(arg) => {
                 plumbing::run_print_txs_in_block(&arg.zq1_persistence_directory, arg.block_number)
                     .await?;
                 Ok(())
             }
-            ConverterCommands::PrintTransactionConverter(ref _arg) => {
+            ConverterCommands::PrintTransactionConverter(_arg) => {
                 unimplemented!();
             }
         },
-        Commands::DocGen(ref arg) => {
+        Commands::DocGen(arg) => {
             plumbing::generate_docs(
                 &base_dir,
                 &arg.target_dir,
@@ -1186,13 +1186,13 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Depends(ref rs) => match rs {
+        Commands::Depends(rs) => match rs {
             DependsCommands::Print => plumbing::print_depends(&base_dir).await,
-            DependsCommands::Update(ref opts) => {
+            DependsCommands::Update(opts) => {
                 plumbing::update_depends(&base_dir, opts.with_ssh).await
             }
         },
-        Commands::Join(ref args) => {
+        Commands::Join(args) => {
             let mut chain = validators::ChainConfig::new(&args.chain_name).await?;
             validators::gen_validator_startup_script(
                 &mut chain,
@@ -1202,7 +1202,7 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Deposit(ref args) => {
+        Commands::Deposit(args) => {
             let node = validators::Validator::new(
                 PeerId::from_str(&args.peer_id).unwrap(),
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
@@ -1220,7 +1220,7 @@ async fn main() -> Result<()> {
             )?;
             signer_client.deposit(&node, &deposit_params).await
         }
-        Commands::DepositTopUp(ref args) => {
+        Commands::DepositTopUp(args) => {
             let bls_public_key =
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
                     .unwrap();
@@ -1232,7 +1232,7 @@ async fn main() -> Result<()> {
                 .deposit_top_up(&bls_public_key, args.amount)
                 .await
         }
-        Commands::Unstake(ref args) => {
+        Commands::Unstake(args) => {
             let bls_public_key =
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
                     .unwrap();
@@ -1242,7 +1242,7 @@ async fn main() -> Result<()> {
             )?;
             signer_client.unstake(&bls_public_key, args.amount).await
         }
-        Commands::Withdraw(ref args) => {
+        Commands::Withdraw(args) => {
             let bls_public_key =
                 NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
                     .unwrap();
@@ -1252,7 +1252,7 @@ async fn main() -> Result<()> {
             )?;
             signer_client.withdraw(&bls_public_key, args.count).await
         }
-        Commands::Nodes(ref args) => {
+        Commands::Nodes(args) => {
             let spec = Composition::parse(&args.nodes)?;
             let log_spec = utils::compute_log_string(
                 &args.log_level.to_string(),
@@ -1288,7 +1288,7 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::JoinNode(ref arg) => {
+        Commands::JoinNode(arg) => {
             let secret_key_hex = std::env::var("PRIVATE_KEY").context("Please set PRIVATE_KEY to the hex representation of the key for the node you want to join")?;
             let mut to_run: HashSet<Component> = HashSet::new();
 

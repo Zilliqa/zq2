@@ -2,10 +2,10 @@ pub mod config;
 pub mod instance;
 pub mod node;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::ValueEnum;
 use colored::Colorize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use strum::EnumProperty;
 use strum_macros::{Display, EnumString};
 use zilliqa::cfg::ContractUpgradesBlockHeights;
