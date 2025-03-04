@@ -6,22 +6,21 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 
 import {Registry, IRegistry} from "./Registry.sol";
 
-
 interface IRelayerEvents {
     /**
      * @dev Triggered when a outgoing message is relayed to another chain
      */
     event Relayed(
-        uint indexed targetChainId,
+        uint256 indexed targetChainId,
         address target,
         bytes call,
-        uint gasLimit,
-        uint nonce
+        uint256 gasLimit,
+        uint256 nonce
     );
 }
 
 struct CallMetadata {
-    uint sourceChainId;
+    uint256 sourceChainId;
     address sender;
 }
 
@@ -30,26 +29,26 @@ interface IRelayer is IRelayerEvents, IRegistry {
      * @dev Incorporates the extra metadata to add on relay
      */
     struct CallMetadata {
-        uint sourceChainId;
+        uint256 sourceChainId;
         address sender;
     }
 
-    function nonce(uint chainId) external view returns (uint);
+    function nonce(uint256 chainId) external view returns (uint256);
 
     function relayWithMetadata(
-        uint targetChainId,
+        uint256 targetChainId,
         address target,
         bytes4 callSelector,
         bytes calldata callData,
-        uint gasLimit
-    ) external returns (uint);
+        uint256 gasLimit
+    ) external returns (uint256);
 
     function relay(
-        uint targetChainId,
+        uint256 targetChainId,
         address target,
         bytes calldata call,
-        uint gasLimit
-    ) external returns (uint);
+        uint256 gasLimit
+    ) external returns (uint256);
 }
 
 /**
@@ -75,7 +74,7 @@ abstract contract Relayer is
      */
     struct RelayerStorage {
         // TargetChainId => Nonce
-        mapping(uint => uint) nonce;
+        mapping(uint256 => uint256) nonce;
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.Relayer")) - 1)) & ~bytes32(uint256(0xff))
@@ -111,7 +110,7 @@ abstract contract Relayer is
     /**
      * @dev Returns the nonce for a given chain
      */
-    function nonce(uint chainId) external view returns (uint) {
+    function nonce(uint256 chainId) external view returns (uint256) {
         RelayerStorage storage $ = _getRelayerStorage();
         return $.nonce[chainId];
     }
@@ -126,13 +125,13 @@ abstract contract Relayer is
 
      */
     function _relay(
-        uint targetChainId,
+        uint256 targetChainId,
         address target,
         bytes memory call,
-        uint gasLimit
-    ) internal isRegistered(_msgSender()) returns (uint) {
+        uint256 gasLimit
+    ) internal isRegistered(_msgSender()) returns (uint256) {
         RelayerStorage storage $ = _getRelayerStorage();
-        uint _nonce = ++$.nonce[targetChainId];
+        uint256 _nonce = ++$.nonce[targetChainId];
 
         emit Relayed(targetChainId, target, call, gasLimit, _nonce);
         return _nonce;
@@ -148,11 +147,11 @@ abstract contract Relayer is
      * @param gasLimit the gas limit for the call executed on the target chain
      */
     function relay(
-        uint targetChainId,
+        uint256 targetChainId,
         address target,
         bytes calldata call,
-        uint gasLimit
-    ) external returns (uint) {
+        uint256 gasLimit
+    ) external returns (uint256) {
         return _relay(targetChainId, target, call, gasLimit);
     }
 
@@ -170,12 +169,12 @@ abstract contract Relayer is
      * @param gasLimit the gas limit for the call executed on the target chain
      */
     function relayWithMetadata(
-        uint targetChainId,
+        uint256 targetChainId,
         address target,
         bytes4 callSelector,
         bytes calldata callData,
-        uint gasLimit
-    ) external returns (uint) {
+        uint256 gasLimit
+    ) external returns (uint256) {
         return
             _relay(
                 targetChainId,
