@@ -2,13 +2,13 @@ use std::collections::HashSet;
 
 use alloy::primitives::{Address, U256};
 use revm::{
+    Database, EvmContext, Inspector,
     inspectors::NoOpInspector,
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome},
     primitives::CreateScheme,
-    Database, EvmContext, Inspector,
 };
 use revm_inspectors::tracing::{
-    js::JsInspector, FourByteInspector, MuxInspector, TracingInspector,
+    FourByteInspector, MuxInspector, TracingInspector, js::JsInspector,
 };
 
 use crate::api::types::ots::{Operation, OperationType, TraceEntry, TraceEntryType};

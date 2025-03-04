@@ -13,12 +13,11 @@ use zilliqa::{
 };
 
 use crate::{
-    deploy_contract,
+    Network, NewNodeOptions, TestNode, deploy_contract,
     zil::{
         deploy_scilla_contract, scilla_test_contract_code, scilla_test_contract_data,
         zilliqa_account,
     },
-    Network, NewNodeOptions, TestNode,
 };
 
 #[zilliqa_macros::test]

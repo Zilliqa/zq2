@@ -3,7 +3,7 @@ use std::str::FromStr;
 use alloy::{primitives::B256, rpc::types::trace::parity::TraceResults};
 use ethers::{
     providers::Middleware,
-    types::{TransactionRequest, H160},
+    types::{H160, TransactionRequest},
 };
 use serde_json::Value;
 

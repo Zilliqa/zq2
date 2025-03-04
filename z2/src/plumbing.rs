@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy::primitives::B256;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use colored::Colorize;
 use tokio::{fs, process::Command};
 use zilliqa::crypto::SecretKey;

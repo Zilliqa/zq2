@@ -1,15 +1,15 @@
 use std::sync::{Arc, RwLock};
 
-use alloy::primitives::{keccak256, B256};
+use alloy::primitives::{B256, keccak256};
 use hashbrown::{HashMap, HashSet};
 use log::warn;
 use rlp::{Prototype, Rlp, RlpStream};
 
 use crate::{
-    db::{MemoryDB, DB},
+    db::{DB, MemoryDB},
     errors::TrieError,
     nibbles::Nibbles,
-    node::{empty_children, BranchNode, Node},
+    node::{BranchNode, Node, empty_children},
 };
 
 pub type TrieResult<T> = Result<T, TrieError>;
@@ -152,17 +152,17 @@ where
                         self.nodes.pop();
                     }
 
-                    (TraceStatus::Doing, Node::Extension(ref ext)) => {
+                    (TraceStatus::Doing, Node::Extension(ext)) => {
                         self.nibble.extend(&ext.read().unwrap().prefix);
                         self.nodes.push((ext.read().unwrap().node.clone()).into());
                     }
 
-                    (TraceStatus::Doing, Node::Leaf(ref leaf)) => {
+                    (TraceStatus::Doing, Node::Leaf(leaf)) => {
                         self.nibble.extend(&leaf.key);
                         return Some((self.nibble.encode_raw().0, leaf.value.clone()));
                     }
 
-                    (TraceStatus::Doing, Node::Branch(ref branch)) => {
+                    (TraceStatus::Doing, Node::Branch(branch)) => {
                         let value_option = branch.read().unwrap().value.clone();
                         if let Some(value) = value_option {
                             return Some((self.nibble.encode_raw().0, value));
@@ -171,14 +171,17 @@ where
                         }
                     }
 
-                    (TraceStatus::Doing, Node::Hash(ref hash_node)) => {
+                    (TraceStatus::Doing, Node::Hash(hash_node)) => {
                         let node_hash = hash_node.hash;
                         if let Ok(n) = self.trie.recover_from_db(node_hash) {
                             self.nodes.pop();
                             match n {
                                 Some(node) => self.nodes.push(node.into()),
                                 None => {
-                                    warn!("Trie node with hash {:?} is missing from the database. Skipping...", &node_hash);
+                                    warn!(
+                                        "Trie node with hash {:?} is missing from the database. Skipping...",
+                                        &node_hash
+                                    );
                                     continue;
                                 }
                             }
@@ -188,7 +191,7 @@ where
                         }
                     }
 
-                    (TraceStatus::Child(i), Node::Branch(ref branch)) => {
+                    (TraceStatus::Child(i), Node::Branch(branch)) => {
                         if i == 0 {
                             self.nibble.push(0);
                         } else {
@@ -309,7 +312,7 @@ where
     /// Checks that the key is present in the trie
     fn contains(&self, key: &[u8]) -> TrieResult<bool> {
         let path = &Nibbles::from_raw(key, true);
-        Ok(self.get_at(&self.root, path, 0)?.map_or(false, |_| true))
+        Ok(self.get_at(&self.root, path, 0)?.is_some())
     }
 
     /// Inserts value into trie and modifies it if it exists
@@ -1038,12 +1041,12 @@ mod tests {
         sync::Arc,
     };
 
-    use alloy::primitives::{keccak256, B256};
-    use rand::{distributions::Alphanumeric, seq::SliceRandom, thread_rng, Rng};
+    use alloy::primitives::{B256, keccak256};
+    use rand::{Rng, distributions::Alphanumeric, seq::SliceRandom, thread_rng};
 
     use super::{EthTrie, Trie};
     use crate::{
-        db::{MemoryDB, DB},
+        db::{DB, MemoryDB},
         errors::TrieError,
         nibbles::Nibbles,
     };

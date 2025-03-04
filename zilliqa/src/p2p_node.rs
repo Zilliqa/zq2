@@ -3,14 +3,14 @@
 use std::{
     collections::HashMap,
     iter,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use cfg_if::cfg_if;
 use libp2p::{
-    autonat,
+    PeerId, StreamProtocol, Swarm, autonat,
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
@@ -19,12 +19,12 @@ use libp2p::{
     noise,
     request_response::{self, OutboundFailure, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, PeerId, StreamProtocol, Swarm,
+    tcp, yamux,
 };
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
-    sync::mpsc::{self, error::SendError, UnboundedSender},
+    sync::mpsc::{self, UnboundedSender, error::SendError},
     task::JoinSet,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;

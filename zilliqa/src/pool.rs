@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tracing::debug;
 
 use crate::{
@@ -280,7 +280,12 @@ impl TransactionPool {
         account_nonce: u64,
     ) -> TxAddResult {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
-            debug!("Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
+            debug!(
+                "Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}",
+                txn.hash,
+                txn.signer,
+                txn.tx.nonce()
+            );
             // This transaction is permanently invalid, so there is nothing to do.
             // unwrap() is safe because we checked above that it was some().
             return TxAddResult::NonceTooLow(txn.tx.nonce().unwrap(), account_nonce);
@@ -295,7 +300,13 @@ impl TransactionPool {
             // keeping the same nonce. So for those, it will always discard the new (identical)
             // one.
             if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
-                debug!("Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}", txn.hash, txn.signer, txn.tx.nonce(), txn.tx.gas_price_per_evm_gas());
+                debug!(
+                    "Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}",
+                    txn.hash,
+                    txn.signer,
+                    txn.tx.nonce(),
+                    txn.tx.gas_price_per_evm_gas()
+                );
                 return TxAddResult::SameNonceButLowerGasPrice;
             }
 
@@ -311,7 +322,12 @@ impl TransactionPool {
             Self::add_to_gas_index(&mut self.gas_index, &txn);
         }
 
-        debug!("Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
+        debug!(
+            "Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}",
+            txn.hash,
+            txn.signer,
+            txn.tx.nonce()
+        );
 
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
@@ -404,7 +420,7 @@ impl TransactionPool {
     }
 
     /// Clear the transaction pool, returning all remaining transactions in an unspecified order.
-    pub fn drain(&mut self) -> impl Iterator<Item = VerifiedTransaction> {
+    pub fn drain(&mut self) -> impl Iterator<Item = VerifiedTransaction> + use<> {
         self.hash_to_index.clear();
         self.gas_index.clear();
         std::mem::take(&mut self.transactions).into_values()

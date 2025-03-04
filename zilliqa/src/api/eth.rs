@@ -3,25 +3,30 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use alloy::{
-    consensus::{transaction::RlpEcdsaTx, TxEip1559, TxEip2930, TxLegacy},
+    consensus::{TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaTx},
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
-    primitives::{Address, B256, U256, U64},
+    primitives::{Address, B256, U64, U256},
     rpc::types::{
+<<<<<<< HEAD
         pubsub::{self, SubscriptionKind},
         FeeHistory, FilteredParams,
+=======
+        FilteredParams,
+        pubsub::{self, SubscriptionKind},
+>>>>>>> c4dd811e6512b6fb1919085d8c433962b05ed796
     },
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use http::Extensions;
 use itertools::{Either, Itertools};
 use jsonrpsee::{
+    PendingSubscriptionSink, RpcModule, SubscriptionMessage,
     core::StringError,
     types::{
+        Params,
         error::{ErrorObject, ErrorObjectOwned},
         params::ParamsSequence,
-        Params,
     },
-    PendingSubscriptionSink, RpcModule, SubscriptionMessage,
 };
 use serde::Deserialize;
 use tracing::*;

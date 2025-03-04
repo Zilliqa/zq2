@@ -5,8 +5,8 @@ use tokio::time::Instant;
 use zilliqa_rs::{
     contract::{Init, ScillaVariable},
     core::{
-        parse_zil, CreateTransactionRequest, CreateTransactionResponse, DeployContractResponse,
-        ZilAddress,
+        CreateTransactionRequest, CreateTransactionResponse, DeployContractResponse, ZilAddress,
+        parse_zil,
     },
     middlewares::Middleware,
     transaction::TransactionBuilder,

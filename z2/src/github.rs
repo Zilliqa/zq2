@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 

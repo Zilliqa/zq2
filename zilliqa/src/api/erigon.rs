@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use jsonrpsee::{types::Params, RpcModule};
+use jsonrpsee::{RpcModule, types::Params};
 
 use super::types::eth;
 use crate::{cfg::EnabledApi, node::Node};

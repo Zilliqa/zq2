@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy::primitives::{Address, U256};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
@@ -23,14 +23,14 @@ use crate::{
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
-    crypto::{verify_messages, BlsSignature, Hash, NodePublicKey, SecretKey},
+    crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
-        ExternalMessage, InternalMessage, NewView, Proposal, QuorumCertificate, Vote,
-        MAX_COMMITTEE_SIZE,
+        ExternalMessage, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal, QuorumCertificate,
+        Vote,
     },
     node::{MessageSender, NetworkMessage},
     pool::{PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent},
@@ -190,8 +190,7 @@ impl Consensus {
     ) -> Result<Self> {
         trace!(
             "Opening database in {:?} for shard {}",
-            config.data_dir,
-            config.eth_chain_id
+            config.data_dir, config.eth_chain_id
         );
 
         // Start chain from checkpoint. Load data file and initialise data in tables
@@ -476,7 +475,11 @@ impl Consensus {
             let stakers = self.state.get_stakers(next_block_header)?;
             // If we're in the genesis committee, vote again.
             if stakers.iter().any(|v| *v == self.public_key()) {
-                info!("timeout in view: {:?}, we will vote for block rather than incrementing view, block hash: {}", view, block.hash());
+                info!(
+                    "timeout in view: {:?}, we will vote for block rather than incrementing view, block hash: {}",
+                    view,
+                    block.hash()
+                );
                 let leader = self.leader_at_block(&block, view).unwrap();
                 let vote = self.vote_from_block(&block);
                 return Ok(Some((
@@ -532,9 +535,7 @@ impl Consensus {
         if milliseconds_since_last_view_change < exponential_backoff_timeout {
             trace!(
                 "Not proceeding with view change. Current view: {} - time since last: {}, timeout requires: {}",
-                view,
-                milliseconds_since_last_view_change,
-                exponential_backoff_timeout
+                view, milliseconds_since_last_view_change, exponential_backoff_timeout
             );
 
             // Resend NewView message for this view if timeout period is a multiple of consensus_timeout
@@ -560,7 +561,14 @@ impl Consensus {
             return Ok(None);
         }
 
-        trace!("Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}", view, milliseconds_since_last_view_change, exponential_backoff_timeout, self.high_qc.view, self.head_block().hash());
+        trace!(
+            "Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}",
+            view,
+            milliseconds_since_last_view_change,
+            exponential_backoff_timeout,
+            self.high_qc.view,
+            self.head_block().hash()
+        );
 
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
             anyhow!("missing block corresponding to our high qc - this should never happen")
@@ -717,7 +725,12 @@ impl Consensus {
 
             // Must make sure state root hash is set to the parent's state root hash before applying transactions
             if self.state.root_hash()? != parent.state_root_hash() {
-                warn!("state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}", parent.state_root_hash(), self.state.root_hash()?, head_block);
+                warn!(
+                    "state root hash prior to block execution mismatch, expected: {:?}, actual: {:?}, head: {:?}",
+                    parent.state_root_hash(),
+                    self.state.root_hash()?,
+                    head_block
+                );
                 self.state.set_to_root(parent.state_root_hash().into());
             }
             let stakers: Vec<_> = self.state.get_stakers(block.header)?;
@@ -1052,7 +1065,7 @@ impl Consensus {
         let Some((index, _)) = committee
             .iter()
             .enumerate()
-            .find(|(_, &v)| v == vote.public_key)
+            .find(|&(_, &v)| v == vote.public_key)
         else {
             warn!("Skipping vote outside of committee");
             return Ok(None);
@@ -1409,7 +1422,10 @@ impl Consensus {
                 );
 
                 let receipt_hash = receipt.compute_hash();
-                debug!("During assembly in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", proposal.header.view, tx.hash, receipt, receipt_hash);
+                debug!(
+                    "During assembly in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}",
+                    proposal.header.view, tx.hash, receipt, receipt_hash
+                );
                 receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
                 // Forwarding cache
@@ -1725,9 +1741,14 @@ impl Consensus {
         let Some((index, public_key)) = committee
             .iter()
             .enumerate()
-            .find(|(_, &public_key)| public_key == new_view.public_key)
+            .find(|&(_, &public_key)| public_key == new_view.public_key)
         else {
-            debug!("ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}", committee.len(), new_view.qc.block_hash, self.high_qc.block_hash);
+            debug!(
+                "ignoring new view from unknown node (buffer?) - committee size is : {:?} hash is: {:?} high hash is: {:?}",
+                committee.len(),
+                new_view.qc.block_hash,
+                self.high_qc.block_hash
+            );
             return Ok(None);
         };
 
@@ -1747,7 +1768,12 @@ impl Consensus {
         let mut current_view = self.get_view()?;
         // if the vote is too old and does not count anymore
         if new_view.view < current_view {
-            trace!(new_view.view, "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}", current_view, new_view.view);
+            trace!(
+                new_view.view,
+                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
+                current_view,
+                new_view.view
+            );
             return Ok(None);
         }
 
@@ -1948,7 +1974,9 @@ impl Consensus {
         let new_high_qc_view = new_high_qc_block.view();
 
         if self.high_qc.block_hash == Hash::ZERO {
-            trace!("received high qc, self high_qc is currently uninitialized, setting to the new one.");
+            trace!(
+                "received high qc, self high_qc is currently uninitialized, setting to the new one."
+            );
             self.db.set_high_qc(new_high_qc)?;
             self.high_qc = new_high_qc;
         } else {
@@ -2016,7 +2044,11 @@ impl Consensus {
         let mut current = block.clone();
         while current.view() > ancestor.view() {
             let Some(next) = self.get_block(&current.parent_hash())? else {
-                warn!("Missing block when traversing to find ancestor! Current parent hash: {:?} {:?}", current.parent_hash(), current);
+                warn!(
+                    "Missing block when traversing to find ancestor! Current parent hash: {:?} {:?}",
+                    current.parent_hash(),
+                    current
+                );
                 return Err(MissingBlockError::from(current.parent_hash()).into());
             };
             current = next;
@@ -2270,7 +2302,12 @@ impl Consensus {
 
         if verified.is_err() {
             info!(?block, "Unable to verify block = ");
-            return Err(anyhow!("invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}", block.hash(), block.view(), committee.len()));
+            return Err(anyhow!(
+                "invalid block signature found! block hash: {:?} block view: {:?} committee len {:?}",
+                block.hash(),
+                block.view(),
+                committee.len()
+            ));
         }
 
         // Check if the co-signers of the block's QC represent the supermajority.
@@ -2309,7 +2346,8 @@ impl Consensus {
                 block_high_qc_block.view(),
                 finalized_block.view(),
                 self.high_qc,
-                block);
+                block
+            );
             return Err(anyhow!(
                 "invalid block - high QC view is {} while finalized is {}",
                 block_high_qc_block.view(),
@@ -2900,7 +2938,12 @@ impl Consensus {
                     // Otherwise, recover txn from proposal. This is slower.
                     Some(txn) if txn.hash == *tx_hash => txn,
                     _ => {
-                        warn!("Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block", block.hash(), block.view(), tx_hash);
+                        warn!(
+                            "Proposal {} at view {} referenced a transaction {} that was neither included in the broadcast nor found locally - cannot apply block",
+                            block.hash(),
+                            block.view(),
+                            tx_hash
+                        );
                         return Ok(());
                     }
                 },
@@ -2948,7 +2991,13 @@ impl Consensus {
 
             let receipt_hash = receipt.compute_hash();
 
-            debug!("During execution in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}", self.get_view()?, tx_hash, receipt, receipt_hash);
+            debug!(
+                "During execution in view: {}, transaction with hash: {:?} produced receipt: {:?}, receipt hash: {:?}",
+                self.get_view()?,
+                tx_hash,
+                receipt,
+                receipt_hash
+            );
             receipts_trie.insert(receipt_hash.as_bytes(), receipt_hash.as_bytes())?;
 
             transactions_trie.insert(tx_hash.as_bytes(), tx_hash.as_bytes())?;
@@ -2969,7 +3018,10 @@ impl Consensus {
         })?;
 
         if cumulative_gas_used != block.gas_used() {
-            warn!("Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}", block.gas_used());
+            warn!(
+                "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}",
+                block.gas_used()
+            );
             return Ok(());
         }
 
@@ -2977,7 +3029,10 @@ impl Consensus {
         if block.header.receipts_root_hash != receipts_root_hash {
             warn!(
                 "Block number: {}, Receipt root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                block.number(), block.header.receipts_root_hash, receipts_root_hash, transaction_hashes
+                block.number(),
+                block.header.receipts_root_hash,
+                receipts_root_hash,
+                transaction_hashes
             );
             return Ok(());
         }
@@ -2986,7 +3041,10 @@ impl Consensus {
         if block.header.transactions_root_hash != transactions_root_hash {
             warn!(
                 "Block number: {}, Transactions root mismatch. Specified in block: {} vs computed: {}, txn_hashes: {}",
-                block.number(), block.header.transactions_root_hash, transactions_root_hash, transaction_hashes
+                block.number(),
+                block.header.transactions_root_hash,
+                transactions_root_hash,
+                transaction_hashes
             );
             return Ok(());
         }

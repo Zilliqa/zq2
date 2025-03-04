@@ -9,7 +9,7 @@ use alloy::{
 };
 use bitvec::{bitarr, order::Msb0};
 use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
+    BatchSize, Criterion, SamplingMode, Throughput, black_box, criterion_group, criterion_main,
 };
 use eth_trie::{MemoryDB, Trie};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -25,7 +25,7 @@ use zilliqa::{
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::Db,
-    message::{Block, ExternalMessage, Proposal, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
+    message::{Block, ExternalMessage, MAX_COMMITTEE_SIZE, Proposal, QuorumCertificate, Vote},
     node::{MessageSender, RequestId},
     schnorr,
     sync::SyncPeers,

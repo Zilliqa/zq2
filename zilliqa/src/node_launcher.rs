@@ -1,12 +1,12 @@
 use std::{
     net::Ipv4Addr,
-    sync::{atomic::AtomicUsize, Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicUsize},
     time::{Duration, SystemTime},
 };
 
-use anyhow::{anyhow, Result};
-use http::{header, Method};
-use libp2p::{futures::StreamExt, PeerId};
+use anyhow::{Result, anyhow};
+use http::{Method, header};
+use libp2p::{PeerId, futures::StreamExt};
 use node::Node;
 use opentelemetry::KeyValue;
 use opentelemetry_semantic_conventions::{

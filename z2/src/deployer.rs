@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
@@ -456,7 +456,9 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         for failure in failures {
             log::error!("FAILURE: {}", failure);
         }
-        log::error!("Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node");
+        log::error!(
+            "Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node"
+        );
     }
 
     Ok(())

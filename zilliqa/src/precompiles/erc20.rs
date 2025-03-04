@@ -1,11 +1,11 @@
-use ethabi::{decode, encode, short_signature, ParamType, Token};
+use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
+    ContextStatefulPrecompile, InnerEvmContext,
     precompile::PrecompileError,
     primitives::{
-        alloy_primitives::private::alloy_rlp::Encodable, Address, Bytes, PrecompileOutput,
-        PrecompileResult,
+        Address, Bytes, PrecompileOutput, PrecompileResult,
+        alloy_primitives::private::alloy_rlp::Encodable,
     },
-    ContextStatefulPrecompile, InnerEvmContext,
 };
 
 use crate::exec::PendingState;

@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Result};
-use jsonrpsee::{types::Params, RpcModule};
+use anyhow::{Result, anyhow};
+use jsonrpsee::{RpcModule, types::Params};
 use sha3::{Digest, Keccak256};
 
 use super::to_hex::ToHex;

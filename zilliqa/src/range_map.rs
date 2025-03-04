@@ -1,5 +1,5 @@
 use std::{
-    cmp::{max, min, Ordering},
+    cmp::{Ordering, max, min},
     default::Default,
     fmt,
     fmt::Display,

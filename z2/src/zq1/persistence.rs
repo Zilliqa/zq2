@@ -4,26 +4,26 @@ use alloy::{
     eips::eip2930::{AccessList, AccessListItem},
     primitives::{Address, B256, B512},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ethabi::Token;
 use k256::ecdsa::VerifyingKey;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use sha2::Sha256;
 use sha3::{
+    Digest, Keccak256,
     digest::generic_array::{
+        GenericArray,
         sequence::Split,
         typenum::{U12, U20},
-        GenericArray,
     },
-    Digest, Keccak256,
 };
 use zilliqa::exec::{ScillaException, ScillaTransition};
 
 use super::proto::{
-    proto_account_base, proto_mb_info, proto_transaction_core_info, proto_transaction_receipt,
-    proto_tx_block::tx_block_header, ProtoAccountBase, ProtoMbInfo, ProtoTransactionWithReceipt,
-    ProtoTxBlock,
+    ProtoAccountBase, ProtoMbInfo, ProtoTransactionWithReceipt, ProtoTxBlock, proto_account_base,
+    proto_mb_info, proto_transaction_core_info, proto_transaction_receipt,
+    proto_tx_block::tx_block_header,
 };
 
 #[derive(Debug)]

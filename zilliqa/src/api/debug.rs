@@ -4,8 +4,8 @@ use alloy::{
     eips::BlockNumberOrTag,
     rpc::types::trace::geth::{GethDebugTracingOptions, TraceResult},
 };
-use anyhow::{anyhow, Result};
-use jsonrpsee::{types::Params, RpcModule};
+use anyhow::{Result, anyhow};
+use jsonrpsee::{RpcModule, types::Params};
 
 use crate::{cfg::EnabledApi, node::Node};
 

@@ -6,10 +6,10 @@ use std::{
 };
 
 use alloy::{
-    consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH},
-    primitives::{Address, PrimitiveSignature, TxKind, B256, U256},
+    consensus::{EMPTY_ROOT_HASH, TxEip1559, TxEip2930, TxLegacy},
+    primitives::{Address, B256, PrimitiveSignature, TxKind, U256},
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
@@ -17,13 +17,13 @@ use itertools::Itertools;
 use sha2::{Digest, Sha256};
 use tracing::{debug, trace, warn};
 use zilliqa::{
-    cfg::{scilla_ext_libs_path_default, Amount, Config, NodeConfig},
+    cfg::{Amount, Config, NodeConfig, scilla_ext_libs_path_default},
     crypto::{Hash, SecretKey},
     db::Db,
     exec::store_external_libraries,
-    message::{Block, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
+    message::{Block, MAX_COMMITTEE_SIZE, QuorumCertificate, Vote},
     schnorr,
-    scilla::{storage_key, CheckOutput, ParamValue, Transition},
+    scilla::{CheckOutput, ParamValue, Transition, storage_key},
     state::{Account, Code, ContractInit, State},
     time::SystemTime,
     transaction::{
@@ -311,7 +311,7 @@ fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Res
                 .consensus
                 .genesis_accounts
                 .iter()
-                .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0),
+                .fold(0, |acc, item: &(Address, Amount)| acc + item.1.0),
         )
         .expect("Genesis accounts sum to more than max value of u128")
         .checked_add(

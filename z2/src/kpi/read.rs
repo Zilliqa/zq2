@@ -4,8 +4,8 @@ use anyhow::Result;
 use zilliqa_rs::{middlewares::Middleware, signers::LocalWallet};
 
 use super::{
-    config::{CallReadOnlyMethods, Config},
     CallReadOnlyMethodsResult, KpiResult, ScenarioAgent,
+    config::{CallReadOnlyMethods, Config},
 };
 
 impl ScenarioAgent for CallReadOnlyMethods {

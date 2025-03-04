@@ -19,7 +19,7 @@ use zilliqa::{
     state::contract_addr,
 };
 
-use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
+use crate::{LocalRpcClient, Network, Wallet, fund_wallet};
 
 async fn check_miner_got_reward(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,

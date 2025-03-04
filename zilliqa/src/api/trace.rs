@@ -5,8 +5,8 @@ use alloy::{
     primitives::{Address, B256},
     rpc::types::trace::parity::{TraceResults, TraceType},
 };
-use anyhow::{anyhow, Result};
-use jsonrpsee::{types::Params, RpcModule};
+use anyhow::{Result, anyhow};
+use jsonrpsee::{RpcModule, types::Params};
 use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use serde::Deserialize;
 

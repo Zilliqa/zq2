@@ -6,10 +6,10 @@ use std::{
     convert::TryFrom,
     fmt,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicUsize},
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tera::Tera;
@@ -244,13 +244,13 @@ fn insert_key(
     if idx == components.len() - 1 {
         // We're here .
         match val {
-            serde_yaml::Value::Mapping(ref mut map) => {
+            serde_yaml::Value::Mapping(map) => {
                 map.insert(
                     serde_yaml::Value::String(k.clone().to_string()),
                     serde_yaml::Value::String(value.to_string()),
                 );
             }
-            serde_yaml::Value::Sequence(ref mut seq) => {
+            serde_yaml::Value::Sequence(seq) => {
                 let mut new_map = serde_yaml::Mapping::new();
                 new_map.insert(
                     serde_yaml::Value::String(k.clone()),
@@ -266,7 +266,7 @@ fn insert_key(
     } else {
         // Not yere het.
         match val {
-            serde_yaml::Value::Mapping(ref mut map) => match map.get_mut(k) {
+            serde_yaml::Value::Mapping(map) => match map.get_mut(k) {
                 Some(ref mut seq) => {
                     insert_key(seq, components, idx + 1, value, position);
                 }
@@ -276,11 +276,11 @@ fn insert_key(
                     map.insert(serde_yaml::Value::String(k.clone()), seq);
                 }
             },
-            serde_yaml::Value::Sequence(ref mut seq) => {
+            serde_yaml::Value::Sequence(seq) => {
                 // Find the right map, if there is one, otherwise add one.
                 let mut found = false;
                 for s in seq.iter_mut() {
-                    if let serde_yaml::Value::Mapping(ref mut map) = s {
+                    if let serde_yaml::Value::Mapping(map) = s {
                         match map.get_mut(k) {
                             None => (),
                             Some(v) => {
@@ -700,7 +700,7 @@ impl Docs {
         ) -> tera::Result<tera::Value> {
             // no-op if this is not a string
             match v {
-                tera::Value::String(ref in_str) => Ok(tera::Value::String(
+                tera::Value::String(in_str) => Ok(tera::Value::String(
                     in_str
                         .split('\n')
                         .map(|x| {

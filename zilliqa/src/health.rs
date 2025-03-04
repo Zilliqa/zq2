@@ -3,7 +3,7 @@ use std::{error::Error, pin::Pin};
 use futures::Future;
 use http::{Method, Request, Response, StatusCode};
 use hyper::body::Body;
-use tower::{layer::Layer, Service};
+use tower::{Service, layer::Layer};
 
 /// [Layer] that responds to `GET /health` calls with a 200 status code.
 pub struct HealthLayer;

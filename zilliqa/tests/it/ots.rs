@@ -12,7 +12,7 @@ use itertools::Itertools;
 use primitive_types::{H160, H256};
 use serde_json::Value;
 
-use crate::{deploy_contract, Network, Wallet};
+use crate::{Network, Wallet, deploy_contract};
 
 async fn search_transactions(
     wallet: &Wallet,
@@ -130,40 +130,43 @@ async fn search_transactions_paging(mut network: Network) {
     // It should be marked as the first (latest) page because we queried for all 16 transactions.
     assert!(response["firstPage"].as_bool().unwrap());
     // Transactions should be returned in descending order (latest to earliest)
-    assert!(txs
-        .iter()
-        .map(|tx| (
-            tx["blockNumber"].as_str().unwrap().parse::<U64>().unwrap(),
-            tx["transactionIndex"]
-                .as_str()
-                .unwrap()
-                .parse::<U64>()
-                .unwrap(),
-        ))
-        .tuple_windows()
-        .all(|(a, b)| a > b));
+    assert!(
+        txs.iter()
+            .map(|tx| (
+                tx["blockNumber"].as_str().unwrap().parse::<U64>().unwrap(),
+                tx["transactionIndex"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<U64>()
+                    .unwrap(),
+            ))
+            .tuple_windows()
+            .all(|(a, b)| a > b)
+    );
 
     let response = search_transactions(&wallet, wallet.address(), 0, 1, true).await;
     let txs = response["txs"].as_array().unwrap();
     // Searching in reverse from the latest block and a page size of 1 should only yield results from a single block.
     assert!(!txs.is_empty());
-    assert!(txs
-        .iter()
-        .map(|tx| tx["blockHash"].as_str().unwrap())
-        .all_equal());
+    assert!(
+        txs.iter()
+            .map(|tx| tx["blockHash"].as_str().unwrap())
+            .all_equal()
+    );
     // Transactions should be returned in descending order (latest to earliest)
-    assert!(txs
-        .iter()
-        .map(|tx| (
-            tx["blockNumber"].as_str().unwrap().parse::<U64>().unwrap(),
-            tx["transactionIndex"]
-                .as_str()
-                .unwrap()
-                .parse::<U64>()
-                .unwrap(),
-        ))
-        .tuple_windows()
-        .all(|(a, b)| a > b));
+    assert!(
+        txs.iter()
+            .map(|tx| (
+                tx["blockNumber"].as_str().unwrap().parse::<U64>().unwrap(),
+                tx["transactionIndex"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<U64>()
+                    .unwrap(),
+            ))
+            .tuple_windows()
+            .all(|(a, b)| a > b)
+    );
 }
 
 #[zilliqa_macros::test]
