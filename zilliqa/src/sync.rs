@@ -245,7 +245,7 @@ impl Sync {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
-                if !self.db.contains_block(&parent_hash)? {
+                if !self.db.contains_canonical_block(&parent_hash)? {
                     self.active_sync_count = self.active_sync_count.saturating_add(1);
                     // No parent block, trigger sync
                     tracing::debug!("sync::DoSync : syncing from {parent_hash}",);
@@ -271,7 +271,7 @@ impl Sync {
             // Wait till 99% synced, zip it up!
             SyncState::Phase3 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
-                if self.db.contains_block(&ancestor_hash)? {
+                if self.db.contains_canonical_block(&ancestor_hash)? {
                     tracing::info!(
                         "sync::DoSync : finishing {} blocks from {}",
                         self.recent_proposals.len(),
@@ -705,7 +705,10 @@ impl Sync {
         let response = response
             .into_iter()
             .filter(|b| {
-                drop = drop | self.db.contains_block(&b.header.hash).unwrap_or_default();
+                drop |= self
+                    .db
+                    .contains_canonical_block(&b.header.hash)
+                    .unwrap_or_default();
                 !drop
             })
             .collect_vec();
@@ -739,7 +742,11 @@ impl Sync {
 
         // If the segment hits our history, turnaround to Phase 2.
         let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
-        if self.db.contains_block(&block_hash).unwrap_or_default() {
+        if self
+            .db
+            .contains_canonical_block(&block_hash)
+            .unwrap_or_default()
+        {
             self.state = SyncState::Phase2((Hash::ZERO, Range::default()));
             // drop all pending requests & responses
             self.p1_response.clear();
