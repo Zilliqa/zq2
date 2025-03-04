@@ -16,11 +16,11 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 library DispatchArgsBuilder {
     struct DispatchArgs {
-        uint sourceChainId;
+        uint256 sourceChainId;
         address target;
         bytes call;
-        uint gasLimit;
-        uint nonce;
+        uint256 gasLimit;
+        uint256 nonce;
     }
 
     function instance(
@@ -28,7 +28,7 @@ library DispatchArgsBuilder {
     ) external pure returns (DispatchArgs memory args) {
         args.sourceChainId = 1;
         args.target = target;
-        args.call = abi.encodeWithSelector(Target.work.selector, uint(1));
+        args.call = abi.encodeWithSelector(Target.work.selector, uint256(1));
         args.gasLimit = 1_000_000;
         args.nonce = 1;
     }
@@ -139,7 +139,7 @@ contract ChainDispatcherTests is DispatcherFixture {
         DispatchArgsBuilder.DispatchArgs memory args = DispatchArgsBuilder
             .instance(address(target));
         bytes[] memory signatures = signDispatch(args);
-        uint badNonce = args.nonce + 1;
+        uint256 badNonce = args.nonce + 1;
 
         vm.expectRevert(
             ISignatureValidatorErrors.InvalidValidatorOrSignatures.selector
@@ -188,7 +188,7 @@ contract ChainDispatcherTests is DispatcherFixture {
     }
 
     function test_failedCall() external {
-        uint num = 1000;
+        uint256 num = 1000;
         bytes memory failedCall = abi.encodeWithSelector(
             target.work.selector,
             num
@@ -284,7 +284,7 @@ contract ChainDispatcherTests is DispatcherFixture {
         );
 
         assertEq(dispatcher.dispatched(args.sourceChainId, args.nonce), true);
-        assertEq(target.c(), uint(0));
+        assertEq(target.c(), uint256(0));
     }
 
     function test_reentrancy() external {

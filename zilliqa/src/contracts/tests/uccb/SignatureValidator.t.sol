@@ -13,8 +13,8 @@ contract SignatureValidatorHarness is Tester {
     EnumerableSet.AddressSet private _validators;
 
     constructor(address[] memory validators) {
-        uint validatorsLength = validators.length;
-        for (uint i = 0; i < validatorsLength; ++i) {
+        uint256 validatorsLength = validators.length;
+        for (uint256 i = 0; i < validatorsLength; ++i) {
             _validators.add(validators[i]);
         }
     }
@@ -35,7 +35,7 @@ abstract contract SignatureValidatorFixture is Tester {
     using EnumerableSet for EnumerableSet.AddressSet;
     using SignatureValidator for EnumerableSet.AddressSet;
 
-    uint constant validatorSize = 10;
+    uint256 constant validatorSize = 10;
     SignatureValidatorHarness internal signatureValidator;
 
     Vm.Wallet[] validatorsWallets = new Vm.Wallet[](validatorSize);
@@ -51,11 +51,11 @@ abstract contract SignatureValidatorFixture is Tester {
     }
 
     function generateValidators(
-        uint size
+        uint256 size
     ) internal returns (Vm.Wallet[] memory, SignatureValidatorHarness) {
         Vm.Wallet[] memory validatorWallets = new Vm.Wallet[](size);
         address[] memory validatorAddresses = new address[](size);
-        for (uint i = 0; i < size; ++i) {
+        for (uint256 i = 0; i < size; ++i) {
             validatorWallets[i] = vm.createWallet(i + 1);
             validatorAddresses[i] = validatorWallets[i].addr;
         }
@@ -67,17 +67,17 @@ abstract contract SignatureValidatorFixture is Tester {
     }
 
     function exactSupermajority(
-        uint size
-    ) internal pure returns (uint supermajority) {
+        uint256 size
+    ) internal pure returns (uint256 supermajority) {
         supermajority = (size * 2) / 3 + 1;
     }
 
     function getValidatorSubset(
         Vm.Wallet[] memory _validators,
-        uint size
+        uint256 size
     ) internal pure returns (Vm.Wallet[] memory subset) {
         subset = new Vm.Wallet[](size);
-        for (uint i = 0; i < size; ++i) {
+        for (uint256 i = 0; i < size; ++i) {
             subset[i] = _validators[i];
         }
     }
@@ -101,7 +101,7 @@ contract SignatureValidatorTests is SignatureValidatorFixture {
 
     function test_exactMajoritySign() external {
         bytes32 messageHash = bytes("Hello world").toEthSignedMessageHash();
-        uint exactSupermajoritySize = exactSupermajority(validatorSize);
+        uint256 exactSupermajoritySize = exactSupermajority(validatorSize);
         Vm.Wallet[] memory exactSupermajorityValidators = getValidatorSubset(
             validatorsWallets,
             exactSupermajoritySize
@@ -119,7 +119,7 @@ contract SignatureValidatorTests is SignatureValidatorFixture {
 
     function testRevert_lessThanSupermajoritySign() external {
         bytes32 messageHash = bytes("Hello world").toEthSignedMessageHash();
-        uint exactSupermajoritySize = exactSupermajority(validatorSize) - 1;
+        uint256 exactSupermajoritySize = exactSupermajority(validatorSize) - 1;
         Vm.Wallet[] memory exactSupermajorityValidators = getValidatorSubset(
             validatorsWallets,
             exactSupermajoritySize
@@ -221,7 +221,7 @@ contract SignatureValidatorTests is SignatureValidatorFixture {
     }
 
     function test_largeValidatorSet() external {
-        uint _validatorSize = 25_000;
+        uint256 _validatorSize = 25_000;
 
         (
             Vm.Wallet[] memory _validatorWallet,
@@ -242,10 +242,10 @@ contract SignatureValidatorTests is SignatureValidatorFixture {
     }
 
     /// forge-config: default.fuzz.runs = 100
-    function testFuzz_signatureCount(uint input) external {
-        uint size = 200;
-        uint exactSupermajoritySize = exactSupermajority(size);
-        uint signaturesCount = exactSupermajoritySize +
+    function testFuzz_signatureCount(uint256 input) external {
+        uint256 size = 200;
+        uint256 exactSupermajoritySize = exactSupermajority(size);
+        uint256 signaturesCount = exactSupermajoritySize +
             (input % (size - exactSupermajoritySize));
 
         (

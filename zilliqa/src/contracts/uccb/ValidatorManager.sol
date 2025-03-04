@@ -17,7 +17,7 @@ interface IValidatorManager is ISignatureValidatorErrors {
 
     function isValidator(address user) external view returns (bool);
 
-    function validatorsSize() external view returns (uint);
+    function validatorsSize() external view returns (uint256);
 
     function validateMessageWithSupermajority(
         bytes32 ethSignedMessageHash,
@@ -83,8 +83,8 @@ contract ValidatorManager is
     ) external initializer {
         __Ownable_init(_owner);
 
-        uint validatorsLength = validators.length;
-        for (uint i = 0; i < validatorsLength; ++i) {
+        uint256 validatorsLength = validators.length;
+        for (uint256 i = 0; i < validatorsLength; ++i) {
             _addValidator(validators[i]);
         }
     }
@@ -146,7 +146,7 @@ contract ValidatorManager is
     /**
      * @dev getter to get the size of the validator set
      */
-    function validatorsSize() external view returns (uint) {
+    function validatorsSize() external view returns (uint256) {
         return _validators().length();
     }
 
