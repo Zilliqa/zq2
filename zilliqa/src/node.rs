@@ -224,6 +224,11 @@ impl Node {
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
         match message {
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
+            }
             // `NewTransaction`s are always broadcasted.
             ExternalMessage::NewTransaction(t) => {
                 // Don't process again txn sent by this node (it's already in the mempool)
@@ -296,11 +301,6 @@ impl Node {
                 let message = self.consensus.sync.handle_metadata_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
-            // This just breaks down group block messages into individual messages to stop them blocking threads
-            // for long periods.
-            ExternalMessage::InjectedProposal(p) => {
-                self.handle_injected_proposal(from, p)?;
-            }
             // Respond negatively to block request from old nodes
             ExternalMessage::BlockRequest(_) => {
                 // respond with an invalid response
@@ -356,7 +356,7 @@ impl Node {
                     .into_iter()
                     .map(|bh| SyncBlockHeader {
                         header: bh,
-                        size_estimate: usize::MIN,
+                        size_estimate: (1024 * 1024 * bh.gas_used.0 / bh.gas_limit.0) as usize, // guesstimate
                     })
                     .collect_vec();
                 self.consensus

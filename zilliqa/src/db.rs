@@ -1095,6 +1095,17 @@ impl Db {
             .is_some())
     }
 
+    pub fn contains_canonical_block(&self, block_hash: &Hash) -> Result<bool> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT 1 FROM blocks WHERE is_canonical = TRUE AND block_hash = ?1")?
+            .query_row([block_hash], |row| row.get::<_, i64>(0))
+            .optional()?
+            .is_some())
+    }
+
     fn make_view_range(row: &Row) -> rusqlite::Result<Range<u64>> {
         // Add one to end because the range returned from SQL is inclusive.
         let start: u64 = row.get(0)?;
