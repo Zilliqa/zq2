@@ -714,15 +714,10 @@ impl Sync {
         self.db.push_sync_segment(&segment_peer, meta)?;
 
         // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
-        let mut block_size = 0;
+        let mut block_size: usize = 0;
         for SyncBlockHeader { header, .. } in response.iter().rev().filter(|&sb| {
             // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
-            block_size += if sb.size_estimate > usize::MIN {
-                sb.size_estimate
-            } else {
-                // guesstimate with gas, if unknown
-                (1024 * 1024 * sb.header.gas_used.0 / sb.header.gas_limit.0) as usize
-            };
+            block_size = block_size.saturating_add(sb.size_estimate);
             tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
             // Try to fill up >90% of RESPONSE_SIZE_MAXIMUM.
             if block_size > 9 * 1024 * 1024 {
