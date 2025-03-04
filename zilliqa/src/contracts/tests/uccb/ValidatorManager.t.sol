@@ -18,12 +18,16 @@ contract ValidatorManagerTests is Tester {
 
         vm.prank(owner);
         address implementation = address(new ValidatorManager());
-        address proxy = address(new ERC1967Proxy(
-            implementation,
-            abi.encodeWithSelector(
-                ValidatorManager.initialize.selector,
-                address(owner),
-                validators)));
+        address proxy = address(
+            new ERC1967Proxy(
+                implementation,
+                abi.encodeWithSelector(
+                    ValidatorManager.initialize.selector,
+                    address(owner),
+                    validators
+                )
+            )
+        );
         validatorManager = ValidatorManager(proxy);
     }
 

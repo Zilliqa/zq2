@@ -13,11 +13,11 @@ interface IChainDispatcherEvents {
      * @dev Triggered when an event enters this chain
      */
     event Dispatched(
-        uint indexed sourceChainId,
+        uint256 indexed sourceChainId,
         address indexed target,
         bool success,
         bytes response,
-        uint indexed nonce
+        uint256 indexed nonce
     );
 }
 
@@ -38,11 +38,11 @@ interface IChainDispatcher is
     function setValidatorManager(address validatorManager) external;
 
     function dispatch(
-        uint sourceChainId,
+        uint256 sourceChainId,
         address target,
         bytes calldata call,
-        uint gasLimit,
-        uint nonce,
+        uint256 gasLimit,
+        uint256 nonce,
         bytes[] calldata signatures
     ) external;
 }
@@ -155,11 +155,11 @@ abstract contract ChainDispatcher is
      * @param signatures the signatures of the messages of the validator
      */
     function dispatch(
-        uint sourceChainId,
+        uint256 sourceChainId,
         address target,
         bytes calldata call,
-        uint gasLimit,
-        uint nonce,
+        uint256 gasLimit,
+        uint256 nonce,
         bytes[] calldata signatures
     ) external replayDispatchGuard(sourceChainId, nonce) {
         ChainDispatcherStorage storage $ = _getChainDispatcherStorage();

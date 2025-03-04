@@ -10,8 +10,8 @@ interface IDispatchReplayCheckerErrors {
 
 interface IDispatchReplayChecker is IDispatchReplayCheckerErrors {
     function dispatched(
-        uint sourceChainId,
-        uint nonce
+        uint256 sourceChainId,
+        uint256 nonce
     ) external view returns (bool);
 }
 
@@ -33,7 +33,7 @@ abstract contract DispatchReplayChecker is IDispatchReplayChecker {
      */
     struct DispatchReplayCheckerStorage {
         // sourceChainId => nonce => isDispatched
-        mapping(uint => mapping(uint => bool)) dispatched;
+        mapping(uint256 => mapping(uint256 => bool)) dispatched;
     }
 
     // keccak256(abi.encode(uint256(keccak256("zilliqa.storage.DispatchReplayChecker")) - 1)) & ~bytes32(uint256(0xff))
@@ -57,8 +57,8 @@ abstract contract DispatchReplayChecker is IDispatchReplayChecker {
      * @dev view function to verify if a message has been dispatched
      */
     function dispatched(
-        uint sourceChainId,
-        uint nonce
+        uint256 sourceChainId,
+        uint256 nonce
     ) external view returns (bool) {
         DispatchReplayCheckerStorage
             storage $ = _getDispatchReplayCheckerStorage();
@@ -68,7 +68,7 @@ abstract contract DispatchReplayChecker is IDispatchReplayChecker {
     /**
      * @dev Internal function handling the replay check and reverts if the message has been dispatched
      */
-    function _replayDispatchCheck(uint sourceChainId, uint nonce) internal {
+    function _replayDispatchCheck(uint256 sourceChainId, uint256 nonce) internal {
         DispatchReplayCheckerStorage
             storage $ = _getDispatchReplayCheckerStorage();
 
@@ -81,7 +81,7 @@ abstract contract DispatchReplayChecker is IDispatchReplayChecker {
     /**
      * @dev Modifier to protect functions from replay attacks and used by child contracts
      */
-    modifier replayDispatchGuard(uint sourceShardId, uint nonce) {
+    modifier replayDispatchGuard(uint256 sourceShardId, uint256 nonce) {
         _replayDispatchCheck(sourceShardId, nonce);
         _;
     }
