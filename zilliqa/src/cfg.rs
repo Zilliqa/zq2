@@ -704,6 +704,7 @@ impl ContractUpgrades {
     // toml doesn't like Option types. Map items in struct and remove keys for None values
     pub fn to_toml(&self) -> toml::Value {
         toml::Value::Table(
+            // ContractUpgrades
             json!(self)
                 .as_object()
                 .unwrap()
@@ -716,7 +717,7 @@ impl ContractUpgrades {
                         Some((
                             k,
                             toml::Value::Table(
-                                // ContractUpgrades
+                                // ContractUpgradeConfig
                                 json!(v)
                                     .as_object()
                                     .unwrap()
@@ -724,28 +725,32 @@ impl ContractUpgrades {
                                     .into_iter()
                                     .filter_map(|(k2, v2)| {
                                         if v2.is_u64() {
+                                            // height
                                             Some((
                                                 k2,
                                                 toml::Value::Integer(v2.as_u64().unwrap() as i64),
                                             ))
                                         } else if !v2.is_null() {
+                                            // ReinitialiseParams
                                             Some((
                                                 k2,
                                                 toml::Value::Table(
-                                                    // ContractUpgradeConfig
                                                     json!(v2)
                                                         .as_object()
                                                         .unwrap()
                                                         .clone()
                                                         .into_iter()
                                                         .filter_map(|(k3, v3)| {
-                                                            // ReinitialiseParams
-                                                            Some((
-                                                                k3,
-                                                                toml::Value::Integer(
-                                                                    v3.as_u64().unwrap() as i64,
-                                                                ),
-                                                            ))
+                                                            if v3.is_u64() {
+                                                                Some((
+                                                                    k3,
+                                                                    toml::Value::Integer(
+                                                                        v3.as_u64().unwrap() as i64,
+                                                                    ),
+                                                                ))
+                                                            } else {
+                                                                None
+                                                            }
                                                         })
                                                         .collect(),
                                                 ),
