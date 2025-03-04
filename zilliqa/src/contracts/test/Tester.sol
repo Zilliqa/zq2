@@ -11,18 +11,18 @@ abstract contract Tester is Test {
 
     function quickSort(
         Vm.Wallet[] memory arr,
-        int left,
-        int right
+        int256 left,
+        int256 right
     ) private pure {
-        int i = left;
-        int j = right;
+        int256 i = left;
+        int256 j = right;
         if (i == j) return;
-        Vm.Wallet memory pivot = arr[uint(left + (right - left) / 2)];
+        Vm.Wallet memory pivot = arr[uint256(left + (right - left) / 2)];
         while (i <= j) {
             while (arr[uint(i)].addr < pivot.addr) i++;
             while (pivot.addr < arr[uint(j)].addr) j--;
             if (i <= j) {
-                (arr[uint(i)], arr[uint(j)]) = (arr[uint(j)], arr[uint(i)]);
+                (arr[uint256(i)], arr[uint256uint256uint256(j)]) = (arr[uint(j)], arr[uint(i)]);
                 i++;
                 j--;
             }
@@ -45,7 +45,7 @@ abstract contract Tester is Test {
     ) public returns (bytes[] memory) {
         bytes[] memory signatures = new bytes[](wallet.length);
 
-        for (uint i = 0; i < wallet.length; ++i) {
+        for (uint256 i = 0; i < wallet.length; ++i) {
             signatures[i] = sign(wallet[i], hashedMessage);
         }
         return signatures;
@@ -54,7 +54,7 @@ abstract contract Tester is Test {
     function sort(
         Vm.Wallet[] memory data
     ) public pure returns (Vm.Wallet[] memory) {
-        quickSort(data, int(0), int(data.length - 1));
+        quickSort(data, int256(0), int256(data.length - 1));
         return data;
     }
 }

@@ -31,7 +31,7 @@ contract RelayerHarness is
 
 interface ITest {
     struct Args {
-        uint num;
+        uint256 num;
     }
 
     function foo() external;
@@ -69,11 +69,11 @@ contract RelayerTests is Tester, IRelayerEvents {
     }
 
     function test_relay_happyPath() external {
-        uint nonce = 1;
-        uint targetChainId = 1;
+        uint256 nonce = 1;
+        uint256 targetChainId = 1;
         address target = address(0x1);
         bytes memory call = abi.encodeWithSelector(ITest.foo.selector);
-        uint gasLimit = 100_000;
+        uint256 gasLimit = 100_000;
 
         vm.expectEmit(address(relayer));
         vm.prank(registered);
@@ -84,18 +84,18 @@ contract RelayerTests is Tester, IRelayerEvents {
             gasLimit,
             nonce
         );
-        uint result = relayer.relay(targetChainId, target, call, gasLimit);
+        uint256 result = relayer.relay(targetChainId, target, call, gasLimit);
 
         assertEq(result, nonce);
         assertEq(relayer.nonce(targetChainId), nonce);
     }
 
     function test_relay_identicalConsecutiveCallsHaveDifferentNonce() external {
-        uint nonce = 1;
-        uint targetChainId = 1;
+        uint256 nonce = 1;
+        uint256 targetChainId = 1;
         address target = address(0x1);
         bytes memory call = abi.encodeWithSelector(ITest.foo.selector);
-        uint gasLimit = 100_000;
+        uint256 gasLimit = 100_000;
 
         vm.expectEmit(address(relayer));
         vm.prank(registered);
@@ -106,7 +106,7 @@ contract RelayerTests is Tester, IRelayerEvents {
             gasLimit,
             nonce
         );
-        uint result = relayer.relay(targetChainId, target, call, gasLimit);
+        uint256 result = relayer.relay(targetChainId, target, call, gasLimit);
 
         assertEq(result, nonce);
         assertEq(relayer.nonce(targetChainId), nonce);
@@ -130,12 +130,12 @@ contract RelayerTests is Tester, IRelayerEvents {
     function test_relay_identicalConsecutiveCallsHaveDifferenceTargetChainId()
         external
     {
-        uint nonce = 1;
-        uint targetChainId = 1;
-        uint targetChainId2 = 2;
+        uint256 nonce = 1;
+        uint256 targetChainId = 1;
+        uint256 targetChainId2 = 2;
         address target = address(0x1);
         bytes memory call = abi.encodeWithSelector(ITest.foo.selector);
-        uint gasLimit = 100_000;
+        uint256 gasLimit = 100_000;
 
         vm.expectEmit(address(relayer));
         vm.prank(registered);
@@ -146,7 +146,7 @@ contract RelayerTests is Tester, IRelayerEvents {
             gasLimit,
             nonce
         );
-        uint result = relayer.relay(targetChainId, target, call, gasLimit);
+        uint256 result = relayer.relay(targetChainId, target, call, gasLimit);
 
         assertEq(result, nonce);
         assertEq(relayer.nonce(targetChainId), nonce);
@@ -168,12 +168,12 @@ contract RelayerTests is Tester, IRelayerEvents {
     }
 
     function test_relayWithMetadata_happyPath() external {
-        uint nonce = 1;
-        uint targetChainId = 1;
+        uint256 nonce = 1;
+        uint256 targetChainId = 1;
         address target = address(0x1);
         bytes4 callSelector = ITest.foo.selector;
         bytes memory callData = abi.encode(ITest.Args(1));
-        uint gasLimit = 100_000;
+        uint256 gasLimit = 100_000;
 
         bytes memory expectedCall = abi.encodeWithSelector(
             callSelector,
@@ -190,7 +190,7 @@ contract RelayerTests is Tester, IRelayerEvents {
             nonce
         );
         vm.prank(registered);
-        uint result = relayer.relayWithMetadata(
+        uint256 result = relayer.relayWithMetadata(
             targetChainId,
             target,
             callSelector,
@@ -203,10 +203,10 @@ contract RelayerTests is Tester, IRelayerEvents {
     }
 
     function test_RevertNonRegisteredSender() external {
-        uint targetChainId = 1;
+        uint256 targetChainId = 1;
         address target = address(0x1);
         bytes memory call = abi.encodeWithSelector(ITest.foo.selector);
-        uint gasLimit = 100_000;
+        uint256 gasLimit = 100_000;
         address notRegisteredSender = vm.addr(10);
 
         vm.prank(notRegisteredSender);
@@ -220,10 +220,10 @@ contract RelayerTests is Tester, IRelayerEvents {
     }
 
     function test_removeRegisteredSender() external {
-        uint targetChainId = 1;
+        uint256 targetChainId = 1;
         address target = address(0x1);
         bytes memory call = abi.encodeWithSelector(ITest.foo.selector);
-        uint gasLimit = 100_000;
+        uint256 gasLimit = 100_000;
 
         vm.prank(owner);
         relayer.unregister(registered);
