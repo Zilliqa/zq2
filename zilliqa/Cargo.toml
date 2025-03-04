@@ -23,7 +23,7 @@ fake_time = []
 
 [build-dependencies]
 anyhow = { version = "1.0.96", features = ["backtrace"] }
-vergen = { version = "8.3.1", features = ["git", "git2"] }
+vergen = { version = "8.3.2", features = ["git", "git2"] }
 
 [dependencies]
 alloy = { version = "0.11.1", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
