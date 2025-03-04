@@ -5,7 +5,7 @@ pub mod deposit_init {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
-    use super::{contract, Contract};
+    use super::{Contract, contract};
 
     static CONTRACT: Lazy<Contract> =
         Lazy::new(|| contract("src/contracts/deposit_v1.sol", "DepositInit"));
@@ -26,7 +26,7 @@ pub mod deposit_v2 {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
-    use super::{contract, Contract};
+    use super::{Contract, contract};
 
     pub static CONTRACT: Lazy<Contract> =
         Lazy::new(|| contract("src/contracts/deposit_v2.sol", "Deposit"));
@@ -74,7 +74,7 @@ pub mod deposit_v3 {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
-    use super::{contract, Contract};
+    use super::{Contract, contract};
 
     pub static CONTRACT: Lazy<Contract> =
         Lazy::new(|| contract("src/contracts/deposit_v3.sol", "Deposit"));
@@ -130,7 +130,7 @@ pub mod deposit_v4 {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
-    use super::{contract, Contract};
+    use super::{Contract, contract};
 
     pub static CONTRACT: Lazy<Contract> =
         Lazy::new(|| contract("src/contracts/deposit_v4.sol", "Deposit"));
@@ -186,7 +186,7 @@ pub mod deposit_v5 {
     use ethabi::{Constructor, Function};
     use once_cell::sync::Lazy;
 
-    use super::{contract, Contract};
+    use super::{Contract, contract};
 
     pub static CONTRACT: Lazy<Contract> =
         Lazy::new(|| contract("src/contracts/deposit_v5.sol", "Deposit"));
@@ -244,7 +244,7 @@ pub mod shard {
     use ethabi::Constructor;
     use once_cell::sync::Lazy;
 
-    use super::{contract, Contract};
+    use super::{Contract, contract};
 
     static CONTRACT: Lazy<Contract> = Lazy::new(|| contract("src/contracts/shard.sol", "Shard"));
 
@@ -257,7 +257,7 @@ pub mod intershard_bridge {
     use ethabi::{Constructor, Event, Function};
     use once_cell::sync::Lazy;
 
-    use super::{contract, Contract};
+    use super::{Contract, contract};
 
     static CONTRACT: Lazy<Contract> =
         Lazy::new(|| contract("src/contracts/intershard_bridge.sol", "IntershardBridge"));
@@ -275,7 +275,7 @@ pub mod shard_registry {
     use ethabi::{Constructor, Event, Function};
     use once_cell::sync::Lazy;
 
-    use super::{contract, Contract};
+    use super::{Contract, contract};
 
     static CONTRACT: Lazy<Contract> =
         Lazy::new(|| contract("src/contracts/shard_registry.sol", "ShardRegistry"));
@@ -299,7 +299,7 @@ pub mod eip1967_proxy {
     use ethabi::{Constructor, Event};
     use once_cell::sync::Lazy;
 
-    use super::{contract, Contract};
+    use super::{Contract, contract};
 
     static CONTRACT: Lazy<Contract> = Lazy::new(|| {
         contract(
@@ -342,8 +342,8 @@ mod tests {
 
     use foundry_compilers::{
         artifacts::{
-            output_selection::OutputSelection, EvmVersion, Optimizer, Remapping, Settings,
-            SolcInput, Source,
+            EvmVersion, Optimizer, Remapping, Settings, SolcInput, Source,
+            output_selection::OutputSelection,
         },
         solc::SolcLanguage,
     };

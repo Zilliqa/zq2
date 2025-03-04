@@ -10,8 +10,8 @@ use bls_verify::BlsVerify;
 use erc20::ERC20Precompile;
 use pop_verify::PopVerify;
 use revm::ContextPrecompile;
-pub use scilla::scilla_call_handle_register;
 use scilla::ScillaRead;
+pub use scilla::scilla_call_handle_register;
 
 use crate::exec::PendingState;
 

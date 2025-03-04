@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Result;
-use jsonrpsee::{types::Params, RpcModule};
+use jsonrpsee::{RpcModule, types::Params};
 
 use super::types::eth;
 use crate::{api::types::eth::Transaction, cfg::EnabledApi, node::Node};

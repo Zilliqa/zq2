@@ -9,11 +9,11 @@ use ethers::{
     types::TransactionRequest,
     utils::keccak256,
 };
-use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
+use k256::{PublicKey, elliptic_curve::sec1::ToEncodedPoint};
 use primitive_types::{H160, H256, U128};
 use prost::Message;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use zilliqa::{
     api::types::zil::GetTxResponse,
@@ -21,7 +21,7 @@ use zilliqa::{
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
-use crate::{deploy_contract, Network, Wallet};
+use crate::{Network, Wallet, deploy_contract};
 
 pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
     zilliqa_account_with_funds(network, 1000 * 10u128.pow(18)).await
@@ -983,10 +983,12 @@ async fn create_contract(mut network: Network) {
         .await
         .unwrap();
     // Assert the data returned from the API is a superset of the init data we passed.
-    assert!(serde_json::from_str::<Vec<Value>>(&data)
-        .unwrap()
-        .iter()
-        .all(|d| api_data.contains(d)));
+    assert!(
+        serde_json::from_str::<Vec<Value>>(&data)
+            .unwrap()
+            .iter()
+            .all(|d| api_data.contains(d))
+    );
 
     let wallet = network.random_wallet().await;
     let old_balance: u128 = {
@@ -1656,9 +1658,11 @@ async fn get_smart_contract_init(mut network: Network) {
     // Assert the data returned from the API is a superset of the init data we passed.
     let expected_data: Vec<Value> = serde_json::from_str(&data).unwrap();
     for expected in expected_data {
-        assert!(init_data
-            .iter()
-            .any(|d| serde_json::to_value(d).unwrap() == expected));
+        assert!(
+            init_data
+                .iter()
+                .any(|d| serde_json::to_value(d).unwrap() == expected)
+        );
     }
 
     // Test the error case with an invalid contract address
@@ -2914,10 +2918,12 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         .await
         .unwrap();
     // Assert the data returned from the API is a superset of the init data we passed.
-    assert!(serde_json::from_str::<Vec<Value>>(&data)
-        .unwrap()
-        .iter()
-        .all(|d| api_data.contains(d)));
+    assert!(
+        serde_json::from_str::<Vec<Value>>(&data)
+            .unwrap()
+            .iter()
+            .all(|d| api_data.contains(d))
+    );
 
     let call = r#"{
         "_tag": "setHello",
