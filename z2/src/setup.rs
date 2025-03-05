@@ -21,7 +21,7 @@ use zilliqa::{
     api,
     cfg::{
         ApiServer, StateAdjustment, genesis_fork_default, max_rpc_response_size_default,
-        max_rpc_response_size_default, staker_withdrawal_period_default, state_cache_size_default,
+        staker_withdrawal_period_default, state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
