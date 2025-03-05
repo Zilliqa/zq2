@@ -1245,6 +1245,11 @@ impl Consensus {
         state.set_to_root(previous_state_root_hash.into());
         self.state = state;
 
+        // In some cases, the Proposal is a fork and should be discarded/recovered.
+        if self.sync.am_syncing()? || proposal.view() <= self.get_view()? {
+            return Ok(None);
+        }
+
         // Return the final proposal
         Ok(Some(proposal))
     }
