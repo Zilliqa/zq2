@@ -182,10 +182,8 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    // gradual pruning interval
-    const PRUNE_INTERVAL: u64 = 1000;
-    // prune interval > 20 to ensure we don't prune forks
-    const MIN_PRUNE_INTERVAL: u64 = 20;
+    // prune interval >> 15 to ensure we don't prune forks; arbitrarily picked.
+    const MIN_PRUNE_INTERVAL: u64 = 30;
 
     pub fn new(
         secret_key: SecretKey,
@@ -324,7 +322,14 @@ impl Consensus {
             peers.clone(),
         )?;
 
-        let prune_interval = config.prune_interval.max(Self::MIN_PRUNE_INTERVAL) - 1;
+        let prune_interval = if config.prune_interval >= Self::MIN_PRUNE_INTERVAL {
+            config.prune_interval.max(Self::MIN_PRUNE_INTERVAL) - 1 // off-by-one
+        } else {
+            return Err(anyhow!(
+                "prune_interval must be at least {}",
+                Self::MIN_PRUNE_INTERVAL
+            ));
+        };
 
         let mut consensus = Consensus {
             secret_key,
@@ -3105,20 +3110,25 @@ impl Consensus {
         self.broadcast_commit_receipts(from, block, block_receipts)
     }
 
+    /// Prune the history
+    ///
+    /// Performs pruning of 1000-blocks at a time. If the prune_interval is unset (u64::MAX by default), pruning is disabled.
     fn prune_history(&mut self, number: u64) -> Result<()> {
-        if self.prune_interval != u64::MAX {
-            let range = self.db.available_range()?;
-            let prune_max = range.start().saturating_add(Self::PRUNE_INTERVAL); // gradually prune N-blocks at a time
-            let prune_at = number.saturating_sub(self.prune_interval).min(prune_max);
-            if range.contains(&prune_at) {
-                for n in *range.start()..prune_at {
-                    let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
-                    if let Some(block) = block {
-                        tracing::trace!(number = %block.number(), hash=%block.hash(), "Pruning block");
-                        self.db
-                            .remove_transactions_executed_in_block(&block.hash())?;
-                        self.db.remove_block(&block)?;
-                    }
+        if self.prune_interval == u64::MAX {
+            return Ok(()); // pruning is disabled
+        }
+        let range = self.db.available_range()?;
+        let prune_at = number
+            .saturating_sub(self.prune_interval)
+            .min(range.start().saturating_add(1000)); // gradually prune 1000-blocks at a time
+        if range.contains(&prune_at) {
+            for n in *range.start()..prune_at {
+                let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
+                if let Some(block) = block {
+                    tracing::trace!(number = %block.number(), hash=%block.hash(), "Prune block");
+                    self.db
+                        .remove_transactions_executed_in_block(&block.hash())?;
+                    self.db.remove_block(&block)?;
                 }
             }
         }
