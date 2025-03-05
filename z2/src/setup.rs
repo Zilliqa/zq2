@@ -126,13 +126,10 @@ impl Config {
             let address =
                 TransactionPublicKey::Ecdsa(*signing_key.verifying_key(), true).into_addr();
             println!("[#{node_id}] = {}", secret_key.to_hex());
-            node_data.insert(
-                *node_id,
-                NodeData {
-                    secret_key: secret_key.to_hex(),
-                    address,
-                },
-            );
+            node_data.insert(*node_id, NodeData {
+                secret_key: secret_key.to_hex(),
+                address,
+            });
         }
 
         let result = Config {
@@ -164,13 +161,10 @@ impl Setup {
             SecretKey::from_hex(secret_key_hex).map_err(|err| anyhow!(Box::new(err)))?;
         let signing_key = SigningKey::from_slice(&hex::decode(secret_key_hex)?)?;
         let address = TransactionPublicKey::Ecdsa(*signing_key.verifying_key(), true).into_addr();
-        node_data.insert(
-            0,
-            NodeData {
-                secret_key: secret_key.to_hex(),
-                address,
-            },
-        );
+        node_data.insert(0, NodeData {
+            secret_key: secret_key.to_hex(),
+            address,
+        });
         let chain_name = format!("{}", chain);
         let config = Config {
             shape: Composition::single_node(is_validator),
