@@ -1259,8 +1259,17 @@ impl Consensus {
     /// It does all the needed work but with a dummy QC.
     fn early_proposal_assemble_at(&mut self, agg: Option<AggregateQc>) -> Result<()> {
         let view = self.get_view()?;
-        if self.early_proposal.is_some() && self.early_proposal.as_ref().unwrap().0.view() == view {
-            return Ok(());
+        if let Some((proposal, applied_txs, txns, rcpts)) = self.early_proposal.take() {
+            if proposal.view() == view {
+                // Do nothing if we are already in the correct view
+                self.early_proposal = Some((proposal, applied_txs, txns, rcpts));
+                return Ok(());
+            } else {
+                // view changed, recover from early proposal
+                for txn in applied_txs.into_iter().rev() {
+                    self.transaction_pool.insert_ready_transaction(txn)?;
+                }
+            }
         }
 
         let (qc, parent) = match agg {
