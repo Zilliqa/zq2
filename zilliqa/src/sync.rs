@@ -243,7 +243,7 @@ impl Sync {
 
         match self.state {
             // Check if we are out of sync
-            SyncState::Phase0 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
+            SyncState::Phase0 if self.in_pipeline == 0 => {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
                 if !self.db.contains_canonical_block(&parent_hash)? {
                     self.active_sync_count = self.active_sync_count.saturating_add(1);
@@ -257,19 +257,15 @@ impl Sync {
                 }
             }
             // Continue phase 1, until we hit history/genesis.
-            SyncState::Phase1(_)
-                if self.in_pipeline < self.max_batch_size && self.in_flight.is_empty() =>
-            {
+            SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
                 self.request_missing_metadata(None)?;
             }
             // Continue phase 2, until we have all segments.
-            SyncState::Phase2(_)
-                if self.in_pipeline < self.max_blocks_in_flight && self.in_flight.is_empty() =>
-            {
+            SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
                 self.request_missing_blocks()?;
             }
             // Wait till 99% synced, zip it up!
-            SyncState::Phase3 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
+            SyncState::Phase3 if self.in_pipeline == 0 => {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
                 if self.db.contains_canonical_block(&ancestor_hash)? {
                     tracing::info!(

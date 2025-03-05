@@ -944,10 +944,8 @@ impl Node {
             } else {
                 self.message_sender.broadcast_proposal(message)?;
             }
-        } else {
-            self.consensus.sync.sync_from_proposal(proposal)?;
         }
-
+        self.consensus.sync.sync_from_proposal(proposal)?;
         Ok(())
     }
 
