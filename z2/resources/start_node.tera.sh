@@ -7,6 +7,7 @@ CHAIN_NAME="{{ chain_name }}"
 NODE_PRIVATE_KEY=""
 CONFIG_FILE="${CHAIN_NAME}.toml"
 CHECKPOINT_FILE=""  # The optional checkpoint file to mount, if provided.
+DATA_FOLDER=$(pwd)/data
 
 # Define a function to show help using EOF
 help() {
@@ -16,7 +17,7 @@ help() {
         Options:
             -k, --key           NODE_PRIVATE_KEY (mandatory)
             -c, --config        Path to the config file (optional, default: ${CHAIN_NAME}.toml)
-            -p, --checkpoint    Path to the checkpoint file (optional)
+            -p, --checkpoint    Path to the checkpoint file (optional, it is needed only the first time a node is started)
             -h, --help          Display this help message
 
         Examples:
@@ -69,6 +70,21 @@ EOF
 exit 1
 fi
 
+
+if [[ -z "${CHECKPOINT_FILE}" && ! -d "${DATA_FOLDER}" ]]; then
+    cat <<-EOF
+
+    Checkpoint not provided.
+    Please provide a checkpoint to initialise the node
+
+    $(help)
+EOF
+
+exit 1
+fi
+
+
+
 start() {
     docker rm zilliqa-${ZQ_VERSION} &> /dev/null || echo 0
     if [[ -n "${CHECKPOINT_FILE}" && -f "${CHECKPOINT_FILE}" ]]; then
@@ -88,7 +104,7 @@ start() {
     -e RUST_BACKTRACE=1 \
     -v $(pwd)/$CONFIG_FILE:/config.toml \
     -v /zilliqa.log:/zilliqa.log \
-    -v $(pwd)/data:/data"
+    -v ${DATA_FOLDER}:/data"
 
     # Add $MOUNT_OPTION only if it's not empty
     if [[ -n "$MOUNT_OPTION" ]]; then
