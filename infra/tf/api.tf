@@ -78,6 +78,9 @@ resource "google_compute_backend_service" "api" {
       capacity_scaler = 1.0
     }
   }
+
+  ## Attach Cloud Armor policy to the backend service
+  security_policy = module.api_security_policies.policy.self_link
 }
 
 resource "google_compute_backend_service" "health" {
@@ -96,6 +99,9 @@ resource "google_compute_backend_service" "health" {
       capacity_scaler = 1.0
     }
   }
+
+  ## Attach Cloud Armor policy to the backend service
+  security_policy = module.health_security_policies.policy.self_link
 }
 
 resource "google_compute_url_map" "api" {
@@ -184,4 +190,57 @@ resource "google_compute_global_forwarding_rule" "health_https" {
   port_range            = "443"
   target                = google_compute_target_https_proxy.api.id
   ip_address            = data.google_compute_global_address.health.address
+}
+
+module "api_security_policies" {
+  source = "./modules/google-cloud-armor"
+
+  project_id          = var.project_id
+  name                = "${var.chain_name}-api"
+  description         = "Cloud Armor security policy for the ${var.chain_name} public APIs"
+  default_rule_action = "deny(403)"
+  type                = "CLOUD_ARMOR"
+
+  security_rules = {
+    allow_whitelisted_ip_ranges = {
+      action        = "allow"
+      priority      = 999
+      description   = "Allow whitelisted IP address ranges"
+      src_ip_ranges = ["*"]
+    }
+  }
+
+  custom_rules = {
+    throttle = {
+      action      = "throttle"
+      priority    = 990
+      description = "Limit requests per IP"
+      expression  = "!inIpRange(origin.ip, '${local.monitoring_ip_range}')"
+      rate_limit_options = {
+        enforce_on_key                       = "IP"
+        exceed_action                        = "deny(429)"
+        rate_limit_http_request_count        = var.api.rate_limit
+        rate_limit_http_request_interval_sec = 60
+      }
+    }
+  }
+}
+
+module "health_security_policies" {
+  source = "./modules/google-cloud-armor"
+
+  project_id          = var.project_id
+  name                = "${var.chain_name}-health"
+  description         = "Cloud Armor security policy for the ${var.chain_name} public health endpoint"
+  default_rule_action = "deny(403)"
+  type                = "CLOUD_ARMOR"
+
+  security_rules = {
+    allow_whitelisted_ip_ranges = {
+      action        = "allow"
+      priority      = 999
+      description   = "Allow whitelisted IP address ranges"
+      src_ip_ranges = [local.monitoring_ip_range]
+    }
+  }
 }
