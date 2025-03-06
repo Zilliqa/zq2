@@ -21,40 +21,51 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.11.1", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local"] }
+alloy = { version = "0.11.1", default-features = false, features = [
+    "consensus",
+    "eips",
+    "rlp",
+    "serde",
+    "signer-local",
+] }
 anyhow = "1.0.96"
 async-trait = "0.1.87"
 base64 = "0.22.0"
 bitvec = "1.0.1"
-blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
-clap = {version = "4.5.31", features = ["derive"]}
+blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs" }
+clap = { version = "4.5.31", features = ["derive"] }
 clap-verbosity-flag = "3.0.2"
 cliclack = "0.3.5"
 colored = "3.0.0"
 env_logger = "0.11.6"
-eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
+eth_trie = { version = "0.1.0", path = "../eth-trie.rs" }
 ethabi = "18.0.0"
-ethers = {version="2.0.14", features = ["ws"]}
+ethers = { version = "2.0.14", features = ["ws"] }
 futures = "0.3.31"
 hex = "0.4.3"
 home = "0.5.11"
 indicatif = "0.17.11"
 itertools = "0.14.0"
-jsonrpsee = {version = "0.24.8", features = ["client"]}
+jsonrpsee = { version = "0.24.8", features = ["client"] }
 k256 = "0.13.4"
 lazy_static = "1.5.0"
-libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "930118ef5a6566f058d22e1614a8e96b4c287262", features = ["identify"]}
+libp2p = { version = "0.55.0", features = ["identify"] }
 log = "0.4.26"
 primitive-types = "0.12.2"
 prost = "0.13.5"
 rand = "0.8.5"
 regex = "1.11.1"
-reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
-revm = {version = "19.5.0", features = ["optional_balance_check"]}
+reqwest = { version = "0.12.9", features = [
+    "json",
+    "rustls-tls",
+    "http2",
+    "charset",
+], default-features = false }
+revm = { version = "19.5.0", features = ["optional_balance_check"] }
 rs-leveldb = "0.1.5"
 rustls = "0.23.23"
 scopeguard = "1.2.0"
-serde = {version = "1.0.218", features = ["derive"]}
+serde = { version = "1.0.218", features = ["derive"] }
 serde_json = { version = "1.0.140", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
@@ -64,12 +75,20 @@ strum_macros = "0.27"
 tempfile = "3.17.1"
 tera = "1.19.1"
 thiserror = "2.0.12"
-tokio = {version = "1.43.0", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
+tokio = { version = "1.43.0", features = [
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "io-std",
+    "io-util",
+    "process",
+    "fs",
+] }
 tokio-stream = "0.1.17"
 toml = { version = "0.8.20", features = ["preserve_order"] }
 tracing = "0.1.41"
 url = "2.5.4"
-zilliqa = {path = "../zilliqa"}
+zilliqa = { path = "../zilliqa" }
 zilliqa-rs = "0.3.2"
 
 [build-dependencies]
