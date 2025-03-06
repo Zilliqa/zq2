@@ -66,8 +66,8 @@ use tracing::*;
 use zilliqa::{
     api,
     cfg::{
-        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades, Fork,
-        GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
+        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
+        Fork, GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
         max_rpc_response_size_default, scilla_address_default, scilla_ext_libs_path_default,
