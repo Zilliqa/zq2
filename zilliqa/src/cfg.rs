@@ -701,71 +701,32 @@ impl ContractUpgrades {
             deposit_v5,
         }
     }
-    // toml doesn't like Option types. Map items in struct and remove keys for None values
     pub fn to_toml(&self) -> toml::Value {
-        toml::Value::Table(
-            // ContractUpgrades
-            json!(self)
-                .as_object()
-                .unwrap()
-                .clone()
-                .into_iter()
-                .filter_map(|(k, v)| {
-                    if v.is_null() {
-                        None // Skip null values
-                    } else {
-                        Some((
-                            k,
-                            toml::Value::Table(
-                                // ContractUpgradeConfig
-                                json!(v)
-                                    .as_object()
-                                    .unwrap()
-                                    .clone()
-                                    .into_iter()
-                                    .filter_map(|(k2, v2)| {
-                                        if v2.is_u64() {
-                                            // height
-                                            Some((
-                                                k2,
-                                                toml::Value::Integer(v2.as_u64().unwrap() as i64),
-                                            ))
-                                        } else if !v2.is_null() {
-                                            // ReinitialiseParams
-                                            Some((
-                                                k2,
-                                                toml::Value::Table(
-                                                    json!(v2)
-                                                        .as_object()
-                                                        .unwrap()
-                                                        .clone()
-                                                        .into_iter()
-                                                        .filter_map(|(k3, v3)| {
-                                                            if v3.is_u64() {
-                                                                Some((
-                                                                    k3,
-                                                                    toml::Value::Integer(
-                                                                        v3.as_u64().unwrap() as i64,
-                                                                    ),
-                                                                ))
-                                                            } else {
-                                                                None
-                                                            }
-                                                        })
-                                                        .collect(),
-                                                ),
-                                            ))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect(),
-                            ),
-                        ))
-                    }
-                })
-                .collect(),
-        )
+        // toml doesn't like Option types. We need to manually map items in struct removing keys for None values as we go
+        // ContractUpgrades's values are only either u64, None or a json object
+        fn serde_value_to_toml_value(input: serde_json::Value) -> toml::Value {
+            toml::Value::Table(
+                input
+                    .as_object()
+                    .unwrap()
+                    .clone()
+                    .into_iter()
+                    .filter_map(|(k, v)| {
+                        if v.is_null() {
+                            // Ignore None values
+                            None
+                        } else if v.is_u64() {
+                            // Parse ints
+                            Some((k, toml::Value::Integer(v.as_u64().unwrap() as i64)))
+                        } else {
+                            // Recursively parse objects
+                            Some((k, serde_value_to_toml_value(v)))
+                        }
+                    })
+                    .collect(),
+            )
+        }
+        serde_value_to_toml_value(json!(self))
     }
 }
 
