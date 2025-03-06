@@ -797,12 +797,7 @@ impl Consensus {
                     self.create_next_block_on_timeout = false;
                 }
                 if self.early_proposal.is_some() {
-                    let (_, txns, _, _) = self.early_proposal.take().unwrap();
-                    for txn in txns.into_iter().rev() {
-                        self.transaction_pool.insert_ready_transaction(txn)?;
-                    }
-                    warn!("Early proposal exists but we are not leader. Clearing proposal");
-                    self.early_proposal = None;
+                    self.recover_early_proposal()?;
                 }
 
                 let Some(next_leader) = next_leader else {
@@ -1254,21 +1249,45 @@ impl Consensus {
         Ok(Some(proposal))
     }
 
+    /// Recover early proposal
+    ///
+    /// In the event that an early proposal cannot be finalised, this function must be called to recover the transactions
+    /// and re-insert them into the transaction pool.
+    fn recover_early_proposal(&mut self) -> Result<()> {
+        if let Some((proposal, applied_txs, _, _)) = self.early_proposal.take() {
+            tracing::debug!(number = %proposal.number(), view = %proposal.view(), "recovering early proposal");
+            // intershard transactions are not meant to be broadcast
+            let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
+                .clone()
+                .into_iter()
+                .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+
+            // Recover the intershard transactions into the pool.
+            for tx in opaque_transactions {
+                let account_nonce = self.state.get_account(tx.signer)?.nonce;
+                self.transaction_pool.insert_transaction(tx, account_nonce);
+            }
+
+            // Recover the broadcast transactions into the pool.
+            while let Some(txn) = broadcasted_transactions.pop() {
+                self.transaction_pool.insert_ready_transaction(txn)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Assembles the Proposal block early.
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
     fn early_proposal_assemble_at(&mut self, agg: Option<AggregateQc>) -> Result<()> {
         let view = self.get_view()?;
-        if let Some((proposal, applied_txs, txns, rcpts)) = self.early_proposal.take() {
-            if proposal.view() == view {
+        if self.early_proposal.is_some() {
+            if self.early_proposal.as_ref().unwrap().0.view() == view {
                 // Do nothing if we are already in the correct view
-                self.early_proposal = Some((proposal, applied_txs, txns, rcpts));
                 return Ok(());
             } else {
-                // view changed, recover from early proposal
-                for txn in applied_txs.into_iter().rev() {
-                    self.transaction_pool.insert_ready_transaction(txn)?;
-                }
+                // view changed, recover and rebuild early proposal
+                self.recover_early_proposal()?;
             }
         }
 
@@ -1639,8 +1658,14 @@ impl Consensus {
         self.early_proposal_assemble_at(None)?;
         let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
+        let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
+            // Do not broadcast Proposal, recover early proposal.
+            self.recover_early_proposal()?;
+            return Ok(None);
+        };
+
         // intershard transactions are not meant to be broadcast
-        let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
+        let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
             .clone()
             .into_iter()
             .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
@@ -1652,16 +1677,6 @@ impl Consensus {
             let account_nonce = self.state.get_account(tx.signer)?.nonce;
             self.transaction_pool.insert_transaction(tx, account_nonce);
         }
-
-        // finalise the proposal
-        let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
-            // Do not Propose.
-            // Recover the proposed transactions into the pool.
-            while let Some(txn) = broadcasted_transactions.pop() {
-                self.transaction_pool.insert_ready_transaction(txn)?;
-            }
-            return Ok(None);
-        };
 
         info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
