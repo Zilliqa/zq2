@@ -1241,7 +1241,7 @@ impl Consensus {
         self.state = state;
 
         // In some cases, the Proposal is a fork and should be discarded/recovered.
-        if self.sync.am_syncing()? || proposal.view() <= self.get_view()? {
+        if self.sync.am_syncing()? || proposal.view() < self.get_view()? {
             return Ok(None);
         }
 
