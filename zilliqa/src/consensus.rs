@@ -211,7 +211,7 @@ pub struct Consensus {
     network_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
-    state: State,
+    pub state: State,
     /// The persistence database
     db: Arc<Db>,
     receipts_cache: Mutex<ReceiptsCache>,
@@ -629,7 +629,7 @@ impl Consensus {
             .at_root(block.state_root_hash().into())
             .get_stakers(next_block_header)?;
         if !stakers.iter().any(|v| *v == self.public_key()) {
-            debug!(
+            trace!(
                 "can't vote for new view, we aren't in the committee of length {:?}",
                 stakers.len()
             );
@@ -743,7 +743,7 @@ impl Consensus {
         }
 
         if let Err(e) = self.check_block(&block, during_sync) {
-            warn!(?e, "invalid block proposal received!");
+            info!(%e, "invalid block proposal received");
             return Ok(None);
         }
 
@@ -2366,10 +2366,6 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
-            warn!(
-                "Missing parent block while trying to check validity of block number {}",
-                block.number()
-            );
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
@@ -3000,7 +2996,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn execute_block(
+    pub fn execute_block(
         &mut self,
         from: Option<PeerId>,
         block: &Block,

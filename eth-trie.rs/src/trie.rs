@@ -2,7 +2,6 @@ use std::sync::{Arc, RwLock};
 
 use alloy::primitives::{B256, keccak256};
 use hashbrown::{HashMap, HashSet};
-use log::warn;
 use rlp::{Prototype, Rlp, RlpStream};
 
 use crate::{
@@ -178,11 +177,10 @@ where
                             match n {
                                 Some(node) => self.nodes.push(node.into()),
                                 None => {
-                                    warn!(
+                                    panic!(
                                         "Trie node with hash {:?} is missing from the database. Skipping...",
                                         &node_hash
                                     );
-                                    continue;
                                 }
                             }
                         } else {

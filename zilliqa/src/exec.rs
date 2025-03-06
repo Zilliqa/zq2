@@ -2047,6 +2047,8 @@ pub fn scilla_call(
                 }
             };
 
+            // Map<String, Map<string, (u664, u64)>?>
+
             debug!(?output);
 
             gas = gas.min(output.gas_remaining);
