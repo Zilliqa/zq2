@@ -804,7 +804,6 @@ impl ChainNode {
             EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
-        let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
         let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
@@ -877,11 +876,6 @@ impl ChainNode {
             &bootstrap_addresses[0].1.bls_public_key,
         );
         ctx.insert("genesis_address", &genesis_account.address);
-        ctx.insert(
-            "whitelisted_evm_contract_addresses",
-            &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
-                .to_string(),
-        );
         ctx.insert(
             "contract_upgrade_block_heights",
             &contract_upgrade_block_heights.map(|c| c.to_toml().to_string()),
