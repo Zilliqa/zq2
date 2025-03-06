@@ -1,11 +1,13 @@
 use alloy::primitives::Address;
+use ethabi::Token;
 use ethers::{
     abi::Tokenize,
     providers::{Middleware, PubsubClient},
     types::TransactionRequest,
 };
-use primitive_types::U256;
+use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
+use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
 mod admin;
 mod consensus;
 mod eth;
@@ -1415,6 +1417,46 @@ async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wa
         .unwrap()
         .tx_hash();
     network.run_until_receipt(from_wallet, hash, 100).await;
+}
+
+async fn get_reward_address(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    staker: &NodePublicKey,
+) -> H160 {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(
+            contracts::deposit::GET_REWARD_ADDRESS
+                .encode_input(&[Token::Bytes(staker.as_bytes())])
+                .unwrap(),
+        );
+    let return_value = wallet.call(&tx.into(), None).await.unwrap();
+    contracts::deposit::GET_REWARD_ADDRESS
+        .decode_output(&return_value)
+        .unwrap()[0]
+        .clone()
+        .into_address()
+        .unwrap()
+}
+
+async fn get_stakers(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+) -> Vec<NodePublicKey> {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
+    let stakers = wallet.call(&tx.into(), None).await.unwrap();
+    let stakers = contracts::deposit::GET_STAKERS
+        .decode_output(&stakers)
+        .unwrap()[0]
+        .clone()
+        .into_array()
+        .unwrap();
+
+    stakers
+        .into_iter()
+        .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
+        .collect()
 }
 
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network
