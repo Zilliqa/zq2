@@ -192,7 +192,8 @@ impl Chain {
                 "failed_scilla_call_from_gas_exempt_caller_causes_revert": false,
                 "scilla_messages_can_call_evm_contracts": false,
                 "scilla_contract_creation_increments_account_balance": false,
-                "scilla_json_preserve_order": false
+                "scilla_json_preserve_order": false,
+                "scilla_call_respects_evm_state_changes": false,
             })),
             _ => None,
         }
@@ -207,6 +208,8 @@ impl Chain {
                 json!({ "at_height": 10200000, "scilla_messages_can_call_evm_contracts": true }),
                 // estimated: 2025-02-12T12:08:37Z
                 json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
+                // estimated: 2025-03-07T12:35:25Z
+                json!({ "at_height": 12693600, "scilla_call_respects_evm_state_changes": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
                 // estimated: 2024-12-20T23:33:12Z
