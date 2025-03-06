@@ -135,7 +135,8 @@ impl P2pNode {
                     // So, the nodes are unable to see each other directly and remain isolated, defeating kademlia and autonat.
                     identify: identify::Behaviour::new(
                         identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
-                            .with_hide_listen_addrs(true),
+                            .with_hide_listen_addrs(true)
+                            .with_push_listen_addr_updates(true),
                     ),
                 })
             })?
@@ -254,6 +255,16 @@ impl P2pNode {
                     match event {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                            info!(%peer_id, ?info, "identify event");
+                            self.swarm.add_external_address(info.observed_addr);
+                            // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
+                            if info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
+                                for addr in info.listen_addrs {
+                                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                                }
+                            }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
                             if let Some(peers) = self.shard_peers.get(&topic) {
