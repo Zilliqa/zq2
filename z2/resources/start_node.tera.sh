@@ -6,7 +6,8 @@ CHAIN_NAME="{{ chain_name }}"
 
 NODE_PRIVATE_KEY=""
 CONFIG_FILE="${CHAIN_NAME}.toml"
-OPTIONAL_CHECKPOINT_FILE=""  # The optional checkpoint file to mount, if provided.
+CHECKPOINT_FILE=""  # The optional checkpoint file to mount, if provided.
+DATA_FOLDER=$(pwd)/data
 
 # Define a function to show help using EOF
 help() {
@@ -16,7 +17,7 @@ help() {
         Options:
             -k, --key           NODE_PRIVATE_KEY (mandatory)
             -c, --config        Path to the config file (optional, default: ${CHAIN_NAME}.toml)
-            -p, --checkpoint    Path to the checkpoint file (optional)
+            -p, --checkpoint    Path to the checkpoint file (optional, it is needed only the first time a node is started)
             -h, --help          Display this help message
 
         Examples:
@@ -39,7 +40,7 @@ while [[ "$#" -gt 0 ]]; do
             shift 2
             ;;
         -p|--checkpoint)
-            OPTIONAL_CHECKPOINT_FILE="$2"
+            CHECKPOINT_FILE="$2"
             shift 2
             ;;
         -h|--help)
@@ -69,11 +70,26 @@ EOF
 exit 1
 fi
 
+
+if [[ -z "${CHECKPOINT_FILE}" && ! -d "${DATA_FOLDER}" ]]; then
+    cat <<-EOF
+
+    Checkpoint not provided.
+    Please provide a checkpoint to initialise the node
+
+    $(help)
+EOF
+
+exit 1
+fi
+
+
+
 start() {
     docker rm zilliqa-${ZQ_VERSION} &> /dev/null || echo 0
-    if [[ -n "${OPTIONAL_CHECKPOINT_FILE}" && -f "${OPTIONAL_CHECKPOINT_FILE}" ]]; then
+    if [[ -n "${CHECKPOINT_FILE}" && -f "${CHECKPOINT_FILE}" ]]; then
         # Mount the checkpoint file at /<file_name> inside the container
-        MOUNT_OPTION="-v $(pwd)/${OPTIONAL_CHECKPOINT_FILE}:/${OPTIONAL_CHECKPOINT_FILE}"
+        MOUNT_OPTION="-v ${CHECKPOINT_FILE}:/$(basename "$CHECKPOINT_FILE")"
     else
         MOUNT_OPTION=""
     fi
@@ -88,7 +104,7 @@ start() {
     -e RUST_BACKTRACE=1 \
     -v $(pwd)/$CONFIG_FILE:/config.toml \
     -v /zilliqa.log:/zilliqa.log \
-    -v $(pwd)/data:/data"
+    -v ${DATA_FOLDER}:/data"
 
     # Add $MOUNT_OPTION only if it's not empty
     if [[ -n "$MOUNT_OPTION" ]]; then

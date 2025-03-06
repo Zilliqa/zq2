@@ -20,14 +20,14 @@ use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 use crate::{
     address::EthereumAddress,
     chain::{
+        Chain,
         config::NetworkConfig,
         instance::ChainInstance,
         node::{ChainNode, NodePort, NodeRole},
     },
     secret::Secret,
     utils::format_amount,
-    validators,
-    validators::SignerClient,
+    validators::{self, SignerClient},
 };
 
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
@@ -156,7 +156,7 @@ async fn execute_install_or_upgrade(
 }
 
 async fn post_install(chain: ChainInstance) -> Result<()> {
-    if chain.name().contains("prototestnet") || chain.name().contains("protomainnet") {
+    if chain.chain()? == Chain::Zq2ProtoTestnet || chain.chain()? == Chain::Zq2ProtoMainnet {
         log::info!("Skipping post install actions for chain: {}", chain.name());
         return anyhow::Ok(());
     }

@@ -52,7 +52,8 @@ resource "google_storage_bucket" "checkpoint" {
       type = "Delete"
     }
     condition {
-      age = 30
+      age            = 30
+      matches_prefix = ["previous/"]
     }
   }
 

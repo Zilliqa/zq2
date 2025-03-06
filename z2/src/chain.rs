@@ -10,7 +10,7 @@ use strum::EnumProperty;
 use strum_macros::{Display, EnumString};
 use zilliqa::cfg::ContractUpgradesBlockHeights;
 
-#[derive(Clone, Debug, ValueEnum, Display, EnumString, EnumProperty)]
+#[derive(Clone, Debug, ValueEnum, Display, EnumString, EnumProperty, PartialEq)]
 // TODO: decomment when became available
 pub enum Chain {
     #[value(name = "zq2-richard")]

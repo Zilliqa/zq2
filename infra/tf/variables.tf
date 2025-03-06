@@ -33,6 +33,12 @@ variable "apps" {
 
   # Validation for provisioning_model
   validation {
+    condition     = var.apps.faucet_max_hourly_requests >= 1 && var.apps.faucet_max_hourly_requests <= 1000000
+    error_message = "Rate limit must be a positive integer between 1 and 1,000,000."
+  }
+
+  # Validation for provisioning_model
+  validation {
     condition     = contains(["STANDARD", "SPOT"], var.apps.provisioning_model)
     error_message = "Provisioning model must be one of 'STANDARD' or 'SPOT'."
   }
@@ -54,6 +60,7 @@ variable "api" {
     provisioning_model   = optional(string, "STANDARD")
     generate_external_ip = optional(bool, false)
     detach_load_balancer = optional(bool, false)
+    rate_limit           = optional(number, 1000000)
     nodes = optional(list(object({
       count  = number
       region = optional(string)
@@ -61,6 +68,12 @@ variable "api" {
     })), [])
   })
   default = {}
+
+  # Validation for provisioning_model
+  validation {
+    condition     = var.api.rate_limit >= 1 && var.api.rate_limit <= 1000000
+    error_message = "Rate limit must be a positive integer between 1 and 1,000,000."
+  }
 
   # Validation for provisioning_model
   validation {
