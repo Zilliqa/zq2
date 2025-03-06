@@ -10,7 +10,7 @@ eth_chain_id = 33469
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 consensus.genesis_accounts = [ ["0xe422f041d1c2c9c2624ebb46ea312af342b444c0", "900_000_000_000_000_000_000_000_000" ] ]
-consensus.genesis_deposits = [ ["9989b9c2217fea9f3c837debc853faeb05651894f3c1747df1a735091b52cd9f3e0a7ee62a72f1fe1530e50f3fa91467", "12D3KooWFvZum3gpEQkj6o9Tg71uLuQZJ4hqXL32c8wPTcpkRnaP", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "0xe422f041d1c2c9c2624ebb46ea312af342b444c0"] ]
+consensus.genesis_deposits = [ ["ae4ac80db341c167d71cc490a39eb99269f21849d981b701fd7a02743382949092f2b25488c6a40f6649778df55e9679", "12D3KooWQQWoCa6W37Deu7eGrZy6v6zPhCM8b94VKiLHXaZXyq7V", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "0xe422f041d1c2c9c2624ebb46ea312af342b444c0"] ]
 consensus.staker_withdrawal_period = 300
 
 # Reward parameters

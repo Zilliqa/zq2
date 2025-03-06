@@ -783,6 +783,7 @@ impl ChainNode {
     pub async fn get_config_toml(&self) -> Result<String> {
         let spec_config = include_str!("../../resources/config.tera.toml");
         let bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
+        let validator_nodes = self.chain.nodes_by_role(NodeRole::Validator).await?;
         let subdomain = self.chain()?.get_subdomain()?;
 
         if bootstrap_nodes.is_empty() {
@@ -798,6 +799,13 @@ impl ChainNode {
             let eth_address = EthereumAddress::from_private_key(&private_key)?;
             let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/tcp/3333");
             bootstrap_addresses.push((endpoint, eth_address));
+        }
+
+        let mut validator_addresses = Vec::new();
+        for n in validator_nodes.into_iter() {
+            let private_key = n.get_private_key().await?;
+            let eth_address = EthereumAddress::from_private_key(&private_key)?;
+            validator_addresses.push(eth_address);
         }
 
         let genesis_account =
@@ -871,10 +879,10 @@ impl ChainNode {
             "bootstrap_address",
             &serde_json::to_string_pretty(&bootstrap_address)?,
         );
-        ctx.insert("bootstrap_peer_id", &bootstrap_addresses[0].1.peer_id);
+        ctx.insert("validator_peer_id", &validator_addresses[0].peer_id);
         ctx.insert(
-            "bootstrap_bls_public_key",
-            &bootstrap_addresses[0].1.bls_public_key,
+            "validator_bls_public_key",
+            &validator_addresses[0].bls_public_key,
         );
         ctx.insert("genesis_address", &genesis_account.address);
         ctx.insert(

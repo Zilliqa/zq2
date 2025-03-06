@@ -7,7 +7,7 @@ eth_chain_id = {{ eth_chain_id }}
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 consensus.genesis_accounts = [ ["{{ genesis_address }}", "900_000_000_000_000_000_000_000_000" ] ]
-consensus.genesis_deposits = [ ["{{ bootstrap_bls_public_key }}", "{{ bootstrap_peer_id }}", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "{{ genesis_address }}"] ]
+consensus.genesis_deposits = [ ["{{ validator_bls_public_key }}", "{{ validator_peer_id }}", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "{{ genesis_address }}"] ]
 {%- if staker_withdrawal_period %}
 consensus.staker_withdrawal_period = {{ staker_withdrawal_period }}
 {%- endif %}
