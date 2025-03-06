@@ -41,7 +41,7 @@ use crate::{
 pub struct State {
     sql: Arc<Db>,
     db: Arc<TrieStorage>,
-    accounts: PatriciaTrie<TrieStorage>,
+    pub accounts: PatriciaTrie<TrieStorage>,
     /// The Scilla interpreter interface. Note that it is lazily initialized - This is a bit of a hack to ensure that
     /// tests which don't invoke Scilla, don't spawn the Scilla communication threads or TCP listeners.
     scilla: Arc<OnceLock<Mutex<Scilla>>>,

@@ -178,7 +178,7 @@ where
                             match n {
                                 Some(node) => self.nodes.push(node.into()),
                                 None => {
-                                    warn!(
+                                    panic!(
                                         "Trie node with hash {:?} is missing from the database. Skipping...",
                                         &node_hash
                                     );

@@ -159,7 +159,7 @@ pub struct Consensus {
     new_view_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
-    state: State,
+    pub state: State,
     /// The persistence database
     db: Arc<Db>,
     /// Receipts cache
@@ -584,7 +584,7 @@ impl Consensus {
             .at_root(block.state_root_hash().into())
             .get_stakers(next_block_header)?;
         if !stakers.iter().any(|v| *v == self.public_key()) {
-            debug!(
+            trace!(
                 "can't vote for new view, we aren't in the committee of length {:?}",
                 stakers.len()
             );
@@ -678,7 +678,7 @@ impl Consensus {
         }
 
         if let Err(e) = self.check_block(&block, during_sync) {
-            warn!(?e, "invalid block proposal received!");
+            info!(%e, "invalid block proposal received");
             return Ok(None);
         }
 
@@ -743,7 +743,7 @@ impl Consensus {
             if view != proposal_view + 1 {
                 view = proposal_view + 1;
                 self.set_view(view)?;
-                debug!("*** setting view to proposal view... view is now {}", view);
+                trace!("*** setting view to proposal view... view is now {}", view);
             }
 
             if let Some(buffered_votes) = self.buffered_votes.remove(&block.hash()) {
@@ -783,7 +783,7 @@ impl Consensus {
             let stakers = self.state.get_stakers(next_block_header)?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
-                debug!(
+                trace!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
@@ -2262,10 +2262,6 @@ impl Consensus {
         }
 
         let Some(parent) = self.get_block(&block.parent_hash())? else {
-            warn!(
-                "Missing parent block while trying to check validity of block number {}",
-                block.number()
-            );
             return Err(MissingBlockError::from(block.parent_hash()).into());
         };
 
@@ -2872,7 +2868,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn execute_block(
+    pub fn execute_block(
         &mut self,
         from: Option<PeerId>,
         block: &Block,
@@ -3188,6 +3184,9 @@ impl Consensus {
 
 #[cfg(test)]
 mod tests {
+    use alloy::primitives::hex;
+    use revm::primitives::{address, b256, ExecutionResult, Log, LogData, Output, ResultAndState, SuccessReason};
+
     use super::*;
     #[test]
     fn test_minimum_views_in_time_difference() {
@@ -3229,5 +3228,65 @@ mod tests {
             ),
             4
         );
+    }
+
+
+
+    #[test]
+    fn test_receipt() {
+        let result = TransactionApplyResult::Evm(
+            ResultAndState {
+                result: ExecutionResult::Success {
+                    reason: SuccessReason::Return,
+                    gas_used: 146534,
+                    gas_refunded: 0,
+                    logs: vec![
+                        Log {
+                            address: address!("0x94e18ae7dd5ee57b55f30c4b63e2760c09efb192"),
+                            data: LogData::new(
+                                vec![
+                                    b256!("0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c"),
+                                    b256!("0x000000000000000000000000e30161f32a019d876f082d9ff13ed451a03a2086"),
+                                ],
+                                hex!("0x0000000000000000000000000000000000000000000000056bc75e2d63100000").into(),
+                            ).unwrap(),
+                        },
+                        Log {
+                            address: address!("0x94e18ae7dd5ee57b55f30c4b63e2760c09efb192"),
+                            data: LogData::new(
+                                vec![
+                                    b256!("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"),
+                                    b256!("0x000000000000000000000000e30161f32a019d876f082d9ff13ed451a03a2086"),
+                                    b256!("0x0000000000000000000000001f42064a4c321f75a84f1d799a75ab3aace38e2f"),
+                                ],
+                                hex!("0x0000000000000000000000000000000000000000000000056bc75e2d63100000").into(),
+                            ).unwrap(),
+                        },
+                        Log {
+                            address: address!("0x1f42064a4c321f75a84f1d799a75ab3aace38e2f"),
+                            data: LogData::new(
+                                vec![
+                                    b256!("0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83"),
+                                    b256!("0x000000000000000000000000e30161f32a019d876f082d9ff13ed451a03a2086"),
+                                    b256!("0x000000000000000000000000d21e70dd2678ee2aaabe3e5c54b6a52d252e7400"),
+                                ],
+                                hex!("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd637ed0000000000000000000000000000000000000000000000056bc75e2d6310000000000000000000000000000000000000005c1a2489beb5b759c1389321c9e19200000000000000000000000000000000000000000000000001f7070999ebc326000000000000000000000000000000000000000000000000000000000004c3d80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000011c37937e080000").into(),
+                            ).unwrap(),
+                        },
+                    ],
+                    output: Output::Call(Default::default()),
+                },
+                state: Default::default(),
+            },
+            Box::new(Default::default()),
+        );
+        let tx_hash = Hash(hex!("0xd3e3255f2c7b00eec815d371253d0f5dadf760d5a2109641c41e8cb44d919d0b"));
+        let receipt = Consensus::create_txn_receipt(result, tx_hash, 0, EvmGas(146534));
+
+        println!("{receipt:?}");
+
+        let receipt_hash = receipt.compute_hash();
+
+        println!("{receipt_hash}");
     }
 }

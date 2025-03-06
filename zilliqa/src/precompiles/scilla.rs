@@ -220,9 +220,7 @@ fn oog<T>() -> Result<T, PrecompileErrors> {
 
 #[track_caller]
 fn err<T>(message: impl Into<String>) -> Result<T, PrecompileErrors> {
-    let location = std::panic::Location::caller();
     let message = message.into();
-    trace!(%location, message, "scilla_call failed");
     Err(err_inner(message))
 }
 
@@ -445,6 +443,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
             &mut ctx.external,
             gas_exempt,
         );
+        trace!(?outcome, "precompile outcome");
 
         // Copied from `EvmContext::call_precompile`
         let mut result = InterpreterResult {
@@ -472,6 +471,12 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
             Err(PrecompileErrors::Fatal { msg }) => return Err(EVMError::Precompile(msg)),
         }
 
+        trace!(
+            failed_scilla_call_from_gas_exempt_caller_causes_revert = ctx.external.fork.failed_scilla_call_from_gas_exempt_caller_causes_revert,
+            result = ?result.result,
+            gas_exempt,
+        );
+
         if ctx
             .external
             .fork
@@ -482,6 +487,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
                 InstructionResult::Return => {}
                 _ => {
                     if gas_exempt {
+                        trace!("enforcing transaction failure");
                         ctx.external.enforce_transaction_failure = true;
                     }
                 }
@@ -601,10 +607,14 @@ fn scilla_call_precompile<I: ScillaInspector>(
                 .call_mode_1_sets_caller_to_parent_caller
             {
                 // Use the caller of the parent call-stack.
-                external_context.callers[depth - 1]
+                let caller = external_context.callers[depth - 1];
+                trace!(?caller, "using caller of parent call-stack as sender");
+                caller
             } else {
                 // Use the original transaction signer.
-                evmctx.env.tx.caller
+                let caller = evmctx.env.tx.caller;
+                trace!(?caller, "using transaction signer as sender");
+                caller
             }
         } else {
             input.caller
