@@ -1242,6 +1242,7 @@ impl Consensus {
 
         // In some cases, the Proposal is a fork and should be discarded/recovered.
         if self.sync.am_syncing()? || proposal.view() < self.get_view()? {
+            tracing::warn!(sync = %self.sync.am_syncing()?, prop_view = %proposal.view(), high_view = %self.get_view()?,  "unable to finish proposal");
             return Ok(None);
         }
 
