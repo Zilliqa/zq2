@@ -437,9 +437,6 @@ impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<
     }
 }
 
-// As per EIP-150
-pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
-
 const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
 pub enum BaseFeeCheck {
@@ -1041,7 +1038,7 @@ impl State {
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
-        let mut max = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
+        let mut max = gas.unwrap_or(self.block_gas_limit).0;
         let upper_bound = max;
 
         // Check if estimation succeeds with the highest possible gas
