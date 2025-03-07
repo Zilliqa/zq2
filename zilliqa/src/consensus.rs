@@ -21,7 +21,7 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
-    cfg::{ConsensusConfig, NodeConfig},
+    cfg::{ConsensusConfig, Forks, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
@@ -111,6 +111,7 @@ type EarlyProposal = (
     Vec<VerifiedTransaction>,
     EthTrie<MemoryDB>,
     EthTrie<MemoryDB>,
+    u128, // Cumulative gas fee which will be sunk to ZERO account
 );
 
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
@@ -147,6 +148,7 @@ type EarlyProposal = (
 pub struct Consensus {
     secret_key: SecretKey,
     config: NodeConfig,
+    forks: Forks,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub sync: Sync,
@@ -319,6 +321,7 @@ impl Consensus {
 
         let mut consensus = Consensus {
             secret_key,
+            forks: config.consensus.get_forks()?,
             config,
             sync,
             latest_leader_cache: RefCell::new(None),
@@ -797,7 +800,7 @@ impl Consensus {
                     self.create_next_block_on_timeout = false;
                 }
                 if self.early_proposal.is_some() {
-                    let (_, txns, _, _) = self.early_proposal.take().unwrap();
+                    let (_, txns, _, _, _) = self.early_proposal.take().unwrap();
                     for txn in txns.into_iter().rev() {
                         self.transaction_pool.insert_ready_transaction(txn)?;
                     }
@@ -1148,7 +1151,11 @@ impl Consensus {
     /// Finalise the early Proposal.
     /// This should only run after majority QC or aggQC are available.
     /// It applies the rewards and produces the final Proposal.
-    fn early_proposal_finish_at(&mut self, mut proposal: Block) -> Result<Option<Block>> {
+    fn early_proposal_finish_at(
+        &mut self,
+        mut proposal: Block,
+        cumulative_gas_fee: u128,
+    ) -> Result<Option<Block>> {
         // Retrieve parent block data
         let parent_block = self
             .get_block(&proposal.parent_hash())?
@@ -1209,10 +1216,17 @@ impl Consensus {
         )?;
 
         // ZIP-9: Sink gas to zero account
+        let fork = self.forks.get(proposal.header.number);
+        let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
+            cumulative_gas_fee
+        } else {
+            proposal.gas_used().0 as u128
+        };
+
         state.mutate_account(Address::ZERO, |a| {
             a.balance = a
                 .balance
-                .checked_add(proposal.gas_used().0 as u128)
+                .checked_add(gas_fee_amount)
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
@@ -1337,7 +1351,7 @@ impl Consensus {
             executed_block_header.gas_limit,
         );
 
-        self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie));
+        self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie, 0));
         self.early_proposal_apply_transactions()?;
 
         Ok(())
@@ -1402,6 +1416,8 @@ impl Consensus {
                 .checked_sub(result.gas_used())
                 .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
+            let gas_fee = result.gas_used().0 as u128 * tx.tx.gas_price_per_evm_gas();
+
             // Clone itself before invalidating the reference
             let tx = tx.clone();
             // Do necessary work to assemble the transaction
@@ -1409,9 +1425,10 @@ impl Consensus {
 
             // Grab and update early_proposal data in own scope to avoid multiple mutable references to self
             {
-                let (proposal, applied_txs, transactions_trie, receipts_trie) =
+                let (proposal, applied_txs, transactions_trie, receipts_trie, cumulative_gas_fee) =
                     self.early_proposal.as_mut().unwrap();
 
+                *cumulative_gas_fee += gas_fee;
                 transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
 
                 let receipt = Self::create_txn_receipt(
@@ -1436,7 +1453,7 @@ impl Consensus {
                 applied_txs.push(tx);
             }
         }
-        let (_, applied_txs, _, _) = self.early_proposal.as_ref().unwrap();
+        let (_, applied_txs, _, _, _) = self.early_proposal.as_ref().unwrap();
         self.db.with_sqlite_tx(|sqlite_tx| {
             for tx in applied_txs {
                 self.db
@@ -1447,7 +1464,7 @@ impl Consensus {
 
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
-            let (proposal, applied_txs, transactions_trie, receipts_trie) =
+            let (proposal, applied_txs, transactions_trie, receipts_trie, _) =
                 self.early_proposal.as_mut().unwrap();
 
             let applied_transaction_hashes = applied_txs.iter().map(|tx| tx.hash).collect_vec();
@@ -1623,7 +1640,8 @@ impl Consensus {
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // We expect early_proposal to exist already but try create incase it doesn't
         self.early_proposal_assemble_at(None)?;
-        let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
+        let (pending_block, applied_txs, _, _, cumulative_gas_fee) =
+            self.early_proposal.take().unwrap(); // safe to unwrap due to check above
 
         // intershard transactions are not meant to be broadcast
         let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
@@ -1640,7 +1658,8 @@ impl Consensus {
         }
 
         // finalise the proposal
-        let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
+        let Some(final_block) = self.early_proposal_finish_at(pending_block, cumulative_gas_fee)?
+        else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
             while let Some(txn) = broadcasted_transactions.pop() {
@@ -1893,7 +1912,7 @@ impl Consensus {
 
         // Perform insertion under early state, if available
         let early_account = match self.early_proposal.as_ref() {
-            Some((block, _, _, _)) => {
+            Some((block, _, _, _, _)) => {
                 let state = self.state.at_root(block.state_root_hash().into());
                 state.get_account(txn.signer)?
             }
@@ -2955,6 +2974,7 @@ impl Consensus {
         let mut cumulative_gas_used = EvmGas(0);
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
+        let mut cumulative_gas_fee = 0_u128;
 
         let transaction_hashes = verified_txns
             .iter()
@@ -2986,6 +3006,11 @@ impl Consensus {
                 warn!("Cumulative gas used by executing transactions exceeded block limit!");
                 return Ok(());
             }
+
+            let gas_fee = gas_used.0 as u128 * txn.tx.gas_price_per_evm_gas();
+            cumulative_gas_fee = cumulative_gas_fee
+                .checked_add(gas_fee)
+                .ok_or_else(|| anyhow!("Overflow occurred in cumulative gas fee calculation"))?;
 
             let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
 
@@ -3061,11 +3086,18 @@ impl Consensus {
         )?;
 
         // ZIP-9: Sink gas to zero account
+        let fork = self.forks.get(block.header.number);
+        let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
+            cumulative_gas_fee
+        } else {
+            block.gas_used().0 as u128
+        };
+
         self.state.mutate_account(Address::ZERO, |a| {
             a.balance = a
                 .balance
-                .checked_add(block.gas_used().0 as u128)
-                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
+                .checked_add(gas_fee_amount)
+                .ok_or(anyhow!("Overflow occurred in zero account balance"))?;
             Ok(())
         })?;
 
