@@ -1003,20 +1003,14 @@ impl Network {
                                     self.pending_responses
                                         .insert(response_channel.clone(), source);
 
-                                    match external_message {
-                                        // Re-route Injections from Requests to Broadcasts
-                                        ExternalMessage::InjectedProposal(_) => inner
-                                            .handle_broadcast(source, external_message.clone())
-                                            .unwrap(),
-                                        _ => inner
-                                            .handle_request(
-                                                source,
-                                                "(synthetic_id)",
-                                                external_message.clone(),
-                                                response_channel,
-                                            )
-                                            .unwrap(),
-                                    }
+                                    inner
+                                        .handle_request(
+                                            source,
+                                            "(synthetic_id)",
+                                            external_message.clone(),
+                                            response_channel,
+                                        )
+                                        .unwrap();
                                 }
                             });
                         }

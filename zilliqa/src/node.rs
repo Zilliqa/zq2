@@ -224,11 +224,6 @@ impl Node {
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
         match message {
-            // This just breaks down group block messages into individual messages to stop them blocking threads
-            // for long periods.
-            ExternalMessage::InjectedProposal(p) => {
-                self.handle_injected_proposal(from, p)?;
-            }
             // `NewTransaction`s are always broadcasted.
             ExternalMessage::NewTransaction(t) => {
                 // Don't process again txn sent by this node (it's already in the mempool)
@@ -320,6 +315,11 @@ impl Node {
                 // Acknowledge the proposal.
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
+            }
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
             }
             msg => {
                 warn!(%msg, "unexpected message type");
