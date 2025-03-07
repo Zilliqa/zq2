@@ -498,6 +498,7 @@ pub struct Fork {
     pub scilla_call_respects_evm_state_changes: bool,
     pub only_mutated_accounts_update_state: bool,
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    pub transfer_gas_fee_to_zero_account: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -547,6 +548,10 @@ pub struct ForkDelta {
     /// exempt addresses.
     #[serde(default)]
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
+
+    /// If true, the total gas fee for all transactions in a block will be transferred to the zero account.
+    /// Before this fork, we were incorrectly transferring the gas used by all transactions to the zero account.
+    pub transfer_gas_fee_to_zero_account: Option<bool>,
 }
 
 impl Fork {
@@ -579,6 +584,9 @@ impl Fork {
                 addrs.extend_from_slice(&delta.scilla_call_gas_exempt_addrs);
                 addrs
             },
+            transfer_gas_fee_to_zero_account: delta
+                .transfer_gas_fee_to_zero_account
+                .unwrap_or(self.transfer_gas_fee_to_zero_account),
         }
     }
 }
@@ -655,6 +663,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_call_respects_evm_state_changes: true,
         only_mutated_accounts_update_state: true,
         scilla_call_gas_exempt_addrs: vec![],
+        transfer_gas_fee_to_zero_account: true,
     }
 }
 
@@ -738,6 +747,7 @@ mod tests {
                 scilla_call_respects_evm_state_changes: None,
                 only_mutated_accounts_update_state: None,
                 scilla_call_gas_exempt_addrs: vec![],
+                transfer_gas_fee_to_zero_account: None,
             }],
             ..Default::default()
         };
@@ -769,6 +779,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    transfer_gas_fee_to_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -780,6 +791,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    transfer_gas_fee_to_zero_account: None,
                 },
             ],
             ..Default::default()
@@ -825,6 +837,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    transfer_gas_fee_to_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -836,6 +849,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    transfer_gas_fee_to_zero_account: None,
                 },
             ],
             ..Default::default()
@@ -872,6 +886,7 @@ mod tests {
                 scilla_call_respects_evm_state_changes: true,
                 only_mutated_accounts_update_state: true,
                 scilla_call_gas_exempt_addrs: vec![],
+                transfer_gas_fee_to_zero_account: true,
             },
             forks: vec![],
             ..Default::default()
@@ -896,6 +911,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    transfer_gas_fee_to_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -907,6 +923,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    transfer_gas_fee_to_zero_account: None,
                 },
             ],
             ..Default::default()

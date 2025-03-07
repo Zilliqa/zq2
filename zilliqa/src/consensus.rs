@@ -21,7 +21,7 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
-    cfg::{ConsensusConfig, NodeConfig},
+    cfg::{ConsensusConfig, Forks, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
@@ -148,6 +148,7 @@ type EarlyProposal = (
 pub struct Consensus {
     secret_key: SecretKey,
     config: NodeConfig,
+    forks: Forks,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub sync: Sync,
@@ -320,6 +321,7 @@ impl Consensus {
 
         let mut consensus = Consensus {
             secret_key,
+            forks: config.consensus.get_forks()?,
             config,
             sync,
             latest_leader_cache: RefCell::new(None),
@@ -1214,10 +1216,17 @@ impl Consensus {
         )?;
 
         // ZIP-9: Sink gas to zero account
+        let fork = self.forks.get(proposal.header.number);
+        let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
+            cumulative_gas_fee
+        } else {
+            proposal.gas_used().0 as u128
+        };
+
         state.mutate_account(Address::ZERO, |a| {
             a.balance = a
                 .balance
-                .checked_add(cumulative_gas_fee)
+                .checked_add(gas_fee_amount)
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
@@ -3077,10 +3086,17 @@ impl Consensus {
         )?;
 
         // ZIP-9: Sink gas to zero account
+        let fork = self.forks.get(block.header.number);
+        let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
+            cumulative_gas_fee
+        } else {
+            block.gas_used().0 as u128
+        };
+
         self.state.mutate_account(Address::ZERO, |a| {
             a.balance = a
                 .balance
-                .checked_add(cumulative_gas_fee)
+                .checked_add(gas_fee_amount)
                 .ok_or(anyhow!("Overflow occurred in zero account balance"))?;
             Ok(())
         })?;
