@@ -1126,15 +1126,7 @@ impl Consensus {
                 if current_view == 1 {
                     return self.propose_new_block();
                 }
-
-                if self.sync.am_syncing()? {
-                    // Do not propose, if syncing
-                    tracing::warn!("out-of-sync, skipping early proposal");
-                    return Ok(None);
-                }
-                self.early_proposal_assemble_at(None)?;
-
-                return self.ready_for_block_proposal();
+                return self.ready_for_block_proposal(None);
             }
         } else {
             self.votes.insert(
@@ -1143,13 +1135,12 @@ impl Consensus {
             );
         }
 
-        if self.sync.am_syncing()? {
-            // Do not propose, if syncing
+        if !self.sync.am_syncing()? {
+            // Assemble early proposal now if it doesn't already exist
+            self.early_proposal_assemble_at(None)?;
+        } else {
             tracing::warn!("out-of-sync, skipping early proposal");
-            return Ok(None);
         }
-        // Either way assemble early proposal now if it doesnt already exist
-        self.early_proposal_assemble_at(None)?;
 
         Ok(None)
     }
@@ -1527,28 +1518,41 @@ impl Consensus {
 
     /// Called when consensus will accept our early_block.
     /// Either propose now or set timeout to allow for txs to come in.
-    fn ready_for_block_proposal(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn ready_for_block_proposal(
+        &mut self,
+        agg: Option<AggregateQc>,
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
         let (milliseconds_since_last_view_change, milliseconds_remaining_of_block_time, _) =
             self.get_consensus_timeout_params()?;
 
+        // propose new block now, or later
         if milliseconds_remaining_of_block_time == 0 {
+            self.early_proposal_assemble_at(agg)?;
             return self.propose_new_block();
         }
 
         // Reset the timeout and wake up again once it has been at least `block_time` since
         // the last view change. At this point we should be ready to produce a new block.
         self.create_next_block_on_timeout = true;
-        self.reset_timeout.send(
-            self.config
-                .consensus
-                .block_time
-                .saturating_sub(Duration::from_millis(milliseconds_since_last_view_change)),
-        )?;
+        let dur = self
+            .config
+            .consensus
+            .block_time
+            .saturating_sub(Duration::from_millis(milliseconds_since_last_view_change));
         trace!(
-            "will propose new proposal on timeout for view {}",
-            self.get_view()?
+            "will propose new proposal on timeout for view {} in {:?}",
+            self.get_view()?,
+            dur
         );
+        self.reset_timeout.send(dur)?;
+
+        if !self.sync.am_syncing()? {
+            self.early_proposal_assemble_at(agg)?;
+        } else {
+            // Do not propose, if syncing
+            tracing::warn!("out-of-sync, skipping early proposal");
+        }
 
         Ok(None)
     }
@@ -1910,17 +1914,8 @@ impl Consensus {
                         "######### creating proposal block from new view"
                     );
 
-                    if self.sync.am_syncing()? {
-                        // Do not propose, if syncing
-                        tracing::warn!("out-of-sync, skipping early proposal");
-                        return Ok(None);
-                    }
-                    // Either way
                     // We now have a valid aggQC so can create early_block with it
-                    self.early_proposal_assemble_at(Some(agg))?;
-
-                    // as a future improvement, process the proposal before broadcasting it
-                    return self.ready_for_block_proposal();
+                    return self.ready_for_block_proposal(Some(agg));
 
                     // we don't want to keep the collected votes if we proposed a new block
                     // we should remove the collected votes if we couldn't reach supermajority within the view
