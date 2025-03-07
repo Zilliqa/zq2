@@ -447,6 +447,10 @@ impl Consensus {
         self.secret_key.node_public_key()
     }
 
+    pub fn has_early_proposal(&self) -> bool {
+        self.early_proposal.is_some()
+    }
+
     pub fn head_block(&self) -> Block {
         let highest_block_number = self
             .db
@@ -1123,6 +1127,11 @@ impl Consensus {
                     return self.propose_new_block();
                 }
 
+                if self.sync.am_syncing()? {
+                    // Do not propose, if syncing
+                    tracing::warn!("out-of-sync, skipping early proposal");
+                    return Ok(None);
+                }
                 self.early_proposal_assemble_at(None)?;
 
                 return self.ready_for_block_proposal();
@@ -1134,6 +1143,11 @@ impl Consensus {
             );
         }
 
+        if self.sync.am_syncing()? {
+            // Do not propose, if syncing
+            tracing::warn!("out-of-sync, skipping early proposal");
+            return Ok(None);
+        }
         // Either way assemble early proposal now if it doesnt already exist
         self.early_proposal_assemble_at(None)?;
 
@@ -1290,6 +1304,10 @@ impl Consensus {
                 // view changed, recover and rebuild early proposal
                 self.recover_early_proposal()?;
             }
+        } else if self.sync.am_syncing()? {
+            // Do not start early proposal, if out-of-sync
+            tracing::error!("out-of-sync, skipping early proposal");
+            return Ok(());
         }
 
         let (qc, parent) = match agg {
@@ -1656,8 +1674,13 @@ impl Consensus {
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // We expect early_proposal to exist already but try create incase it doesn't
-        self.early_proposal_assemble_at(None)?;
-        let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
+        if !self.sync.am_syncing()? {
+            self.early_proposal_assemble_at(None)?;
+        }
+        let Some((pending_block, applied_txs, _, _)) = self.early_proposal.take() else {
+            tracing::warn!("out-of-sync, skipping proposal");
+            return Ok(None);
+        };
 
         let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
             // Do not broadcast Proposal, recover early proposal.
@@ -1887,6 +1910,12 @@ impl Consensus {
                         "######### creating proposal block from new view"
                     );
 
+                    if self.sync.am_syncing()? {
+                        // Do not propose, if syncing
+                        tracing::warn!("out-of-sync, skipping early proposal");
+                        return Ok(None);
+                    }
+                    // Either way
                     // We now have a valid aggQC so can create early_block with it
                     self.early_proposal_assemble_at(Some(agg))?;
 
