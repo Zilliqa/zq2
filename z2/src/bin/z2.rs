@@ -63,6 +63,10 @@ enum Commands {
     Nodes(NodesStruct),
     /// Start a node and join it to a network
     JoinNode(JoinNodeStruct),
+    // Start all the networks in a bridge and configure them.
+    //Bridge(BridgeStruct),
+    /// Set up a network - this deploys various useful contracts into a fresh network
+    Populate(PopulateStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -683,6 +687,12 @@ struct JoinNodeStruct {
     scilla: bool,
     #[clap(long = "scilla", overrides_with = "scilla")]
     _no_scilla: bool,
+}
+
+#[derive(Args, Debug)]
+struct PopulateStruct {
+    /// Configuration directory.
+    config_dir: String,
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
@@ -1350,6 +1360,11 @@ async fn main() -> Result<()> {
                 Some(secret_key_hex),
             )
             .await?;
+            Ok(())
+        }
+        Commands::Populate(arg) => {
+            // Populate the network.
+            plumbing::populate_network(&arg.config_dir, &base_dir).await?;
             Ok(())
         }
     }

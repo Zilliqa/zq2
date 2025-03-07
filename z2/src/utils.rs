@@ -176,3 +176,9 @@ pub fn format_amount(number: f64) -> String {
     // Combine the integer and fractional parts
     format!("{}{}", formatted_integer, formatted_fractional)
 }
+
+pub fn ethers_from_alloy(
+    in_v: &alloy::primitives::Address,
+) -> Result<ethers::core::types::Address> {
+    Ok(ethers::core::types::Address::from_slice(in_v.as_slice()))
+}

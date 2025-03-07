@@ -28,10 +28,6 @@ interface IRelayer is IRelayerEvents, IRegistry {
     /**
      * @dev Incorporates the extra metadata to add on relay
      */
-    struct CallMetadata {
-        uint256 sourceChainId;
-        address sender;
-    }
 
     function nonce(uint256 chainId) external view returns (uint256);
 
