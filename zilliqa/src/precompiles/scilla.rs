@@ -429,6 +429,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         let gas = Gas::new(inputs.gas_limit);
         let gas_exempt = ctx
             .external
+            .fork
             .scilla_call_gas_exempt_addrs
             .contains(&inputs.caller);
 
@@ -584,9 +585,13 @@ fn scilla_call_precompile<I: ScillaInspector>(
 
     let empty_state = PendingState::new(evmctx.db.pre_state.clone());
     // Temporarily move the `PendingState` out of `evmctx`, replacing it with an empty state.
-    let state = std::mem::replace(&mut evmctx.db, empty_state);
+    let mut state = std::mem::replace(&mut evmctx.db, empty_state);
+    let depth = evmctx.journaled_state.depth;
+    if external_context.fork.scilla_call_respects_evm_state_changes {
+        state.evm_state = Some(evmctx.journaled_state.clone());
+    }
     let scilla = evmctx.db.pre_state.scilla();
-    let Ok((result, state)) = scilla_call(
+    let Ok((result, mut state)) = scilla_call(
         state,
         scilla,
         evmctx.env.tx.caller,
@@ -596,7 +601,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
                 .call_mode_1_sets_caller_to_parent_caller
             {
                 // Use the caller of the parent call-stack.
-                external_context.callers[evmctx.journaled_state.depth - 1]
+                external_context.callers[depth - 1]
             } else {
                 // Use the original transaction signer.
                 evmctx.env.tx.caller
@@ -622,6 +627,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
     };
     trace!(?result, "scilla_call complete");
     if !&result.success {
+        evmctx.db = state;
         if result.errors.values().any(|errs| {
             errs.iter()
                 .any(|err| matches!(err, ScillaError::GasNotSufficient))
@@ -631,7 +637,25 @@ fn scilla_call_precompile<I: ScillaInspector>(
             return err("scilla call failed");
         }
     }
-    // Move the new state back into `evmctx`.
+    state.new_state.retain(|address, account| {
+        if !account.touched {
+            return true;
+        }
+        if !account.from_evm {
+            return true;
+        }
+
+        // Apply changes made to EVM accounts back to the EVM `JournaledState`.
+        let before = evmctx.journaled_state.state.get_mut(address).unwrap();
+
+        // The only thing that Scilla is able to update is the balance.
+        if before.info.balance.to::<u128>() != account.account.balance {
+            before.info.balance = account.account.balance.try_into().unwrap();
+            before.mark_touch();
+        }
+
+        false
+    });
     evmctx.db = state;
 
     for log in result.logs {
