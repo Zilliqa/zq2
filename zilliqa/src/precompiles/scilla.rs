@@ -429,6 +429,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         let gas = Gas::new(inputs.gas_limit);
         let gas_exempt = ctx
             .external
+            .fork
             .scilla_call_gas_exempt_addrs
             .contains(&inputs.caller);
 

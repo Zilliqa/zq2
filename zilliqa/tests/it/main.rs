@@ -66,7 +66,7 @@ use tracing::*;
 use zilliqa::{
     api,
     cfg::{
-        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights,
+        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights, Fork,
         GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
@@ -355,13 +355,17 @@ impl Network {
                 blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 total_native_token_supply: total_native_token_supply_default(),
-                scilla_call_gas_exempt_addrs: vec![
-                    // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
-                    Address::new(get_contract_address(secret_key_to_address(&genesis_key).0, 2).0),
-                ],
                 contract_upgrade_block_heights,
                 forks: vec![],
-                genesis_fork: genesis_fork_default(),
+                genesis_fork: Fork {
+                    scilla_call_gas_exempt_addrs: vec![
+                        // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
+                        Address::new(
+                            get_contract_address(secret_key_to_address(&genesis_key).0, 2).0,
+                        ),
+                    ],
+                    ..genesis_fork_default()
+                },
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -499,12 +503,17 @@ impl Network {
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
-                scilla_call_gas_exempt_addrs: vec![Address::new(
-                    get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
-                )],
                 contract_upgrade_block_heights,
                 forks: vec![],
-                genesis_fork: genesis_fork_default(),
+                genesis_fork: Fork {
+                    scilla_call_gas_exempt_addrs: vec![
+                        // Allow the *third* contract deployed by the genesis key to call `scilla_call` for free.
+                        Address::new(
+                            get_contract_address(secret_key_to_address(&self.genesis_key).0, 2).0,
+                        ),
+                    ],
+                    ..genesis_fork_default()
+                },
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
