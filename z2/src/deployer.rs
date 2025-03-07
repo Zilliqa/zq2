@@ -1233,10 +1233,8 @@ async fn generate_secret(
     ));
     let secret_value = Secret::generate_random_secret();
 
-    if let Some(error) = secrets[0].value().err() {
-        if error.to_string().contains("has no versions") {
-            secrets[0].add_version(&secret_value)?;
-        }
+    if secrets[0].value().is_err() {
+        secrets[0].add_version(&secret_value)?;
     }
     progress_bar.inc(1);
 
