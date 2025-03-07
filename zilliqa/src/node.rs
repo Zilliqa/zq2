@@ -948,6 +948,7 @@ impl Node {
         if self.consensus.sync.sync_from_proposal(proposal)? && self.consensus.has_early_proposal()
         {
             // Entered active-syncing after, early-proposal - recover
+            tracing::warn!("out-of-sync, proposal recovery");
             self.consensus.recover_early_proposal()?;
         }
         Ok(())
