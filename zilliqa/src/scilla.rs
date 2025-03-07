@@ -32,7 +32,7 @@ use serde_json::Value;
 use sha2::Sha256;
 use sha3::{Digest, digest::DynDigest};
 use tokio::runtime;
-use tracing::{trace, warn};
+use tracing::trace;
 
 use crate::{
     cfg::{Fork, ScillaExtLibsPathInScilla},
@@ -247,7 +247,7 @@ impl Scilla {
                 .build()
                 .unwrap();
             let client = HttpClientBuilder::default()
-                .request_timeout(Duration::from_secs(500))
+                .request_timeout(Duration::from_secs(5))
                 .build(format!("{address}/run"))
                 .unwrap();
 
@@ -618,7 +618,6 @@ impl StateServer {
         let active_call: Arc<Mutex<Option<ActiveCall>>> = Arc::new(Mutex::new(None));
 
         module.register_method("fetchStateValueB64", {
-            warn!("fetchStateValueB64!");
             let active_call = Arc::clone(&active_call);
             let b64 = base64::engine::general_purpose::STANDARD;
             move |params, (), _| {
