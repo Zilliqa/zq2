@@ -3,7 +3,7 @@ use std::{
     fmt::Debug,
     fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    ops::Range,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -516,6 +516,15 @@ impl Db {
 
         c.commit()?;
         Ok(())
+    }
+
+    /// Returns the lowest and highest block numbers of stored blocks
+    pub fn available_range(&self) -> Result<RangeInclusive<u64>> {
+        let db = self.db.lock().unwrap();
+        let (min, max) = db
+            .prepare_cached("SELECT MIN(height), MAX(height) FROM blocks")?
+            .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(min..=max)
     }
 
     /// Fetch checkpoint data from file and initialise db state
