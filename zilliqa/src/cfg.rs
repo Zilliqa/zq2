@@ -410,13 +410,6 @@ pub struct ConsensusConfig {
     /// The total supply of native token in the network in Wei. Any funds which are not immediately assigned to an account (via genesis_accounts and genesis_deposits env vars) will be assigned to the zero account (0x0).
     #[serde(default = "total_native_token_supply_default")]
     pub total_native_token_supply: Amount,
-    /// Calls to the `scilla_call` precompile from these addresses cost a different amount of gas. If the provided gas
-    /// limit is not enough, the call will still succeed and we will charge as much gas as we can. This hack exists due
-    /// to important contracts deployed on Zilliqa 1's mainnet that pass the incorrect gas limit to `scilla_call`.
-    /// Zilliqa 1's implementation was broken and accepted these calls and these contracts are now widely used and
-    /// bridged to other chains.
-    #[serde(default)]
-    pub scilla_call_gas_exempt_addrs: Vec<Address>,
     /// The block heights at which we perform EIP-1967 contract upgrades
     /// Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
     #[serde(default)]
@@ -439,17 +432,18 @@ impl ConsensusConfig {
             return Err(anyhow!("first fork must start at height 0"));
         }
 
-        let mut delta_forks = self.forks.to_vec();
+        let mut delta_forks = self.forks.clone();
         delta_forks.sort_unstable_by_key(|f| f.at_height);
 
-        let forks = delta_forks
-            .into_iter()
-            .fold(vec![self.genesis_fork], |mut forks, delta| {
-                let last_fork = forks.last().unwrap(); // Safe to call unwrap because we always have genesis_fork
-                let new_fork = last_fork.apply_delta_fork(&delta);
-                forks.push(new_fork);
-                forks
-            });
+        let forks =
+            delta_forks
+                .into_iter()
+                .fold(vec![self.genesis_fork.clone()], |mut forks, delta| {
+                    let last_fork = forks.last().unwrap(); // Safe to call unwrap because we always have genesis_fork
+                    let new_fork = last_fork.apply_delta_fork(&delta);
+                    forks.push(new_fork);
+                    forks
+                });
 
         Ok(Forks(forks))
     }
@@ -477,7 +471,6 @@ impl Default for ConsensusConfig {
             epochs_per_checkpoint: epochs_per_checkpoint_default(),
             gas_price: 4_761_904_800_000u128.into(),
             total_native_token_supply: total_native_token_supply_default(),
-            scilla_call_gas_exempt_addrs: vec![],
             contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
             forks: vec![],
             genesis_fork: genesis_fork_default(),
@@ -489,7 +482,7 @@ impl Default for ConsensusConfig {
 pub struct Forks(Vec<Fork>);
 
 impl Forks {
-    pub fn get(&self, height: u64) -> Fork {
+    pub fn get(&self, height: u64) -> &Fork {
         // Binary search to find the fork at the specified height. If an entry was not found at exactly the specified
         // height, the `Err` returned from `binary_search_by_key` will contain the index where an element with this
         // height could be inserted. By subtracting one from this, we get the maximum entry with a height less than the
@@ -498,11 +491,11 @@ impl Forks {
             .0
             .binary_search_by_key(&height, |f| f.at_height)
             .unwrap_or_else(|i| i - 1);
-        self.0[index]
+        &self.0[index]
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Fork {
     pub at_height: u64,
     pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
@@ -511,9 +504,11 @@ pub struct Fork {
     pub scilla_contract_creation_increments_account_balance: bool,
     pub scilla_json_preserve_order: bool,
     pub scilla_call_respects_evm_state_changes: bool,
+    pub only_mutated_accounts_update_state: bool,
+    pub scilla_call_gas_exempt_addrs: Vec<Address>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ForkDelta {
     pub at_height: u64,
     /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`
@@ -546,6 +541,20 @@ pub struct ForkDelta {
     /// accounts without state changes being lost. If false, state changes can be lost if Scilla and EVM attempt to
     /// update the same account. This can sometimes lead to mined transactions which don't increase the caller's nonce.
     pub scilla_call_respects_evm_state_changes: Option<bool>,
+    // If true, when an account is accessed but not mutated as part of transaction execution, we will not change the
+    // state of that account in the state trie. If false, we will always update state to the read value of the account.
+    // Most of the time this does not make a difference, because we would just be writing back the same value we read.
+    // However, in some edge cases (e.g. precompiles) setting this value to `false` results in spurious writes of
+    // default accounts to the state trie.
+    pub only_mutated_accounts_update_state: Option<bool>,
+    /// Calls to the `scilla_call` precompile from these addresses cost a different amount of gas. If the provided gas
+    /// limit is not enough, the call will still succeed and we will charge as much gas as we can. This hack exists due
+    /// to important contracts deployed on Zilliqa 1's mainnet that pass the incorrect gas limit to `scilla_call`.
+    /// Zilliqa 1's implementation was broken and accepted these calls and these contracts are now widely used and
+    /// bridged to other chains. Adding a value to this list in a [ForkDelta] will append it to the total list of
+    /// exempt addresses.
+    #[serde(default)]
+    pub scilla_call_gas_exempt_addrs: Vec<Address>,
 }
 
 impl Fork {
@@ -570,6 +579,14 @@ impl Fork {
             scilla_call_respects_evm_state_changes: delta
                 .scilla_call_respects_evm_state_changes
                 .unwrap_or(self.scilla_call_respects_evm_state_changes),
+            only_mutated_accounts_update_state: delta
+                .only_mutated_accounts_update_state
+                .unwrap_or(self.only_mutated_accounts_update_state),
+            scilla_call_gas_exempt_addrs: {
+                let mut addrs = self.scilla_call_gas_exempt_addrs.clone();
+                addrs.extend_from_slice(&delta.scilla_call_gas_exempt_addrs);
+                addrs
+            },
         }
     }
 }
@@ -644,6 +661,8 @@ pub fn genesis_fork_default() -> Fork {
         scilla_contract_creation_increments_account_balance: true,
         scilla_json_preserve_order: true,
         scilla_call_respects_evm_state_changes: true,
+        only_mutated_accounts_update_state: true,
+        scilla_call_gas_exempt_addrs: vec![],
     }
 }
 
@@ -725,6 +744,8 @@ mod tests {
                 scilla_contract_creation_increments_account_balance: Some(false),
                 scilla_json_preserve_order: None,
                 scilla_call_respects_evm_state_changes: None,
+                only_mutated_accounts_update_state: None,
+                scilla_call_gas_exempt_addrs: vec![],
             }],
             ..Default::default()
         };
@@ -754,6 +775,8 @@ mod tests {
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: Some(true),
                     scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
                 },
                 ForkDelta {
                     at_height: 20,
@@ -763,6 +786,8 @@ mod tests {
                     scilla_contract_creation_increments_account_balance: Some(true),
                     scilla_json_preserve_order: Some(true),
                     scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
                 },
             ],
             ..Default::default()
@@ -806,6 +831,8 @@ mod tests {
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: None,
                     scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
                 },
                 ForkDelta {
                     at_height: 10,
@@ -815,6 +842,8 @@ mod tests {
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: None,
                     scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
                 },
             ],
             ..Default::default()
@@ -849,6 +878,8 @@ mod tests {
                 scilla_contract_creation_increments_account_balance: true,
                 scilla_json_preserve_order: true,
                 scilla_call_respects_evm_state_changes: true,
+                only_mutated_accounts_update_state: true,
+                scilla_call_gas_exempt_addrs: vec![],
             },
             forks: vec![],
             ..Default::default()
@@ -871,6 +902,8 @@ mod tests {
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: None,
                     scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
                 },
                 ForkDelta {
                     at_height: 20,
@@ -880,6 +913,8 @@ mod tests {
                     scilla_contract_creation_increments_account_balance: None,
                     scilla_json_preserve_order: None,
                     scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
                 },
             ],
             ..Default::default()

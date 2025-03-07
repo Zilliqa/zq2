@@ -4,7 +4,7 @@ use revm::primitives::Address;
 use serde::Deserialize;
 use zilliqa::crypto::{NodePublicKey, SecretKey};
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 pub struct EthereumAddress {
     pub secret_key: SecretKey,
     pub bls_public_key: NodePublicKey,
