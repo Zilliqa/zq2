@@ -417,7 +417,7 @@ impl Scilla {
         init: &ContractInit,
         msg: &Value,
         ext_libs_dir: &ScillaExtLibsPathInScilla,
-        fork: Fork,
+        fork: &Fork,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .init(init.to_string())

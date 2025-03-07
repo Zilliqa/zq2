@@ -543,7 +543,6 @@ impl Setup {
                     epochs_per_checkpoint: 24,
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
                     total_native_token_supply: total_native_token_supply_default(),
-                    scilla_call_gas_exempt_addrs: vec![],
                     contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),

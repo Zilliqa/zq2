@@ -423,8 +423,7 @@ impl DatabaseRef for &State {
 /// The external context used by [Evm].
 pub struct ExternalContext<'a, I> {
     pub inspector: I,
-    pub fork: Fork,
-    pub scilla_call_gas_exempt_addrs: &'a [Address],
+    pub fork: &'a Fork,
     // This flag is only used for zq1 whitelisted contracts, and it's used to detect if the entire transaction should be marked as failed
     pub enforce_transaction_failure: bool,
     /// The caller of each call in the call-stack. This is needed because the `scilla_call` precompile needs to peek
@@ -459,6 +458,7 @@ impl State {
         override_address: Option<Address>,
         amount: u128,
     ) -> Result<Address> {
+        let current_block = BlockHeader::genesis(Hash::ZERO);
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
@@ -468,7 +468,7 @@ impl State {
             amount,
             creation_bytecode,
             None,
-            BlockHeader::genesis(Hash::ZERO),
+            current_block,
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
@@ -490,7 +490,7 @@ impl State {
                     addr
                 };
 
-                self.apply_delta_evm(&state)?;
+                self.apply_delta_evm(&state, current_block.number)?;
                 Ok(addr)
             }
             ExecutionResult::Success { .. } => Err(anyhow!("deployment did not create a contract")),
@@ -521,7 +521,6 @@ impl State {
         let external_context = ExternalContext {
             inspector,
             fork: self.forks.get(current_block.number),
-            scilla_call_gas_exempt_addrs: &self.scilla_call_gas_exempt_addrs,
             enforce_transaction_failure: false,
             callers: vec![from_addr],
         };
@@ -720,7 +719,7 @@ impl State {
             let (result, state) =
                 self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 
-            self.apply_delta_scilla(&state)?;
+            self.apply_delta_scilla(&state, current_block.number)?;
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {
@@ -744,8 +743,8 @@ impl State {
                     },
                 )?;
 
-            self.apply_delta_evm(&state)?;
-            self.apply_delta_scilla(&scilla_state)?;
+            self.apply_delta_evm(&state, current_block.number)?;
+            self.apply_delta_scilla(&scilla_state, current_block.number)?;
 
             Ok(TransactionApplyResult::Evm(
                 ResultAndState { result, state },
@@ -755,9 +754,17 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
+    fn apply_delta_scilla(
+        &mut self,
+        state: &HashMap<Address, PendingAccount>,
+        current_block_number: u64,
+    ) -> Result<()> {
+        let only_mutated_accounts_update_state = self
+            .forks
+            .get(current_block_number)
+            .only_mutated_accounts_update_state;
         for (&address, account) in state {
-            if !account.touched {
+            if only_mutated_accounts_update_state && !account.touched {
                 continue;
             }
 
@@ -825,9 +832,14 @@ impl State {
     pub fn apply_delta_evm(
         &mut self,
         state: &revm::primitives::HashMap<Address, revm::primitives::Account>,
+        current_block_number: u64,
     ) -> Result<()> {
+        let only_mutated_accounts_update_state = self
+            .forks
+            .get(current_block_number)
+            .only_mutated_accounts_update_state;
         for (&address, account) in state {
-            if !account.is_touched() {
+            if only_mutated_accounts_update_state && !account.is_touched() {
                 continue;
             }
 
@@ -1168,7 +1180,7 @@ impl State {
             false,
             BaseFeeCheck::Ignore,
         )?;
-        self.apply_delta_evm(&state)?;
+        self.apply_delta_evm(&state, current_block.number)?;
 
         Ok(result)
     }
@@ -1610,7 +1622,7 @@ fn scilla_create(
     current_block: BlockHeader,
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
-    fork: Fork,
+    fork: &Fork,
 ) -> Result<(ScillaResult, PendingState)> {
     if txn.data.is_empty() {
         return Err(anyhow!("contract creation without init data"));
@@ -1815,7 +1827,7 @@ pub fn scilla_call(
     data: String,
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
-    fork: Fork,
+    fork: &Fork,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = gas_limit;
 
