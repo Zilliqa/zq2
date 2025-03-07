@@ -307,7 +307,7 @@ impl P2pNode {
                             }
                         }
 
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source, .. })) => {
                             match message {
                                 request_response::Message::Request { request, channel: _channel, request_id: _request_id, .. } => {
                                     let to = self.peer_id;
@@ -332,7 +332,7 @@ impl P2pNode {
                                 }
                             }
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error, .. })) => {
                             if let OutboundFailure::DialFailure = error {
                                 // We failed to send a message to a peer. The likely reason is that we don't know their
                                 // address. Someone else in the network must know it, because we learnt their peer ID.
