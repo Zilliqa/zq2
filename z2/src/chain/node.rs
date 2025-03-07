@@ -800,11 +800,23 @@ impl ChainNode {
             bootstrap_addresses.push((endpoint, eth_address));
         }
 
+        let mut validator_addresses = Vec::new();
+
+        if self.chain()? == Chain::Zq2ProtoTestnet || self.chain()? == Chain::Zq2ProtoMainnet {
+            validator_addresses.push(bootstrap_addresses[0].1);
+        } else {
+            let validator_nodes = self.chain.nodes_by_role(NodeRole::Validator).await?;
+            for n in validator_nodes.into_iter() {
+                let private_key = n.get_private_key().await?;
+                let eth_address = EthereumAddress::from_private_key(&private_key)?;
+                validator_addresses.push(eth_address);
+            }
+        }
+
         let genesis_account =
             EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
-        let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
         let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
@@ -867,21 +879,30 @@ impl ChainNode {
             ))?
         };
 
+        let genesis_deposits = serde_json::to_value(
+            validator_addresses
+                .iter()
+                .map(|v| {
+                    (
+                        v.bls_public_key,
+                        v.peer_id,
+                        "20_000_000_000_000_000_000_000_000",
+                        "0x0000000000000000000000000000000000000000",
+                        &genesis_account.address,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )?;
+
         ctx.insert(
             "bootstrap_address",
             &serde_json::to_string_pretty(&bootstrap_address)?,
         );
-        ctx.insert("bootstrap_peer_id", &bootstrap_addresses[0].1.peer_id);
         ctx.insert(
-            "bootstrap_bls_public_key",
-            &bootstrap_addresses[0].1.bls_public_key,
+            "genesis_deposits",
+            &serde_json::to_string_pretty(&genesis_deposits)?,
         );
         ctx.insert("genesis_address", &genesis_account.address);
-        ctx.insert(
-            "whitelisted_evm_contract_addresses",
-            &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
-                .to_string(),
-        );
         ctx.insert(
             "contract_upgrade_block_heights",
             &contract_upgrade_block_heights.map(|c| c.to_toml().to_string()),
