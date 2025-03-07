@@ -17,7 +17,7 @@ use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use revm::{
-    Database, DatabaseRef, Evm, GetInspector, Inspector, inspector_handle_register,
+    Database, DatabaseRef, Evm, GetInspector, Inspector, JournaledState, inspector_handle_register,
     primitives::{
         AccountInfo, B256, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg,
         KECCAK_EMPTY, Output, ResultAndState, SpecId, TxEnv,
@@ -761,6 +761,9 @@ impl State {
                 continue;
             }
 
+            // We shouldn't mutate accounts that were from EVM.
+            assert!(!account.from_evm);
+
             let mut storage = self.get_account_trie(address)?;
 
             /// Recursively called internal function which assigns `value` at the correct key to `storage`.
@@ -1185,6 +1188,9 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 pub struct PendingState {
     pub pre_state: State,
     pub new_state: HashMap<Address, PendingAccount>,
+    // Read-only copy of the current cached EVM state. Only `Some` when this Scilla call is made by the `scilla_call`
+    // precompile.
+    pub evm_state: Option<JournaledState>,
 }
 
 /// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
@@ -1193,11 +1199,40 @@ pub struct PendingState {
 fn load_account<'a>(
     pre_state: &State,
     new_state: &'a mut HashMap<Address, PendingAccount>,
+    evm_state: &Option<JournaledState>,
     address: Address,
 ) -> Result<&'a mut PendingAccount> {
-    match new_state.entry(address) {
-        Entry::Occupied(entry) => Ok(entry.into_mut()),
-        Entry::Vacant(vac) => {
+    match (
+        new_state.entry(address),
+        evm_state.as_ref().and_then(|s| s.state.get(&address)),
+    ) {
+        (Entry::Occupied(entry), _) => Ok(entry.into_mut()),
+        (Entry::Vacant(vac), Some(account)) => {
+            let account = Account {
+                nonce: account.info.nonce,
+                balance: account.info.balance.to(),
+                code: Code::Evm(if account.info.code_hash == KECCAK_EMPTY {
+                    vec![]
+                } else {
+                    account
+                        .info
+                        .code
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("account should have code"))?
+                        .original_bytes()
+                        .to_vec()
+                }),
+                storage_root: B256::ZERO, // There's no need to set this, since Scilla cannot query EVM contracts' state.
+            };
+            let account = PendingAccount {
+                account,
+                storage: BTreeMap::new(),
+                from_evm: true,
+                touched: false,
+            };
+            Ok(vac.insert(account))
+        }
+        (Entry::Vacant(vac), None) => {
             let account = pre_state.get_account(address)?;
             Ok(vac.insert(account.into()))
         }
@@ -1209,6 +1244,7 @@ impl PendingState {
         PendingState {
             pre_state: state,
             new_state: HashMap::new(),
+            evm_state: None,
         }
     }
 
@@ -1231,7 +1267,12 @@ impl PendingState {
     }
 
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
-        load_account(&self.pre_state, &mut self.new_state, address)
+        load_account(
+            &self.pre_state,
+            &mut self.new_state,
+            &self.evm_state,
+            address,
+        )
     }
 
     pub fn load_var_info(&mut self, address: Address, variable: &str) -> Result<(&str, u8)> {
@@ -1254,7 +1295,12 @@ impl PendingState {
         indices: &[Vec<u8>],
         value: StorageValue,
     ) -> Result<()> {
-        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+        let account = load_account(
+            &self.pre_state,
+            &mut self.new_state,
+            &self.evm_state,
+            address,
+        )?;
 
         let mut current = account
             .storage
@@ -1289,7 +1335,12 @@ impl PendingState {
         var_name: &str,
         indices: &[Vec<u8>],
     ) -> Result<&mut Option<Bytes>> {
-        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+        let account = load_account(
+            &self.pre_state,
+            &mut self.new_state,
+            &self.evm_state,
+            address,
+        )?;
 
         fn get_cached<'a>(
             storage: &'a mut BTreeMap<String, StorageValue>,
@@ -1345,7 +1396,12 @@ impl PendingState {
         var_name: &str,
         indices: &[Vec<u8>],
     ) -> Result<BTreeMap<Vec<u8>, StorageValue>> {
-        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+        let account = load_account(
+            &self.pre_state,
+            &mut self.new_state,
+            &self.evm_state,
+            address,
+        )?;
 
         // Even if we have something cached for this prefix, we don't know if it is a full representation of the map.
         // It might have been the case that only a few subfields were cached. Therefore, we need to retrieve the full
@@ -1457,6 +1513,7 @@ pub struct PendingAccount {
     pub account: Account,
     /// Cached values of updated or deleted storage. Note that deletions can happen at any level of a map.
     pub storage: BTreeMap<String, StorageValue>,
+    pub from_evm: bool,
     pub touched: bool,
 }
 
@@ -1497,6 +1554,7 @@ impl From<Account> for PendingAccount {
         PendingAccount {
             account,
             storage: BTreeMap::new(),
+            from_evm: false,
             touched: false,
         }
     }

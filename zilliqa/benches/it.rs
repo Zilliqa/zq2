@@ -68,12 +68,6 @@ fn process_empty(c: &mut Criterion) {
                 consensus.minimum_stake = "1"
                 consensus.eth_block_gas_limit = 1000000000
                 consensus.gas_price = "1"
-                consensus.genesis_fork.at_height = 0
-                consensus.genesis_fork.failed_scilla_call_from_gas_exempt_caller_causes_revert = true
-                consensus.genesis_fork.call_mode_1_sets_caller_to_parent_caller = true
-                consensus.genesis_fork.scilla_messages_can_call_evm_contracts = true
-                consensus.genesis_fork.scilla_contract_creation_increments_account_balance = true
-                consensus.genesis_fork.scilla_json_preserve_order = true
                 consensus.genesis_accounts = [
                     [
                         "0x0000000000000000000000000000000000000000",
@@ -194,12 +188,6 @@ fn consensus(
             consensus.minimum_stake = "1"
             consensus.eth_block_gas_limit = 84000000
             consensus.gas_price = "1"
-            consensus.genesis_fork.at_height = 0
-            consensus.genesis_fork.failed_scilla_call_from_gas_exempt_caller_causes_revert = true
-            consensus.genesis_fork.call_mode_1_sets_caller_to_parent_caller = true
-            consensus.genesis_fork.scilla_messages_can_call_evm_contracts = true
-            consensus.genesis_fork.scilla_contract_creation_increments_account_balance = true
-            consensus.genesis_fork.scilla_json_preserve_order = true
         "#,
     )
     .unwrap();
