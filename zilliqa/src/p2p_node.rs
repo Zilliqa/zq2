@@ -258,7 +258,6 @@ impl P2pNode {
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
                             info!(%peer_id, ?info, "identify event");
-                            self.swarm.add_external_address(info.observed_addr);
                             // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                             if info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
                                 for addr in info.listen_addrs {
