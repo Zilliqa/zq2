@@ -15,7 +15,6 @@ use prost::Message;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tracing::info;
 use zilliqa::{
     api::types::zil::GetTxResponse,
     schnorr,
@@ -3289,10 +3288,9 @@ async fn get_num_tx_blocks_structure(mut network: Network) {
     assert!(response.as_str().unwrap().parse::<u64>().is_ok());
 }
 
-
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn return_map_and_parse(mut network: Network) {
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let (secret_key, _) = zilliqa_account(&mut network).await;
 
     let code = r#"
         scilla_version 0
@@ -3332,8 +3330,7 @@ async fn return_map_and_parse(mut network: Network) {
         }
     ]"#;
 
-    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
-
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, code, data).await;
 
     // Set nested map to some value
     {
@@ -3358,7 +3355,7 @@ async fn return_map_and_parse(mut network: Network) {
         ]
     }"#;
 
-        let (_, txn) = send_transaction(
+        let (_, _) = send_transaction(
             &mut network,
             &secret_key,
             2,
@@ -3368,7 +3365,7 @@ async fn return_map_and_parse(mut network: Network) {
             None,
             Some(call),
         )
-            .await;
+        .await;
     }
 
     // Parse returned nested map
@@ -3394,7 +3391,7 @@ async fn return_map_and_parse(mut network: Network) {
             None,
             Some(call),
         )
-            .await;
+        .await;
         let event = &txn["receipt"]["event_logs"][0];
         assert_eq!(event["_eventname"], "FetchedWithdrawMap");
         // We expect that value is a non-empty array (it contains correct result from `to_list` operation applied by scilla)

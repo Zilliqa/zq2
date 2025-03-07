@@ -11,7 +11,7 @@ use std::{
     thread,
     time::Duration,
 };
-use std::collections::HashMap;
+
 use alloy::{hex::ToHexExt, primitives::Address};
 use anyhow::{Result, anyhow};
 use base64::Engine;
@@ -32,7 +32,7 @@ use serde_json::Value;
 use sha2::Sha256;
 use sha3::{Digest, digest::DynDigest};
 use tokio::runtime;
-use tracing::{info, trace, warn};
+use tracing::{trace, warn};
 
 use crate::{
     cfg::{Fork, ScillaExtLibsPathInScilla},
@@ -825,13 +825,15 @@ impl ActiveCall {
         } else {
             let value = self.state.load_storage_by_prefix(addr, &name, &indices)?;
 
-            fn get_by_indices<'a>(map: &'a BTreeMap<Vec<u8>, StorageValue>, indices: &[Vec<u8>]) -> &'a BTreeMap<Vec<u8>, StorageValue> {
+            fn get_by_indices<'a>(
+                map: &'a BTreeMap<Vec<u8>, StorageValue>,
+                indices: &[Vec<u8>],
+            ) -> &'a BTreeMap<Vec<u8>, StorageValue> {
                 let mut current = map;
                 for index in indices {
-                    if let Some(StorageValue::Map {map: inner_map, ..}) = current.get(index) {
+                    if let Some(StorageValue::Map { map: inner_map, .. }) = current.get(index) {
                         current = inner_map;
-                    }
-                    else {
+                    } else {
                         break;
                     }
                 }
@@ -841,7 +843,7 @@ impl ActiveCall {
             fn convert(value: &BTreeMap<Vec<u8>, StorageValue>) -> ProtoScillaVal {
                 ProtoScillaVal::map(
                     value
-                        .into_iter()
+                        .iter()
                         .filter_map(|(k, v)| {
                             let k = String::from_utf8(k.clone()).ok()?;
                             Some((
