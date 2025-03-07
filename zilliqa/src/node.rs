@@ -945,10 +945,10 @@ impl Node {
                 self.message_sender.broadcast_proposal(message)?;
             }
         }
-        if !self.consensus.has_early_proposal() {
-            self.consensus.sync.sync_from_proposal(proposal)?;
-        } else {
-            tracing::warn!("early-proposal, skipping sync");
+        if self.consensus.sync.sync_from_proposal(proposal)? && self.consensus.has_early_proposal()
+        {
+            // Entered active-syncing after, early-proposal - recover
+            self.consensus.recover_early_proposal()?;
         }
         Ok(())
     }

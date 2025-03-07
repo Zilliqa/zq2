@@ -1268,7 +1268,7 @@ impl Consensus {
     ///
     /// In the event that an early proposal cannot be finalised, this function must be called to recover the transactions
     /// and re-insert them into the transaction pool.
-    fn recover_early_proposal(&mut self) -> Result<()> {
+    pub fn recover_early_proposal(&mut self) -> Result<()> {
         if let Some((proposal, applied_txs, _, _)) = self.early_proposal.take() {
             tracing::debug!(number = %proposal.number(), view = %proposal.view(), "recovering early proposal");
             // intershard transactions are not meant to be broadcast
