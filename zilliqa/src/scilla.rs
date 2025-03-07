@@ -825,7 +825,7 @@ impl ActiveCall {
         } else {
             let value = self.state.load_storage_by_prefix(addr, &name, &indices)?;
 
-            fn get_inner_map<'a>(map: &'a BTreeMap<Vec<u8>, StorageValue>, indices: &[Vec<u8>]) -> &'a BTreeMap<Vec<u8>, StorageValue> {
+            fn get_by_indices<'a>(map: &'a BTreeMap<Vec<u8>, StorageValue>, indices: &[Vec<u8>]) -> &'a BTreeMap<Vec<u8>, StorageValue> {
                 let mut current = map;
                 for index in indices {
                     if let Some(StorageValue::Map {map: inner_map, ..}) = current.get(index) {
@@ -843,7 +843,7 @@ impl ActiveCall {
                     value
                         .into_iter()
                         .filter_map(|(k, v)| {
-                            let k = serde_json::from_slice(&k).ok()?;
+                            let k = String::from_utf8(k.clone()).ok()?;
                             Some((
                                 k,
                                 match v {
@@ -863,19 +863,9 @@ impl ActiveCall {
                         .collect(),
                 )
             }
-            let value = get_inner_map(&value, &indices);
-            if name == "welcome_map" {
-                let mut map = HashMap::new();
-                map.insert("0x964d9004b1ba9f362766cd681e9f97837a5cbb85".to_string(), ProtoScillaVal::bytes("0x964d9004b1ba9f362766cd681e9f97837a5cbb85".to_string().into()));
-                let map = ProtoScillaVal::map(map);
-
-                map
-            }
-            else {
-                convert(value)
-            }
+            let value = get_by_indices(&value, &indices);
+            convert(value)
         };
-        println!("Returned for varname: {} value: {:?}", name, value);
         Ok(Some((value, ty)))
     }
 

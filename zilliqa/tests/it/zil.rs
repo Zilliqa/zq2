@@ -3291,57 +3291,23 @@ async fn get_num_tx_blocks_structure(mut network: Network) {
 
 
 #[zilliqa_macros::test(restrict_concurrency)]
-async fn simple_staking_contract(mut network: Network) {
+async fn return_map_and_parse(mut network: Network) {
     let (secret_key, address) = zilliqa_account(&mut network).await;
 
     let code = r#"
         scilla_version 0
 
-        contract HelloWorld
+        contract ReturnMap
         ()
 
-        field withdrawal_pending : Map ByStr20 (Map BNum Uint128) = Emp ByStr20 (Map BNum Uint128)
-
-        field welcome_map : Map ByStr20 ByStr20 = Emp ByStr20 ByStr20
+        field complex_map : Map ByStr20 (Map BNum Uint128) = Emp ByStr20 (Map BNum Uint128)
 
         transition AddPendingWithdrawal(initiator: ByStr20, withdraw_number: BNum, amount: Uint128)
-            withdrawal_pending[initiator][withdraw_number] := amount;
-            welcome_map[initiator] := initiator
-        end
-
-        transition foo(initiator: ByStr20)
-            my_map <- welcome_map;
-            is_in_map = builtin contains my_map initiator;
-            value_o <- welcome_map[initiator];
-
-            match value_o with
-            | Some value =>
-              inner = {
-                _eventname: "ValueInMap";
-                val: value
-                };
-                event inner
-            | None =>
-            end;
-
-            inner = {
-                _eventname: "ExistsInMap";
-                is: is_in_map
-            };
-            event inner
+            complex_map[initiator][withdraw_number] := amount
         end
 
         transition CompleteWithdrawal(initiator: ByStr20)
-            my_map <- welcome_map;
-            my_map_list = builtin to_list my_map;
-
-            inner = {
-                    _eventname: "inner";
-                    my_map_list: my_map_list
-            };
-            event inner;
-
-            withdraw_map_o <- withdrawal_pending[initiator];
+            withdraw_map_o <- complex_map[initiator];
 
             match withdraw_map_o with
             | Some withdraw_map =>
@@ -3403,15 +3369,12 @@ async fn simple_staking_contract(mut network: Network) {
             Some(call),
         )
             .await;
-        //let event = &txn["receipt"]["event_logs"][0];
-        //assert_eq!(event["_eventname"], "setHello");
-        info!("Receipt is: {:?}", txn.to_string());
     }
 
-    // Set nested map to some value
+    // Parse returned nested map
     {
         let call = r#"{
-        "_tag": "foo",
+        "_tag": "CompleteWithdrawal",
         "params": [
             {
                 "vname": "initiator",
@@ -3427,42 +3390,14 @@ async fn simple_staking_contract(mut network: Network) {
             3,
             ToAddr::Address(contract_address),
             0,
-            150_000,
+            50_000,
             None,
             Some(call),
         )
             .await;
-        //let event = &txn["receipt"]["event_logs"][0];
-        //assert_eq!(event["_eventname"], "setHello");
-        info!("Receipt is: {:?}", txn.to_string());
+        let event = &txn["receipt"]["event_logs"][0];
+        assert_eq!(event["_eventname"], "FetchedWithdrawMap");
+        // We expect that value is a non-empty array (it contains correct result from `to_list` operation applied by scilla)
+        assert!(!event["params"][1]["value"].as_array().unwrap().is_empty());
     }
-
-    // // Set nested map to some value
-    // {
-    //     let call = r#"{
-    //     "_tag": "CompleteWithdrawal",
-    //     "params": [
-    //         {
-    //             "vname": "initiator",
-    //             "type": "ByStr20",
-    //             "value": "0x964d9004b1ba9f362766cd681e9f97837a5cbb85"
-    //         }
-    //     ]
-    // }"#;
-    //
-    //     let (_, txn) = send_transaction(
-    //         &mut network,
-    //         &secret_key,
-    //         3,
-    //         ToAddr::Address(contract_address),
-    //         0,
-    //         50_000,
-    //         None,
-    //         Some(call),
-    //     )
-    //         .await;
-    //     //let event = &txn["receipt"]["event_logs"][0];
-    //     //assert_eq!(event["_eventname"], "setHello");
-    //     info!("Receipt is: {:?}", txn.to_string());
-    // }
 }
