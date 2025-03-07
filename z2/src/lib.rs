@@ -7,6 +7,7 @@ pub mod deployer;
 pub mod docgen;
 pub mod docs;
 mod github;
+pub mod init_chain;
 pub mod kpi;
 pub mod mitmweb;
 pub mod node_spec;
