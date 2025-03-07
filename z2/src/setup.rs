@@ -5,10 +5,15 @@ use std::{
 };
 
 use alloy::{
-    primitives::{Address, address},
+    primitives::{Address, B256, address},
     signers::local::LocalSigner,
 };
 use anyhow::{Context, Result, anyhow};
+use ethers::{
+    middleware::{Middleware, SignerMiddleware},
+    providers::{Http, Provider},
+    signers::{LocalWallet, Signer, Wallet},
+};
 use k256::ecdsa::SigningKey;
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
@@ -53,6 +58,19 @@ const CHAIN_ID: u64 = 700;
 const ONE_MILLION: u128 = 1_000_000u128;
 const ONE_ETH: u128 = ONE_MILLION * ONE_MILLION * ONE_MILLION;
 const ONE_BILLION: u128 = 1_000u128 * ONE_MILLION;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UCCBData {
+    /// Private key to use to deploy the network.
+    pub private_key: B256,
+
+    /// Salt to use.
+    pub salt: B256,
+
+    /// The addresses you ought to get (it's easier to just record them than to try to derive them)
+    pub validator_manager_address: Address,
+    pub chain_gateway_address: Address,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeData {
@@ -274,6 +292,36 @@ impl Setup {
             watch,
             chain_config: None,
         })
+    }
+
+    pub fn get_uccb_data(&self) -> Result<UCCBData> {
+        // This is mostly constant ...
+        Ok(UCCBData {
+            private_key: B256::from_str(
+                "0xdb11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3",
+            )?,
+            salt: B256::from_str(
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            )?,
+            validator_manager_address: Address::from_str(
+                "0x2946Ad1c0e9BC9E5ff8762B4F3CE8F5AdbF31366",
+            )?,
+            chain_gateway_address: Address::from_str("0xcc0cb8C883BBd8A86DCE0D2ec9b6dAB7CdE8c276")?,
+        })
+    }
+
+    pub async fn get_signer(&self) -> Result<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>> {
+        let provider = Provider::<Http>::try_from(self.get_json_rpc_url(true))?;
+        let wallet: LocalWallet =
+            LocalWallet::from_bytes(self.get_funded_private_key()?.as_slice())?
+                .with_chain_id(provider.get_chainid().await?.as_u64());
+        Ok(SignerMiddleware::new(provider, wallet))
+    }
+
+    pub fn get_funded_private_key(&self) -> Result<B256> {
+        Ok(B256::from_str(
+            "0xdb11cfa086b92497c8ed5a4cc6edb3a5bfe3a640c43ffb9fc6aa0873c56f2ee3",
+        )?)
     }
 
     /// For historical reasons, this is 201.

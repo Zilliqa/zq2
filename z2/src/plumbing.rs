@@ -11,7 +11,7 @@ use crate::{
         node::{NodePort, NodeRole},
     },
     deployer::{ApiOperation, Metrics},
-    kpi,
+    init_chain, kpi,
     node_spec::{Composition, NodeSpec},
     utils,
 };
@@ -516,4 +516,14 @@ pub async fn generate_docs(
             "There are RPC methods implemented but not documented, or vice versa"
         ))
     }
+}
+
+pub async fn populate_network(config_dir: &str, base_dir: &str) -> Result<()> {
+    // Deploys arachnid and multicall.
+    let setup_obj = setup::Setup::load(config_dir, "", base_dir, false).await?;
+    println!("Submitting chain initialization transactions .. ");
+    init_chain::init_chain(&setup_obj).await?;
+    println!("Setting up UCCB .. ");
+
+    Ok(())
 }
