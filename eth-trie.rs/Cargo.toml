@@ -4,7 +4,7 @@ version.workspace = true
 authors = ["Jason Carver <ut96caarrs@snkmail.com>", "Zilliqa <zilliqatech@zilliqa.com>"]
 description = "Ethereum-compatible Merkle-Patricia Trie."
 license = "Apache-2.0"
-edition = "2021"
+edition.workspace = true
 readme = "README.md"
 keywords = ["patricia", "mpt", "evm", "trie", "ethereum"]
 
@@ -20,4 +20,4 @@ alloy = { version = "0.11.1", default-features = false, features = ["getrandom"]
 rand = "0.8.5"
 hex = "0.4.3"
 criterion = "0.5.1"
-uuid = { version = "1.14.0", features = ["serde", "v4"] }
+uuid = { version = "1.15.1", features = ["serde", "v4"] }

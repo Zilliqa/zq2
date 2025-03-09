@@ -5,10 +5,10 @@ use std::{
 };
 
 use alloy::{
-    primitives::{address, Address},
+    primitives::{Address, address},
     signers::local::LocalSigner,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use k256::ecdsa::SigningKey;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
@@ -19,19 +19,19 @@ use tokio::fs;
 use zilliqa::{
     api,
     cfg::{
-        genesis_fork_default, max_rpc_response_size_default, staker_withdrawal_period_default,
-        state_cache_size_default, ApiServer,
+        ApiServer, genesis_fork_default, max_rpc_response_size_default,
+        staker_withdrawal_period_default, state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
 use zilliqa::{
     cfg::{
-        self, allowed_timestamp_skew_default, block_request_batch_size_default,
+        self, Amount, ConsensusConfig, ContractUpgradesBlockHeights, GenesisDeposit,
+        allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, block_time_default, consensus_timeout_default,
         eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
         max_blocks_in_flight_default, scilla_address_default, scilla_ext_libs_path_default,
         scilla_stdlib_dir_default, state_rpc_limit_default, total_native_token_supply_default,
-        Amount, ConsensusConfig, ContractUpgradesBlockHeights, GenesisDeposit,
     },
     transaction::EvmGas,
 };
@@ -244,7 +244,9 @@ impl Setup {
         let config = if let Some(val) = &network {
             // One was specified.
             if let Some(val2) = loaded_config {
-                println!("WARNING: You've specified a network configuration; we'll ignore this and take the config from the existing loaded configuration file");
+                println!(
+                    "WARNING: You've specified a network configuration; we'll ignore this and take the config from the existing loaded configuration file"
+                );
                 val2
             } else {
                 Config::from_spec(val, base_port)?
@@ -254,7 +256,9 @@ impl Setup {
             val2
         } else {
             // Set up a default network
-            println!(">> No network specified or loaded; using default 4-node network for legacy reasons.");
+            println!(
+                ">> No network specified or loaded; using default 4-node network for legacy reasons."
+            );
             Config::from_spec(&Composition::small_network(), base_port)?
         };
         // Whatever we did, save it!
@@ -539,7 +543,6 @@ impl Setup {
                     epochs_per_checkpoint: 24,
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
                     total_native_token_supply: total_native_token_supply_default(),
-                    scilla_call_gas_exempt_addrs: vec![],
                     contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),

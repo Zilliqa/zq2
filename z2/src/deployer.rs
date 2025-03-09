@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
@@ -20,14 +20,14 @@ use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 use crate::{
     address::EthereumAddress,
     chain::{
+        Chain,
         config::NetworkConfig,
         instance::ChainInstance,
         node::{ChainNode, NodePort, NodeRole},
     },
     secret::Secret,
     utils::format_amount,
-    validators,
-    validators::SignerClient,
+    validators::{self, SignerClient},
 };
 
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
@@ -156,7 +156,7 @@ async fn execute_install_or_upgrade(
 }
 
 async fn post_install(chain: ChainInstance) -> Result<()> {
-    if chain.name().contains("prototestnet") || chain.name().contains("protomainnet") {
+    if chain.chain()? == Chain::Zq2ProtoTestnet || chain.chain()? == Chain::Zq2ProtoMainnet {
         log::info!("Skipping post install actions for chain: {}", chain.name());
         return anyhow::Ok(());
     }
@@ -456,7 +456,9 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         for failure in failures {
             log::error!("FAILURE: {}", failure);
         }
-        log::error!("Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node");
+        log::error!(
+            "Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node"
+        );
     }
 
     Ok(())
@@ -1231,10 +1233,8 @@ async fn generate_secret(
     ));
     let secret_value = Secret::generate_random_secret();
 
-    if let Some(error) = secrets[0].value().err() {
-        if error.to_string().contains("has no versions") {
-            secrets[0].add_version(&secret_value)?;
-        }
+    if secrets[0].value().is_err() {
+        secrets[0].add_version(&secret_value)?;
     }
     progress_bar.inc(1);
 

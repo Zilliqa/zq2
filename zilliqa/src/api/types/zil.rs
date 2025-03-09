@@ -359,7 +359,7 @@ impl GetTxResponse {
                     .map(|log| EventLog {
                         address: log.address,
                         event_name: log.event_name,
-                        params: log.params.into_iter().map(ParamValue::from).collect(),
+                        params: log.params,
                     })
                     .collect(),
                 success: receipt.success,

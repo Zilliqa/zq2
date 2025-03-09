@@ -10,16 +10,15 @@ use std::{
 };
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Context, Result};
-use eth_trie::{EthTrie, MemoryDB, Trie, DB};
+use anyhow::{Context, Result, anyhow};
+use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use libp2p::PeerId;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
 use rusqlite::{
-    named_params,
+    Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
-    Connection, OptionalExtension, Row, ToSql,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -214,7 +213,9 @@ impl Db {
                 version_file.read_to_string(&mut version)?;
 
                 if !version.is_empty() && version != CURRENT_DB_VERSION {
-                    return Err(anyhow!("data is incompatible with this version - please delete the data and re-sync"));
+                    return Err(anyhow!(
+                        "data is incompatible with this version - please delete the data and re-sync"
+                    ));
                 }
 
                 version_file.seek(SeekFrom::Start(0))?;
@@ -580,7 +581,9 @@ impl Db {
         reader.read_exact(&mut parent_ser)?;
         let parent: Block = bincode::deserialize(&parent_ser)?;
         if block.parent_hash() != parent.hash() {
-            return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
+            return Err(anyhow!(
+                "Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"
+            ));
         }
 
         if state_trie.iter().next().is_some()
@@ -599,7 +602,9 @@ impl Db {
             // usecase for going through the effort to support it and ensure it works as expected.
             if let Some(db_block) = self.get_block_by_hash(&parent.hash())? {
                 if db_block.parent_hash() != parent.parent_hash() {
-                    return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
+                    return Err(anyhow!(
+                        "Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"
+                    ));
                 } else {
                     // In this case, the database already has the block contained in this checkpoint. We assume the
                     // database contains the full state for that block too and thus return early, without actually
@@ -607,7 +612,9 @@ impl Db {
                     return Ok(Some((block, transactions, parent)));
                 }
             } else {
-                return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"));
+                return Err(anyhow!(
+                    "Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"
+                ));
             }
         }
 
@@ -686,7 +693,9 @@ impl Db {
                 bincode::deserialize::<Account>(&serialised_account)?.storage_root;
             if account_trie.root_hash()?.as_slice() != account_trie_root {
                 return Err(anyhow!(
-                    "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(account_trie_root)
+                    "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}",
+                    hex::encode(account_trie.root_hash()?.as_slice()),
+                    hex::encode(account_trie_root)
                 ));
             }
             if processed_storage_items > maximum_sql_parameters {
@@ -1086,6 +1095,17 @@ impl Db {
             .is_some())
     }
 
+    pub fn contains_canonical_block(&self, block_hash: &Hash) -> Result<bool> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT 1 FROM blocks WHERE is_canonical = TRUE AND block_hash = ?1")?
+            .query_row([block_hash], |row| row.get::<_, i64>(0))
+            .optional()?
+            .is_some())
+    }
+
     fn make_view_range(row: &Row) -> rusqlite::Result<Range<u64>> {
         // Add one to end because the range returned from SQL is inclusive.
         let start: u64 = row.get(0)?;
@@ -1444,8 +1464,8 @@ impl eth_trie::DB for TrieStorage {
 mod tests {
     use alloy::consensus::EMPTY_ROOT_HASH;
     use rand::{
-        distributions::{Distribution, Uniform},
         Rng, SeedableRng,
+        distributions::{Distribution, Uniform},
     };
     use rand_chacha::ChaCha8Rng;
     use tempfile::tempdir;
@@ -1464,16 +1484,16 @@ mod tests {
         let distribution = Uniform::new(1, 50);
         let mut root_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
         for _ in 0..100 {
-            let account_address: [u8; 20] = rng.gen();
+            let account_address: [u8; 20] = rng.r#gen();
             let mut account_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
             let mut key = Vec::<u8>::with_capacity(50);
             let mut value = Vec::<u8>::with_capacity(50);
             for _ in 0..distribution.sample(&mut rng) {
                 for _ in 0..distribution.sample(&mut rng) {
-                    key.push(rng.gen());
+                    key.push(rng.r#gen());
                 }
                 for _ in 0..distribution.sample(&mut rng) {
-                    value.push(rng.gen());
+                    value.push(rng.r#gen());
                 }
                 account_trie.insert(&key, &value).unwrap();
             }

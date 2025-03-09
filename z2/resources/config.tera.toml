@@ -7,7 +7,7 @@ eth_chain_id = {{ eth_chain_id }}
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 consensus.genesis_accounts = [ ["{{ genesis_address }}", "900_000_000_000_000_000_000_000_000" ] ]
-consensus.genesis_deposits = [ ["{{ bootstrap_bls_public_key }}", "{{ bootstrap_peer_id }}", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "{{ genesis_address }}"] ]
+consensus.genesis_deposits = {{ genesis_deposits }}
 {%- if staker_withdrawal_period %}
 consensus.staker_withdrawal_period = {{ staker_withdrawal_period }}
 {%- endif %}
@@ -19,7 +19,6 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.scilla_call_gas_exempt_addrs = {{ whitelisted_evm_contract_addresses }}
 {%- if contract_upgrade_block_heights %}
 consensus.contract_upgrade_block_heights = {{ contract_upgrade_block_heights }}
 {%- endif %}

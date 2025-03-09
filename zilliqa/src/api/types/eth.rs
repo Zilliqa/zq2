@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use alloy::{
     consensus::TxEip1559,
-    primitives::{Address, B256, U128, U256, U64},
+    primitives::{Address, B256, U64, U128, U256},
     rpc::types::TransactionInput,
 };
 use serde::{Deserialize, Serialize};
@@ -477,7 +477,7 @@ pub struct SyncingMeta {
     #[serde(serialize_with = "hex")]
     pub retry_count: usize,
     #[serde(serialize_with = "hex")]
-    pub timeout_count: usize,
+    pub error_count: usize,
     #[serde(serialize_with = "hex")]
     pub active_sync_count: usize,
 }
@@ -491,7 +491,7 @@ pub struct SyncingStruct {
     pub current_block: u64,
     #[serde(serialize_with = "hex")]
     pub highest_block: u64,
-    pub status: SyncingMeta,
+    pub stats: SyncingMeta,
 }
 
 #[derive(Clone, Serialize)]

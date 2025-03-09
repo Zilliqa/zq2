@@ -86,7 +86,7 @@ pub struct Sync {
     started_at: u64,
     highest_block_seen: u64,
     retry_count: usize,
-    timeout_count: usize,
+    error_count: usize,
     empty_count: usize,
     headers_downloaded: usize,
     blocks_downloaded: usize,
@@ -142,7 +142,7 @@ impl Sync {
             started_at: latest_block_number,
             highest_block_seen: latest_block_number,
             retry_count: 0,
-            timeout_count: 0,
+            error_count: 0,
             empty_count: 0,
             headers_downloaded: 0,
             blocks_downloaded: 0,
@@ -183,7 +183,7 @@ impl Sync {
         from: PeerId,
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
-        self.timeout_count = self.timeout_count.saturating_add(1);
+        self.error_count = self.error_count.saturating_add(1);
         if let Some((peer, _)) = self
             .in_flight
             .iter_mut()
@@ -243,10 +243,10 @@ impl Sync {
 
         match self.state {
             // Check if we are out of sync
-            SyncState::Phase0 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
+            SyncState::Phase0 if self.in_pipeline == 0 => {
                 let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
-                if !self.db.contains_block(&parent_hash)? {
-                    self.active_sync_count += self.active_sync_count.saturating_add(1);
+                if !self.db.contains_canonical_block(&parent_hash)? {
+                    self.active_sync_count = self.active_sync_count.saturating_add(1);
                     // No parent block, trigger sync
                     tracing::debug!("sync::DoSync : syncing from {parent_hash}",);
                     self.update_started_at()?;
@@ -257,21 +257,17 @@ impl Sync {
                 }
             }
             // Continue phase 1, until we hit history/genesis.
-            SyncState::Phase1(_)
-                if self.in_pipeline < self.max_batch_size && self.in_flight.is_empty() =>
-            {
+            SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
                 self.request_missing_metadata(None)?;
             }
             // Continue phase 2, until we have all segments.
-            SyncState::Phase2(_)
-                if self.in_pipeline < self.max_blocks_in_flight && self.in_flight.is_empty() =>
-            {
+            SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
                 self.request_missing_blocks()?;
             }
             // Wait till 99% synced, zip it up!
-            SyncState::Phase3 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
+            SyncState::Phase3 if self.in_pipeline == 0 => {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
-                if self.db.contains_block(&ancestor_hash)? {
+                if self.db.contains_canonical_block(&ancestor_hash)? {
                     tracing::info!(
                         "sync::DoSync : finishing {} blocks from {}",
                         self.recent_proposals.len(),
@@ -681,12 +677,18 @@ impl Sync {
                 block_hash = meta.qc.block_hash;
                 block_num = meta.number;
             } else {
-                // If something does not match, do nothing and it will retry with another peer.
+                // If something does not match, restart from the last known segment.
+                // This is a safety mechanism to prevent a peer from sending us garbage.
                 tracing::error!(
                     "sync::DoMetadataResponse : unexpected metadata hash={block_hash} != {}, num={block_num} != {}",
                     meta.hash,
                     meta.number,
                 );
+                // Unless, it is the first segment, where it will restart the entire sync.
+                // https://github.com/Zilliqa/zq2/issues/2416
+                if self.db.count_sync_segments()? <= 1 {
+                    self.state = SyncState::Phase3; // flush, drop all segments, and restart
+                }
                 return Ok(());
             }
             if meta.hash == response.last().unwrap().header.hash {
@@ -694,7 +696,18 @@ impl Sync {
             }
         }
 
-        // Chain segment is sane
+        // Chain segment is sane, drop redundant blocks already in the DB.
+        let mut drop = false;
+        let response = response
+            .into_iter()
+            .filter(|b| {
+                drop |= self
+                    .db
+                    .contains_canonical_block(&b.header.hash)
+                    .unwrap_or_default();
+                !drop
+            })
+            .collect_vec();
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
         // Record the constructed chain metadata
@@ -704,15 +717,10 @@ impl Sync {
         self.db.push_sync_segment(&segment_peer, meta)?;
 
         // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
-        let mut block_size = 0;
+        let mut block_size: usize = 0;
         for SyncBlockHeader { header, .. } in response.iter().rev().filter(|&sb| {
             // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
-            block_size += if sb.size_estimate > usize::MIN {
-                sb.size_estimate
-            } else {
-                // guesstimate with gas, if unknown
-                (1024 * 1024 * sb.header.gas_used.0 / sb.header.gas_limit.0) as usize
-            };
+            block_size = block_size.saturating_add(sb.size_estimate);
             tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
             // Try to fill up >90% of RESPONSE_SIZE_MAXIMUM.
             if block_size > 9 * 1024 * 1024 {
@@ -728,14 +736,16 @@ impl Sync {
         // Record the oldest block in the segment
         self.state = SyncState::Phase1(segment.last().cloned().unwrap());
 
-        // If the check-point/starting-point is in this segment
-        let checkpointed = segment.last().as_ref().unwrap().number <= self.checkpoint_at;
-        let block_hash = segment.last().as_ref().unwrap().hash;
-
         // If the segment hits our history, turnaround to Phase 2.
-        if checkpointed || self.db.contains_block(&block_hash)? {
+        let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
+        if self
+            .db
+            .contains_canonical_block(&block_hash)
+            .unwrap_or_default()
+        {
             self.state = SyncState::Phase2((Hash::ZERO, Range::default()));
-            // drop all pending requests
+            // drop all pending requests & responses
+            self.p1_response.clear();
             for p in self.in_flight.drain(..) {
                 self.peers.done_with_peer(Some(p), DownGrade::None);
             }
@@ -1020,11 +1030,11 @@ impl Sync {
             starting_block: self.started_at,
             current_block,
             highest_block: self.highest_block_seen,
-            status: SyncingMeta {
+            stats: SyncingMeta {
                 peer_count,
                 current_phase: self.state.to_string(),
                 retry_count: self.retry_count,
-                timeout_count: self.timeout_count,
+                error_count: self.error_count,
                 empty_count: self.empty_count,
                 header_downloads: self.headers_downloaded,
                 block_downloads: self.blocks_downloaded,

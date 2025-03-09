@@ -5,7 +5,7 @@ All contracts currently are compiled into `./compiled.json`.
 You'll first need to pull the OpenZeppelin modules:
 
 ```sh
-git submodule update --init
+git submodule update --init --recursive
 ```
 
 Then compile with `solc`:
