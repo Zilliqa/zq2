@@ -135,7 +135,8 @@ impl P2pNode {
                     // So, the nodes are unable to see each other directly and remain isolated, defeating kademlia and autonat.
                     identify: identify::Behaviour::new(
                         identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
-                            .with_hide_listen_addrs(true),
+                            .with_hide_listen_addrs(true)
+                            .with_push_listen_addr_updates(true),
                     ),
                 })
             })?
@@ -255,6 +256,25 @@ impl P2pNode {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
                         }
+                        // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
+                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                            debug!(%peer_id, ?info, "identify event");
+                            if info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
+                                for addr in info.listen_addrs {
+                                    // this will trigger the `NewExternalAddrOfPeer` event below
+                                    self.swarm.add_peer_address(peer_id, addr);
+                                }
+                            }
+                        }
+                        SwarmEvent::NewExternalAddrOfPeer{peer_id, address} => {
+                            debug!(%peer_id, %address, "new peer");
+                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
+                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                        }
+                        SwarmEvent::ExternalAddrConfirmed{address} => {
+                            debug!(%address, "confirmed");
+                            self.swarm.add_external_address(address);
+                        }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.add_peer(peer_id);
@@ -296,7 +316,7 @@ impl P2pNode {
                             }
                         }
 
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source, .. })) => {
                             match message {
                                 request_response::Message::Request { request, channel: _channel, request_id: _request_id, .. } => {
                                     let to = self.peer_id;
@@ -321,7 +341,7 @@ impl P2pNode {
                                 }
                             }
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error, .. })) => {
                             if let OutboundFailure::DialFailure = error {
                                 // We failed to send a message to a peer. The likely reason is that we don't know their
                                 // address. Someone else in the network must know it, because we learnt their peer ID.
