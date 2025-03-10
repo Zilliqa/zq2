@@ -47,7 +47,7 @@ libp2p = { git = "https://github.com/libp2p/rust-libp2p.git", rev = "930118ef5a6
 log = "0.4.26"
 primitive-types = "0.12.2"
 prost = "0.13.5"
-rand = "0.8.5"
+rand = "0.9.0"
 regex = "1.11.1"
 reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
 revm = {version = "19.5.0", features = ["optional_balance_check"]}
