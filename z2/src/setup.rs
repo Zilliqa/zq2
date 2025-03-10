@@ -1,25 +1,23 @@
+use alloy::{
+    //transports::http::Http,
+    network::Ethereum,
+    primitives::{Address, B256, address},
+    providers::{Provider, ProviderBuilder},
+    signers::{Signer, local::LocalSigner},
+};
+use anyhow::{Context, Result, anyhow};
+use k256::ecdsa::SigningKey;
+use libp2p::{Multiaddr, PeerId};
+use serde::{Deserialize, Serialize};
+use serde_yaml;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
 };
-
-use alloy::{
-    primitives::{Address, B256, address},
-    signers::local::LocalSigner,
-};
-use anyhow::{Context, Result, anyhow};
-use ethers::{
-    middleware::{Middleware, SignerMiddleware},
-    providers::{Http, Provider},
-    signers::{LocalWallet, Signer, Wallet},
-};
-use k256::ecdsa::SigningKey;
-use libp2p::{Multiaddr, PeerId};
-use serde::{Deserialize, Serialize};
-use serde_yaml;
 use tera::Tera;
 use tokio::fs;
+use url::Url;
 /// This module should eventually generate configuration files
 /// For now, it just generates secret keys (which should be different each run, or we will become dependent on their values)
 use zilliqa::{
@@ -59,6 +57,11 @@ const CHAIN_ID: u64 = 700;
 const ONE_MILLION: u128 = 1_000_000u128;
 const ONE_ETH: u128 = ONE_MILLION * ONE_MILLION * ONE_MILLION;
 const ONE_BILLION: u128 = 1_000u128 * ONE_MILLION;
+
+pub struct Interactor {
+    pub provider: Box<dyn Provider<Ethereum>>,
+    pub signer: Box<dyn Signer>,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UCCBData {
@@ -311,12 +314,15 @@ impl Setup {
         })
     }
 
-    pub async fn get_signer(&self) -> Result<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>> {
-        let provider = Provider::<Http>::try_from(self.get_json_rpc_url(true))?;
-        let wallet: LocalWallet =
-            LocalWallet::from_bytes(self.get_funded_private_key()?.as_slice())?
-                .with_chain_id(provider.get_chainid().await?.as_u64());
-        Ok(SignerMiddleware::new(provider, wallet))
+    pub async fn get_interactor(&self) -> Result<Interactor> {
+        let signer = LocalSigner::from_bytes(&self.get_funded_private_key()?)?;
+        let provider = ProviderBuilder::new()
+            .wallet(alloy::network::EthereumWallet::new(signer.clone()))
+            .on_http(Url::parse(&self.get_json_rpc_url(true))?);
+        Ok(Interactor {
+            provider: Box::new(provider),
+            signer: Box::new(signer),
+        })
     }
 
     pub fn get_funded_private_key(&self) -> Result<B256> {

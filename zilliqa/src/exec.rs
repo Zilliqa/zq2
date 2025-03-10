@@ -749,7 +749,7 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(
+    pub fn apply_delta_scilla(
         &mut self,
         state: &HashMap<Address, PendingAccount>,
         current_block_number: u64,
