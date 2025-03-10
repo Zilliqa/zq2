@@ -1279,26 +1279,28 @@ impl Consensus {
     }
 
     /// Assembles the Proposal block early.
+    ///
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
+    /// It does not assemble a proposal, if the node is out-of-sync
     fn early_proposal_assemble_at(&mut self, agg: Option<AggregateQc>) -> Result<()> {
         let view = self.get_view()?;
         if self.early_proposal.is_some() {
             if self.sync.am_syncing()? {
-                // fell out-of-sync, recover
-                tracing::error!("out-of-sync, recover early proposal");
+                // fell out-of-sync; recover, do not propose
+                tracing::warn!("out-of-sync, recovering proposal");
                 self.recover_early_proposal()?;
                 return Ok(());
-            } else if self.early_proposal.as_ref().unwrap().0.view() == view {
-                // Do nothing if we are already in the correct view
-                return Ok(());
+            } else if self.early_proposal.as_ref().unwrap().0.view() != view {
+                // view changed; recover and rebuild early proposal
+                self.recover_early_proposal()?;
             } else {
-                // view changed, recover and rebuild early proposal
-                self.recover_early_proposal()?;
+                // Do nothing
+                return Ok(());
             }
         } else if self.sync.am_syncing()? {
             // already out-of-sync, do not start early proposal
-            tracing::error!("out-of-sync, skipping early proposal");
+            tracing::warn!("out-of-sync, skipping proposal");
             return Ok(());
         }
 
@@ -1675,12 +1677,13 @@ impl Consensus {
         // We expect early_proposal to exist already but try create incase it doesn't
         self.early_proposal_assemble_at(None)?;
         let Some((pending_block, applied_txs, _, _)) = self.early_proposal.take() else {
-            tracing::warn!("out-of-sync, skipping proposal");
+            tracing::warn!("out-of-sync, skipped proposal");
             return Ok(None);
         };
 
         let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
             // Do not broadcast Proposal, recover early proposal.
+            tracing::warn!("out-of-sync, dropping proposal");
             self.recover_early_proposal()?;
             return Ok(None);
         };
