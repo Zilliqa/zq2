@@ -498,6 +498,7 @@ pub struct Fork {
     pub scilla_call_respects_evm_state_changes: bool,
     pub only_mutated_accounts_update_state: bool,
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    pub scilla_block_number_returns_current_block: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -547,6 +548,9 @@ pub struct ForkDelta {
     /// exempt addresses.
     #[serde(default)]
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    /// If true, querying the `BLOCKNUMBER` from Scilla will correctly return the current block number (i.e. the one
+    /// the transaction is about to be included in). If false, it will return the previous block number.
+    pub scilla_block_number_returns_current_block: Option<bool>,
 }
 
 impl Fork {
@@ -579,6 +583,9 @@ impl Fork {
                 addrs.extend_from_slice(&delta.scilla_call_gas_exempt_addrs);
                 addrs
             },
+            scilla_block_number_returns_current_block: delta
+                .scilla_block_number_returns_current_block
+                .unwrap_or(self.scilla_block_number_returns_current_block),
         }
     }
 }
@@ -655,6 +662,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_call_respects_evm_state_changes: true,
         only_mutated_accounts_update_state: true,
         scilla_call_gas_exempt_addrs: vec![],
+        scilla_block_number_returns_current_block: true,
     }
 }
 
@@ -738,6 +746,7 @@ mod tests {
                 scilla_call_respects_evm_state_changes: None,
                 only_mutated_accounts_update_state: None,
                 scilla_call_gas_exempt_addrs: vec![],
+                scilla_block_number_returns_current_block: None,
             }],
             ..Default::default()
         };
@@ -769,6 +778,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -780,6 +790,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
                 },
             ],
             ..Default::default()
@@ -825,6 +836,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -836,6 +848,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
                 },
             ],
             ..Default::default()
@@ -872,6 +885,7 @@ mod tests {
                 scilla_call_respects_evm_state_changes: true,
                 only_mutated_accounts_update_state: true,
                 scilla_call_gas_exempt_addrs: vec![],
+                scilla_block_number_returns_current_block: true,
             },
             forks: vec![],
             ..Default::default()
@@ -896,6 +910,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -907,6 +922,7 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
                 },
             ],
             ..Default::default()
