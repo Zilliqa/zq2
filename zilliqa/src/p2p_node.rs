@@ -256,14 +256,19 @@ impl P2pNode {
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
                         }
+                        // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
                             info!(%peer_id, ?info, "identify event");
-                            // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                             if info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
                                 for addr in info.listen_addrs {
-                                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                                    // this will trigger the `NewExternalAddrOfPeer` event below
+                                    self.swarm.add_peer_address(peer_id, addr);
                                 }
                             }
+                        }
+                        SwarmEvent::NewExternalAddrOfPeer{peer_id, address} => {
+                            info!(%peer_id, %address, "new peer");
+                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
                             if let Some(peers) = self.shard_peers.get(&topic) {
