@@ -269,9 +269,10 @@ impl P2pNode {
                         SwarmEvent::NewExternalAddrOfPeer{peer_id, address} => {
                             debug!(%peer_id, %address, "new peer");
                             self.swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
+                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         }
                         SwarmEvent::ExternalAddrConfirmed{address} => {
-                            debug!(%address, "confirmed external");
+                            debug!(%address, "confirmed");
                             self.swarm.add_external_address(address);
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
