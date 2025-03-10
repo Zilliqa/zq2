@@ -1,12 +1,17 @@
-use std::{collections::BTreeMap, fmt, str::FromStr};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    process::{Command, Output},
+    str::FromStr,
+};
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Ok, Result, anyhow};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::NamedTempFile;
 use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
@@ -165,7 +170,7 @@ pub struct Machine {
 }
 
 impl Machine {
-    pub async fn add_labels(&self, labels: BTreeMap<String, String>) -> Result<()> {
+    pub fn add_labels(&self, labels: BTreeMap<String, String>) -> Result<()> {
         let labels = &labels
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
@@ -185,11 +190,8 @@ impl Machine {
 
         println!("gcloud {}", args.join(" "));
 
-        zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("gcloud", &args)
-            .run()
-            .await?;
+        Command::new("gcloud").args(args).output()?;
+
         Ok(())
     }
 
@@ -212,46 +214,37 @@ impl Machine {
         ]
         .concat();
 
-        zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("gcloud", &args)
-            .run()
-            .await?;
+        Command::new("gcloud").args(args).output()?;
+
         Ok(())
     }
 
-    pub async fn run(&self, cmd: &str, print: bool) -> Result<zqutils::commands::CommandOutput> {
+    pub fn run(&self, cmd: &str, print: bool) -> Result<Output> {
         if print {
             println!("Running command '{}' in {}", cmd, self.name);
         }
-        let output: zqutils::commands::CommandOutput = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "compute",
-                    "ssh",
-                    "--project",
-                    &self.project_id,
-                    "--zone",
-                    &self.zone,
-                    &self.name,
-                    "--tunnel-through-iap",
-                    "--strict-host-key-checking=no",
-                    "--ssh-flag=",
-                    "--command",
-                    cmd,
-                ],
-            )
-            .run_for_output()
-            .await?;
-        Ok(output)
+        Ok(Command::new("gcloud")
+            .args([
+                "compute",
+                "ssh",
+                "--project",
+                &self.project_id,
+                "--zone",
+                &self.zone,
+                &self.name,
+                "--tunnel-through-iap",
+                "--strict-host-key-checking=no",
+                "--ssh-flag=",
+                "--command",
+                cmd,
+            ])
+            .output()?)
     }
 
     pub async fn get_local_block_number(&self) -> Result<u64> {
         let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
-        let output = self.run(inner_command, true).await?;
-        if !output.success {
+        let output = self.run(inner_command, true)?;
+        if !output.status.success() {
             return Err(anyhow!(
                 "getting local block number failed: {:?}",
                 output.stderr
@@ -271,7 +264,7 @@ impl Machine {
         Ok(block_number)
     }
 
-    pub async fn get_rpc_response(
+    pub fn get_rpc_response(
         &self,
         method: &str,
         params: &Option<String>,
@@ -305,16 +298,12 @@ impl Machine {
                 &body,
                 port.value()
             );
-            self.run(&inner_command, false).await?
+            self.run(&inner_command, false)?
         } else {
-            zqutils::commands::CommandBuilder::new()
-                .silent()
-                .cmd("curl", args)
-                .run_for_output()
-                .await?
+            Command::new("curl").args(args).output()?
         };
 
-        if !output.success {
+        if !output.status.success() {
             return Err(anyhow!(
                 "getting rpc response for {} with params {:?} failed: {:?}",
                 method,
@@ -327,11 +316,12 @@ impl Machine {
     }
 
     pub async fn get_block_number(&self, timeout: usize) -> Result<u64> {
-        let response: Value = serde_json::from_str(
-            &self
-                .get_rpc_response("eth_blockNumber", &None, timeout, NodePort::Default)
-                .await?,
-        )?;
+        let response: Value = serde_json::from_str(&self.get_rpc_response(
+            "eth_blockNumber",
+            &None,
+            timeout,
+            NodePort::Default,
+        )?)?;
         let block_number = response
             .get("result")
             .ok_or_else(|| anyhow!("response has no result"))?
@@ -344,11 +334,12 @@ impl Machine {
     }
 
     pub async fn get_consensus_info(&self, timeout: usize) -> Result<Value> {
-        let response: Value = serde_json::from_str(
-            &self
-                .get_rpc_response("admin_consensusInfo", &None, timeout, NodePort::Admin)
-                .await?,
-        )?;
+        let response: Value = serde_json::from_str(&self.get_rpc_response(
+            "admin_consensusInfo",
+            &None,
+            timeout,
+            NodePort::Admin,
+        )?)?;
 
         let response = response
             .get("result")
@@ -575,8 +566,7 @@ impl ChainNode {
             &self.chain.name(),
             &self.machine.project_id,
             &self.machine.name,
-        )
-        .await?;
+        )?;
         let private_key = if let Some(private_key) = private_keys.first() {
             private_key
         } else {
@@ -586,7 +576,7 @@ impl ChainNode {
             ));
         };
 
-        Ok(private_key.value().await?)
+        Ok(private_key.value()?)
     }
 
     async fn tag_machine(&self) -> Result<()> {
@@ -598,10 +588,9 @@ impl ChainNode {
             &self.chain.name(),
             &self.machine.project_id,
             &self.machine.name,
-        )
-        .await?;
+        )?;
         let private_key = if let Some(private_key) = private_keys.first() {
-            private_key.value().await?
+            private_key.value()?
         } else {
             return Err(anyhow!(
                 "No private key for the instance {}",
@@ -614,7 +603,7 @@ impl ChainNode {
         let mut labels = BTreeMap::<String, String>::new();
         labels.insert("peer-id".to_string(), ethereum_address.peer_id.to_string());
 
-        self.machine.add_labels(labels).await?;
+        self.machine.add_labels(labels)?;
 
         println!(
             "Tagged the machine {} with the peer-id {}",
@@ -676,16 +665,16 @@ impl ChainNode {
 
     async fn clean_previous_install(&self) -> Result<()> {
         let cmd = "sudo rm -f /tmp/config.toml /tmp/provision_node.py";
-        let output = self.machine.run(cmd, true).await?;
-        if !output.success {
+        let output = self.machine.run(cmd, true)?;
+        if !output.status.success() {
             println!("{:?}", output.stderr);
             return Err(anyhow!("Error removing previous installation files"));
         }
 
         if self.role == NodeRole::Checkpoint {
             let cmd = "sudo rm -f /tmp/checkpoint_cron_job.sh";
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
+            let output = self.machine.run(cmd, true)?;
+            if !output.status.success() {
                 println!("{:?}", output.stderr);
                 return Err(anyhow!("Error removing previous checkpoint cron job"));
             }
@@ -693,8 +682,8 @@ impl ChainNode {
 
         if self.role == NodeRole::Persistence {
             let cmd = "sudo rm -f /tmp/persistence_export_cron_job.sh";
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
+            let output = self.machine.run(cmd, true)?;
+            if !output.status.success() {
                 println!("{:?}", output.stderr);
                 return Err(anyhow!(
                     "Error removing previous persistence export cron job"
@@ -709,8 +698,8 @@ impl ChainNode {
 
     async fn run_provisioning_script(&self) -> Result<()> {
         let cmd = "sudo chmod 666 /tmp/config.toml /tmp/provision_node.py && sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
-        let output = self.machine.run(cmd, true).await?;
-        if !output.success {
+        let output = self.machine.run(cmd, true)?;
+        if !output.status.success() {
             println!("{:?}", output.stderr);
             return Err(anyhow!("Error running the provisioning script"));
         }
@@ -721,8 +710,8 @@ impl ChainNode {
                 sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && \
                 echo '*/30 * * * * /checkpoint_cron_job.sh' | sudo crontab -"#;
 
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
+            let output = self.machine.run(cmd, true)?;
+            if !output.status.success() {
                 println!("{:?}", output.stderr);
                 return Err(anyhow!("Error creating the checkpoint cronjob"));
             }
@@ -734,8 +723,8 @@ impl ChainNode {
                 sudo mv /tmp/persistence_export_cron_job.sh /persistence_export_cron_job.sh && \
                 echo '0 */2 * * * /persistence_export_cron_job.sh' | sudo crontab -"#;
 
-            let output = self.machine.run(cmd, true).await?;
-            if !output.success {
+            let output = self.machine.run(cmd, true)?;
+            if !output.status.success() {
                 println!("{:?}", output.stderr);
                 return Err(anyhow!("Error creating the persistence export cronjob"));
             }
@@ -811,16 +800,56 @@ impl ChainNode {
             bootstrap_addresses.push((endpoint, eth_address));
         }
 
+        let mut validator_addresses = Vec::new();
+
+        if self.chain()? == Chain::Zq2ProtoTestnet || self.chain()? == Chain::Zq2ProtoMainnet {
+            validator_addresses.push(bootstrap_addresses[0].1);
+        } else {
+            let validator_nodes = self.chain.nodes_by_role(NodeRole::Validator).await?;
+            for n in validator_nodes.into_iter() {
+                let private_key = n.get_private_key().await?;
+                let eth_address = EthereumAddress::from_private_key(&private_key)?;
+                validator_addresses.push(eth_address);
+            }
+        }
+
         let genesis_account =
             EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
-        let whitelisted_evm_contract_addresses = self.chain()?.get_whitelisted_evm_contracts();
         let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
         let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
             // Enable all APIs, except `admin_` for API nodes.
-            json!({ "port": 4201, "enabled_apis": ["erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] })
+            json!({
+                "port": 4201,
+                "enabled_apis": [
+                    "erigon",
+                    "eth",
+                    "net",
+                    {
+                        "namespace": "ots",
+                        // Enable all APIs except `ots_getContractCreator` until #2381 is resolved.
+                        "apis": [
+                            "getApiLevel",
+                            "getBlockDetails",
+                            "getBlockDetailsByHash",
+                            "getBlockTransactions",
+                            "getInternalOperations",
+                            "getTransactionBySenderAndNonce",
+                            "getTransactionError",
+                            "hasCode",
+                            "searchTransactionsAfter",
+                            "searchTransactionsBefore",
+                            "traceTransaction",
+                        ],
+                    },
+                    "trace",
+                    "txpool",
+                    "web3",
+                    "zilliqa",
+                ]
+            })
         } else {
             // Only enable `eth_blockNumber` for other nodes.
             json!({"port": 4201, "enabled_apis": [ { "namespace": "eth", "apis": ["blockNumber"] } ] })
@@ -850,24 +879,33 @@ impl ChainNode {
             ))?
         };
 
+        let genesis_deposits = serde_json::to_value(
+            validator_addresses
+                .iter()
+                .map(|v| {
+                    (
+                        v.bls_public_key,
+                        v.peer_id,
+                        "20_000_000_000_000_000_000_000_000",
+                        "0x0000000000000000000000000000000000000000",
+                        &genesis_account.address,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )?;
+
         ctx.insert(
             "bootstrap_address",
             &serde_json::to_string_pretty(&bootstrap_address)?,
         );
-        ctx.insert("bootstrap_peer_id", &bootstrap_addresses[0].1.peer_id);
         ctx.insert(
-            "bootstrap_bls_public_key",
-            &bootstrap_addresses[0].1.bls_public_key,
+            "genesis_deposits",
+            &serde_json::to_string_pretty(&genesis_deposits)?,
         );
         ctx.insert("genesis_address", &genesis_account.address);
         ctx.insert(
-            "whitelisted_evm_contract_addresses",
-            &serde_json::from_value::<toml::Value>(json!(whitelisted_evm_contract_addresses))?
-                .to_string(),
-        );
-        ctx.insert(
             "contract_upgrade_block_heights",
-            &contract_upgrade_block_heights.to_toml().to_string(),
+            &contract_upgrade_block_heights.map(|c| c.to_toml().to_string()),
         );
         // convert json to toml formatting
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
@@ -901,14 +939,11 @@ impl ChainNode {
                 let checkpoint_hex_block =
                     crate::utils::string_decimal_to_hex(&checkpoint_file.replace(".dat", ""))?;
 
-                let json_response = self
-                    .chain
-                    .run_rpc_call(
-                        "eth_getBlockByNumber",
-                        &Some(format!("[\"{}\", false]", checkpoint_hex_block)),
-                        30,
-                    )
-                    .await?;
+                let json_response = self.chain.run_rpc_call(
+                    "eth_getBlockByNumber",
+                    &Some(format!("[\"{}\", false]", checkpoint_hex_block)),
+                    30,
+                )?;
 
                 let parsed_json: Value = serde_json::from_str(&json_response)?;
 
@@ -1046,33 +1081,29 @@ impl ChainNode {
             self.chain()?,
             backup_name
         );
-        let result = machine.run(&command, false).await;
+        let result = machine.run(&command, false);
         if result.is_ok() {
             let command = format!(
                 "sudo gsutil -m rm -rf gs://{}-persistence/{}",
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
         }
         progress_bar.inc(1);
 
         // stop the service
         progress_bar.start("Stopping the service");
-        machine
-            .run("sudo systemctl stop zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl stop zilliqa.service", false)?;
         progress_bar.inc(1);
 
         if zip {
             // create the zip file
             progress_bar.start("Packaging the data dir");
-            machine
-                .run(
-                    "sudo apt install -y zip && sudo zip -r /tmp/data.zip /data",
-                    false,
-                )
-                .await?;
+            machine.run(
+                "sudo apt install -y zip && sudo zip -r /tmp/data.zip /data",
+                false,
+            )?;
             progress_bar.inc(1);
 
             // upload the zip file to the bucket
@@ -1082,12 +1113,12 @@ impl ChainNode {
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
             progress_bar.inc(1);
 
             // clean the temp backup file
             progress_bar.start("Cleaning the temp backup files");
-            machine.run("sudo rm -rf /tmp/data.zip", false).await?;
+            machine.run("sudo rm -rf /tmp/data.zip", false)?;
             progress_bar.inc(1);
         } else {
             // export the backup files
@@ -1097,15 +1128,13 @@ impl ChainNode {
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
             progress_bar.inc(1);
         }
 
         // start the service
         progress_bar.start("Starting the service");
-        machine
-            .run("sudo systemctl start zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl start zilliqa.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.stop(format!("{} Backup completed", "✔".green()));
@@ -1133,9 +1162,7 @@ impl ChainNode {
 
         // stop the service
         progress_bar.start(format!("{}: Stopping the service", self.name()));
-        machine
-            .run("sudo systemctl stop zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl stop zilliqa.service", false)?;
         progress_bar.inc(1);
 
         if zip {
@@ -1145,29 +1172,27 @@ impl ChainNode {
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
             progress_bar.inc(1);
 
             progress_bar.start(format!("{}: Deleting the data folder", self.name()));
-            machine.run("sudo rm -rf /data", false).await?;
+            machine.run("sudo rm -rf /data", false)?;
             progress_bar.inc(1);
 
             progress_bar.start(format!("{}: Restoring the data folder", self.name()));
-            machine
-                .run(
-                    "sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /",
-                    false,
-                )
-                .await?;
+            machine.run(
+                "sudo apt install -y unzip && sudo unzip /tmp/data.zip -d /",
+                false,
+            )?;
             progress_bar.inc(1);
 
             progress_bar.start(format!("{}: Cleaning the backup files", self.name()));
-            machine.run("sudo rm -f /tmp/data.zip", false).await?;
+            machine.run("sudo rm -f /tmp/data.zip", false)?;
             progress_bar.inc(1);
         } else {
             // delete the data folder
             progress_bar.start(format!("{}: Deleting the data folder", self.name()));
-            machine.run("sudo rm -rf /data", false).await?;
+            machine.run("sudo rm -rf /data", false)?;
             progress_bar.inc(1);
 
             // import the backup files
@@ -1177,15 +1202,13 @@ impl ChainNode {
                 self.chain()?,
                 backup_name
             );
-            machine.run(&command, false).await?;
+            machine.run(&command, false)?;
             progress_bar.inc(1);
         }
 
         // start the service
         progress_bar.start(format!("{}: Starting the service", self.name()));
-        machine
-            .run("sudo systemctl start zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl start zilliqa.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.stop(format!(
@@ -1202,13 +1225,11 @@ impl ChainNode {
         let progress_bar = multi_progress.add(cliclack::progress_bar(2));
 
         progress_bar.start(format!("{}: Stopping the service", self.name()));
-        machine
-            .run("sudo systemctl stop zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl stop zilliqa.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Deleting the data folder", self.name()));
-        machine.run("sudo rm -rf /data", false).await?;
+        machine.run("sudo rm -rf /data", false)?;
         progress_bar.inc(1);
 
         progress_bar.stop(format!("{} {}: Reset completed", "✔".green(), self.name()));
@@ -1221,15 +1242,11 @@ impl ChainNode {
         let progress_bar = multi_progress.add(cliclack::progress_bar(2));
 
         progress_bar.start(format!("{}: Stopping the service", self.name()));
-        machine
-            .run("sudo systemctl stop zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl stop zilliqa.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.start(format!("{}: Starting the service", self.name()));
-        machine
-            .run("sudo systemctl start zilliqa.service", false)
-            .await?;
+        machine.run("sudo systemctl start zilliqa.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.stop(format!(
@@ -1393,9 +1410,7 @@ impl ChainNode {
         let progress_bar = multi_progress.add(cliclack::progress_bar(1));
 
         progress_bar.start(format!("{}: Starting the service", self.name()));
-        machine
-            .run("sudo systemctl start healthcheck.service", false)
-            .await?;
+        machine.run("sudo systemctl start healthcheck.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.stop(format!("{} {}: Attach completed", "✔".green(), self.name()));
@@ -1408,9 +1423,7 @@ impl ChainNode {
         let progress_bar = multi_progress.add(cliclack::progress_bar(1));
 
         progress_bar.start(format!("{}: Stopping the service", self.name()));
-        machine
-            .run("sudo systemctl stop healthcheck.service", false)
-            .await?;
+        machine.run("sudo systemctl stop healthcheck.service", false)?;
         progress_bar.inc(1);
 
         progress_bar.stop(format!("{} {}: Detach completed", "✔".green(), self.name()));
@@ -1419,7 +1432,7 @@ impl ChainNode {
     }
 }
 
-pub async fn retrieve_secret_by_role(
+pub fn retrieve_secret_by_role(
     chain_name: &str,
     project_id: &str,
     role_name: &str,
@@ -1432,10 +1445,9 @@ pub async fn retrieve_secret_by_role(
         )
         .as_str(),
     )
-    .await
 }
 
-async fn retrieve_secret_by_node_name(
+fn retrieve_secret_by_node_name(
     chain_name: &str,
     project_id: &str,
     node_name: &str,
@@ -1448,5 +1460,4 @@ async fn retrieve_secret_by_node_name(
         )
         .as_str(),
     )
-    .await
 }

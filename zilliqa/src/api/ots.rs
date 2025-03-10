@@ -7,10 +7,10 @@ use alloy::{
     eips::BlockId,
     primitives::{Address, B256},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ethabi::Token;
-use jsonrpsee::{types::Params, RpcModule};
-use serde_json::{json, Value};
+use jsonrpsee::{RpcModule, types::Params};
+use serde_json::{Value, json};
 
 use super::{
     eth::{get_transaction_inner, get_transaction_receipt_inner},

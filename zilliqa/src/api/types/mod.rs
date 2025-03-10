@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use alloy::{eips::BlockId, primitives::B256};
-use serde::{ser::SerializeSeq, Serializer};
+use serde::{Serializer, ser::SerializeSeq};
 
 use super::to_hex::ToHex;
 use crate::crypto;

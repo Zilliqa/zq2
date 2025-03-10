@@ -8,22 +8,22 @@ use std::{
 
 use alloy::{
     consensus::SignableTransaction,
-    eips::BlockId,
+    eips::{BlockId, BlockNumberOrTag},
     primitives::{Address, B256},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use jsonrpsee::{
-    types::{ErrorObject, Params},
     RpcModule,
+    types::{ErrorObject, Params},
 };
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Deserializer};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sha3::digest::generic_array::{
+    GenericArray,
     sequence::Split,
     typenum::{U12, U20},
-    GenericArray,
 };
 
 use super::{
@@ -32,9 +32,9 @@ use super::{
         self, BlockchainInfo, DSBlock, DSBlockHeaderVerbose, DSBlockListing, DSBlockListingResult,
         DSBlockRateResult, DSBlockVerbose, GetCurrentDSCommResult, MinerInfo,
         RecentTransactionsResponse, SWInfo, ShardingStructure, SmartContract, StateProofResponse,
-        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionStatusResponse,
-        TxBlockListing, TxBlockListingResult, TxnBodiesForTxBlockExResponse,
-        TxnsForTxBlockExResponse,
+        TXBlockRateResult, TransactionBody, TransactionReceiptResponse, TransactionState,
+        TransactionStatusResponse, TxBlockListing, TxBlockListingResult,
+        TxnBodiesForTxBlockExResponse, TxnsForTxBlockExResponse,
     },
 };
 use crate::{
@@ -44,14 +44,14 @@ use crate::{
     exec::zil_contract_address,
     message::Block,
     node::Node,
-    pool::TxAddResult,
+    pool::{PendingOrQueued, TxAddResult},
     schnorr,
-    scilla::{split_storage_key, storage_key, ParamValue},
+    scilla::{ParamValue, split_storage_key, storage_key},
     state::Code,
     time::SystemTime,
     transaction::{
-        ScillaGas, SignedTransaction, TxZilliqa, ValidationOutcome, ZilAmount,
-        EVM_GAS_PER_SCILLA_GAS,
+        EVM_GAS_PER_SCILLA_GAS, ScillaGas, SignedTransaction, TxZilliqa, ValidationOutcome,
+        ZilAmount,
     },
 };
 
@@ -711,11 +711,13 @@ fn get_transactions_for_tx_block(
         return Err(anyhow!("TxBlock has no transactions"));
     }
 
-    Ok(vec![block
-        .transactions
-        .into_iter()
-        .map(|h| B256::from(h).to_hex_no_prefix())
-        .collect()])
+    Ok(vec![
+        block
+            .transactions
+            .into_iter()
+            .map(|h| B256::from(h).to_hex_no_prefix())
+            .collect(),
+    ])
 }
 
 pub const TRANSACTIONS_PER_PAGE: usize = 2500;
@@ -840,11 +842,17 @@ fn get_example_ds_block_verbose(dsblocknum: u64, txblocknum: u64) -> DSBlockVerb
     DSBlockVerbose {
         b1: vec![false, false, false],
         b2: vec![false, false],
-        cs1: String::from("FBA696961142862169D03EED67DD302EAB91333CBC4EEFE7EDB230515DA31DC1B9746EEEE5E7C105685E22C483B1021867B3775D30215CA66D5D81543E9FE8B5"),
-        prev_dshash: String::from("585373fb2c607b324afbe8f592e43b40d0091bbcef56c158e0879ced69648c8e"),
+        cs1: String::from(
+            "FBA696961142862169D03EED67DD302EAB91333CBC4EEFE7EDB230515DA31DC1B9746EEEE5E7C105685E22C483B1021867B3775D30215CA66D5D81543E9FE8B5",
+        ),
+        prev_dshash: String::from(
+            "585373fb2c607b324afbe8f592e43b40d0091bbcef56c158e0879ced69648c8e",
+        ),
         header: DSBlockHeaderVerbose {
             block_num: dsblocknum.to_string(),
-            committee_hash: String::from("da38b3b21b26b71835bb1545246a0a248f97003de302ae20d70aeaf854403029"),
+            committee_hash: String::from(
+                "da38b3b21b26b71835bb1545246a0a248f97003de302ae20d70aeaf854403029",
+            ),
             difficulty: 95,
             difficulty_ds: 156,
             epoch_num: txblocknum.to_string(),
@@ -852,14 +860,25 @@ fn get_example_ds_block_verbose(dsblocknum: u64, txblocknum: u64) -> DSBlockVerb
             members_ejected: vec![],
             po_wwinners: vec![],
             po_wwinners_ip: vec![],
-            prev_hash: String::from("585373fb2c607b324afbe8f592e43b40d0091bbcef56c158e0879ced69648c8e"),
-            reserved_field: String::from("0000000000000000000000000000000000000000000000000000000000000000"),
-            swinfo: SWInfo { scilla: vec![], zilliqa: vec![] },
-            sharding_hash: String::from("3216a33bfd4801e1907e72c7d529cef99c38d57cd281d0e9d726639fd9882d25"),
+            prev_hash: String::from(
+                "585373fb2c607b324afbe8f592e43b40d0091bbcef56c158e0879ced69648c8e",
+            ),
+            reserved_field: String::from(
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            swinfo: SWInfo {
+                scilla: vec![],
+                zilliqa: vec![],
+            },
+            sharding_hash: String::from(
+                "3216a33bfd4801e1907e72c7d529cef99c38d57cd281d0e9d726639fd9882d25",
+            ),
             timestamp: String::from("1606443830834512"),
             version: 2,
         },
-        signature: String::from("7EE023C56602A17F2C8ABA2BEF290386D7C2CE1ABD8E3621573802FA67B243DE60B3EBEE5C4CCFDB697C80127B99CB384DAFEB44F70CD7569F2816DB950877BB"),
+        signature: String::from(
+            "7EE023C56602A17F2C8ABA2BEF290386D7C2CE1ABD8E3621573802FA67B243DE60B3EBEE5C4CCFDB697C80127B99CB384DAFEB44F70CD7569F2816DB950877BB",
+        ),
     }
 }
 
@@ -1520,23 +1539,39 @@ fn get_transaction_status(
                 "Txn Hash not found".to_string(),
                 jsonrpc_error_data.clone(),
             ))?;
-    let receipt =
-        node.get_transaction_receipt(hash)?
-            .ok_or(jsonrpsee::types::ErrorObject::owned(
-                RPCErrorCode::RpcDatabaseError as i32,
-                "Txn receipt not found".to_string(),
-                jsonrpc_error_data.clone(),
-            ))?;
-    let block = node
-        .get_block(receipt.block_hash)?
-        .ok_or(jsonrpsee::types::ErrorObject::owned(
-            RPCErrorCode::RpcDatabaseError as i32,
-            "Block not found".to_string(),
-            jsonrpc_error_data.clone(),
-        ))?;
+    let receipt = node.get_transaction_receipt(hash)?;
 
-    let res = TransactionStatusResponse::new(transaction, receipt, block)?;
-    Ok(res)
+    let (block, success) = if let Some(receipt) = &receipt {
+        (node.get_block(receipt.block_hash)?, receipt.success)
+    } else {
+        (None, false)
+    };
+
+    // Determine transaction state
+    let state = if receipt.is_some_and(|receipt| !receipt.errors.is_empty()) {
+        TransactionState::Error
+    } else {
+        match &block {
+            Some(block) => {
+                let newest_finalized_block =
+                    node.resolve_block_number(BlockNumberOrTag::Finalized)?;
+                if newest_finalized_block.is_some()
+                    && block.number() >= newest_finalized_block.unwrap().number()
+                {
+                    TransactionState::Finalized
+                } else {
+                    TransactionState::Pending
+                }
+            }
+            None => match node.consensus.get_pending_or_queued(&transaction)? {
+                Some(PendingOrQueued::Pending) => TransactionState::Pending,
+                Some(PendingOrQueued::Queued) => TransactionState::Queued,
+                None => panic!("Transaction not found in block or pending/queued"),
+            },
+        }
+    };
+
+    TransactionStatusResponse::new(transaction, success, block, state)
 }
 
 #[cfg(test)]
@@ -1544,7 +1579,7 @@ mod tests {
 
     #[test]
     fn test_hex_checksum() {
-        use alloy::primitives::{address, Address};
+        use alloy::primitives::{Address, address};
 
         use crate::api::zilliqa::to_zil_checksum_string;
 

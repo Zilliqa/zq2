@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use alloy::{
     consensus::TxEip1559,
     eips::BlockNumberOrTag,
-    primitives::{Address, B256, U128, U256, U64},
+    primitives::{Address, B256, U64, U128, U256},
     rpc::types::TransactionInput,
 };
 use serde::{Deserialize, Serialize};
@@ -121,8 +121,6 @@ pub struct Block {
     pub quorum_certificate: QuorumCertificate,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate_quorum_certificate: Option<AggregateQc>,
-    #[serde(serialize_with = "hex")]
-    pub logs_bloom: [u8; 256],
 }
 
 impl Block {
@@ -133,7 +131,7 @@ impl Block {
         logs_bloom: [u8; 256],
     ) -> Self {
         Block {
-            header: Header::from_header(block.header, miner, block_gas_limit),
+            header: Header::from_header(block.header, miner, block_gas_limit, logs_bloom),
             size: block.size() as u64,
             transactions: block
                 .transactions
@@ -143,7 +141,6 @@ impl Block {
             uncles: vec![], // Uncles do not exist in ZQ2
             quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
-            logs_bloom,
         }
     }
 }
@@ -185,6 +182,8 @@ pub struct Header {
     pub timestamp: u64,
     #[serde(serialize_with = "hex")]
     pub mix_hash: B256,
+    #[serde(serialize_with = "hex")]
+    pub logs_bloom: [u8; 256],
 }
 
 impl Header {
@@ -192,6 +191,7 @@ impl Header {
         header: message::BlockHeader,
         miner: Address,
         block_gas_limit: EvmGas,
+        logs_bloom: [u8; 256],
     ) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
@@ -216,6 +216,7 @@ impl Header {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            logs_bloom,
         }
     }
 }
@@ -496,7 +497,7 @@ pub struct SyncingMeta {
     #[serde(serialize_with = "hex")]
     pub retry_count: usize,
     #[serde(serialize_with = "hex")]
-    pub timeout_count: usize,
+    pub error_count: usize,
     #[serde(serialize_with = "hex")]
     pub active_sync_count: usize,
 }
@@ -510,7 +511,7 @@ pub struct SyncingStruct {
     pub current_block: u64,
     #[serde(serialize_with = "hex")]
     pub highest_block: u64,
-    pub status: SyncingMeta,
+    pub stats: SyncingMeta,
 }
 
 #[derive(Clone, Serialize)]

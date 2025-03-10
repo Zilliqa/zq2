@@ -3,14 +3,14 @@
 use std::{
     collections::HashMap,
     iter,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use cfg_if::cfg_if;
 use libp2p::{
-    autonat,
+    PeerId, StreamProtocol, Swarm, autonat,
     futures::StreamExt,
     gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
     identify,
@@ -19,12 +19,12 @@ use libp2p::{
     noise,
     request_response::{self, OutboundFailure, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, PeerId, StreamProtocol, Swarm,
+    tcp, yamux,
 };
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
-    sync::mpsc::{self, error::SendError, UnboundedSender},
+    sync::mpsc::{self, UnboundedSender, error::SendError},
     task::JoinSet,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -384,7 +384,15 @@ impl P2pNode {
                             debug!(%from, %dest, %message, ?request_id, "sending direct message");
                             let id = format!("{:?}", request_id);
                             if from == dest {
-                                self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
+                                match message {
+                                    // Route sync messages as broadcast, to allow other requests to be prioritized.
+                                    ExternalMessage::InjectedProposal(_) => {
+                                        self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                    },
+                                    _ => {
+                                        self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
+                                    }
+                                };
                             } else {
                                 let libp2p_request_id = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
                                 self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));

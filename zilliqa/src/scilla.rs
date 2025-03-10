@@ -5,32 +5,32 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     str,
     sync::{
-        mpsc::{channel, Receiver, Sender},
         Arc, Mutex,
+        mpsc::{Receiver, Sender, channel},
     },
     thread,
     time::Duration,
 };
 
 use alloy::{hex::ToHexExt, primitives::Address};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use base64::Engine;
 use bytes::{BufMut, Bytes, BytesMut};
 use jsonrpsee::{
-    core::{client::ClientT, params::ObjectParams, ClientError},
+    RpcModule,
+    core::{ClientError, client::ClientT, params::ObjectParams},
     http_client::HttpClientBuilder,
     server::ServerHandle,
-    types::{error::CALL_EXECUTION_FAILED_CODE, ErrorObject},
-    RpcModule,
+    types::{ErrorObject, error::CALL_EXECUTION_FAILED_CODE},
 };
 use prost::Message as _;
 use serde::{
-    de::{self, Unexpected},
     Deserialize, Deserializer, Serialize,
+    de::{self, Unexpected},
 };
 use serde_json::Value;
 use sha2::Sha256;
-use sha3::{digest::DynDigest, Digest};
+use sha3::{Digest, digest::DynDigest};
 use tokio::runtime;
 use tracing::trace;
 
@@ -417,7 +417,7 @@ impl Scilla {
         init: &ContractInit,
         msg: &Value,
         ext_libs_dir: &ScillaExtLibsPathInScilla,
-        fork: Fork,
+        fork: &Fork,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .init(init.to_string())
@@ -973,6 +973,7 @@ impl ActiveCall {
             self.state
                 .set_storage(self.sender, &name, &indices, convert(value)?)?;
         }
+        self.state.touch(self.sender);
 
         Ok(())
     }

@@ -1,27 +1,27 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use alloy::primitives::{hex, Address};
-use ethabi::{ethereum_types::U64, Token};
+use alloy::primitives::{Address, hex};
+use ethabi::{Token, ethereum_types::U64};
 use ethers::{
     abi::FunctionExt,
     core::types::{Bytes, Signature},
     providers::{Middleware, MiddlewareError, Provider},
     types::{
+        BlockId, BlockNumber, Eip1559TransactionRequest, Eip2930TransactionRequest, Filter,
+        Transaction, TransactionReceipt, TransactionRequest,
         transaction::{
             eip2718::TypedTransaction,
             eip2930::{AccessList, AccessListItem},
         },
-        BlockId, BlockNumber, Eip1559TransactionRequest, Eip2930TransactionRequest, Filter,
-        Transaction, TransactionReceipt, TransactionRequest,
     },
     utils::keccak256,
 };
-use futures::{future::join_all, StreamExt};
+use futures::{StreamExt, future::join_all};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
+use crate::{LocalRpcClient, Network, Wallet, deploy_contract};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {

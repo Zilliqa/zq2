@@ -1,6 +1,6 @@
 use std::{
     fmt::Debug,
-    sync::{atomic::AtomicUsize, Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -8,6 +8,7 @@ use alloy::{
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::Address,
     rpc::types::{
+        TransactionInfo,
         trace::{
             geth::{
                 FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
@@ -15,16 +16,15 @@ use alloy::{
             },
             parity::{TraceResults, TraceType},
         },
-        TransactionInfo,
     },
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use itertools::Itertools;
-use libp2p::{request_response::OutboundFailure, PeerId};
-use revm::{primitives::ExecutionResult, Inspector};
+use libp2p::{PeerId, request_response::OutboundFailure};
+use revm::{Inspector, primitives::ExecutionResult};
 use revm_inspectors::tracing::{
-    js::JsInspector, FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
-    TransactionContext,
+    FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
+    js::JsInspector,
 };
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
@@ -227,6 +227,11 @@ impl Node {
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
         match message {
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
+            }
             // `NewTransaction`s are always broadcasted.
             ExternalMessage::NewTransaction(t) => {
                 // Don't process again txn sent by this node (it's already in the mempool)
@@ -299,11 +304,6 @@ impl Node {
                 let message = self.consensus.sync.handle_metadata_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
-            // This just breaks down group block messages into individual messages to stop them blocking threads
-            // for long periods.
-            ExternalMessage::InjectedProposal(p) => {
-                self.handle_injected_proposal(from, p)?;
-            }
             // Respond negatively to block request from old nodes
             ExternalMessage::BlockRequest(_) => {
                 // respond with an invalid response
@@ -359,7 +359,7 @@ impl Node {
                     .into_iter()
                     .map(|bh| SyncBlockHeader {
                         header: bh,
-                        size_estimate: usize::MIN,
+                        size_estimate: (1024 * 1024 * bh.gas_used.0 / bh.gas_limit.0) as usize, // guesstimate
                     })
                     .collect_vec();
                 self.consensus
@@ -947,10 +947,8 @@ impl Node {
             } else {
                 self.message_sender.broadcast_proposal(message)?;
             }
-        } else {
-            self.consensus.sync.sync_from_proposal(proposal)?;
         }
-
+        self.consensus.sync.sync_from_proposal(proposal)?;
         Ok(())
     }
 

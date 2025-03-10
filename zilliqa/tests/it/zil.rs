@@ -9,19 +9,20 @@ use ethers::{
     types::TransactionRequest,
     utils::keccak256,
 };
-use k256::{elliptic_curve::sec1::ToEncodedPoint, PublicKey};
+use k256::{PublicKey, elliptic_curve::sec1::ToEncodedPoint};
 use primitive_types::{H160, H256, U128};
 use prost::Message;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tracing::debug;
 use zilliqa::{
     api::types::zil::GetTxResponse,
     schnorr,
     zq1_proto::{Code, Data, Nonce, ProtoTransactionCoreInfo},
 };
 
-use crate::{deploy_contract, Network, Wallet};
+use crate::{Network, Wallet, deploy_contract};
 
 pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
     zilliqa_account_with_funds(network, 1000 * 10u128.pow(18)).await
@@ -983,10 +984,12 @@ async fn create_contract(mut network: Network) {
         .await
         .unwrap();
     // Assert the data returned from the API is a superset of the init data we passed.
-    assert!(serde_json::from_str::<Vec<Value>>(&data)
-        .unwrap()
-        .iter()
-        .all(|d| api_data.contains(d)));
+    assert!(
+        serde_json::from_str::<Vec<Value>>(&data)
+            .unwrap()
+            .iter()
+            .all(|d| api_data.contains(d))
+    );
 
     let wallet = network.random_wallet().await;
     let old_balance: u128 = {
@@ -1302,6 +1305,215 @@ async fn scilla_precompiles(mut network: Network) {
     assert_eq!(
         scilla_log["params"][0]["value"],
         format!("{:?}", wallet.address())
+    );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn mutate_evm_then_read_from_scilla(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let code = r#"
+        scilla_version 0
+
+        contract Test
+        ()
+
+        transition LogBalance(addr: ByStr20 with contract end)
+          myBal <- _balance;
+          e1 = { _eventname : "MyBalance"; balance : myBal };
+          event e1;
+          bal <- & addr._balance;
+          e2 = { _eventname : "Balance"; balance : bal };
+          event e2
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let evm_contract_address = receipt.contract_address.unwrap();
+
+    let recipient = Address::random_with(network.rng.lock().unwrap().deref_mut());
+    debug!(%recipient);
+
+    let function = abi.function("sendEtherThenCallScilla").unwrap();
+    let input = &[
+        Token::Address(H160(recipient.0.0)),
+        Token::Address(scilla_contract_address),
+        Token::String("LogBalance".to_owned()),
+        Token::Address(H160(recipient.0.0)),
+    ];
+    let amount = 1_234_000_000_000_000_000_000;
+    let tx = TransactionRequest::new()
+        .to(evm_contract_address)
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000)
+        .value(amount);
+
+    let my_balance_before = wallet
+        .get_balance(scilla_contract_address, None)
+        .await
+        .unwrap()
+        .as_u128();
+
+    // Run the transaction.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+
+    let log = &receipt.logs[0];
+    let data = ethabi::decode(&[ParamType::String], &log.data).unwrap()[0]
+        .clone()
+        .into_string()
+        .unwrap();
+    let scilla_log: Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(scilla_log["_eventname"], "Balance");
+    assert_eq!(
+        scilla_log["params"][0]["value"],
+        (amount / 10u128.pow(6)).to_string()
+    );
+
+    let log = &receipt.logs[1];
+    let data = ethabi::decode(&[ParamType::String], &log.data).unwrap()[0]
+        .clone()
+        .into_string()
+        .unwrap();
+    let scilla_log: Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(scilla_log["_eventname"], "MyBalance");
+    assert_eq!(
+        scilla_log["params"][0]["value"],
+        (my_balance_before / 10u128.pow(6)).to_string(),
+    );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn interop_send_funds_from_scilla(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let code = r#"
+        scilla_version 0
+
+        library HelloWorld
+        let one = Uint128 1
+
+        let one_msg =
+          fun (msg : Message) =>
+          let nil_msg = Nil {Message} in
+            Cons {Message} msg nil_msg
+
+        contract Test
+        ()
+
+        transition SendTo(addr: ByStr20)
+          msg = { _tag : ""; _recipient : addr; _amount : one };
+          msgs = one_msg msg;
+          send msgs
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        1_000_000,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let evm_contract_address = receipt.contract_address.unwrap();
+
+    let recipient = Address::random_with(network.rng.lock().unwrap().deref_mut());
+    debug!(%recipient);
+
+    let function = abi.function("callScillaOneArg").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("SendTo".to_owned()),
+        Token::Address(H160(recipient.0.0)),
+    ];
+    let tx = TransactionRequest::new()
+        .to(evm_contract_address)
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    let tx_count_before = wallet
+        .get_transaction_count(wallet.address(), None)
+        .await
+        .unwrap();
+    let balance_before = wallet.get_balance(wallet.address(), None).await.unwrap();
+
+    // Run the transaction.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.status.unwrap().as_u64(), 1);
+
+    let tx_count_after = wallet
+        .get_transaction_count(wallet.address(), None)
+        .await
+        .unwrap();
+    let balance_after = wallet.get_balance(wallet.address(), None).await.unwrap();
+
+    assert_eq!(tx_count_before + 1, tx_count_after);
+    assert_eq!(
+        balance_before
+            - 1_000_000
+            - (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap()),
+        balance_after
+    );
+    assert_eq!(
+        wallet
+            .get_balance(H160(recipient.0.0), None)
+            .await
+            .unwrap()
+            .as_u128(),
+        1_000_000
     );
 }
 
@@ -1656,9 +1868,11 @@ async fn get_smart_contract_init(mut network: Network) {
     // Assert the data returned from the API is a superset of the init data we passed.
     let expected_data: Vec<Value> = serde_json::from_str(&data).unwrap();
     for expected in expected_data {
-        assert!(init_data
-            .iter()
-            .any(|d| serde_json::to_value(d).unwrap() == expected));
+        assert!(
+            init_data
+                .iter()
+                .any(|d| serde_json::to_value(d).unwrap() == expected)
+        );
     }
 
     // Test the error case with an invalid contract address
@@ -2914,10 +3128,12 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         .await
         .unwrap();
     // Assert the data returned from the API is a superset of the init data we passed.
-    assert!(serde_json::from_str::<Vec<Value>>(&data)
-        .unwrap()
-        .iter()
-        .all(|d| api_data.contains(d)));
+    assert!(
+        serde_json::from_str::<Vec<Value>>(&data)
+            .unwrap()
+            .iter()
+            .all(|d| api_data.contains(d))
+    );
 
     let call = r#"{
         "_tag": "setHello",
