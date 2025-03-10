@@ -817,7 +817,7 @@ impl ChainNode {
             EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
-        let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
+        let contract_upgrades = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
         let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
             // Enable all APIs, except `admin_` for API nodes.
@@ -904,8 +904,8 @@ impl ChainNode {
         );
         ctx.insert("genesis_address", &genesis_account.address);
         ctx.insert(
-            "contract_upgrade_block_heights",
-            &contract_upgrade_block_heights.map(|c| c.to_toml().to_string()),
+            "contract_upgrades",
+            &contract_upgrades.to_toml().to_string(),
         );
         // convert json to toml formatting
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
@@ -926,10 +926,6 @@ impl ChainNode {
                     .collect::<Result<Vec<_>>>()?,
             );
         }
-        ctx.insert(
-            "staker_withdrawal_period",
-            &self.chain()?.get_staker_withdrawal_period(),
-        );
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator {
