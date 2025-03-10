@@ -1135,12 +1135,8 @@ impl Consensus {
             );
         }
 
-        if !self.sync.am_syncing()? {
-            // Assemble early proposal now if it doesn't already exist
-            self.early_proposal_assemble_at(None)?;
-        } else {
-            tracing::warn!("out-of-sync, skipping early proposal");
-        }
+        // Assemble early proposal now if it doesn't already exist
+        self.early_proposal_assemble_at(None)?;
 
         Ok(None)
     }
@@ -1288,7 +1284,12 @@ impl Consensus {
     fn early_proposal_assemble_at(&mut self, agg: Option<AggregateQc>) -> Result<()> {
         let view = self.get_view()?;
         if self.early_proposal.is_some() {
-            if self.early_proposal.as_ref().unwrap().0.view() == view {
+            if self.sync.am_syncing()? {
+                // fell out-of-sync, recover
+                tracing::error!("out-of-sync, recover early proposal");
+                self.recover_early_proposal()?;
+                return Ok(());
+            } else if self.early_proposal.as_ref().unwrap().0.view() == view {
                 // Do nothing if we are already in the correct view
                 return Ok(());
             } else {
@@ -1296,7 +1297,7 @@ impl Consensus {
                 self.recover_early_proposal()?;
             }
         } else if self.sync.am_syncing()? {
-            // Do not start early proposal, if out-of-sync
+            // already out-of-sync, do not start early proposal
             tracing::error!("out-of-sync, skipping early proposal");
             return Ok(());
         }
@@ -1522,13 +1523,14 @@ impl Consensus {
         &mut self,
         agg: Option<AggregateQc>,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        self.early_proposal_assemble_at(agg)?;
+
         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
         let (milliseconds_since_last_view_change, milliseconds_remaining_of_block_time, _) =
             self.get_consensus_timeout_params()?;
 
         // propose new block now, or later
         if milliseconds_remaining_of_block_time == 0 {
-            self.early_proposal_assemble_at(agg)?;
             return self.propose_new_block();
         }
 
@@ -1546,13 +1548,6 @@ impl Consensus {
             dur
         );
         self.reset_timeout.send(dur)?;
-
-        if !self.sync.am_syncing()? {
-            self.early_proposal_assemble_at(agg)?;
-        } else {
-            // Do not propose, if syncing
-            tracing::warn!("out-of-sync, skipping early proposal");
-        }
 
         Ok(None)
     }
@@ -1678,9 +1673,7 @@ impl Consensus {
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // We expect early_proposal to exist already but try create incase it doesn't
-        if !self.sync.am_syncing()? {
-            self.early_proposal_assemble_at(None)?;
-        }
+        self.early_proposal_assemble_at(None)?;
         let Some((pending_block, applied_txs, _, _)) = self.early_proposal.take() else {
             tracing::warn!("out-of-sync, skipping proposal");
             return Ok(None);
