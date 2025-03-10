@@ -183,7 +183,7 @@ pub struct Consensus {
 
 impl Consensus {
     // prune interval >> 15 to ensure we don't prune forks; arbitrarily picked.
-    const MIN_PRUNE_INTERVAL: u64 = 30;
+    const MIN_PRUNE_INTERVAL: u64 = 300;
 
     pub fn new(
         secret_key: SecretKey,

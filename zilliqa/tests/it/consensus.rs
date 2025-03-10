@@ -336,7 +336,7 @@ async fn prune_interval(mut network: Network) {
 
     info!("Adding pruned node.");
     let index = network.add_node_with_options(crate::NewNodeOptions {
-        prune_interval: Some(30),
+        prune_interval: Some(300),
         ..Default::default()
     });
     network.run_until_synced(index).await;
@@ -348,14 +348,14 @@ async fn prune_interval(mut network: Network) {
                     .get_block(BlockId::latest())
                     .unwrap()
                     .map_or(0, |b| b.number())
-                    >= 35
+                    >= 305
             },
-            500,
+            5000,
         )
         .await
         .unwrap();
 
     let range = network.node_at(index).db.available_range().unwrap();
     info!("Pruned range: {range:?}");
-    assert_eq!(range.count(), 30);
+    assert_eq!(range.count(), 300);
 }
