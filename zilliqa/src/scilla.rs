@@ -824,12 +824,27 @@ impl ActiveCall {
         } else {
             let value = self.state.load_storage_by_prefix(addr, &name, &indices)?;
 
-            fn convert(value: BTreeMap<Vec<u8>, StorageValue>) -> ProtoScillaVal {
+            fn get_by_indices<'a>(
+                map: &'a BTreeMap<Vec<u8>, StorageValue>,
+                indices: &[Vec<u8>],
+            ) -> &'a BTreeMap<Vec<u8>, StorageValue> {
+                let mut current = map;
+                for index in indices {
+                    if let Some(StorageValue::Map { map: inner_map, .. }) = current.get(index) {
+                        current = inner_map;
+                    } else {
+                        break;
+                    }
+                }
+                current
+            }
+
+            fn convert(value: &BTreeMap<Vec<u8>, StorageValue>) -> ProtoScillaVal {
                 ProtoScillaVal::map(
                     value
-                        .into_iter()
+                        .iter()
                         .filter_map(|(k, v)| {
-                            let k = serde_json::from_slice(&k).ok()?;
+                            let k = String::from_utf8(k.clone()).ok()?;
                             Some((
                                 k,
                                 match v {
@@ -838,7 +853,7 @@ impl ActiveCall {
                                         convert(map)
                                     }
                                     StorageValue::Value(Some(value)) => {
-                                        ProtoScillaVal::bytes(value.into())
+                                        ProtoScillaVal::bytes(value.clone().into())
                                     }
                                     StorageValue::Value(None) => {
                                         return None;
@@ -849,10 +864,9 @@ impl ActiveCall {
                         .collect(),
                 )
             }
-
+            let value = get_by_indices(&value, &indices);
             convert(value)
         };
-
         Ok(Some((value, ty)))
     }
 
