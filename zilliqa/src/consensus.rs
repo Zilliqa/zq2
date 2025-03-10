@@ -861,7 +861,9 @@ impl Consensus {
             .iter()
             .any(|x| x == &parent_block_hash || x == &block_hash);
         if block_or_parent_trusted {
-            trace!("Do not apply rewards with parent {parent_block_hash:?} block {block_hash:?} - trusted");
+            trace!(
+                "Do not apply rewards with parent {parent_block_hash:?} block {block_hash:?} - trusted"
+            );
         }
         !block_or_parent_trusted
     }
@@ -3362,7 +3364,8 @@ impl Consensus {
                     }
                     let final_state = pending_state.finalize();
                     trace!(" ... finalized state {final_state:?}");
-                    after_adjustment_state.apply_delta_scilla(&final_state)?;
+                    after_adjustment_state
+                        .apply_delta_scilla(&final_state, highest_block_number)?;
                 }
                 StateAdjustment::ScillaInitData(adjv) => {
                     // Read the account

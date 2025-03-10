@@ -1,53 +1,57 @@
-use crate::{setup, utils};
+use crate::setup;
+//use alloy::core::primitives::{Address, B256, U256};
+use alloy::core::primitives::U256;
+use alloy::network::TransactionBuilder;
+use alloy::rpc::types::TransactionRequest;
 use anyhow::{Result, anyhow};
-use ethers::{
-    middleware::Middleware,
-    prelude::{Bytes, TransactionRequest},
-    types::{H160, H256, U256},
-};
 use std::ops::Add;
 use tokio::process::Command;
 use zilliqa::exec::BLESSED_TRANSACTIONS;
 
 /// Dispatches the blessed transactions to a chain
 pub async fn init_chain(setup: &setup::Setup) -> Result<()> {
-    let signer = setup.get_signer().await?;
-    let gas_price = signer.get_gas_price().await?;
-    let from_address = signer.address();
-    let mut cur_nonce = signer.get_transaction_count(from_address, None).await?;
+    let inter = setup.get_interactor().await?;
+    let gas_price = inter.provider.get_gas_price().await?;
+    let from_address = inter.signer.address();
+    let mut cur_nonce = inter.provider.get_transaction_count(from_address).await?;
     let mut idx = 0;
     println!("gas_price {gas_price} address {from_address:x} txn_count {cur_nonce}");
     for blessed in BLESSED_TRANSACTIONS {
         idx += 1;
         println!("[{idx}/{}]", BLESSED_TRANSACTIONS.len());
-        if let Ok(Some(_)) = signer.get_transaction_receipt(H256(blessed.hash.0)).await {
+        if let Ok(Some(_)) = inter
+            .provider
+            .get_transaction_receipt(blessed.hash.into())
+            .await
+        {
             // Already did this one.
             continue;
         }
-        let tx = TransactionRequest::new()
-            .to(H160(blessed.sender.0.into()))
+        let tx = TransactionRequest::default()
+            .to(blessed.sender)
             .nonce(cur_nonce)
-            .value(U256::from(blessed.gas_limit) * gas_price);
+            .value(U256::from(blessed.gas_limit) * U256::from(gas_price))
+            .with_gas_price(gas_price);
         cur_nonce = cur_nonce.add(1);
-        let funding_txn = signer.send_transaction(tx, None).await?;
-        _ = funding_txn.await?;
-        let payload = Bytes::from(blessed.payload.to_vec());
-        _ = signer.send_raw_transaction(payload).await?;
+        let funding_txn = inter.provider.send_transaction(tx).await?;
+        _ = funding_txn.watch().await?;
+        _ = inter
+            .provider
+            .send_raw_transaction(&blessed.payload)
+            .await?
+            .watch()
+            .await?;
     }
     // Check if the UCCB base contracts are already deployed.
     let uccb_data = setup.get_uccb_data()?;
-    let vm_deployed = signer
-        .get_code(
-            utils::ethers_from_alloy(&uccb_data.validator_manager_address)?,
-            None,
-        )
+    let vm_deployed = inter
+        .provider
+        .get_code_at(uccb_data.validator_manager_address)
         .await
         .is_ok();
-    let cg_deployed = signer
-        .get_code(
-            utils::ethers_from_alloy(&uccb_data.chain_gateway_address)?,
-            None,
-        )
+    let cg_deployed = inter
+        .provider
+        .get_code_at(uccb_data.chain_gateway_address)
         .await
         .is_ok();
     match (vm_deployed, cg_deployed) {
@@ -90,5 +94,7 @@ pub async fn init_chain(setup: &setup::Setup) -> Result<()> {
             ));
         }
     }
+    // Populate the validator manager contract.
+
     Ok(())
 }
