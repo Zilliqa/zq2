@@ -622,6 +622,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
         &mut external_context.inspector,
         &scilla_ext_libs_path_default(),
         external_context.fork,
+        evmctx.env.block.number.to(),
     ) else {
         return fatal("scilla call failed");
     };
