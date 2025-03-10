@@ -1,16 +1,13 @@
-# docker-compsoe file for testing networking with static IPs
-version: "3"
 services:
   node0_with_otel:
-    depends_on:
-      - node3_with_otel
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info,opentelemetry=trace
+      OTEL_RESOURCE_ATTRIBUTES: service.name=node0,deployment.environment=local
     image: zq2-node0
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ${PWD}
+      dockerfile: ${PWD}/Dockerfile
     container_name: zilliqanode0_with_otel
     volumes:
       - "./config_docker.toml:/config.toml"
@@ -24,12 +21,16 @@ services:
 
   node1_with_otel:
     depends_on:
-      - node3_with_otel
+      - node0_with_otel
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info,opentelemetry=trace
+      OTEL_RESOURCE_ATTRIBUTES: service.name=node1,deployment.environment=local
     container_name: zilliqanode1_with_otel
     image: zq2-node0
+    build:
+      context: ${PWD}
+      dockerfile: ${PWD}/Dockerfile
     volumes:
       - "./config_docker.toml:/config.toml"
     command:
@@ -40,12 +41,16 @@ services:
 
   node2_with_otel:
     depends_on:
-      - node3_with_otel
+      - node0_with_otel
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info,opentelemetry=trace
+      OTEL_RESOURCE_ATTRIBUTES: service.name=node2,deployment.environment=local
     container_name: zilliqanode2_with_otel
     image: zq2-node0
+    build:
+      context: ${PWD}
+      dockerfile: ${PWD}/Dockerfile
     volumes:
       - "./config_docker.toml:/config.toml"
     command:
@@ -55,11 +60,17 @@ services:
         ipv4_address: 198.53.100.102
 
   node3_with_otel:
+    depends_on:
+      - node0_with_otel
     environment:
       RUST_BACKTRACE: 1
       RUST_LOG: zilliqa=info,opentelemetry=trace
+      OTEL_RESOURCE_ATTRIBUTES: service.name=node3,deployment.environment=local
     container_name: zilliqanode3_with_otel
     image: zq2-node0
+    build:
+      context: ${PWD}
+      dockerfile: ${PWD}/Dockerfile
     volumes:
       - "./config_docker.toml:/config.toml"
     command:
@@ -130,6 +141,10 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     ports:
       - "9010:3000"
+    volumes:
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/provisioning-datasources.yaml:ro
+      - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/provisioning-dashboards.yaml:ro
+      - ./zq2-opentelemetry-dashboard.json:/var/lib/grafana/dashboards/zq2-opentelemetry-dashboard.json:ro
     networks:
       - localnet_with_otel
 

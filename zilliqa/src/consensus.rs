@@ -447,6 +447,10 @@ impl Consensus {
         self.secret_key.node_public_key()
     }
 
+    pub fn has_early_proposal(&self) -> bool {
+        self.early_proposal.is_some()
+    }
+
     pub fn head_block(&self) -> Block {
         let highest_block_number = self
             .db
@@ -797,12 +801,7 @@ impl Consensus {
                     self.create_next_block_on_timeout = false;
                 }
                 if self.early_proposal.is_some() {
-                    let (_, txns, _, _) = self.early_proposal.take().unwrap();
-                    for txn in txns.into_iter().rev() {
-                        self.transaction_pool.insert_ready_transaction(txn)?;
-                    }
-                    warn!("Early proposal exists but we are not leader. Clearing proposal");
-                    self.early_proposal = None;
+                    self.recover_early_proposal()?;
                 }
 
                 let Some(next_leader) = next_leader else {
@@ -1127,10 +1126,7 @@ impl Consensus {
                 if current_view == 1 {
                     return self.propose_new_block();
                 }
-
-                self.early_proposal_assemble_at(None)?;
-
-                return self.ready_for_block_proposal();
+                return self.ready_for_block_proposal(None);
             }
         } else {
             self.votes.insert(
@@ -1139,7 +1135,7 @@ impl Consensus {
             );
         }
 
-        // Either way assemble early proposal now if it doesnt already exist
+        // Assemble early proposal now if it doesn't already exist
         self.early_proposal_assemble_at(None)?;
 
         Ok(None)
@@ -1245,16 +1241,66 @@ impl Consensus {
         state.set_to_root(previous_state_root_hash.into());
         self.state = state;
 
+        // In some cases, the Proposal is a fork and should be discarded/recovered.
+        if self.sync.am_syncing()? || proposal.view() < self.get_view()? {
+            tracing::warn!(sync = %self.sync.am_syncing()?, prop_view = %proposal.view(), high_view = %self.get_view()?,  "unable to finish proposal");
+            return Ok(None);
+        }
+
         // Return the final proposal
         Ok(Some(proposal))
     }
 
+    /// Recover early proposal
+    ///
+    /// In the event that an early proposal cannot be finalised, this function must be called to recover the transactions
+    /// and re-insert them into the transaction pool.
+    pub fn recover_early_proposal(&mut self) -> Result<()> {
+        if let Some((proposal, applied_txs, _, _)) = self.early_proposal.take() {
+            tracing::debug!(number = %proposal.number(), view = %proposal.view(), "recovering early proposal");
+            // intershard transactions are not meant to be broadcast
+            let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
+                .clone()
+                .into_iter()
+                .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
+
+            // Recover the intershard transactions into the pool.
+            for tx in opaque_transactions {
+                let account_nonce = self.state.get_account(tx.signer)?.nonce;
+                self.transaction_pool.insert_transaction(tx, account_nonce);
+            }
+
+            // Recover the broadcast transactions into the pool.
+            while let Some(txn) = broadcasted_transactions.pop() {
+                self.transaction_pool.insert_ready_transaction(txn)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Assembles the Proposal block early.
+    ///
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
+    /// It does not assemble a proposal, if the node is out-of-sync
     fn early_proposal_assemble_at(&mut self, agg: Option<AggregateQc>) -> Result<()> {
         let view = self.get_view()?;
-        if self.early_proposal.is_some() && self.early_proposal.as_ref().unwrap().0.view() == view {
+        if self.early_proposal.is_some() {
+            if self.sync.am_syncing()? {
+                // fell out-of-sync; recover, do not propose
+                tracing::warn!("out-of-sync, recovering proposal");
+                self.recover_early_proposal()?;
+                return Ok(());
+            } else if self.early_proposal.as_ref().unwrap().0.view() != view {
+                // view changed; recover and rebuild early proposal
+                self.recover_early_proposal()?;
+            } else {
+                // Do nothing
+                return Ok(());
+            }
+        } else if self.sync.am_syncing()? {
+            // already out-of-sync, do not start early proposal
+            tracing::warn!("out-of-sync, skipping proposal");
             return Ok(());
         }
 
@@ -1475,11 +1521,17 @@ impl Consensus {
 
     /// Called when consensus will accept our early_block.
     /// Either propose now or set timeout to allow for txs to come in.
-    fn ready_for_block_proposal(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn ready_for_block_proposal(
+        &mut self,
+        agg: Option<AggregateQc>,
+    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+        self.early_proposal_assemble_at(agg)?;
+
         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
         let (milliseconds_since_last_view_change, milliseconds_remaining_of_block_time, _) =
             self.get_consensus_timeout_params()?;
 
+        // propose new block now, or later
         if milliseconds_remaining_of_block_time == 0 {
             return self.propose_new_block();
         }
@@ -1487,16 +1539,17 @@ impl Consensus {
         // Reset the timeout and wake up again once it has been at least `block_time` since
         // the last view change. At this point we should be ready to produce a new block.
         self.create_next_block_on_timeout = true;
-        self.reset_timeout.send(
-            self.config
-                .consensus
-                .block_time
-                .saturating_sub(Duration::from_millis(milliseconds_since_last_view_change)),
-        )?;
+        let dur = self
+            .config
+            .consensus
+            .block_time
+            .saturating_sub(Duration::from_millis(milliseconds_since_last_view_change));
         trace!(
-            "will propose new proposal on timeout for view {}",
-            self.get_view()?
+            "will propose new proposal on timeout for view {} in {:?}",
+            self.get_view()?,
+            dur
         );
+        self.reset_timeout.send(dur)?;
 
         Ok(None)
     }
@@ -1623,10 +1676,20 @@ impl Consensus {
     fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         // We expect early_proposal to exist already but try create incase it doesn't
         self.early_proposal_assemble_at(None)?;
-        let (pending_block, applied_txs, _, _) = self.early_proposal.take().unwrap(); // safe to unwrap due to check above
+        let Some((pending_block, applied_txs, _, _)) = self.early_proposal.take() else {
+            tracing::warn!("out-of-sync, skipped proposal");
+            return Ok(None);
+        };
+
+        let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
+            // Do not broadcast Proposal, recover early proposal.
+            tracing::warn!("out-of-sync, dropping proposal");
+            self.recover_early_proposal()?;
+            return Ok(None);
+        };
 
         // intershard transactions are not meant to be broadcast
-        let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
+        let (broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
             .clone()
             .into_iter()
             .partition(|tx| !matches!(tx.tx, SignedTransaction::Intershard { .. }));
@@ -1638,16 +1701,6 @@ impl Consensus {
             let account_nonce = self.state.get_account(tx.signer)?.nonce;
             self.transaction_pool.insert_transaction(tx, account_nonce);
         }
-
-        // finalise the proposal
-        let Some(final_block) = self.early_proposal_finish_at(pending_block)? else {
-            // Do not Propose.
-            // Recover the proposed transactions into the pool.
-            while let Some(txn) = broadcasted_transactions.pop() {
-                self.transaction_pool.insert_ready_transaction(txn)?;
-            }
-            return Ok(None);
-        };
 
         info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
@@ -1858,10 +1911,7 @@ impl Consensus {
                     );
 
                     // We now have a valid aggQC so can create early_block with it
-                    self.early_proposal_assemble_at(Some(agg))?;
-
-                    // as a future improvement, process the proposal before broadcasting it
-                    return self.ready_for_block_proposal();
+                    return self.ready_for_block_proposal(Some(agg));
 
                     // we don't want to keep the collected votes if we proposed a new block
                     // we should remove the collected votes if we couldn't reach supermajority within the view

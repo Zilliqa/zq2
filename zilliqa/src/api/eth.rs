@@ -273,25 +273,109 @@ fn get_balance(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
         .to_hex())
 }
 
-fn get_block_receipts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TransactionReceipt>> {
-    let block_id: BlockId = params.one()?;
+pub fn get_block_transaction_receipts_inner(
+    node: &MutexGuard<Node>,
+    block_id: impl Into<BlockId>,
+) -> Result<Vec<eth::TransactionReceipt>> {
+    let Some(block) = node.get_block(block_id)? else {
+        return Err(anyhow!("Block not found"));
+    };
 
-    let node = node.lock().unwrap();
-
-    // Get the block
-    let block = node
-        .get_block(block_id)?
-        .ok_or_else(|| anyhow!("block not found"))?;
-
-    // Get receipts for all transactions in the block
+    let mut log_index = 0;
     let mut receipts = Vec::new();
-    for tx_hash in block.transactions {
-        if let Some(receipt) = get_transaction_receipt_inner(tx_hash, &node)? {
-            receipts.push(receipt);
+
+    for (transaction_index, tx_hash) in block.transactions.iter().enumerate() {
+        let Some(signed_transaction) = node.get_transaction_by_hash(*tx_hash)? else {
+            warn!(
+                "Failed to get TX by hash when getting TX receipt! {}",
+                tx_hash
+            );
+            continue;
+        };
+
+        let Some(receipt) = node.get_transaction_receipt(*tx_hash)? else {
+            debug!(
+                "Failed to get TX receipt when getting TX receipt! {}",
+                tx_hash
+            );
+            continue;
+        };
+
+        debug!(
+            "get_block_transaction_receipts: hash: {:?} result: {:?}",
+            tx_hash, receipt
+        );
+
+        let mut logs_bloom = [0; 256];
+
+        let mut logs = Vec::new();
+        for log in receipt.logs {
+            let log = match log {
+                Log::Evm(log) => log,
+                Log::Scilla(log) => log.into_evm(),
+            };
+            let log = eth::Log::new(
+                log,
+                log_index,
+                transaction_index,
+                *tx_hash,
+                block.number(),
+                block.hash(),
+            );
+            log_index += 1;
+            log.bloom(&mut logs_bloom);
+            logs.push(log);
         }
+
+        let from = signed_transaction.signer;
+        let v = signed_transaction.tx.sig_v();
+        let r = signed_transaction.tx.sig_r();
+        let s = signed_transaction.tx.sig_s();
+        let transaction = signed_transaction.tx.into_transaction();
+
+        let receipt = eth::TransactionReceipt {
+            transaction_hash: (*tx_hash).into(),
+            transaction_index: transaction_index as u64,
+            block_hash: block.hash().into(),
+            block_number: block.number(),
+            from,
+            to: transaction.to_addr(),
+            cumulative_gas_used: receipt.cumulative_gas_used,
+            effective_gas_price: transaction.max_fee_per_gas(),
+            gas_used: receipt.gas_used,
+            contract_address: receipt.contract_address,
+            logs,
+            logs_bloom,
+            ty: 0,
+            status: receipt.success,
+            v,
+            r,
+            s,
+        };
+
+        receipts.push(receipt);
     }
 
     Ok(receipts)
+}
+
+// This has to iterate through a whole block, so get_block_transaction_receipts_inner is more efficient for multiple receipts
+pub fn get_transaction_receipt_inner_slow(
+    node: &MutexGuard<Node>,
+    block_id: impl Into<BlockId>,
+    txn_hash: Hash,
+) -> Result<Option<eth::TransactionReceipt>> {
+    let receipts = get_block_transaction_receipts_inner(node, block_id)?;
+    Ok(receipts
+        .into_iter()
+        .find(|r| r.transaction_hash == txn_hash.as_bytes()))
+}
+
+fn get_block_receipts(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TransactionReceipt>> {
+    let block_id: BlockId = params.one()?;
+    let node = node.lock().unwrap();
+
+    get_block_transaction_receipts_inner(&node, block_id)
 }
 
 fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -705,106 +789,6 @@ pub(super) fn get_transaction_inner(
     Ok(Some(eth::Transaction::new(tx, block)))
 }
 
-pub(super) fn get_transaction_receipt_inner(
-    hash: Hash,
-    node: &MutexGuard<Node>,
-) -> Result<Option<eth::TransactionReceipt>> {
-    let Some(signed_transaction) = node.get_transaction_by_hash(hash)? else {
-        warn!("Failed to get TX by hash when getting TX receipt! {}", hash);
-        return Ok(None);
-    };
-    // TODO: Return error if receipt or block does not exist.
-
-    let Some(receipt) = node.get_transaction_receipt(hash)? else {
-        debug!("Failed to get TX receipt when getting TX receipt! {}", hash);
-        return Ok(None);
-    };
-
-    debug!(
-        "get_transaction_receipt_inner: hash: {:?} result: {:?}",
-        hash, receipt
-    );
-
-    let Some(block) = node.get_block(receipt.block_hash)? else {
-        warn!("Failed to get block when getting TX receipt! {}", hash);
-        return Ok(None);
-    };
-
-    let transaction_index = block.transactions.iter().position(|t| *t == hash).unwrap();
-
-    let mut logs_bloom = [0; 256];
-
-    let logs = receipt
-        .logs
-        .into_iter()
-        .map(|log| match log {
-            Log::Evm(log) => log,
-            Log::Scilla(log) => log.into_evm(),
-        })
-        .enumerate()
-        .map(|(log_index, log)| {
-            let log = eth::Log::new(
-                log,
-                log_index,
-                transaction_index,
-                hash,
-                block.number(),
-                block.hash(),
-            );
-
-            log.bloom(&mut logs_bloom);
-
-            log
-        })
-        .collect();
-
-    let (is_zilliqa_txn, contract_address) =
-        if let SignedTransaction::Zilliqa { ref tx, .. } = signed_transaction.tx {
-            (
-                true,
-                Some(tx.get_contract_address(&signed_transaction.signer)?),
-            )
-        } else {
-            (false, None)
-        };
-
-    let from = signed_transaction.signer;
-    let v = signed_transaction.tx.sig_v();
-    let r = signed_transaction.tx.sig_r();
-    let s = signed_transaction.tx.sig_s();
-    let transaction = signed_transaction.tx.into_transaction();
-
-    let contract_address = {
-        if is_zilliqa_txn && transaction.to_addr().is_none() {
-            contract_address
-        } else {
-            receipt.contract_address
-        }
-    };
-
-    let receipt = eth::TransactionReceipt {
-        transaction_hash: hash.into(),
-        transaction_index: transaction_index as u64,
-        block_hash: block.hash().into(),
-        block_number: block.number(),
-        from,
-        to: transaction.to_addr(),
-        cumulative_gas_used: receipt.cumulative_gas_used,
-        effective_gas_price: transaction.max_fee_per_gas(),
-        gas_used: receipt.gas_used,
-        contract_address,
-        logs,
-        logs_bloom,
-        ty: 0,
-        status: receipt.success,
-        v,
-        r,
-        s,
-    };
-
-    Ok(Some(receipt))
-}
-
 fn get_transaction_receipt(
     params: Params,
     node: &Arc<Mutex<Node>>,
@@ -813,7 +797,11 @@ fn get_transaction_receipt(
     let hash: B256 = params.one()?;
     let hash: Hash = hash.into();
     let node = node.lock().unwrap();
-    get_transaction_receipt_inner(hash, &node)
+    let block_hash = match node.get_transaction_receipt(hash)? {
+        Some(receipt) => receipt.block_hash,
+        None => return Ok(None),
+    };
+    get_transaction_receipt_inner_slow(&node, block_hash, hash)
 }
 
 fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
@@ -954,7 +942,19 @@ async fn subscribe(
                 if !filter.filter_block_hash(receipt.block_hash.into()) {
                     continue;
                 }
-                for (log_index, log) in receipt.logs.into_iter().enumerate() {
+
+                // We track log index plus one because we have to increment before we use the log index, and log indexes are 0-based.
+                let mut log_index_plus_one: i64 = get_block_transaction_receipts_inner(
+                    &node.lock().unwrap(),
+                    receipt.block_hash,
+                )?
+                .iter()
+                .take_while(|x| x.transaction_index < receipt.index)
+                .map(|x| x.logs.len())
+                .sum::<usize>() as i64;
+
+                for log in receipt.logs.into_iter() {
+                    log_index_plus_one += 1;
                     // Only consider EVM logs
                     let Log::Evm(log) = log else {
                         continue;
@@ -996,7 +996,7 @@ async fn subscribe(
                         ),
                         transaction_hash: Some(receipt.tx_hash.into()),
                         transaction_index: Some(transaction_index as u64),
-                        log_index: Some(log_index as u64),
+                        log_index: Some((log_index_plus_one - 1) as u64),
                         removed: false,
                     };
                     let _ = sink.send(SubscriptionMessage::from_json(&log)?).await;
