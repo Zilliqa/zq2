@@ -26,7 +26,7 @@ anyhow = { version = "1.0.97", features = ["backtrace"] }
 vergen = { version = "8.3.2", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.11.1", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 anyhow = { version = "1.0.97", features = ["backtrace"] }
 async-trait = "0.1.87"
 base64 = "0.22.1"
@@ -54,8 +54,8 @@ paste = "1.0.15"
 prost = "0.13.5"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-revm = { version = "19.5.0", features = ["optional_no_base_fee"] }
-revm-inspectors = { version = "0.15.0", features = ["js-tracer"] }
+revm = { version = "19.6.0", features = ["optional_no_base_fee"] }
+revm-inspectors = { version = "0.16.0", features = ["js-tracer"] }
 rusqlite = { version = "0.34.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.218", features = ["derive", "rc"] }
 serde_bytes = "0.11.17"
@@ -85,7 +85,7 @@ semver = "1.0.23"
 foundry-compilers = { version = "0.13.3", features = ["svm-solc"] }
 
 [dev-dependencies]
-alloy = { version = "0.11.1", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
+alloy = { version = "0.12.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
 async-trait = "0.1.87"
 criterion = "0.5.1"
 ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
