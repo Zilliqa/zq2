@@ -671,6 +671,7 @@ impl State {
                 inspector,
                 &self.scilla_ext_libs_path,
                 self.forks.get(current_block.number),
+                current_block.number,
             )
         }?;
 
@@ -1763,6 +1764,8 @@ fn scilla_create(
         txn.amount,
         &contract_init,
         &ext_libs_dir_in_scilla,
+        fork,
+        current_block.number,
     )?;
     let create_output = match create_output {
         Ok(o) => o,
@@ -1821,6 +1824,7 @@ pub fn scilla_call(
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
     fork: &Fork,
+    current_block: u64,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = gas_limit;
 
@@ -1927,6 +1931,7 @@ pub fn scilla_call(
                     .ok_or_else(|| anyhow!("call to a Scilla contract without a message"))?,
                 &ext_libs_dir_in_scilla,
                 fork,
+                current_block,
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 

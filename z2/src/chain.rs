@@ -8,7 +8,7 @@ use colored::Colorize;
 use serde_json::{Value, json};
 use strum::EnumProperty;
 use strum_macros::{Display, EnumString};
-use zilliqa::cfg::ContractUpgradesBlockHeights;
+use zilliqa::cfg::{ContractUpgradeConfig, ContractUpgrades, ReinitialiseParams};
 
 #[derive(Clone, Debug, ValueEnum, Display, EnumString, EnumProperty, PartialEq)]
 // TODO: decomment when became available
@@ -124,22 +124,32 @@ impl Chain {
     }
 
     // Warning: Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
-    pub fn get_contract_upgrades_block_heights(&self) -> Option<ContractUpgradesBlockHeights> {
+    pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgrades {
         match self {
-            Self::Zq2ProtoMainnet => Some(ContractUpgradesBlockHeights {
+            Self::Zq2Devnet => ContractUpgrades {
+                deposit_v3: None,
+                deposit_v4: None,
+                deposit_v5: Some(ContractUpgradeConfig {
+                    height: 0,
+                    reinitialise_params: Some(ReinitialiseParams {
+                        withdrawal_period: 5 * 60, // 5 minutes
+                    }),
+                }),
+            },
+            Self::Zq2ProtoMainnet => ContractUpgrades {
                 // estimated: 2024-12-20T23:33:12Z
-                deposit_v3: Some(5342400),
+                deposit_v3: Some(ContractUpgradeConfig::from_height(5342400)),
                 // estimated: 2025-02-12T13:25:00Z
-                deposit_v4: Some(7966800),
+                deposit_v4: Some(ContractUpgradeConfig::from_height(7966800)),
                 deposit_v5: None,
-            }),
-            Self::Zq2ProtoTestnet => Some(ContractUpgradesBlockHeights {
-                deposit_v3: Some(8406000),
+            },
+            Self::Zq2ProtoTestnet => ContractUpgrades {
+                deposit_v3: Some(ContractUpgradeConfig::from_height(8406000)),
                 // estimated: 2025-02-03T13:55:00Z
-                deposit_v4: Some(10890000),
+                deposit_v4: Some(ContractUpgradeConfig::from_height(10890000)),
                 deposit_v5: None,
-            }),
-            _ => None,
+            },
+            _ => ContractUpgrades::default(),
         }
     }
 
@@ -155,6 +165,7 @@ impl Chain {
                 "scilla_call_respects_evm_state_changes": false,
                 "only_mutated_accounts_update_state": false,
                 "scilla_call_gas_exempt_addrs": [],
+                "scilla_block_number_returns_current_block": false,
             })),
             _ => None,
         }
@@ -188,6 +199,8 @@ impl Chain {
                 json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
                 // estimated: 2025-03-07T12:35:25Z
                 json!({ "at_height": 12693600, "scilla_call_respects_evm_state_changes": true }),
+                // estimated: 2025-03-11T12:58:08Z
+                json!({ "at_height": 12884400, "only_mutated_accounts_update_state": true, "scilla_block_number_returns_current_block": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
                 json!({
@@ -258,12 +271,5 @@ impl Chain {
         let log_level = self.get_str("log_level");
 
         Ok(log_level.unwrap_or("zilliqa=trace"))
-    }
-
-    pub fn get_staker_withdrawal_period(&self) -> Option<u64> {
-        match self {
-            Chain::Zq2Devnet => Some(5 * 60), // 5 minutes
-            _ => None,
-        }
     }
 }
