@@ -3191,11 +3191,15 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         .unwrap();
     assert_eq!(state["welcome_msg"], "foobar");
 
+    let empty_string_vec: Vec<String> = vec![]; // Needed for type annotation
     let substate0: serde_json::Value = network
         .random_wallet()
         .await
         .provider()
-        .request("GetSmartContractSubState", [contract_address])
+        .request(
+            "GetSmartContractSubState",
+            ([contract_address], "", empty_string_vec.clone()),
+        )
         .await
         .expect("Failed to call GetSmartContractSubState API");
     assert_eq!(substate0, state);
@@ -3206,7 +3210,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         .provider()
         .request(
             "GetSmartContractSubState",
-            (contract_address, "welcome_msg"),
+            (contract_address, "welcome_msg", empty_string_vec),
         )
         .await
         .expect("Failed to call GetSmartContractSubState API");
