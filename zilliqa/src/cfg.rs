@@ -548,9 +548,7 @@ pub struct ForkDelta {
     /// exempt addresses.
     #[serde(default)]
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
-
-    /// If true, the total gas fee for all transactions in a block will be transferred to the zero account.
-    /// Before this fork, we were incorrectly transferring the gas used by all transactions to the zero account.
+    /// If true, the total gas paid by all transactions in a block is transferred to the zero address. This keeps the total supply of the network constant. If false, we still transfer funds to the zero address, but with an incorrect gas price of 1 Wei per gas.
     pub transfer_gas_fee_to_zero_account: Option<bool>,
 }
 
