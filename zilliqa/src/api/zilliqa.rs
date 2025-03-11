@@ -1415,11 +1415,11 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
     let mut seq = params.sequence();
     let address: ZilAddress = seq.next()?;
     let address: Address = address.into();
-    let var_name: String = match seq.optional_next()? {
-        Some(x) => x,
-        None => return get_smart_contract_state(params, node),
+    let var_name: &str = match seq.next()? {
+        "" => return get_smart_contract_state(params, node),
+        x => x,
     };
-    let requested_indices: Vec<String> = seq.optional_next()?.unwrap_or_default();
+    let requested_indices: Vec<String> = seq.next()?;
     let node = node.lock().unwrap();
     if requested_indices.len() > node.config.state_rpc_limit {
         return Err(anyhow!(
@@ -1446,12 +1446,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
 
     let account = state.get_account(address)?;
 
-    let result = json!({
-        "_balance": ZilAmount::from_amount(account.balance).to_string(),
-    });
-    let Value::Object(mut result) = result else {
-        unreachable!()
-    };
+    let mut result = serde_json::Map::new();
 
     if account.code.clone().scilla_code_and_init_data().is_some() {
         let trie = state.get_account_trie(address)?;
@@ -1460,7 +1455,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
             .iter()
             .map(|x| serde_json::to_vec(&x))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let prefix = storage_key(&var_name, &indicies_encoded);
+        let prefix = storage_key(var_name, &indicies_encoded);
         let mut n = 0;
         for (k, v) in trie.iter_by_prefix(&prefix)? {
             n += 1;
