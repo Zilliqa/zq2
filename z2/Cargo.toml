@@ -21,7 +21,7 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.11.1", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local"] }
+alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local"] }
 anyhow = "1.0.97"
 async-trait = "0.1.87"
 base64 = "0.22.0"
@@ -50,21 +50,21 @@ prost = "0.13.5"
 rand = "0.8.5"
 regex = "1.11.1"
 reqwest = {version = "0.12.9", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
-revm = {version = "19.5.0", features = ["optional_balance_check"]}
+revm = {version = "19.6.0", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 rustls = "0.23.23"
 scopeguard = "1.2.0"
-serde = {version = "1.0.218", features = ["derive"]}
+serde = {version = "1.0.219", features = ["derive"]}
 serde_json = { version = "1.0.140", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 strum = { version = "0.27", features = ["derive"] }
 strum_macros = "0.27"
-tempfile = "3.17.1"
+tempfile = "3.18.0"
 tera = "1.19.1"
 thiserror = "2.0.12"
-tokio = {version = "1.43.0", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
+tokio = {version = "1.44.0", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
 tokio-stream = "0.1.17"
 toml = { version = "0.8.20", features = ["preserve_order"] }
 tracing = "0.1.41"

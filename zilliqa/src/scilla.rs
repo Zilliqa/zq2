@@ -24,6 +24,7 @@ use jsonrpsee::{
     types::{ErrorObject, error::CALL_EXECUTION_FAILED_CODE},
 };
 use prost::Message as _;
+use revm::primitives::BLOCK_HASH_HISTORY;
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, Unexpected},
@@ -355,6 +356,8 @@ impl Scilla {
         value: ZilAmount,
         init: &ContractInit,
         ext_libs_dir: &ScillaExtLibsPathInScilla,
+        fork: &Fork,
+        current_block: u64,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .ipc_address(self.state_server_addr())
@@ -367,14 +370,17 @@ impl Scilla {
             .is_library(init.is_library()?)
             .build()?;
 
-        let (response, state) =
-            self.state_server
-                .lock()
-                .unwrap()
-                .active_call(sender, state, || {
-                    self.request_tx.send(request)?;
-                    Ok(self.response_rx.lock().unwrap().recv()?)
-                })?;
+        let (response, state) = self.state_server.lock().unwrap().active_call(
+            sender,
+            state,
+            current_block,
+            fork.scilla_block_number_returns_current_block,
+            fork.scilla_maps_are_encoded_correctly,
+            || {
+                self.request_tx.send(request)?;
+                Ok(self.response_rx.lock().unwrap().recv()?)
+            },
+        )?;
 
         trace!(?response, "create response");
 
@@ -418,6 +424,7 @@ impl Scilla {
         msg: &Value,
         ext_libs_dir: &ScillaExtLibsPathInScilla,
         fork: &Fork,
+        current_block: u64,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .init(init.to_string())
@@ -431,14 +438,17 @@ impl Scilla {
             .pplit(true)
             .build()?;
 
-        let (response, state) =
-            self.state_server
-                .lock()
-                .unwrap()
-                .active_call(contract, state, || {
-                    self.request_tx.send(request)?;
-                    Ok(self.response_rx.lock().unwrap().recv()?)
-                })?;
+        let (response, state) = self.state_server.lock().unwrap().active_call(
+            contract,
+            state,
+            current_block,
+            fork.scilla_block_number_returns_current_block,
+            fork.scilla_maps_are_encoded_correctly,
+            || {
+                self.request_tx.send(request)?;
+                Ok(self.response_rx.lock().unwrap().recv()?)
+            },
+        )?;
 
         let response: Value = match response {
             Ok(r) => r,
@@ -750,11 +760,20 @@ impl StateServer {
         &mut self,
         sender: Address, // TODO: rename
         state: PendingState,
+        current_block: u64,
+        scilla_block_number_returns_current_block: bool,
+        scilla_maps_are_encoded_correctly: bool,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<(R, PendingState)> {
         {
             let mut active_call = self.active_call.lock().unwrap();
-            *active_call = Some(ActiveCall { sender, state });
+            *active_call = Some(ActiveCall {
+                sender,
+                state,
+                current_block,
+                scilla_block_number_returns_current_block,
+                scilla_maps_are_encoded_correctly,
+            });
         }
 
         let response = f()?;
@@ -797,6 +816,9 @@ pub fn split_storage_key(key: impl AsRef<[u8]>) -> Result<(String, Vec<Vec<u8>>)
 struct ActiveCall {
     sender: Address,
     state: PendingState,
+    current_block: u64,
+    scilla_block_number_returns_current_block: bool,
+    scilla_maps_are_encoded_correctly: bool,
 }
 
 impl ActiveCall {
@@ -822,20 +844,27 @@ impl ActiveCall {
                 val_type: Some(ValType::Bval(value.to_vec())),
             }
         } else {
-            let value = self.state.load_storage_by_prefix(addr, &name, &indices)?;
+            let mut value = self.state.load_storage_by_prefix(addr, &name, &indices)?;
 
-            fn convert(value: BTreeMap<Vec<u8>, StorageValue>) -> ProtoScillaVal {
+            fn convert(
+                scilla_maps_are_encoded_correctly: bool,
+                value: BTreeMap<Vec<u8>, StorageValue>,
+            ) -> ProtoScillaVal {
                 ProtoScillaVal::map(
                     value
                         .into_iter()
                         .filter_map(|(k, v)| {
-                            let k = serde_json::from_slice(&k).ok()?;
+                            let k = if scilla_maps_are_encoded_correctly {
+                                String::from_utf8(k).unwrap()
+                            } else {
+                                serde_json::from_slice(&k).ok()?
+                            };
                             Some((
                                 k,
                                 match v {
                                     StorageValue::Map { map, complete } => {
                                         assert!(complete);
-                                        convert(map)
+                                        convert(scilla_maps_are_encoded_correctly, map)
                                     }
                                     StorageValue::Value(Some(value)) => {
                                         ProtoScillaVal::bytes(value.into())
@@ -850,7 +879,17 @@ impl ActiveCall {
                 )
             }
 
-            convert(value)
+            if self.scilla_maps_are_encoded_correctly {
+                for index in &indices {
+                    if let Some(StorageValue::Map { map: inner_map, .. }) = value.remove(index) {
+                        value = inner_map;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            convert(self.scilla_maps_are_encoded_correctly, value)
         };
 
         Ok(Some((value, ty)))
@@ -981,19 +1020,42 @@ impl ActiveCall {
     fn fetch_blockchain_info(&self, name: String, args: String) -> Result<(bool, String)> {
         match name.as_str() {
             "CHAINID" => Ok((true, self.state.zil_chain_id().to_string())),
-            "BLOCKNUMBER" => match self.state.get_highest_canonical_block_number()? {
-                Some(block_number) => Ok((true, block_number.to_string())),
-                None => Ok((false, "".to_string())),
-            },
+            "BLOCKNUMBER" => {
+                if self.scilla_block_number_returns_current_block {
+                    Ok((true, self.current_block.to_string()))
+                } else {
+                    Ok((true, self.current_block.saturating_sub(1).to_string()))
+                }
+            }
             "BLOCKHASH" => {
-                let block_number: u64 = args.parse()?;
+                let block_number = args.parse()?;
+                let Some(diff) = self.current_block.checked_sub(block_number) else {
+                    return Ok((false, "".to_string()));
+                };
+                // We should return nothing if requested number is the same as the current number.
+                if diff == 0 {
+                    return Ok((false, "".to_string()));
+                }
+                if diff <= BLOCK_HASH_HISTORY {
+                    return Ok((false, "".to_string()));
+                }
                 match self.state.get_canonical_block_by_number(block_number)? {
                     Some(block) => Ok((true, block.hash().to_string())),
                     None => Ok((false, "".to_string())),
                 }
             }
             "TIMESTAMP" => {
-                let block_number: u64 = args.parse()?;
+                let block_number = args.parse()?;
+                let Some(diff) = self.current_block.checked_sub(block_number) else {
+                    return Ok((false, "".to_string()));
+                };
+                // We should return nothing if requested number is the same as the current number.
+                if diff == 0 {
+                    return Ok((false, "".to_string()));
+                }
+                if diff > BLOCK_HASH_HISTORY {
+                    return Ok((false, "".to_string()));
+                }
                 match self.state.get_canonical_block_by_number(block_number)? {
                     Some(block) => Ok((
                         true,

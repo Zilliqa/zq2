@@ -27,14 +27,16 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.contract_upgrade_block_heights = { deposit_v3 = 8406000, deposit_v4 = 10890000 }
+consensus.contract_upgrades = { deposit_v3 = { height = 8406000 }, deposit_v4 = { height = 10890000 } }
 
 api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
-consensus.genesis_fork = { at_height = 0, call_mode_1_sets_caller_to_parent_caller = false, failed_scilla_call_from_gas_exempt_caller_causes_revert = false, scilla_messages_can_call_evm_contracts = false, scilla_contract_creation_increments_account_balance = false, scilla_json_preserve_order = false, scilla_call_respects_evm_state_changes = false, only_mutated_accounts_update_state = false, scilla_call_gas_exempt_addrs = [] }
+consensus.genesis_fork = { at_height = 0, call_mode_1_sets_caller_to_parent_caller = false, failed_scilla_call_from_gas_exempt_caller_causes_revert = false, scilla_messages_can_call_evm_contracts = false, scilla_contract_creation_increments_account_balance = false, scilla_json_preserve_order = false, scilla_call_respects_evm_state_changes = false, only_mutated_accounts_update_state = false, scilla_call_gas_exempt_addrs = [], scilla_block_number_returns_current_block = false, scilla_maps_are_encoded_correctly = false }
 consensus.forks = [
     { at_height = 7855000, scilla_call_gas_exempt_addrs = ["0x60E6b5b1B8D3E373E1C04dC0b4f5624776bcBB60", "0x7013Da2653453299Efb867EfcCCcB1A6d5FE1384", "0x8618d39a8276D931603c6Bc7306af6A53aD2F1F3", "0xE90Dd366D627aCc5feBEC126211191901A69f8a0", "0x5900Ac075A67742f5eA4204650FEad9E674c664F", "0x28e8d39fc68eaa27c88797eb7d324b4b97d5b844", "0x51b9f3ddb948bcc16b89b48d83b920bc01dbed55", "0x1fD09F6701a1852132A649fe9D07F2A3b991eCfA", "0x878c5008A348A60a5B239844436A7b483fAdb7F2", "0x8895Aa1bEaC254E559A3F91e579CF4a67B70ce02", "0x453b11386FBd54bC532892c0217BBc316fc7b918", "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057"] },
     { at_height = 8404000, failed_scilla_call_from_gas_exempt_caller_causes_revert = true, call_mode_1_sets_caller_to_parent_caller = true },
     { at_height = 10200000, scilla_messages_can_call_evm_contracts = true },
     { at_height = 11152000, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true },
     { at_height = 12693600, scilla_call_respects_evm_state_changes = true },
+    { at_height = 12884400, only_mutated_accounts_update_state = true, scilla_block_number_returns_current_block = true },
+    { at_height = 12931200, scilla_maps_are_encoded_correctly = true },
 ]

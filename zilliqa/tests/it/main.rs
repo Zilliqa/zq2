@@ -66,13 +66,13 @@ use tracing::*;
 use zilliqa::{
     api,
     cfg::{
-        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights, Fork,
-        GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
+        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
+        Fork, GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
         max_rpc_response_size_default, scilla_address_default, scilla_ext_libs_path_default,
-        scilla_stdlib_dir_default, staker_withdrawal_period_default, state_cache_size_default,
-        state_rpc_limit_default, total_native_token_supply_default,
+        scilla_stdlib_dir_default, state_cache_size_default, state_rpc_limit_default,
+        total_native_token_supply_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -329,13 +329,23 @@ impl Network {
             })
             .collect();
 
-        let contract_upgrade_block_heights =
-            ContractUpgradesBlockHeights::new(deposit_v3_upgrade_block_height, None, None);
+        let contract_upgrades = {
+            if let Some(deposit_v3_upgrade_block_height_value) = deposit_v3_upgrade_block_height {
+                ContractUpgrades::new(
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height_value,
+                    )),
+                    None,
+                    None,
+                )
+            } else {
+                ContractUpgrades::new(None, None, None)
+            }
+        };
 
         let config = NodeConfig {
             eth_chain_id: shard_id,
             consensus: ConsensusConfig {
-                staker_withdrawal_period: staker_withdrawal_period_default(),
                 genesis_deposits: genesis_deposits.clone(),
                 is_main: send_to_parent.is_none(),
                 consensus_timeout: Duration::from_secs(5),
@@ -355,7 +365,7 @@ impl Network {
                 blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 total_native_token_supply: total_native_token_supply_default(),
-                contract_upgrade_block_heights,
+                contract_upgrades,
                 forks: vec![],
                 genesis_fork: Fork {
                     scilla_call_gas_exempt_addrs: vec![
@@ -470,8 +480,17 @@ impl Network {
     }
 
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
-        let contract_upgrade_block_heights =
-            ContractUpgradesBlockHeights::new(self.deposit_v3_upgrade_block_height, None, None);
+        let contract_upgrades = if self.deposit_v3_upgrade_block_height.is_some() {
+            ContractUpgrades::new(
+                Some(ContractUpgradeConfig::from_height(
+                    self.deposit_v3_upgrade_block_height.unwrap(),
+                )),
+                None,
+                None,
+            )
+        } else {
+            ContractUpgrades::new(None, None, None)
+        };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             api_servers: vec![ApiServer {
@@ -484,7 +503,6 @@ impl Network {
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
             consensus: ConsensusConfig {
-                staker_withdrawal_period: staker_withdrawal_period_default(),
                 genesis_deposits: self.genesis_deposits.clone(),
                 is_main: self.is_main(),
                 consensus_timeout: Duration::from_secs(5),
@@ -503,7 +521,7 @@ impl Network {
                 scilla_stdlib_dir: scilla_stdlib_dir_default(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
-                contract_upgrade_block_heights,
+                contract_upgrades,
                 forks: vec![],
                 genesis_fork: Fork {
                     scilla_call_gas_exempt_addrs: vec![
