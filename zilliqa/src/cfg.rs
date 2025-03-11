@@ -363,7 +363,7 @@ pub struct ConsensusConfig {
     /// The expected time between blocks when no views are missed.
     #[serde(default = "block_time_default")]
     pub block_time: Duration,
-    /// Address of the Scilla server. Defaults to "http://localhost:3000".
+    /// Address of the Scilla server. Defaults to "http://localhost:62831".
     #[serde(default = "scilla_address_default")]
     pub scilla_address: String,
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
@@ -611,7 +611,7 @@ pub fn block_time_default() -> Duration {
 }
 
 pub fn scilla_address_default() -> String {
-    String::from("http://localhost:3000")
+    String::from("http://localhost:62831")
 }
 
 // This path is as viewed from Scilla, not zq2.
