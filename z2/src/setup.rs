@@ -2,7 +2,7 @@ use alloy::{
     //transports::http::Http,
     network::Ethereum,
     primitives::{Address, B256, address},
-    providers::{Provider, ProviderBuilder},
+    providers::{DynProvider, Provider, ProviderBuilder},
     signers::{Signer, local::LocalSigner},
 };
 use anyhow::{Context, Result, anyhow};
@@ -79,7 +79,7 @@ pub struct UCCBData {
 pub struct NodeData {
     // Secret key as hex.
     secret_key: String,
-    address: Address,
+    pub address: Address,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -313,15 +313,16 @@ impl Setup {
         })
     }
 
-    pub async fn get_interactor(&self) -> Result<Interactor> {
-        let signer = LocalSigner::from_bytes(&self.get_funded_private_key()?)?;
+    pub async fn get_provider(&self) -> Result<DynProvider> {
+        let signer = self.get_signer().await?;
         let provider = ProviderBuilder::new()
-            .wallet(alloy::network::EthereumWallet::new(signer.clone()))
+            .wallet(alloy::network::EthereumWallet::new(signer))
             .on_http(Url::parse(&self.get_json_rpc_url(true))?);
-        Ok(Interactor {
-            provider: Box::new(provider),
-            signer: Box::new(signer),
-        })
+        Ok(provider.erased())
+    }
+
+    pub async fn get_signer(&self) -> Result<LocalSigner<SigningKey>> {
+        Ok(LocalSigner::from_bytes(&self.get_funded_private_key()?)?)
     }
 
     pub fn get_funded_private_key(&self) -> Result<B256> {

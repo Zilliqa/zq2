@@ -21,7 +21,7 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.11.1", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local", "providers", "reqwest", "rpc", "rpc-types"] }
+alloy = { version = "0.11.1", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local", "providers", "reqwest", "rpc", "rpc-types", "contract"] }
 anyhow = "1.0.97"
 async-trait = "0.1.87"
 base64 = "0.22.0"
