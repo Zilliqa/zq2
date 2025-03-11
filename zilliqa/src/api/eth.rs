@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use alloy::{
-    consensus::{TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaTx},
+    consensus::{TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaDecodableTx},
     eips::{BlockId, BlockNumberOrTag, RpcBlockHash},
     primitives::{Address, B256, U64, U256},
     rpc::types::{
