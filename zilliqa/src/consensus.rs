@@ -21,7 +21,7 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
-    cfg::{ConsensusConfig, Forks, NodeConfig},
+    cfg::{ConsensusConfig, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
@@ -111,7 +111,7 @@ type EarlyProposal = (
     Vec<VerifiedTransaction>,
     EthTrie<MemoryDB>,
     EthTrie<MemoryDB>,
-    u128, // Cumulative gas fee which will be sunk to ZERO account
+    u128, // Cumulative gas fee which will be sent to ZERO account
 );
 
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
@@ -148,7 +148,6 @@ type EarlyProposal = (
 pub struct Consensus {
     secret_key: SecretKey,
     config: NodeConfig,
-    forks: Forks,
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub sync: Sync,
@@ -321,7 +320,6 @@ impl Consensus {
 
         let mut consensus = Consensus {
             secret_key,
-            forks: config.consensus.get_forks()?,
             config,
             sync,
             latest_leader_cache: RefCell::new(None),
@@ -1212,7 +1210,7 @@ impl Consensus {
         )?;
 
         // ZIP-9: Sink gas to zero account
-        let fork = self.forks.get(proposal.header.number);
+        let fork = state.forks.get(proposal.header.number);
         let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
             cumulative_gas_fee
         } else {
@@ -3137,7 +3135,7 @@ impl Consensus {
         )?;
 
         // ZIP-9: Sink gas to zero account
-        let fork = self.forks.get(block.header.number);
+        let fork = self.state.forks.get(block.header.number);
         let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
             cumulative_gas_fee
         } else {

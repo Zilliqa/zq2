@@ -155,6 +155,7 @@ impl Chain {
                 "scilla_call_respects_evm_state_changes": false,
                 "only_mutated_accounts_update_state": false,
                 "scilla_call_gas_exempt_addrs": [],
+                "transfer_gas_fee_to_zero_account": false,
             })),
             _ => None,
         }
