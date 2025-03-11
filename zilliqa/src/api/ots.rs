@@ -13,7 +13,10 @@ use jsonrpsee::{RpcModule, types::Params};
 use serde_json::{Value, json};
 
 use super::{
-    eth::{get_transaction_inner, get_transaction_receipt_inner},
+    eth::{
+        get_block_transaction_receipts_inner, get_transaction_inner,
+        get_transaction_receipt_inner_slow,
+    },
     types::ots::{self, Operation, TraceEntry},
 };
 use crate::{
@@ -116,17 +119,14 @@ fn get_block_transactions(
     let start = usize::min(page_number * page_size, block.transactions.len());
     let end = usize::min((page_number + 1) * page_size, block.transactions.len());
 
-    let txn_results = block.transactions[start..end].iter().map(|hash| {
-        // There are some redundant calls between these two functions - We could optimise by combining them.
-        let txn = get_transaction_inner(*hash, &node)?
-            .ok_or_else(|| anyhow!("transaction not found: {hash}"))?;
-        let receipt = get_transaction_receipt_inner(*hash, &node)?
-            .ok_or_else(|| anyhow!("receipt not found: {hash}"))?;
-
-        Ok::<_, anyhow::Error>((txn, receipt))
-    });
-    let (transactions, receipts): (Vec<_>, Vec<_>) =
-        itertools::process_results(txn_results, |iter| iter.unzip())?;
+    let receipts = get_block_transaction_receipts_inner(&node, block_number)?;
+    let transactions = block.transactions[start..end]
+        .iter()
+        .map(|hash| get_transaction_inner(*hash, &node))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
 
     let block_gas_limit = node.config.consensus.eth_block_gas_limit;
     let full_block = ots::BlockWithTransactions {
@@ -305,7 +305,9 @@ fn search_transactions_inner(
 
         let node = node.lock().unwrap();
         let receipt = ots::TransactionReceiptWithTimestamp {
-            receipt: get_transaction_receipt_inner(hash, &node).unwrap().unwrap(),
+            receipt: get_transaction_receipt_inner_slow(&node, txn_block_number, hash)
+                .unwrap()
+                .unwrap(),
             timestamp: timestamp
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
