@@ -3198,7 +3198,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         .provider()
         .request(
             "GetSmartContractSubState",
-            ([contract_address], "", empty_string_vec.clone()),
+            (contract_address, "", empty_string_vec.clone()),
         )
         .await
         .expect("Failed to call GetSmartContractSubState API");
