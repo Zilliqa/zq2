@@ -33,6 +33,7 @@ consensus.genesis_accounts = [
     ["9cB422D2Fabe9622ed706ad5D9d3fFd2cDd1C001", "5000000000000000000000"],
     ["AcE5F1e883d3e02A1b2C78F6909a8C0430C6Fb12", "5000000000000000000000"],
     ["1958b2f7b5c476F5e8FeBdEFeba5EC39E2f20288", "5000000000000000000000"],
+]
 
 # speed up local/docker epochs
 consensus.blocks_per_epoch = 36
