@@ -632,6 +632,19 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
                 var.or_insert(convert_result?);
             }
         }
+
+        // Insert empty maps to the state. Empty maps are not returned by the trie iterator.
+        let field_defs = match &account.code {
+            Code::Scilla { types, .. } => types,
+            _ => unreachable!(),
+        };
+        for (var_name, (type_, _)) in field_defs.iter() {
+            if type_.starts_with("Map") {
+                result
+                    .entry(var_name)
+                    .or_insert(Value::Object(Default::default()));
+            }
+        }
     }
 
     Ok(result.into())
