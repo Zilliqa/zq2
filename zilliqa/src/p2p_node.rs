@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
 use std::{
@@ -32,13 +33,14 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
 
 use crate::{
-    cfg::{Config, ConsensusConfig, NodeConfig},
+    cfg::{Config, ConsensusConfig, NodeConfig, UCCBConfig},
     crypto::SecretKey,
     db,
     message::{ExternalMessage, InternalMessage},
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
     sync::SyncPeers,
+    uccb::{launcher::UCCBInputChannels, launcher::UCCBLauncher, launcher::UCCBRequestId},
 };
 
 /// Messages are a tuple of the destination shard ID and the actual message.
@@ -65,6 +67,10 @@ pub type LocalMessageTuple = (u64, u64, InternalMessage);
 pub struct P2pNode {
     shard_peers: HashMap<TopicHash, Arc<SyncPeers>>,
     shard_nodes: HashMap<TopicHash, NodeInputChannels>,
+    // There is one of these per shard_node.
+    uccb_peers: HashMap<TopicHash, Arc<SyncPeers>>,
+    uccb_nodes: HashMap<TopicHash, UCCBInputChannels>,
+    uccb_threads: JoinSet<Result<()>>,
     shard_threads: JoinSet<Result<()>>,
     task_threads: JoinSet<Result<()>>,
     secret_key: SecretKey,
@@ -152,6 +158,9 @@ impl P2pNode {
         Ok(Self {
             shard_peers: HashMap::new(),
             shard_nodes: HashMap::new(),
+            uccb_peers: HashMap::new(),
+            uccb_nodes: HashMap::new(),
+            uccb_threads: JoinSet::new(),
             peer_id,
             secret_key,
             config,
@@ -173,6 +182,10 @@ impl P2pNode {
         IdentTopic::new(shard_id.to_string())
     }
 
+    pub fn shard_id_to_uccb_topic(shard_id: u64) -> IdentTopic {
+        IdentTopic::new(format!("uccb_{shard_id}"))
+    }
+
     /// Temporary method until light nodes are implemented, which will allow
     /// connecting to the other shard and obtaining consensus parameters.
     /// For now, we copy the (presumably main shard's) existing config and use it
@@ -189,6 +202,31 @@ impl P2pNode {
             },
             ..parent
         }
+    }
+
+    pub async fn add_uccb_node(&mut self, config: NodeConfig) -> Result<()> {
+        let shard_id = config.eth_chain_id;
+        let topic = Self::shard_id_to_uccb_topic(shard_id);
+        if self.uccb_nodes.contains_key(&topic.hash()) {
+            info!(
+                "Attempting to add a UCCB listener for shard {shard_id} which we're already running. Ignoring..."
+            );
+            return Ok(());
+        }
+        let (mut node, input_channels, peers) = UCCBLauncher::new(
+            self.secret_key,
+            config,
+            self.outbound_message_sender.clone(),
+            self.local_message_sender.clone(),
+            self.request_responses_sender.clone(),
+        )
+        .await?;
+        self.uccb_peers.insert(topic.hash(), peers);
+        self.uccb_nodes.insert(topic.hash(), input_channels);
+        self.uccb_threads
+            .spawn(async move { node.start_uccb_node().await });
+        self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+        Ok(())
     }
 
     pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
@@ -213,6 +251,18 @@ impl P2pNode {
             .spawn(async move { node.start_shard_node().await });
         self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
         Ok(())
+    }
+
+    fn send_uccb<T: Send + Sync + 'static>(
+        &self,
+        topic_hash: &TopicHash,
+        sender: impl FnOnce(&UCCBInputChannels) -> Result<(), SendError<T>>,
+    ) -> Result<()> {
+        let Some(channels) = self.uccb_nodes.get(topic_hash) else {
+            warn!(?topic_hash, "message received for unknown uccb topic");
+            return Ok(());
+        };
+        Ok(sender(channels)?)
     }
 
     fn send_to<T: Send + Sync + 'static>(
@@ -291,8 +341,13 @@ impl P2pNode {
 
                             // Route broadcasts to speed-up Proposal processing, with faux request-id
                             match message {
+                                ExternalMessage::UCCB(u) => {
+                                    self.send_uccb(&topic_hash,
+                                                   |c| c.broadcasts.send(source, u))?;
+                                },
                                 ExternalMessage::Proposal(_) => {
-                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
+                                    self.send_to(&topic_hash,
+                                                 |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?
                                 }
                                 _ => {
                                     self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
@@ -305,11 +360,24 @@ impl P2pNode {
                                     let to = self.peer_id;
                                     let (shard_id, _external_message) = request;
                                     debug!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "message received");
-                                    let _topic = Self::shard_id_to_topic(shard_id);
+                                    let _topic = if let ExternalMessage::UCCB(_) = _external_message {
+                                        Self::shard_id_to_topic(shard_id)
+                                    } else {
+                                        Self::shard_id_to_uccb_topic(shard_id)
+                                    };
                                     let _id = format!("{}", _request_id);
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
-                                            self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
+                                            match message {
+                                                ExternalMessage::UCCB(u) => {
+                                                    self.send_uccb(&Self::shard_id_to_uccb_topic(shard_id).hash(),
+                                                                   |c| c.requests.send((_source, _id, u, ResponseChannel::Remote(_channel))))?;
+                                                },
+                                                _ => {
+                                                    self.send_to(&Self::shard_id_to_topic(_topic).hash(),
+                                                                 |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
+                                                }
+                                            }
                                         } else {
                                             panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
                                         }
@@ -317,7 +385,15 @@ impl P2pNode {
                                 }
                                 request_response::Message::Response { request_id, response } => {
                                     if let Some((shard_id, _)) = self.pending_requests.remove(&request_id) {
-                                        self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.responses.send((_source, response)))?;
+                                        match response {
+                                            ExternalMessage::UCCB(u) => {
+                                                self.send_uccb(&Self::shard_id_to_uccb_topic(shard_id).hash(),
+                                                               |c| c.responses.send((_source, u)))?;
+                                            },
+                                            _ => {
+                                                self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.responses.send((_source, response)))?;
+                                            }
+                                        }
                                     } else {
                                         return Err(anyhow!("response to request with no id"));
                                     }
@@ -335,7 +411,9 @@ impl P2pNode {
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
+                                // This gets sent to both uccb and the shard and they then need to work out if the request was one of theirs.
                                 self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
+                                self.send_uccb(&Self::shard_id_to_uccb_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
                             } else {
                                 return Err(anyhow!("request without id failed"));
                             }
@@ -360,6 +438,9 @@ impl P2pNode {
                         },
                         InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, path) => {
                             self.task_threads.spawn(async move { db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, path) });
+                        },
+                        InternalMessage::UCCB(uccb) => {
+                            self.send_uccb(&Self::shard_id_to_uccb_topic(destination).hash(), |c| c.local_messages.send((source, uccb)))?;
                         }
                     }
                 },
@@ -380,7 +461,11 @@ impl P2pNode {
                     let data = cbor4ii::serde::to_vec(Vec::new(), &message).unwrap();
                     let from = self.peer_id;
 
-                    let topic = Self::shard_id_to_topic(shard_id);
+                    let topic = if let ExternalMessage::UCCB(_) = &message {
+                        Self::shard_id_to_uccb_topic(shard_id)
+                    } else {
+                        Self::shard_id_to_topic(shard_id)
+                    };
 
                     match dest {
                         Some((dest, request_id)) => {
@@ -388,6 +473,10 @@ impl P2pNode {
                             let id = format!("{:?}", request_id);
                             if from == dest {
                                 match message {
+                                    ExternalMessage::UCCB(u) => {
+                                        self.send_uccb(&topic.hash(),
+                                                       |c| c.requests.send((from, id, u, ResponseChannel::Local)))?;
+                                    },
                                     // Route sync messages as broadcast, to allow other requests to be prioritized.
                                     ExternalMessage::InjectedProposal(_) => {
                                         self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
@@ -410,6 +499,10 @@ impl P2pNode {
                                         ExternalMessage::Proposal(_) => {
                                             self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
                                         }
+                                        ExternalMessage::UCCB(u) => {
+                                            self.send_uccb(&topic.hash(),
+                                                           |c| c.broadcasts.send((from, u)))?;
+                                        },
                                         _ => {
                                             self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
                                         }
@@ -420,7 +513,11 @@ impl P2pNode {
                                     match message {
                                         ExternalMessage::Proposal(_) => {
                                             self.send_to(&topic.hash(), |c| c.requests.send((from, "(faux-id)".to_string(), message, ResponseChannel::Local)))?;
-                                        }
+                                        },
+                                        ExternalMessage::UCCB(u) => {
+                                            self.send_uccb(&topic.hash(),
+                                                           |c| c.broadcasts.send((from, u)))?;
+                                        },
                                         _ => {
                                             self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
                                         }
