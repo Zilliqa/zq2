@@ -141,13 +141,15 @@ impl Chain {
                 deposit_v3: Some(ContractUpgradeConfig::from_height(5342400)),
                 // estimated: 2025-02-12T13:25:00Z
                 deposit_v4: Some(ContractUpgradeConfig::from_height(7966800)),
-                deposit_v5: None,
+                // estimated: 2025-03-17T13:16:37Z
+                deposit_v5: Some(ContractUpgradeConfig::from_height(9010800)),
             },
             Self::Zq2ProtoTestnet => ContractUpgrades {
                 deposit_v3: Some(ContractUpgradeConfig::from_height(8406000)),
                 // estimated: 2025-02-03T13:55:00Z
                 deposit_v4: Some(ContractUpgradeConfig::from_height(10890000)),
-                deposit_v5: None,
+                // estimated: 2025-03-12T15:00:00Z
+                deposit_v5: Some(ContractUpgradeConfig::from_height(12934800)),
             },
             _ => ContractUpgrades::default(),
         }
