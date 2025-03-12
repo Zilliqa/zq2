@@ -129,10 +129,6 @@ impl P2pNode {
                     autonat_client: autonat::v2::client::Behaviour::default(),
                     autonat_server: autonat::v2::server::Behaviour::default(),
                     kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
-                    // FIXME: This is a hack.
-                    // By exposing the listen addresses, the nodes are able to get the correct remote ip/port to connect to.
-                    // Otherwise, when running locally in docker, the nodes connect to each other via the gateway acting as a NAT router.
-                    // So, the nodes are unable to see each other directly and remain isolated, defeating kademlia and autonat.
                     identify: identify::Behaviour::new(
                         identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
                             .with_hide_listen_addrs(true)
@@ -240,8 +236,7 @@ impl P2pNode {
 
         for (peer, address) in &self.config.bootstrap_address.0 {
             if self.swarm.local_peer_id() != peer {
-                self.swarm.dial(address.clone())?;
-                self.swarm.add_peer_address(*peer, address.clone());
+                self.swarm.dial(address.clone())?; // peers get added during the SwarmEvent
             }
         }
 
@@ -258,7 +253,7 @@ impl P2pNode {
                         }
                         // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
-                            debug!(%peer_id, ?info, "identify event");
+                            info!(%peer_id, ?info, "identify event");
                             if info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
                                 for addr in info.listen_addrs {
                                     // this will trigger the `NewExternalAddrOfPeer` event below
@@ -266,21 +261,27 @@ impl P2pNode {
                                 }
                             }
                         }
+                        SwarmEvent::ExternalAddrExpired{address} => {
+                            info!(%address, "expired");
+                            self.swarm.remove_external_address(&address);
+                        }
                         SwarmEvent::NewExternalAddrOfPeer{peer_id, address} => {
-                            debug!(%peer_id, %address, "new peer");
+                            info!(%peer_id, %address, "new peer");
                             self.swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
                             self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         }
                         SwarmEvent::ExternalAddrConfirmed{address} => {
-                            debug!(%address, "confirmed");
+                            info!(%address, "confirmed");
                             self.swarm.add_external_address(address);
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
+                            info!(%peer_id, "subscribed");
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.add_peer(peer_id);
                             }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) => {
+                            info!(%peer_id, "unsubscribed");
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.remove_peer(peer_id);
                             }
