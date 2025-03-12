@@ -167,6 +167,9 @@ pub struct NodeConfig {
     pub prune_interval: u64,
     #[serde(default = "default_true")]
     pub respect_shard_ids_in_checkpoints: bool,
+    /// UCCB Configuration. Each node can have at most one UCCB validator associated with it.
+    #[serde(default)]
+    pub uccb: Option<UCCBConfig>,
 }
 
 impl Default for NodeConfig {
@@ -190,6 +193,7 @@ impl Default for NodeConfig {
             prune_interval: u64_max(),
             respect_shard_ids_in_checkpoints: true,
             adjust_state: vec![],
+            uccb: None,
         }
     }
 }
@@ -813,6 +817,35 @@ impl Default for ContractUpgrades {
             }),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UCCBNetwork {
+    /// The RPC URL to monitor.
+    pub rpc_url: String,
+    /// Chain id
+    pub chain_id: u64,
+    /// Chain gateway
+    pub chain_gateway: Address,
+    /// Block to start monitoring from, if later than the block in the database, or if
+    /// specified on the comamnd line.
+    pub start_block: u64,
+}
+
+/// If configured, a UCCB node watches the local network and relays what it finds there to one of the other
+/// configured networks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UCCBConfig {
+    /// Networks to monitor (excluding our own)
+    pub networks: Vec<UCCBNetwork>,
+
+    /// Chain gateway for our own network
+    pub chain_gateway: Address,
+
+    /// Starting block.
+    pub start_block: u64,
 }
 
 #[cfg(test)]

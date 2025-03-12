@@ -18,6 +18,7 @@ use crate::{
     db::TrieStorage,
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
+    uccb::message::{UCCBExternalMessage, UCCBInternalMessage},
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
@@ -281,6 +282,8 @@ pub enum ExternalMessage {
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),
     SyncBlockHeaders(Vec<SyncBlockHeader>),
+    // UCCB
+    UCCB(UCCBExternalMessage),
 }
 
 impl ExternalMessage {
@@ -388,6 +391,8 @@ pub enum InternalMessage {
         TrieStorage,
         Box<Path>,
     ),
+    /// UCCB
+    UCCB(UCCBInternalMessage),
 }
 
 /// Returns a terse, human-readable summary of a message.
