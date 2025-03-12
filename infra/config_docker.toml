@@ -11,7 +11,6 @@ bootstrap_address = [
 p2p_port = 5643
 
 [[nodes]]
-eth_chain_id = 33469
 api_servers = [
     { port = 4201, enabled_apis = [ "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] },
 ]
