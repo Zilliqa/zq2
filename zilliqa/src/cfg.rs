@@ -363,7 +363,7 @@ pub struct ConsensusConfig {
     /// The expected time between blocks when no views are missed.
     #[serde(default = "block_time_default")]
     pub block_time: Duration,
-    /// Address of the Scilla server. Defaults to "http://localhost:3000".
+    /// Address of the Scilla server. Defaults to "http://localhost:62831".
     #[serde(default = "scilla_address_default")]
     pub scilla_address: String,
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
@@ -494,6 +494,7 @@ pub struct Fork {
     pub only_mutated_accounts_update_state: bool,
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
     pub scilla_block_number_returns_current_block: bool,
+    pub scilla_maps_are_encoded_correctly: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -546,6 +547,9 @@ pub struct ForkDelta {
     /// If true, querying the `BLOCKNUMBER` from Scilla will correctly return the current block number (i.e. the one
     /// the transaction is about to be included in). If false, it will return the previous block number.
     pub scilla_block_number_returns_current_block: Option<bool>,
+    /// If true, nested Scilla maps are returned to the Scilla intepreter in the correct format and keys are encoded
+    /// properly. If false, Scilla transactions will work but they will be incorrect in undetermined ways.
+    pub scilla_maps_are_encoded_correctly: Option<bool>,
 }
 
 impl Fork {
@@ -581,6 +585,9 @@ impl Fork {
             scilla_block_number_returns_current_block: delta
                 .scilla_block_number_returns_current_block
                 .unwrap_or(self.scilla_block_number_returns_current_block),
+            scilla_maps_are_encoded_correctly: delta
+                .scilla_maps_are_encoded_correctly
+                .unwrap_or(self.scilla_maps_are_encoded_correctly),
         }
     }
 }
@@ -604,7 +611,7 @@ pub fn block_time_default() -> Duration {
 }
 
 pub fn scilla_address_default() -> String {
-    String::from("http://localhost:3000")
+    String::from("http://localhost:62831")
 }
 
 // This path is as viewed from Scilla, not zq2.
@@ -658,6 +665,7 @@ pub fn genesis_fork_default() -> Fork {
         only_mutated_accounts_update_state: true,
         scilla_call_gas_exempt_addrs: vec![],
         scilla_block_number_returns_current_block: true,
+        scilla_maps_are_encoded_correctly: true,
     }
 }
 
@@ -783,6 +791,7 @@ mod tests {
                 only_mutated_accounts_update_state: None,
                 scilla_call_gas_exempt_addrs: vec![],
                 scilla_block_number_returns_current_block: None,
+                scilla_maps_are_encoded_correctly: None,
             }],
             ..Default::default()
         };
@@ -815,6 +824,7 @@ mod tests {
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -827,6 +837,7 @@ mod tests {
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
                 },
             ],
             ..Default::default()
@@ -873,6 +884,7 @@ mod tests {
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -885,6 +897,7 @@ mod tests {
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
                 },
             ],
             ..Default::default()
@@ -922,6 +935,7 @@ mod tests {
                 only_mutated_accounts_update_state: true,
                 scilla_call_gas_exempt_addrs: vec![],
                 scilla_block_number_returns_current_block: true,
+                scilla_maps_are_encoded_correctly: true,
             },
             forks: vec![],
             ..Default::default()
@@ -947,6 +961,7 @@ mod tests {
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -959,6 +974,7 @@ mod tests {
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
                 },
             ],
             ..Default::default()

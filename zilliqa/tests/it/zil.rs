@@ -3191,11 +3191,15 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         .unwrap();
     assert_eq!(state["welcome_msg"], "foobar");
 
+    let empty_string_vec: Vec<String> = vec![]; // Needed for type annotation
     let substate0: serde_json::Value = network
         .random_wallet()
         .await
         .provider()
-        .request("GetSmartContractSubState", [contract_address])
+        .request(
+            "GetSmartContractSubState",
+            (contract_address, "", empty_string_vec.clone()),
+        )
         .await
         .expect("Failed to call GetSmartContractSubState API");
     assert_eq!(substate0, state);
@@ -3206,7 +3210,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         .provider()
         .request(
             "GetSmartContractSubState",
-            (contract_address, "welcome_msg"),
+            (contract_address, "welcome_msg", empty_string_vec),
         )
         .await
         .expect("Failed to call GetSmartContractSubState API");
@@ -3496,4 +3500,116 @@ async fn get_num_tx_blocks_structure(mut network: Network) {
     // Should be a string containing a number
     assert!(response.is_string());
     assert!(response.as_str().unwrap().parse::<u64>().is_ok());
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn return_map_and_parse(mut network: Network) {
+    let (secret_key, _) = zilliqa_account(&mut network).await;
+
+    let code = r#"
+        scilla_version 0
+
+        contract ReturnMap
+        ()
+
+        field complex_map : Map ByStr20 (Map BNum Uint128) = Emp ByStr20 (Map BNum Uint128)
+
+        transition AddToMap(a: ByStr20, b: BNum, c: Uint128)
+            complex_map[a][b] := c
+        end
+
+        transition GetFromMap(a: ByStr20)
+            complex_map_o <- complex_map[a];
+
+            match complex_map_o with
+            | Some complex_map =>
+                values_list = builtin to_list complex_map;
+
+                e = {
+                    _eventname: "MapValues";
+                    a: a;
+                    values_list: values_list
+                };
+                event e
+            | None =>
+            end
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let contract_address = deploy_scilla_contract(&mut network, &secret_key, code, data).await;
+
+    // Set nested map to some value
+    let call = r#"{
+        "_tag": "AddToMap",
+        "params": [
+            {
+                "vname": "a",
+                "type": "ByStr20",
+                "value": "0x964d9004b1ba9f362766cd681e9f97837a5cbb85"
+            },
+            {
+                "vname": "b",
+                "value": "1",
+                "type": "BNum"
+            },
+            {
+                "vname": "c",
+                "value": "100",
+                "type": "Uint128"
+            }
+        ]
+    }"#;
+
+    let (_, _) = send_transaction(
+        &mut network,
+        &secret_key,
+        2,
+        ToAddr::Address(contract_address),
+        0,
+        50_000,
+        None,
+        Some(call),
+    )
+    .await;
+
+    // Parse returned nested map
+    let call = r#"{
+        "_tag": "GetFromMap",
+        "params": [
+            {
+                "vname": "a",
+                "type": "ByStr20",
+                "value": "0x964d9004b1ba9f362766cd681e9f97837a5cbb85"
+            }
+        ]
+    }"#;
+
+    let (_, txn) = send_transaction(
+        &mut network,
+        &secret_key,
+        3,
+        ToAddr::Address(contract_address),
+        0,
+        50_000,
+        None,
+        Some(call),
+    )
+    .await;
+    let event = &txn["receipt"]["event_logs"][0];
+    assert_eq!(event["_eventname"], "MapValues");
+    assert_eq!(
+        event["params"][1]["value"][0]["arguments"]
+            .as_array()
+            .unwrap()
+            .clone(),
+        vec![Value::from("1"), Value::from("100")]
+    );
 }
