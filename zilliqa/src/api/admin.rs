@@ -1,6 +1,9 @@
 //! An administrative API
 
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::RangeInclusive,
+    sync::{Arc, Mutex},
+};
 
 use alloy::eips::BlockId;
 use anyhow::{Result, anyhow};
@@ -20,6 +23,7 @@ pub fn rpc_module(
         [
             ("admin_consensusInfo", consensus_info),
             ("admin_generateCheckpoint", checkpoint),
+            ("admin_blockRange", admin_block_range),
         ]
     )
 }
@@ -31,6 +35,11 @@ struct ConsensusInfo {
     high_qc: QuorumCertificate,
     milliseconds_since_last_view_change: u64,
     milliseconds_until_next_view_change: u64,
+}
+
+/// TODO: place-holder for now, feel free to change it.
+fn admin_block_range(_params: Params, node: &Arc<Mutex<Node>>) -> Result<RangeInclusive<u64>> {
+    node.lock().unwrap().db.available_range()
 }
 
 fn consensus_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<ConsensusInfo> {
