@@ -166,6 +166,7 @@ impl Chain {
                 "only_mutated_accounts_update_state": false,
                 "scilla_call_gas_exempt_addrs": [],
                 "scilla_block_number_returns_current_block": false,
+                "scilla_maps_are_encoded_correctly": false,
             })),
             _ => None,
         }
@@ -201,6 +202,8 @@ impl Chain {
                 json!({ "at_height": 12693600, "scilla_call_respects_evm_state_changes": true }),
                 // estimated: 2025-03-11T12:58:08Z
                 json!({ "at_height": 12884400, "only_mutated_accounts_update_state": true, "scilla_block_number_returns_current_block": true }),
+                // estimated: 2025-03-12T12:29:22Z
+                json!({ "at_height": 12931200, "scilla_maps_are_encoded_correctly": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
                 json!({

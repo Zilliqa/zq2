@@ -375,6 +375,7 @@ impl Scilla {
             state,
             current_block,
             fork.scilla_block_number_returns_current_block,
+            fork.scilla_maps_are_encoded_correctly,
             || {
                 self.request_tx.send(request)?;
                 Ok(self.response_rx.lock().unwrap().recv()?)
@@ -442,6 +443,7 @@ impl Scilla {
             state,
             current_block,
             fork.scilla_block_number_returns_current_block,
+            fork.scilla_maps_are_encoded_correctly,
             || {
                 self.request_tx.send(request)?;
                 Ok(self.response_rx.lock().unwrap().recv()?)
@@ -760,6 +762,7 @@ impl StateServer {
         state: PendingState,
         current_block: u64,
         scilla_block_number_returns_current_block: bool,
+        scilla_maps_are_encoded_correctly: bool,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<(R, PendingState)> {
         {
@@ -769,6 +772,7 @@ impl StateServer {
                 state,
                 current_block,
                 scilla_block_number_returns_current_block,
+                scilla_maps_are_encoded_correctly,
             });
         }
 
@@ -814,6 +818,7 @@ struct ActiveCall {
     state: PendingState,
     current_block: u64,
     scilla_block_number_returns_current_block: bool,
+    scilla_maps_are_encoded_correctly: bool,
 }
 
 impl ActiveCall {
@@ -839,20 +844,27 @@ impl ActiveCall {
                 val_type: Some(ValType::Bval(value.to_vec())),
             }
         } else {
-            let value = self.state.load_storage_by_prefix(addr, &name, &indices)?;
+            let mut value = self.state.load_storage_by_prefix(addr, &name, &indices)?;
 
-            fn convert(value: BTreeMap<Vec<u8>, StorageValue>) -> ProtoScillaVal {
+            fn convert(
+                scilla_maps_are_encoded_correctly: bool,
+                value: BTreeMap<Vec<u8>, StorageValue>,
+            ) -> ProtoScillaVal {
                 ProtoScillaVal::map(
                     value
                         .into_iter()
                         .filter_map(|(k, v)| {
-                            let k = serde_json::from_slice(&k).ok()?;
+                            let k = if scilla_maps_are_encoded_correctly {
+                                String::from_utf8(k).unwrap()
+                            } else {
+                                serde_json::from_slice(&k).ok()?
+                            };
                             Some((
                                 k,
                                 match v {
                                     StorageValue::Map { map, complete } => {
                                         assert!(complete);
-                                        convert(map)
+                                        convert(scilla_maps_are_encoded_correctly, map)
                                     }
                                     StorageValue::Value(Some(value)) => {
                                         ProtoScillaVal::bytes(value.into())
@@ -867,7 +879,17 @@ impl ActiveCall {
                 )
             }
 
-            convert(value)
+            if self.scilla_maps_are_encoded_correctly {
+                for index in &indices {
+                    if let Some(StorageValue::Map { map: inner_map, .. }) = value.remove(index) {
+                        value = inner_map;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            convert(self.scilla_maps_are_encoded_correctly, value)
         };
 
         Ok(Some((value, ty)))
