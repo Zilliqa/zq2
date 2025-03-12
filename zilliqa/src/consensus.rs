@@ -182,9 +182,6 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    // prune interval >> 15 to ensure we don't prune forks; arbitrarily picked.
-    const MIN_PRUNE_INTERVAL: u64 = 300;
-
     pub fn new(
         secret_key: SecretKey,
         config: NodeConfig,
@@ -322,14 +319,7 @@ impl Consensus {
             peers.clone(),
         )?;
 
-        let prune_interval = if config.prune_interval >= Self::MIN_PRUNE_INTERVAL {
-            config.prune_interval.max(Self::MIN_PRUNE_INTERVAL) - 1 // off-by-one
-        } else {
-            return Err(anyhow!(
-                "prune_interval must be at least {}",
-                Self::MIN_PRUNE_INTERVAL
-            ));
-        };
+        let prune_interval = config.prune_interval;
 
         let mut consensus = Consensus {
             secret_key,
@@ -3169,7 +3159,7 @@ impl Consensus {
         }
         let range = self.db.available_range()?;
         let prune_at = number
-            .saturating_sub(self.prune_interval)
+            .saturating_sub(self.prune_interval.saturating_sub(1)) // off-by-one
             .min(range.start().saturating_add(1000)); // gradually prune 1000-blocks at a time
         if range.contains(&prune_at) {
             for n in *range.start()..prune_at {

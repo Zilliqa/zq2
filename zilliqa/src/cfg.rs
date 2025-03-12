@@ -203,6 +203,11 @@ impl NodeConfig {
                 }
             }
         }
+
+        // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
+        if self.prune_interval < 300 {
+            return Err(anyhow!("prune_interval must be at least 300",));
+        }
         Ok(())
     }
 }
