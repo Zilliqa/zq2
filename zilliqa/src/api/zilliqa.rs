@@ -1512,21 +1512,18 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
 
         // If the requested indices are empty, the whole map is likely requested.
         // So, we need to insert an empty map into the sub state because the trie iterator does not return empty maps.
-        if requested_indices.len() == 0 {
+        if requested_indices.is_empty() {
             let field_defs = match &account.code {
                 Code::Scilla { types, .. } => types,
                 _ => unreachable!(),
             };
-            field_defs
-                .iter()
-                .find(|(var_name, (type_, _))| {
-                    type_.starts_with("Map") && *var_name == requested_var_name
-                })
-                .map(|(var_name, _)| {
-                    result
-                        .entry(var_name)
-                        .or_insert(Value::Object(Default::default()));
-                });
+            if let Some((var_name, _)) = field_defs.iter().find(|(var_name, (type_, _))| {
+                type_.starts_with("Map") && *var_name == requested_var_name
+            }) {
+                result
+                    .entry(var_name)
+                    .or_insert(Value::Object(Default::default()));
+            }
         }
     }
     Ok(result.into())
