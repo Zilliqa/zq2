@@ -224,6 +224,8 @@ RestartSec=10
 WantedBy=multi-user.target
 """
 
+SCILLA_SERVER_PORT="62831"
+
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
@@ -237,7 +239,7 @@ start() {
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
-    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} ${1} --log-json
+    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ ${1} --log-json
 }
 
 stop() {
