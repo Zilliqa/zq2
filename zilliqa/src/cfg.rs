@@ -159,6 +159,9 @@ pub struct NodeConfig {
     /// Maximum allowed RPC response size
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
+    /// The N number of historical blocks to be kept in the DB during pruning. N > 30.
+    #[serde(default = "u64_max")]
+    pub prune_interval: u64,
 }
 
 impl Default for NodeConfig {
@@ -179,6 +182,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            prune_interval: u64_max(),
         }
     }
 }
@@ -198,6 +202,11 @@ impl NodeConfig {
                     ));
                 }
             }
+        }
+
+        // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
+        if self.prune_interval < 300 {
+            return Err(anyhow!("prune_interval must be at least 300",));
         }
         Ok(())
     }
@@ -232,6 +241,10 @@ where
     Hash::try_from(bytes.as_slice()).map_err(|_| {
         de::Error::invalid_value(de::Unexpected::Bytes(&bytes), &"a 32-byte hex value")
     })
+}
+
+pub fn u64_max() -> u64 {
+    u64::MAX
 }
 
 pub fn allowed_timestamp_skew_default() -> Duration {
