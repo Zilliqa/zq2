@@ -550,6 +550,12 @@ pub async fn convert_persistence(
             receipt.block_hash = zq1_block.block_hash.into();
         }
 
+        let mut log_index = 0;
+        let receipts: Vec<_> = receipts
+            .into_iter()
+            .map(|x| zilliqa::consensus::annotate_receipt_with_log_indices(x, &mut log_index))
+            .collect();
+
         parent_hash = zq1_block.block_hash.into();
 
         zq2_db.with_sqlite_tx(|sqlite_tx| {
@@ -701,6 +707,7 @@ fn try_with_zil_transaction(
                     address: log.address,
                     topics: log.topics,
                     data: log.data,
+                    log_index: None,
                 }))
             })
             .collect::<Result<_>>()?,
@@ -775,6 +782,7 @@ fn try_with_evm_transaction(
                     address: log.address,
                     topics: log.topics,
                     data: log.data,
+                    log_index: None,
                 }))
             })
             .collect::<Result<_>>()?,
