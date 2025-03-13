@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use alloy::primitives::Address;
 use anyhow::Result;
 use jsonrpsee::{RpcModule, types::Params};
 
@@ -68,6 +69,12 @@ fn txpool_inspect(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 }
 
 /// txpool_status
-fn txpool_status(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+fn txpool_status(_params: Params, node: &Arc<Mutex<Node>>) -> Result<types::txpool::TxPoolStatus> {
+    let node = node.lock().unwrap();
+    let content = node.txpool_content()?;
+
+    Ok(types::txpool::TxPoolStatus {
+        pending: content.pending.len() as u64,
+        queued: content.queued.len() as u64,
+    })
 }
