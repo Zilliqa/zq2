@@ -1,6 +1,6 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
-use alloy::primitives::Address;
+use alloy::{primitives::Address, rlp::Encodable};
 use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
@@ -162,10 +162,6 @@ pub struct NodeConfig {
     /// The N number of historical blocks to be kept in the DB during pruning. N > 30.
     #[serde(default = "u64_max")]
     pub prune_interval: u64,
-    /// The block height at which ZQ1 converted persistence ends. After this block ZQ2 blocks begin.
-    /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks. In future converted networks all ZQ1 blocks will be distinguishable by their zeroed state root hash.  
-    #[serde(default)]
-    pub proto_network_persistence_block_height: Option<u64>,
 }
 
 impl Default for NodeConfig {
@@ -187,7 +183,6 @@ impl Default for NodeConfig {
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
             prune_interval: u64_max(),
-            proto_network_persistence_block_height: None,
         }
     }
 }
@@ -498,11 +493,49 @@ impl Forks {
             .unwrap_or_else(|i| i - 1);
         &self.0[index]
     }
+
+    pub fn find_height_fork_first_activated(&self, fork_name: ForkName) -> Option<u64> {
+        let mut sorted_fork = self.0.clone();
+        sorted_fork.sort_by_key(|item| item.at_height);
+        for fork in sorted_fork.iter() {
+            if match fork_name {
+                ForkName::ExecutableBlocks => fork.executable_blocks,
+                ForkName::FailedScillaCallFromGasExemptCallerCausesRevert => {
+                    fork.failed_scilla_call_from_gas_exempt_caller_causes_revert
+                }
+                ForkName::CallMode1SetsCallerToParentCaller => {
+                    fork.call_mode_1_sets_caller_to_parent_caller
+                }
+                ForkName::ScillaMessagesCanCallEvmContracts => {
+                    fork.scilla_messages_can_call_evm_contracts
+                }
+                ForkName::ScillaContractCreationIncrementsAccountBalance => {
+                    fork.scilla_contract_creation_increments_account_balance
+                }
+                ForkName::ScillaJsonPreserveOrder => fork.scilla_json_preserve_order,
+                ForkName::ScillaCallRespectsEvmStateChanges => {
+                    fork.scilla_call_respects_evm_state_changes
+                }
+                ForkName::OnlyMutatedAccountsUpdateState => fork.only_mutated_accounts_update_state,
+                ForkName::ScillaCallGasExemptAddrs => {
+                    fork.scilla_call_gas_exempt_addrs.length() != 0
+                }
+                ForkName::ScillaBlockNumberReturnsCurrentBlock => {
+                    fork.scilla_block_number_returns_current_block
+                }
+                ForkName::ScillaMapsAreEncodedCorrectly => fork.scilla_maps_are_encoded_correctly,
+            } {
+                return Some(fork.at_height);
+            }
+        }
+        return None;
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Fork {
     pub at_height: u64,
+    pub executable_blocks: bool,
     pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
     pub call_mode_1_sets_caller_to_parent_caller: bool,
     pub scilla_messages_can_call_evm_contracts: bool,
@@ -515,9 +548,26 @@ pub struct Fork {
     pub scilla_maps_are_encoded_correctly: bool,
 }
 
+pub enum ForkName {
+    ExecutableBlocks,
+    FailedScillaCallFromGasExemptCallerCausesRevert,
+    CallMode1SetsCallerToParentCaller,
+    ScillaMessagesCanCallEvmContracts,
+    ScillaContractCreationIncrementsAccountBalance,
+    ScillaJsonPreserveOrder,
+    ScillaCallRespectsEvmStateChanges,
+    OnlyMutatedAccountsUpdateState,
+    ScillaCallGasExemptAddrs,
+    ScillaBlockNumberReturnsCurrentBlock,
+    ScillaMapsAreEncodedCorrectly,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ForkDelta {
     pub at_height: u64,
+    /// If true then transactions can be executed against blocks.
+    /// Currently used to mark the height at which ZQ1 blocks end and ZQ2 blocks begin in converted persistence networks. This is required because their state root hashes are set to Hash::ZERO.
+    pub executable_blocks: Option<bool>,
     /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`
     /// precompile and the inner Scilla call fails, the entire transaction will revert. If false, the normal EVM
     /// semantics apply where the caller can decide how to act based on the success of the inner call.
@@ -574,6 +624,7 @@ impl Fork {
     pub fn apply_delta_fork(&self, delta: &ForkDelta) -> Fork {
         Fork {
             at_height: delta.at_height,
+            executable_blocks: delta.executable_blocks.unwrap_or(self.executable_blocks),
             failed_scilla_call_from_gas_exempt_caller_causes_revert: delta
                 .failed_scilla_call_from_gas_exempt_caller_causes_revert
                 .unwrap_or(self.failed_scilla_call_from_gas_exempt_caller_causes_revert),
@@ -674,6 +725,7 @@ pub fn withdrawal_period_default() -> u64 {
 pub fn genesis_fork_default() -> Fork {
     Fork {
         at_height: 0,
+        executable_blocks: true,
         failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
         call_mode_1_sets_caller_to_parent_caller: true,
         scilla_messages_can_call_evm_contracts: true,
@@ -800,6 +852,7 @@ mod tests {
             genesis_fork: genesis_fork_default(),
             forks: vec![ForkDelta {
                 at_height: 10,
+                executable_blocks: None,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                 call_mode_1_sets_caller_to_parent_caller: Some(false),
                 scilla_messages_can_call_evm_contracts: None,
@@ -833,6 +886,7 @@ mod tests {
             forks: vec![
                 ForkDelta {
                     at_height: 10,
+                    executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: Some(true),
@@ -846,6 +900,7 @@ mod tests {
                 },
                 ForkDelta {
                     at_height: 20,
+                    executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
                     call_mode_1_sets_caller_to_parent_caller: Some(true),
                     scilla_messages_can_call_evm_contracts: Some(false),
@@ -893,6 +948,7 @@ mod tests {
             forks: vec![
                 ForkDelta {
                     at_height: 20,
+                    executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
@@ -906,6 +962,7 @@ mod tests {
                 },
                 ForkDelta {
                     at_height: 10,
+                    executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
@@ -944,6 +1001,7 @@ mod tests {
         let config = ConsensusConfig {
             genesis_fork: Fork {
                 at_height: 1,
+                executable_blocks: true,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
                 call_mode_1_sets_caller_to_parent_caller: true,
                 scilla_messages_can_call_evm_contracts: true,
@@ -970,6 +1028,7 @@ mod tests {
             forks: vec![
                 ForkDelta {
                     at_height: 10,
+                    executable_blocks: None,
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
@@ -983,6 +1042,7 @@ mod tests {
                 },
                 ForkDelta {
                     at_height: 20,
+                    executable_blocks: None,
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
