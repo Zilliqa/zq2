@@ -39,8 +39,8 @@ use tracing::*;
 pub struct UCCBMessageSender {
     pub our_shard: u64,
     pub our_peer_id: PeerId,
-    pub outbound_channel: UnboundedSender<UCCBOutboundMessageTuple>,
-    pub local_channel: UnboundedSender<UCCBLocalMessageTuple>,
+    pub outbound_channel: UnboundedSender<OutboundMessageTuple>,
+    pub local_channel: UnboundedSender<LocalMessageTuple>,
     pub request_id: UCCBRequestId,
 }
 
@@ -74,42 +74,49 @@ impl UCCBNode {
         };
 
         let uccb_config = node_config
+            .clone()
             .uccb
             .ok_or(anyhow!("No UCCB config when instantiating UCCB node"))?;
         Ok(Self {
             secret_key,
-            node_config: node_config.clone(),
+            node_config,
             uccb_config,
             request_responses,
             sender,
         })
     }
 
-    pub fn handle_broadcast(&mut self, from: PeerId, message: UCCBExternalMessage) -> Result<()> {
+    pub fn handle_broadcast(&mut self, _from: PeerId, _message: UCCBExternalMessage) -> Result<()> {
         debug!("uccb_handle_broadcast()");
         Ok(())
     }
 
-    pub fn handle_request(&mut self, from: PeerId, message: UCCBExternalMessage) -> Result<()> {
+    pub fn handle_request(
+        &mut self,
+        _from: PeerId,
+        _id: &str,
+        _message: UCCBExternalMessage,
+        _response_channel: ResponseChannel,
+    ) -> Result<()> {
         debug!("uccb_handle_request()");
         Ok(())
     }
 
     pub fn handle_request_failure(
         &mut self,
-        from: PeerId,
-        message: UCCBMessageFailure,
+        _from: PeerId,
+        _message: UCCBMessageFailure,
     ) -> Result<()> {
         debug!("uccb_handle_request_failure()");
         Ok(())
     }
 
-    pub fn handle_response(&mut self, from: PeerId, message: UCCBExternalMessage) -> Result<()> {
+    pub fn handle_response(&mut self, _from: PeerId, _message: UCCBExternalMessage) -> Result<()> {
         debug!("uccb_handle_response()");
         Ok(())
     }
 
-    pub fn handle_local(&mut self, idx: u64, message: UCCBInternalMessage) -> Result<()> {
+    pub fn handle_local(&mut self, _id: u64, _message: UCCBInternalMessage) -> Result<()> {
         debug!("uccb_handle_local()");
         Ok(())
     }

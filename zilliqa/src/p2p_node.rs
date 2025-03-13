@@ -40,7 +40,10 @@ use crate::{
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
     sync::SyncPeers,
-    uccb::{launcher::UCCBInputChannels, launcher::UCCBLauncher, launcher::UCCBRequestId},
+    uccb::{
+        launcher::UCCBInputChannels, launcher::UCCBLauncher, launcher::UCCBMessageFailure,
+        launcher::UCCBRequestId,
+    },
 };
 
 /// Messages are a tuple of the destination shard ID and the actual message.
@@ -343,7 +346,7 @@ impl P2pNode {
                             match message {
                                 ExternalMessage::UCCB(u) => {
                                     self.send_uccb(&topic_hash,
-                                                   |c| c.broadcasts.send(source, u))?;
+                                                   |c| c.broadcasts.send((source, u)))?;
                                 },
                                 ExternalMessage::Proposal(_) => {
                                     self.send_to(&topic_hash,
@@ -360,21 +363,16 @@ impl P2pNode {
                                     let to = self.peer_id;
                                     let (shard_id, _external_message) = request;
                                     debug!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "message received");
-                                    let _topic = if let ExternalMessage::UCCB(_) = _external_message {
-                                        Self::shard_id_to_topic(shard_id)
-                                    } else {
-                                        Self::shard_id_to_uccb_topic(shard_id)
-                                    };
                                     let _id = format!("{}", _request_id);
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
-                                            match message {
+                                            match _external_message {
                                                 ExternalMessage::UCCB(u) => {
                                                     self.send_uccb(&Self::shard_id_to_uccb_topic(shard_id).hash(),
                                                                    |c| c.requests.send((_source, _id, u, ResponseChannel::Remote(_channel))))?;
                                                 },
                                                 _ => {
-                                                    self.send_to(&Self::shard_id_to_topic(_topic).hash(),
+                                                    self.send_to(&Self::shard_id_to_topic(shard_id).hash(),
                                                                  |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
                                                 }
                                             }
@@ -412,8 +410,10 @@ impl P2pNode {
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
                                 // This gets sent to both uccb and the shard and they then need to work out if the request was one of theirs.
+                                // @todo sadly, the failure reason is not cloneable, so we don't pass it to UCCB.
                                 self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
-                                self.send_uccb(&Self::shard_id_to_uccb_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
+                                let uccb_error = UCCBMessageFailure { peer, request_id: UCCBRequestId::from_u64(request_id.to_u64()) };
+                                self.send_uccb(&Self::shard_id_to_uccb_topic(shard_id).hash(), |c| c.request_failures.send((peer, uccb_error)))?;
                             } else {
                                 return Err(anyhow!("request without id failed"));
                             }
