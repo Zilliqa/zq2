@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use crate::cfg::{NodeConfig, UCCBConfig};
 use crate::message::ExternalMessage;
+use crate::node::Node;
 use crate::p2p_node::{LocalMessageTuple, OutboundMessageTuple};
 use crate::uccb::launcher::{
     UCCBLocalMessageTuple, UCCBMessageFailure, UCCBOutboundMessageTuple, UCCBRequestId,
@@ -8,6 +9,7 @@ use crate::uccb::launcher::{
 };
 use crate::uccb::message::{UCCBExternalMessage, UCCBInternalMessage};
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
+use alloy::eips::BlockNumberOrTag;
 use anyhow::{Result, anyhow};
 use libp2p::{PeerId, futures::StreamExt, request_response::OutboundFailure};
 use opentelemetry::KeyValue;
@@ -53,6 +55,9 @@ pub struct UCCBNode {
     pub uccb_config: UCCBConfig,
     pub request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
     pub sender: UCCBMessageSender,
+    pub node: Arc<Mutex<Node>>,
+    /// The latest block we've requested to scan on our native chain.
+    pub latest_scanned_block: Option<u64>,
 }
 
 impl UCCBNode {
@@ -63,6 +68,7 @@ impl UCCBNode {
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
         request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
+        node: Arc<Mutex<Node>>,
     ) -> Result<Self> {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let sender = UCCBMessageSender {
@@ -83,6 +89,8 @@ impl UCCBNode {
             uccb_config,
             request_responses,
             sender,
+            node,
+            latest_scanned_block: None,
         })
     }
 
@@ -116,13 +124,35 @@ impl UCCBNode {
         Ok(())
     }
 
-    pub fn handle_local(&mut self, _id: u64, _message: UCCBInternalMessage) -> Result<()> {
-        debug!("uccb_handle_local()");
+    pub fn handle_local(&mut self, _id: u64, message: UCCBInternalMessage) -> Result<()> {
+        debug!("uccb_handle_local() {:?}", message);
         Ok(())
     }
 
     pub fn handle_tick(&mut self) -> Result<()> {
         debug!("uccb_tick()");
+        // Find the latest safe block.
+        if let Some(latest_finalized_block) = self
+            .node
+            .lock()
+            .unwrap()
+            .resolve_block_number(BlockNumberOrTag::Finalized)?
+        {
+            let latest_finalized_block_number = latest_finalized_block.number();
+            debug!(
+                "Latest finalised block is {}",
+                latest_finalized_block_number
+            );
+
+            if let Some(v) = self.latest_scanned_block {
+                // @todo - fix this! need to get the latest scanned block from the db so that
+                // we don't end up with gaps, and also need to deal with checkpoints.
+                ((v + 1)..(latest_finalized_block_number + 1)).for_each(|x| {
+                    debug!("Requesting scan for block {x}");
+                });
+            }
+            self.latest_scanned_block = Some(latest_finalized_block_number);
+        }
         Ok(())
     }
 }

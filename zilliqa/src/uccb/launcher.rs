@@ -6,6 +6,7 @@ use crate::message::ExternalMessage;
 use crate::p2p_node::{LocalMessageTuple, OutboundMessageTuple};
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
 use crate::{
+    node::Node,
     uccb::message::{UCCBExternalMessage, UCCBInternalMessage},
     uccb::node::UCCBNode,
 };
@@ -101,6 +102,7 @@ impl UCCBLauncher {
     pub async fn new(
         secret_key: SecretKey,
         config: NodeConfig,
+        host: Arc<Mutex<Node>>,
         outbound_message_sender: UnboundedSender<OutboundMessageTuple>,
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
@@ -125,6 +127,7 @@ impl UCCBLauncher {
             outbound_message_sender,
             local_outbound_message_sender,
             request_responses_sender,
+            host,
         )?));
 
         // We don't (yet!) have an API server.
