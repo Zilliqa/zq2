@@ -281,7 +281,6 @@ pub fn get_block_transaction_receipts_inner(
         return Err(anyhow!("Block not found"));
     };
 
-    let mut log_index = 0;
     let mut receipts = Vec::new();
 
     for (transaction_index, tx_hash) in block.transactions.iter().enumerate() {
@@ -314,6 +313,7 @@ pub fn get_block_transaction_receipts_inner(
                 Log::Evm(log) => log,
                 Log::Scilla(log) => log.into_evm(),
             };
+            let log_index = log.log_index.unwrap();
             let log = eth::Log::new(
                 log,
                 log_index,
@@ -322,7 +322,6 @@ pub fn get_block_transaction_receipts_inner(
                 block.number(),
                 block.hash(),
             );
-            log_index += 1;
             log.bloom(&mut logs_bloom);
             logs.push(log);
         }
@@ -495,8 +494,8 @@ pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block_hash: Hash) -> Result
                 Log::Evm(log) => log,
                 Log::Scilla(log) => log.into_evm(),
             })
-            .enumerate()
-            .map(|(log_index, log)| {
+            .map(|log| {
+                let log_index = log.log_index.unwrap();
                 let log = eth::Log::new(
                     log,
                     log_index,
@@ -679,18 +678,17 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
                     Log::Evm(log) => log,
                     Log::Scilla(log) => log.into_evm(),
                 })
-                .enumerate()
-                .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
+                .map(move |l| (l, txn_index, txn_hash, block_number, block_hash)))
         })
         .flatten_ok()
-        .filter_ok(|(log, _, _, _, _, _)| {
+        .filter_ok(|(log, _, _, _, _)| {
             params
                 .address
                 .as_ref()
                 .map(|a| a.contains(&log.address))
                 .unwrap_or(true)
         })
-        .filter_ok(|(log, _, _, _, _, _)| {
+        .filter_ok(|(log, _, _, _, _)| {
             params
                 .topics
                 .iter()
@@ -702,7 +700,8 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
 
     // Finally convert the iterator to our response format.
     let logs = logs.map(|l: Result<_>| {
-        let (log, log_index, txn_index, txn_hash, block_number, block_hash) = l?;
+        let (log, txn_index, txn_hash, block_number, block_hash) = l?;
+        let log_index = log.log_index.unwrap();
         Ok(eth::Log::new(
             log,
             log_index,
@@ -943,18 +942,7 @@ async fn subscribe(
                     continue;
                 }
 
-                // We track log index plus one because we have to increment before we use the log index, and log indexes are 0-based.
-                let mut log_index_plus_one: i64 = get_block_transaction_receipts_inner(
-                    &node.lock().unwrap(),
-                    receipt.block_hash,
-                )?
-                .iter()
-                .take_while(|x| x.transaction_index < receipt.index)
-                .map(|x| x.logs.len())
-                .sum::<usize>() as i64;
-
                 for log in receipt.logs.into_iter() {
-                    log_index_plus_one += 1;
                     // Only consider EVM logs
                     let Log::Evm(log) = log else {
                         continue;
@@ -996,7 +984,7 @@ async fn subscribe(
                         ),
                         transaction_hash: Some(receipt.tx_hash.into()),
                         transaction_index: Some(transaction_index as u64),
-                        log_index: Some((log_index_plus_one - 1) as u64),
+                        log_index: Some(log.log_index.unwrap()),
                         removed: false,
                     };
                     let _ = sink.send(SubscriptionMessage::from_json(&log)?).await;
