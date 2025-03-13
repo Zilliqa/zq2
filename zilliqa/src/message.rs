@@ -367,6 +367,7 @@ impl Display for ExternalMessage {
                 }
             },
             ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
+            ExternalMessage::UCCB(u) => write!(f, "UCCB {:?}", u),
         }
     }
 }
@@ -404,6 +405,9 @@ impl Display for InternalMessage {
             InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
             InternalMessage::ExportBlockCheckpoint(block, ..) => {
                 write!(f, "ExportCheckpoint({})", block.number())
+            }
+            InternalMessage::UCCB(u) => {
+                write!(f, "UCCB({:?})", u)
             }
         }
     }

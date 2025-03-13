@@ -53,6 +53,12 @@ use crate::{
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct RequestId(u64);
 
+impl RequestId {
+    pub fn to_u64(&self) -> u64 {
+        return self.0;
+    }
+}
+
 #[derive(Debug)]
 pub struct OutgoingMessageFailure {
     pub peer: PeerId,
@@ -386,6 +392,9 @@ impl Node {
                 warn!(
                     "{message} type messages should be handled by the coordinator, not forwarded to a node.",
                 );
+            }
+            InternalMessage::UCCB(_) => {
+                warn!("{message} type messages should be handled by UCCB, not forwarded to zq2.");
             }
         }
         Ok(())

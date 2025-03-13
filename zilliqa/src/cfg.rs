@@ -845,7 +845,7 @@ pub struct UCCBConfig {
     pub chain_gateway: Address,
 
     /// Starting block.
-    pub start_block: u64,
+    pub start_block: Option<u64>,
 }
 
 #[cfg(test)]

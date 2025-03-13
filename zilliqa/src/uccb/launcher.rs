@@ -2,6 +2,8 @@
 //! UCCB node.
 
 use crate::cfg::NodeConfig;
+use crate::message::ExternalMessage;
+use crate::p2p_node::{LocalMessageTuple, OutboundMessageTuple};
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
 use crate::{
     uccb::message::{UCCBExternalMessage, UCCBInternalMessage},
@@ -34,6 +36,12 @@ use tracing::*;
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct UCCBRequestId(u64);
 
+impl UCCBRequestId {
+    pub fn from_u64(u: u64) -> Self {
+        Self(u)
+    }
+}
+
 pub type UCCBOutboundMessageTuple = (Option<(PeerId, UCCBRequestId)>, u64, UCCBExternalMessage);
 pub type UCCBLocalMessageTuple = (u64, u64, UCCBInternalMessage);
 
@@ -41,7 +49,6 @@ pub type UCCBLocalMessageTuple = (u64, u64, UCCBInternalMessage);
 pub struct UCCBMessageFailure {
     pub peer: PeerId,
     pub request_id: UCCBRequestId,
-    pub error: OutboundFailure,
 }
 
 pub struct UCCBLauncher {
@@ -108,15 +115,13 @@ impl UCCBLauncher {
         let (request_failures_sender, request_failures_receiver) = sender_receiver();
         let (responses_sender, responses_receiver) = sender_receiver();
         let (local_messages_sender, local_messages_receiver) = sender_receiver();
-        let (tick_receiver_sender, tick_receiver_receiver) = sender_receiver();
+        let (_tick_receiver_sender, tick_receiver_receiver) = sender_receiver();
 
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let peers: Arc<SyncPeers> = Arc::new(SyncPeers::new(peer_id));
         let node = Arc::new(Mutex::new(UCCBNode::new(
             secret_key,
-            config.uccb.ok_or(anyhow!(
-                "No UCCB configuration when instantiating UCCB launcher"
-            ))?,
+            config.clone(),
             outbound_message_sender,
             local_outbound_message_sender,
             request_responses_sender,
@@ -166,7 +171,7 @@ impl UCCBLauncher {
             vec![
                 KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
                 KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),
-                KeyValue::new(MESSAGING_DESTINATION_NAME, name),
+                KeyValue::new(MESSAGING_DESTINATION_NAME, name.to_string()),
             ]
         }
 
@@ -185,10 +190,10 @@ impl UCCBLauncher {
                         &attributes);
                 }
                 message = self.requests.next() => {
-                    let (source, message) = message.expect("uccb request message stream should be infinite");
+                    let (source, id, message, response_channel) = message.expect("uccb request message stream should be infinite");
                     let start = SystemTime::now();
                     let mut attributes = get_attributes("request");
-                    if let Err(e) = self.node.lock().unwrap().handle_request(source, message) {
+                    if let Err(e) = self.node.lock().unwrap().handle_request(source, &id, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process request message: {e}");
                     }
@@ -233,9 +238,9 @@ impl UCCBLauncher {
                         &attributes);
                 },
                 () = &mut tick_time => {
-                    let mut attributes = get_attributes("tick");
+                    let attributes = get_attributes("tick");
                     let start = SystemTime::now();
-                    self.node.lock().unwrap().handle_tick();
+                    let _ = self.node.lock().unwrap().handle_tick();
                     tick_time.as_mut().reset(Instant::now() + Duration::from_millis(1000));
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),

@@ -639,6 +639,12 @@ impl Setup {
             };
             // @todo should pass this in!
             let port = self.get_json_rpc_port(*node_index as u16, false);
+            let uccb_data = self.get_uccb_data()?;
+            let uccb_config = cfg::UCCBConfig {
+                networks: vec![],
+                chain_gateway: uccb_data.chain_gateway_address,
+                start_block: None,
+            };
             let mut node_config = cfg::NodeConfig {
                 api_servers: vec![ApiServer {
                     port,
@@ -684,6 +690,7 @@ impl Setup {
                 max_rpc_response_size: max_rpc_response_size_default(),
                 prune_interval: cfg::u64_max(),
                 respect_shard_ids_in_checkpoints: true,
+                uccb: Some(uccb_config),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 
