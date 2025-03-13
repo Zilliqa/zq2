@@ -22,6 +22,7 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
 };
+use std::sync::Mutex;
 use tokio::{
     select,
     signal::{self, unix::SignalKind},
@@ -37,6 +38,7 @@ use crate::{
     crypto::SecretKey,
     db,
     message::{ExternalMessage, InternalMessage},
+    node::Node,
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
     sync::SyncPeers,
@@ -207,7 +209,8 @@ impl P2pNode {
         }
     }
 
-    pub async fn add_uccb_node(&mut self, config: NodeConfig) -> Result<()> {
+    pub async fn add_uccb_node(&mut self, node: Arc<Mutex<Node>>) -> Result<()> {
+        let config = node.lock().unwrap().config.clone();
         let shard_id = config.eth_chain_id;
         let topic = Self::shard_id_to_uccb_topic(shard_id);
         if config.uccb.is_none() {
@@ -223,6 +226,7 @@ impl P2pNode {
         let (mut node, input_channels, peers) = UCCBLauncher::new(
             self.secret_key,
             config,
+            node,
             self.outbound_message_sender.clone(),
             self.local_message_sender.clone(),
             self.request_responses_sender.clone(),
@@ -236,12 +240,12 @@ impl P2pNode {
         Ok(())
     }
 
-    pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
+    pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<Option<Arc<Mutex<Node>>>> {
         let shard_id = config.eth_chain_id;
         let topic = Self::shard_id_to_topic(shard_id);
         if self.shard_nodes.contains_key(&topic.hash()) {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
-            return Ok(());
+            return Ok(None);
         }
         let (mut node, input_channels, peers) = NodeLauncher::new(
             self.secret_key,
@@ -252,12 +256,13 @@ impl P2pNode {
             self.peer_num.clone(),
         )
         .await?;
+        let returned_node = node.node.clone();
         self.shard_peers.insert(topic.hash(), peers);
         self.shard_nodes.insert(topic.hash(), input_channels);
         self.shard_threads
             .spawn(async move { node.start_shard_node().await });
         self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
-        Ok(())
+        Ok(Some(returned_node))
     }
 
     fn send_uccb<T: Send + Sync + 'static>(

@@ -118,11 +118,14 @@ async fn main() -> Result<()> {
 
     let mut node = P2pNode::new(args.secret_key, config.clone())?;
 
-    node.add_shard_node(config.nodes.first().unwrap().clone())
+    let inner_node = node
+        .add_shard_node(config.nodes.first().unwrap().clone())
         .await?;
     // Add the uccb node.
-    node.add_uccb_node(config.nodes.first().unwrap().clone())
-        .await?;
+    node.add_uccb_node(inner_node.ok_or(anyhow!(
+        "Attempt to start zq2 node failed - cannot start uccb node for a non-existent zq2 node"
+    ))?)
+    .await?;
 
     node.start().await
 }
