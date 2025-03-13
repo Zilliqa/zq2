@@ -120,6 +120,9 @@ async fn main() -> Result<()> {
 
     node.add_shard_node(config.nodes.first().unwrap().clone())
         .await?;
+    // Add the uccb node.
+    node.add_uccb_node(config.nodes.first().unwrap().clone())
+        .await?;
 
     node.start().await
 }

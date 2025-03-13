@@ -210,6 +210,10 @@ impl P2pNode {
     pub async fn add_uccb_node(&mut self, config: NodeConfig) -> Result<()> {
         let shard_id = config.eth_chain_id;
         let topic = Self::shard_id_to_uccb_topic(shard_id);
+        if config.uccb.is_none() {
+            // No node configured.
+            return Ok(());
+        }
         if self.uccb_nodes.contains_key(&topic.hash()) {
             info!(
                 "Attempting to add a UCCB listener for shard {shard_id} which we're already running. Ignoring..."
