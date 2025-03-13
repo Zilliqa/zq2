@@ -156,7 +156,11 @@ async fn execute_install_or_upgrade(
 }
 
 async fn post_install(chain: ChainInstance) -> Result<()> {
-    if chain.chain()? == Chain::Zq2ProtoTestnet || chain.chain()? == Chain::Zq2ProtoMainnet {
+    if chain.chain()? == Chain::Zq2ProtoTestnet
+        || chain.chain()? == Chain::Zq2ProtoMainnet
+        || chain.chain()? == Chain::Zq2Testnet
+        || chain.chain()? == Chain::Zq2Mainnet
+    {
         log::info!("Skipping post install actions for chain: {}", chain.name());
         return anyhow::Ok(());
     }
