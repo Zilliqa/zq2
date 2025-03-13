@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use alloy::primitives::Address;
 use anyhow::Result;
 use jsonrpsee::{RpcModule, types::Params};
 
@@ -58,8 +59,41 @@ fn txpool_content(
 }
 
 /// txpool_contentFrom
-fn txpool_content_from(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+fn txpool_content_from(
+    params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<types::txpool::TxPoolContent> {
+    let address: super::zilliqa::ZilAddress = params.one()?;
+    let address: Address = address.into();
+    let node = node.lock().unwrap();
+    let content = node.txpool_content()?;
+
+    let mut result = types::txpool::TxPoolContent {
+        pending: HashMap::new(),
+        queued: HashMap::new(),
+    };
+
+    for item in content.pending {
+        if item.signer == address {
+            let txns = result.pending.entry(item.signer).or_default();
+            txns.insert(
+                item.tx.nonce().unwrap(),
+                Transaction::new(item.clone(), None),
+            );
+        }
+    }
+
+    for item in content.queued {
+        if item.signer == address {
+            let txns = result.queued.entry(item.signer).or_default();
+            txns.insert(
+                item.tx.nonce().unwrap(),
+                Transaction::new(item.clone(), None),
+            );
+        }
+    }
+
+    Ok(result)
 }
 
 /// txpool_inspect
