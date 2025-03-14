@@ -661,6 +661,15 @@ impl Consensus {
             return Ok(None);
         }
 
+        if !during_sync && block.view() <= head_block.header.view {
+            warn!(
+                "Rejecting block - view not greater than our current head block! {} vs {}",
+                block.view(),
+                head_block.header.view
+            );
+            return Ok(None);
+        }
+
         if block.gas_limit() > self.config.consensus.eth_block_gas_limit
             || block.gas_used() > block.gas_limit()
         {
