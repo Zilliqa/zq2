@@ -268,13 +268,20 @@ impl Sync {
             SyncState::Phase3 if self.in_pipeline == 0 => {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
                 if self.db.contains_canonical_block(&ancestor_hash)? {
+                    // inject more recent proposals
+                    let highest_number = self.db.get_highest_canonical_block_number()?.unwrap();
+                    let proposals = self
+                        .recent_proposals
+                        .drain(..)
+                        .filter(|b| b.number() > highest_number)
+                        .collect_vec();
+
                     tracing::info!(
-                        "sync::DoSync : finishing {} blocks from {}",
-                        self.recent_proposals.len(),
-                        self.peer_id,
+                        "sync::DoSync : finishing {} blocks from {}..",
+                        proposals.len(),
+                        highest_number,
                     );
-                    // inject the proposals
-                    let proposals = self.recent_proposals.drain(..).collect_vec();
+
                     self.inject_proposals(proposals)?;
                 }
                 self.db.empty_sync_metadata()?;
