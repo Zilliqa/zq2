@@ -253,7 +253,7 @@ impl P2pNode {
                         }
                         // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
-                            info!(%peer_id, ?info, "identify event");
+                            debug!(%peer_id, ?info, "identify event");
                             if info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
                                 for addr in info.listen_addrs {
                                     // this will trigger the `NewExternalAddrOfPeer` event below
@@ -262,26 +262,26 @@ impl P2pNode {
                             }
                         }
                         SwarmEvent::ExternalAddrExpired{address} => {
-                            info!(%address, "expired");
+                            debug!(%address, "expired");
                             self.swarm.remove_external_address(&address);
                         }
                         SwarmEvent::NewExternalAddrOfPeer{peer_id, address} => {
-                            info!(%peer_id, %address, "new peer");
+                            debug!(%peer_id, %address, "new peer");
                             self.swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
                             self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         }
                         SwarmEvent::ExternalAddrConfirmed{address} => {
-                            info!(%address, "confirmed");
+                            debug!(%address, "confirmed");
                             self.swarm.add_external_address(address);
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
-                            info!(%peer_id, "subscribed");
+                            debug!(%peer_id, %topic, "subscribed");
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.add_peer(peer_id);
                             }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) => {
-                            info!(%peer_id, "unsubscribed");
+                            debug!(%peer_id, %topic, "unsubscribed");
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.remove_peer(peer_id);
                             }
