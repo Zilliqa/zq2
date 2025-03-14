@@ -10,4 +10,6 @@ pub enum UCCBExternalMessage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum UCCBInternalMessage {
     HelloInternal,
+    /// Request a scan for this block on our chain.
+    RequestScan(u64),
 }
