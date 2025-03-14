@@ -907,7 +907,8 @@ impl Sync {
                 tracing::info!(?range, from = %peer_info.peer_id,
                     "sync::MissingMetadata : requesting ({num}/{num_peers})",
                 );
-                offset += self.max_batch_size as u64;
+                let count = range.count();
+                offset = offset.saturating_add(count as u64);
 
                 let request_id = self
                     .message_sender
