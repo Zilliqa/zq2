@@ -34,4 +34,4 @@ Returns the number of peers currently connected to the client.
 | `id`      | string | Required | `"1"`             |
 | `jsonrpc` | string | Required | `"2.0"`           |
 | `method`  | string | Required | `"net_peerCount"` |
-| `params`  | array  | Requred  | can be anything   |
+| `params`  | array  | Required | can be anything   |
