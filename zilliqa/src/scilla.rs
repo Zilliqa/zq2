@@ -248,7 +248,7 @@ impl Scilla {
                 .build()
                 .unwrap();
             let client = HttpClientBuilder::default()
-                .request_timeout(Duration::from_secs(5))
+                .request_timeout(Duration::from_secs(120))
                 .build(format!("{address}/run"))
                 .unwrap();
 
@@ -900,9 +900,12 @@ impl ActiveCall {
         name: String,
         indices: Vec<Vec<u8>>,
     ) -> Result<Option<ProtoScillaVal>> {
-        Ok(self
+        trace!(sender = %self.sender, name, indices_len = indices.len(), "fetch state value");
+        let result = self
             .fetch_value_inner(self.sender, name, indices)?
-            .map(|(v, _)| v))
+            .map(|(v, _)| v);
+        trace!(result_is_some = result.is_some(), "value fetched");
+        Ok(result)
     }
 
     fn fetch_external_state_value(
@@ -911,6 +914,7 @@ impl ActiveCall {
         name: String,
         indices: Vec<Vec<u8>>,
     ) -> Result<Option<(ProtoScillaVal, String)>> {
+        trace!(sender = %self.sender, %addr, name, indices_len = indices.len(), "fetch external state value");
         fn scilla_val(b: Vec<u8>) -> ProtoScillaVal {
             ProtoScillaVal {
                 val_type: Some(ValType::Bval(b)),
@@ -918,7 +922,7 @@ impl ActiveCall {
         }
 
         let account = self.state.load_account(addr)?;
-        match name.as_str() {
+        let result = match name.as_str() {
             "_balance" => {
                 let balance = ZilAmount::from_amount(account.account.balance);
                 let val = scilla_val(format!("\"{balance}\"").into_bytes());
@@ -948,7 +952,10 @@ impl ActiveCall {
                 Ok(Some((val, "ByStr32".to_owned())))
             }
             _ => self.fetch_value_inner(addr, name.clone(), indices.clone()),
-        }
+        }?;
+        trace!(result_is_some = result.is_some(), "value fetched");
+
+        Ok(result)
     }
 
     fn update_state_value(
@@ -958,6 +965,7 @@ impl ActiveCall {
         ignore_value: bool,
         value: ProtoScillaVal,
     ) -> Result<()> {
+        trace!(sender = %self.sender, name, indices_len = indices.len(), ignore_value, "update state value");
         let (_, depth) = self.state.load_var_info(self.sender, &name)?;
         let depth = depth as usize;
 
@@ -1014,11 +1022,14 @@ impl ActiveCall {
         }
         self.state.touch(self.sender);
 
+        trace!("value updated");
+
         Ok(())
     }
 
     fn fetch_blockchain_info(&self, name: String, args: String) -> Result<(bool, String)> {
-        match name.as_str() {
+        trace!(sender = %self.sender, name, args, "fetch blockchain value");
+        let (exists, value) = match name.as_str() {
             "CHAINID" => Ok((true, self.state.zil_chain_id().to_string())),
             "BLOCKNUMBER" => {
                 if self.scilla_block_number_returns_current_block {
@@ -1071,6 +1082,8 @@ impl ActiveCall {
             _ => Err(anyhow!(
                 "fetch_blockchain_info: `{name}` not implemented yet."
             )),
-        }
+        }?;
+        trace!(exists, value, "info fetched");
+        Ok((exists, value))
     }
 }
