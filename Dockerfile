@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM ubuntu:22.04
 
 RUN apt update -y && \
-    apt install -y build-essential libev-dev libgmp-dev
+    apt install -y build-essential libev-dev libgmp-dev curl
 
 COPY --chmod=777 ./infra/run.sh /run.sh
 COPY --from=builder /zilliqa/build/zilliqa /zilliqa
