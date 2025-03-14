@@ -53,14 +53,14 @@ pub async fn init_chain(setup: &setup::Setup) -> Result<()> {
         " validator_manager = {:x} , chain_gateway = {:x}",
         uccb_data.validator_manager_address, uccb_data.chain_gateway_address
     );
-    let vm_deployed = provider
+    let vm_deployed = !provider
         .get_code_at(uccb_data.validator_manager_address)
-        .await
-        .is_ok();
-    let cg_deployed = provider
+        .await?
+        .is_empty();
+    let cg_deployed = !provider
         .get_code_at(uccb_data.chain_gateway_address)
-        .await
-        .is_ok();
+        .await?
+        .is_empty();
     match (vm_deployed, cg_deployed) {
         (false, false) => {
             println!("Deploying UCCB contracts .. ");

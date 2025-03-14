@@ -1,8 +1,9 @@
 #![allow(unused_imports)]
 use crate::cfg::{NodeConfig, UCCBConfig};
-use crate::message::ExternalMessage;
+use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::Node;
 use crate::p2p_node::{LocalMessageTuple, OutboundMessageTuple};
+use crate::transaction::{EvmLog, Log, TransactionReceipt};
 use crate::uccb::launcher::{
     UCCBLocalMessageTuple, UCCBMessageFailure, UCCBOutboundMessageTuple, UCCBRequestId,
     UCCBResponseChannel,
@@ -10,6 +11,7 @@ use crate::uccb::launcher::{
 use crate::uccb::message::{UCCBExternalMessage, UCCBInternalMessage};
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
 use alloy::eips::BlockNumberOrTag;
+use alloy::sol_types::SolEvent;
 use anyhow::{Result, anyhow};
 use libp2p::{PeerId, futures::StreamExt, request_response::OutboundFailure};
 use opentelemetry::KeyValue;
@@ -46,8 +48,13 @@ pub struct UCCBMessageSender {
     pub request_id: UCCBRequestId,
 }
 
-// TBD.
-impl UCCBMessageSender {}
+impl UCCBMessageSender {
+    pub fn send_local_message(&self, msg: UCCBInternalMessage) -> Result<()> {
+        self.local_channel
+            .send((self.our_shard, self.our_shard, InternalMessage::UCCB(msg)))?;
+        Ok(())
+    }
+}
 
 pub struct UCCBNode {
     pub secret_key: SecretKey,
@@ -58,6 +65,19 @@ pub struct UCCBNode {
     pub node: Arc<Mutex<Node>>,
     /// The latest block we've requested to scan on our native chain.
     pub latest_scanned_block: Option<u64>,
+}
+
+pub async fn handle_local(
+    node: Arc<Mutex<UCCBNode>>,
+    _id: u64,
+    message: UCCBInternalMessage,
+) -> Result<()> {
+    debug!("uccb_handle_local(2): {:?}", message);
+    match message {
+        UCCBInternalMessage::RequestScan(blk) => node.lock().unwrap().scan_block(blk)?,
+        _ => (),
+    }
+    Ok(())
 }
 
 impl UCCBNode {
@@ -124,8 +144,53 @@ impl UCCBNode {
         Ok(())
     }
 
-    pub fn handle_local(&mut self, _id: u64, message: UCCBInternalMessage) -> Result<()> {
-        debug!("uccb_handle_local() {:?}", message);
+    pub fn scan_block(&mut self, blk: u64) -> Result<()> {
+        // Do we have the block?
+        // Slightly odd, but limits the locking scope to what we need.
+        let chain_gateway_address = self.uccb_config.chain_gateway;
+        let receipts = {
+            let zq2_node = self.node.lock().unwrap();
+            let block = zq2_node.get_block(blk)?.ok_or(anyhow!(
+                "TODO: Attempt to scan a block {blk} that we do not have!"
+            ))?;
+            // Do we have the receipts?
+            zq2_node.get_transaction_receipts_in_block(block.hash())?
+        };
+        // Now look through the receipts
+        let to_relay: Vec<EvmLog> = receipts
+            .iter()
+            .filter_map(|x| {
+                // Unsuccessful transactions emit no relayer events
+                if !x.success {
+                    return None;
+                }
+                let valid_logs = x
+                    .logs
+                    .iter()
+                    .filter_map(|l| match l {
+                        Log::Evm(l) => Some(l),
+                        _ => None,
+                    })
+                    .filter(|e| e.address == chain_gateway_address)
+                    .filter(|e| {
+                        // First topic should be the relayed topic
+                        if let Some(v) = e.topics.get(0) {
+                            *v == crate::uccb::contracts::IRELAYER_EVENTS::Relayed::SIGNATURE_HASH
+                        } else {
+                            false
+                        }
+                    })
+                    .cloned()
+                    .collect::<Vec<EvmLog>>();
+                if valid_logs.is_empty() {
+                    None
+                } else {
+                    Some(valid_logs)
+                }
+            })
+            .flatten()
+            .collect();
+        debug!("scan_block: Found valid logs - {to_relay:?}");
         Ok(())
     }
 
@@ -149,6 +214,12 @@ impl UCCBNode {
                 // we don't end up with gaps, and also need to deal with checkpoints.
                 ((v + 1)..(latest_finalized_block_number + 1)).for_each(|x| {
                     debug!("Requesting scan for block {x}");
+                    if let Err(e) = self
+                        .sender
+                        .send_local_message(UCCBInternalMessage::RequestScan(x))
+                    {
+                        warn!("Failed to request scan for block {x} - {e}");
+                    };
                 });
             }
             self.latest_scanned_block = Some(latest_finalized_block_number);

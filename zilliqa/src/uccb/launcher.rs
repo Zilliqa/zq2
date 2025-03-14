@@ -232,7 +232,7 @@ impl UCCBLauncher {
                     let (source, message) = message.expect("uccb responses message stream should be infinite");
                     let start = SystemTime::now();
                     let mut attributes = get_attributes("local");
-                    if let Err(e) = self.node.lock().unwrap().handle_local(source, message) {
+                    if let Err(e) = crate::uccb::node::handle_local(self.node.clone(), source, message).await {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process local message: {e}");
                     }
