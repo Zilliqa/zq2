@@ -244,16 +244,15 @@ impl Sync {
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
-                // Guarantee that active-sync only requests missing blocks - https://github.com/Zilliqa/zq2/issues/2520
-                let meta = self.recent_proposals.front().unwrap().header;
+                let meta = self.recent_proposals.back().unwrap().header;
                 let parent_hash = meta.qc.block_hash;
                 // No parent block, trigger sync
                 if !self.db.contains_canonical_block(&parent_hash)? {
                     self.active_sync_count = self.active_sync_count.saturating_add(1);
-                    tracing::debug!("sync::DoSync : syncing from {parent_hash}",);
-                    self.update_started_at()?;
+                    tracing::debug!(from_hash = %parent_hash, "sync::DoSync : syncing",);
                     // Ensure started_at_block_number is set before running this.
                     // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
+                    self.update_started_at()?;
                     self.request_missing_metadata(Some(meta))?;
                 }
             }
@@ -271,17 +270,14 @@ impl Sync {
                 if self.db.contains_canonical_block(&ancestor_hash)? {
                     // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
                     let proposals = self.recent_proposals.drain(..).collect_vec();
-
-                    let range = std::ops::RangeInclusive::new(
-                        proposals.first().as_ref().unwrap().number(),
-                        proposals.last().as_ref().unwrap().number(),
-                    );
-
-                    tracing::info!(?range, "sync::DoSync : finishing");
-
+                    let range = proposals.first().as_ref().unwrap().number()
+                        ..=proposals.last().as_ref().unwrap().number();
+                    tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
                     self.inject_proposals(proposals)?;
                 }
+                // delay-slot
                 self.db.empty_sync_metadata()?;
+                self.recent_proposals.pop_front(); // on restarts, use a subsequent block
                 self.state = SyncState::Phase0;
             }
             // Retry to fix sync issues e.g. peers that are now offline
@@ -957,7 +953,7 @@ impl Sync {
         if let Some((when, injected, prev_highest)) = self.inject_at {
             let diff = injected - self.in_pipeline;
             let rate = diff as f32 / when.elapsed().as_secs_f32();
-            tracing::debug!("sync::InjectProposals : synced {rate} block/s");
+            tracing::debug!(%rate, "sync::InjectProposals : injected");
             // Detect if node is stuck i.e. active-sync is not making progress
             if highest_number == prev_highest
                 && proposals
