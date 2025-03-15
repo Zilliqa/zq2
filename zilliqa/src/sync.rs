@@ -244,15 +244,16 @@ impl Sync {
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
-                let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
+                // Guarantee that active-sync only requests missing blocks - https://github.com/Zilliqa/zq2/issues/2520
+                let meta = self.recent_proposals.front().unwrap().header;
+                let parent_hash = meta.qc.block_hash;
+                // No parent block, trigger sync
                 if !self.db.contains_canonical_block(&parent_hash)? {
                     self.active_sync_count = self.active_sync_count.saturating_add(1);
-                    // No parent block, trigger sync
                     tracing::debug!("sync::DoSync : syncing from {parent_hash}",);
                     self.update_started_at()?;
                     // Ensure started_at_block_number is set before running this.
                     // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
-                    let meta = self.recent_proposals.back().unwrap().header;
                     self.request_missing_metadata(Some(meta))?;
                 }
             }
@@ -268,19 +269,15 @@ impl Sync {
             SyncState::Phase3 if self.in_pipeline == 0 => {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
                 if self.db.contains_canonical_block(&ancestor_hash)? {
-                    // inject more recent proposals
-                    let highest_number = self.db.get_highest_canonical_block_number()?.unwrap();
-                    let proposals = self
-                        .recent_proposals
-                        .drain(..)
-                        .filter(|b| b.number() > highest_number)
-                        .collect_vec();
+                    // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
+                    let proposals = self.recent_proposals.drain(..).collect_vec();
 
-                    tracing::info!(
-                        "sync::DoSync : finishing {} blocks from {}..",
-                        proposals.len(),
-                        highest_number,
+                    let range = std::ops::RangeInclusive::new(
+                        proposals.first().as_ref().unwrap().number(),
+                        proposals.last().as_ref().unwrap().number(),
                     );
+
+                    tracing::info!(?range, "sync::DoSync : finishing");
 
                     self.inject_proposals(proposals)?;
                 }
