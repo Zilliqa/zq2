@@ -1006,6 +1006,12 @@ impl Sync {
     pub fn mark_received_proposal(&mut self, number: u64) -> Result<()> {
         tracing::trace!(%number, "sync::MarkReceivedProposal : received");
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
+        // speed-up block transfers, w/o waiting for proposals
+        if Self::DO_SPECULATIVE {
+            if let SyncState::Phase2(_) = self.state {
+                self.request_missing_blocks()?;
+            }
+        }
         Ok(())
     }
 
