@@ -269,7 +269,12 @@ impl Sync {
                 let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
                 if self.db.contains_canonical_block(&ancestor_hash)? {
                     // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
-                    let proposals = self.recent_proposals.drain(..).collect_vec();
+                    let highest_block = self.db.get_highest_canonical_block_number()?.unwrap();
+                    let proposals = self
+                        .recent_proposals
+                        .drain(..)
+                        .filter(|b| b.number() > highest_block)
+                        .collect_vec();
                     let range = proposals.first().as_ref().unwrap().number()
                         ..=proposals.last().as_ref().unwrap().number();
                     tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
@@ -277,7 +282,6 @@ impl Sync {
                 }
                 // delay-slot
                 self.db.empty_sync_metadata()?;
-                self.recent_proposals.pop_front(); // on restarts, use a subsequent block
                 self.state = SyncState::Phase0;
             }
             // Retry to fix sync issues e.g. peers that are now offline
