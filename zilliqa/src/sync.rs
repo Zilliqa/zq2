@@ -282,6 +282,10 @@ impl Sync {
         Ok(())
     }
 
+    /// Injects the recent proposals
+    ///
+    /// The recent proposals have been buffering while active-sync is in process to 99%.
+    /// This injects the last 1% to finish it up.
     fn inject_recent_blocks(&mut self) -> Result<()> {
         let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
         if self.db.contains_canonical_block(&ancestor_hash)? {
@@ -1027,8 +1031,12 @@ impl Sync {
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
         // speed-up block transfers, w/o waiting for proposals
         if Self::DO_SPECULATIVE {
-            if let SyncState::Phase2(_) = self.state {
-                self.request_missing_blocks()?;
+            match self.state {
+                SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
+                    self.request_missing_blocks()?
+                }
+                SyncState::Phase3 if self.in_pipeline == 0 => self.inject_recent_blocks()?,
+                _ => {}
             }
         }
         Ok(())
