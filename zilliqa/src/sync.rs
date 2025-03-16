@@ -287,34 +287,38 @@ impl Sync {
     /// The recent proposals have been buffering while active-sync is in process to 99%.
     /// This injects the last 1% to finish it up.
     fn inject_recent_blocks(&mut self) -> Result<()> {
-        let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
-        if self.db.contains_canonical_block(&ancestor_hash)? {
-            // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
-            let highest_block = self.db.get_highest_canonical_block_number()?.unwrap();
-            let mut hash = self.recent_proposals.back().unwrap().hash();
-            let proposals = self
-                .recent_proposals
-                .drain(..)
-                .rev()
-                .filter(|b| {
-                    // filter the chain
-                    if hash == b.hash() {
-                        hash = b.header.qc.block_hash;
-                        b.number() > highest_block
-                    } else {
-                        false
-                    }
-                })
-                .collect_vec()
-                .into_iter()
-                .rev()
-                .collect_vec();
-            let range = proposals.first().as_ref().unwrap().number()
-                ..=proposals.last().as_ref().unwrap().number();
-            tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
-            self.inject_proposals(proposals)?;
+        if !matches!(self.state, SyncState::Phase3) {
+            anyhow::bail!("sync::RecentBlocks : invalid state");
         }
-        // delay-slot
+        if let Some(block) = self.recent_proposals.front() {
+            let ancestor_hash = block.header.qc.block_hash;
+            if self.db.contains_canonical_block(&ancestor_hash)? {
+                // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
+                let highest_block = self.db.get_highest_canonical_block_number()?.unwrap();
+                let mut hash = self.recent_proposals.back().unwrap().hash();
+                let proposals = self
+                    .recent_proposals
+                    .drain(..)
+                    .rev()
+                    .filter(|b| {
+                        // filter the chain
+                        if hash == b.hash() {
+                            hash = b.header.qc.block_hash;
+                            b.number() > highest_block
+                        } else {
+                            false
+                        }
+                    })
+                    .collect_vec()
+                    .into_iter()
+                    .rev()
+                    .collect_vec();
+                let range = proposals.first().as_ref().unwrap().number()
+                    ..=proposals.last().as_ref().unwrap().number();
+                tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
+                self.inject_proposals(proposals)?;
+            }
+        }
         self.db.empty_sync_metadata()?;
         self.state = SyncState::Phase0;
         Ok(())
