@@ -266,23 +266,7 @@ impl Sync {
             }
             // Wait till 99% synced, zip it up!
             SyncState::Phase3 if self.in_pipeline == 0 => {
-                let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
-                if self.db.contains_canonical_block(&ancestor_hash)? {
-                    // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
-                    let highest_block = self.db.get_highest_canonical_block_number()?.unwrap();
-                    let proposals = self
-                        .recent_proposals
-                        .drain(..)
-                        .filter(|b| b.number() > highest_block)
-                        .collect_vec();
-                    let range = proposals.first().as_ref().unwrap().number()
-                        ..=proposals.last().as_ref().unwrap().number();
-                    tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
-                    self.inject_proposals(proposals)?;
-                }
-                // delay-slot
-                self.db.empty_sync_metadata()?;
-                self.state = SyncState::Phase0;
+                self.inject_recent_blocks()?;
             }
             // Retry to fix sync issues e.g. peers that are now offline
             SyncState::Retry1 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
@@ -295,6 +279,40 @@ impl Sync {
             }
         }
 
+        Ok(())
+    }
+
+    fn inject_recent_blocks(&mut self) -> Result<()> {
+        let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
+        if self.db.contains_canonical_block(&ancestor_hash)? {
+            // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
+            let highest_block = self.db.get_highest_canonical_block_number()?.unwrap();
+            let mut hash = self.recent_proposals.back().unwrap().hash();
+            let proposals = self
+                .recent_proposals
+                .drain(..)
+                .rev()
+                .filter(|b| {
+                    // filter the chain
+                    if hash == b.hash() {
+                        hash = b.header.qc.block_hash;
+                        b.number() > highest_block
+                    } else {
+                        false
+                    }
+                })
+                .collect_vec()
+                .into_iter()
+                .rev()
+                .collect_vec();
+            let range = proposals.first().as_ref().unwrap().number()
+                ..=proposals.last().as_ref().unwrap().number();
+            tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
+            self.inject_proposals(proposals)?;
+        }
+        // delay-slot
+        self.db.empty_sync_metadata()?;
+        self.state = SyncState::Phase0;
         Ok(())
     }
 
@@ -311,6 +329,7 @@ impl Sync {
             )?
             .expect("missing canonical block");
         self.started_at = highest_block.number();
+        self.checkpoint_at = highest_block.number();
         Ok(())
     }
 
