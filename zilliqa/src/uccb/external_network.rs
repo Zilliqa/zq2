@@ -4,6 +4,7 @@ use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::Node;
 use crate::p2p_node::{LocalMessageTuple, OutboundMessageTuple};
 use crate::transaction::{EvmLog, Log, TransactionReceipt};
+use crate::uccb::contracts::{IDISPATCHER_EVENTS, IRELAYER_EVENTS};
 use crate::uccb::launcher::{
     UCCBLocalMessageTuple, UCCBMessageFailure, UCCBOutboundMessageTuple, UCCBRequestId,
     UCCBResponseChannel,
@@ -79,9 +80,37 @@ impl ExternalNetwork {
             "Getting logs from block {}, chain id {}",
             self.last_block, self.network.chain_id
         );
-        return Ok(ShouldAbort::Continue);
-        //let relay_contract = contracts::IRELAYER_EVENTS::connect(
-        //let relay_filter =
+
+        let relay_contract = IRELAYER_EVENTS::new(self.network.chain_gateway, provider.clone());
+        let dispatch_contract = IDISPATCHER_EVENTS::new(self.network.chain_gateway, provider);
+        let mut relayer_filter = relay_contract
+            .Relayed_filter()
+            .from_block(self.last_block)
+            .watch()
+            .await?
+            .into_stream();
+        let mut dispatcher_filter = dispatch_contract
+            .Dispatched_filter()
+            .from_block(self.last_block)
+            .watch()
+            .await?
+            .into_stream();
+        loop {
+            select! {
+                Some(result) = relayer_filter.next() => {
+                    if let Ok((relay, _log)) = result {
+                        info!("Relay event nonce {} to {}", relay.nonce, relay.targetChainId);
+                    }
+                },
+                Some(result) = dispatcher_filter.next() => {
+                    if let Ok((dispatch, _log)) = result {
+                        info!("Dispatch event nonce {} from {}", dispatch.nonce, dispatch.sourceChainId);
+                    }
+                },
+            }
+        }
+
+        //return Ok(ShouldAbort::Continue);
     }
 
     pub async fn start(&mut self) -> Result<()> {
