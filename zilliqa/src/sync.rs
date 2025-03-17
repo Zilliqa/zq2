@@ -290,24 +290,24 @@ impl Sync {
         if !matches!(self.state, SyncState::Phase3) {
             anyhow::bail!("sync::RecentBlocks : invalid state");
         }
-        if !self.recent_proposals.is_empty() {
-            // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
-            let highest_block = self
-                .db
-                .get_highest_recorded_block()?
-                .expect("db is not empty");
+        // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
+        let highest_block = self
+            .db
+            .get_highest_recorded_block()?
+            .expect("db is not empty");
 
-            // drain, filter and sort cached-blocks.
-            let proposals = self
-                .recent_proposals
-                .drain(..)
-                .filter(|b| b.number() > highest_block.number()) // newer blocks
-                .sorted_by(|a, b| match b.number().cmp(&a.number()) {
-                    Ordering::Equal => b.header.timestamp.cmp(&a.header.timestamp),
-                    o => o,
-                }) // descending sort
-                .collect_vec();
+        // drain, filter and sort cached-blocks.
+        let proposals = self
+            .recent_proposals
+            .drain(..)
+            .filter(|b| b.number() > highest_block.number()) // newer blocks
+            .sorted_by(|a, b| match b.number().cmp(&a.number()) {
+                Ordering::Equal => b.header.timestamp.cmp(&a.header.timestamp),
+                o => o,
+            }) // descending sort
+            .collect_vec();
 
+        if !proposals.is_empty() {
             // extract chain segment, ascending order
             let mut hash = proposals.first().expect("contains newer blocks").hash();
             let mut proposals = proposals
