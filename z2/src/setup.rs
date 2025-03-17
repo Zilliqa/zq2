@@ -24,19 +24,18 @@ use zilliqa::{
     api,
     cfg::{
         ApiServer, StateAdjustment, genesis_fork_default, max_rpc_response_size_default,
-        max_rpc_response_size_default, staker_withdrawal_period_default, state_cache_size_default,
         state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
 use zilliqa::{
     cfg::{
-        self, Amount, ConsensusConfig, ContractUpgrades, GenesisDeposit,
+        self, Amount, ConsensusConfig, ContractUpgrades, GenesisDeposit, UCCBNetwork,
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, block_time_default, consensus_timeout_default,
-        eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
-        max_blocks_in_flight_default, scilla_address_default, scilla_ext_libs_path_default,
-        scilla_stdlib_dir_default, state_rpc_limit_default, total_native_token_supply_default,
+        failed_request_sleep_duration_default, local_address_default, max_blocks_in_flight_default,
+        scilla_address_default, scilla_ext_libs_path_default, scilla_stdlib_dir_default,
+        state_rpc_limit_default, total_native_token_supply_default,
     },
     transaction::EvmGas,
 };
@@ -49,11 +48,11 @@ use crate::{
     scilla, utils, validators,
 };
 
+const CHAIN_ID_DEFAULT: u64 = 700;
 const GENESIS_DEPOSIT: u128 = 10000000000000000000000000;
 const DATADIR_PREFIX: &str = "z2_node_";
 const NETWORK_CONFIG_FILE_NAME: &str = "network.yaml";
 const ZQ2_CONFIG_FILE_NAME: &str = "config.toml";
-const CHAIN_ID: u64 = 700;
 const ONE_MILLION: u128 = 1_000_000u128;
 const ONE_ETH: u128 = ONE_MILLION * ONE_MILLION * ONE_MILLION;
 const ONE_BILLION: u128 = 1_000u128 * ONE_MILLION;
@@ -91,8 +90,12 @@ pub struct Config {
     pub node_data: HashMap<u64, NodeData>,
     /// Base port
     pub base_port: u16,
+    /// Chain id
+    pub chain_id: u64,
     /// Existing chain?
     pub chain: Option<String>,
+    /// Foreign networks
+    pub uccb: Option<HashMap<String, UCCBNetwork>>,
 }
 
 pub struct Setup {
@@ -141,7 +144,11 @@ impl Config {
         self.shape.clone()
     }
 
-    pub fn from_spec(network: &Composition, base_port: u16) -> Result<Self> {
+    pub fn from_spec(
+        network: &Composition,
+        base_port: u16,
+        chain_id: &Option<u64>,
+    ) -> Result<Self> {
         // Generate secret keys and node addresses for the nodes in the network and stash it all in config.
         let mut node_data: HashMap<u64, NodeData> = HashMap::new();
         for node_id in network.nodes.keys() {
@@ -162,7 +169,9 @@ impl Config {
             shape: network.clone(),
             node_data,
             base_port,
+            chain_id: chain_id.unwrap_or(CHAIN_ID_DEFAULT),
             chain: None,
+            uccb: None,
         };
         Ok(result)
     }
@@ -194,12 +203,17 @@ impl Setup {
                 address,
             },
         );
+
         let chain_name = format!("{}", chain);
         let config = Config {
             shape: Composition::single_node(is_validator),
             node_data,
             base_port,
+            // @todo really need to fix this, but it's quite hard due to the way
+            // parsing works in Chain s.
+            chain_id: 0,
             chain: Some(chain_name),
+            uccb: None,
         };
         Ok(Self {
             config,
@@ -212,8 +226,13 @@ impl Setup {
             chain_config: Some(chain_config),
         })
     }
-    pub fn ephemeral(base_port: u16, base_dir: &str, config_dir: &str) -> Result<Self> {
-        let config = Config::from_spec(&Composition::small_network(), base_port)?;
+    pub fn ephemeral(
+        base_port: u16,
+        base_dir: &str,
+        config_dir: &str,
+        chain_id: &Option<u64>,
+    ) -> Result<Self> {
+        let config = Config::from_spec(&Composition::small_network(), base_port, chain_id)?;
         Ok(Self {
             config,
             collector: None,
@@ -252,6 +271,37 @@ impl Setup {
         })
     }
 
+    pub async fn add_uccb_foreign_network(
+        &mut self,
+        name: &str,
+        rpc_url: &str,
+        chain_id: u64,
+        chain_gateway: &Address,
+        start_block: u64,
+        bidirectional: bool,
+    ) -> Result<()> {
+        let new_network = UCCBNetwork {
+            rpc_url: rpc_url.to_string(),
+            chain_id,
+            chain_gateway: *chain_gateway,
+            start_block,
+            bidirectional,
+        };
+        match self.config.uccb.as_mut() {
+            None => {
+                let mut tbl = HashMap::new();
+                tbl.insert(name.to_string(), new_network);
+                self.config.uccb = Some(tbl)
+            }
+            Some(v) => {
+                v.insert(name.to_string(), new_network);
+            }
+        }
+        // "whatever we did, save it!"
+        self.config.save_to_config_dir(&self.config_dir).await?;
+        Ok(())
+    }
+
     pub async fn create(
         network: &Option<Composition>,
         config_dir: &str,
@@ -260,6 +310,7 @@ impl Setup {
         base_dir: &str,
         keep_old_network: bool,
         watch: bool,
+        chain_id: &Option<u64>,
     ) -> Result<Self> {
         // If we had a config file, load it. Otherwise create a new one and save it so that
         // we can find it later.
@@ -272,7 +323,7 @@ impl Setup {
                 );
                 val2
             } else {
-                Config::from_spec(val, base_port)?
+                Config::from_spec(val, base_port, chain_id)?
             }
         } else if let Some(val2) = loaded_config {
             println!("Starting previously saved config in {config_dir}");
@@ -282,7 +333,7 @@ impl Setup {
             println!(
                 ">> No network specified or loaded; using default 4-node network for legacy reasons."
             );
-            Config::from_spec(&Composition::small_network(), base_port)?
+            Config::from_spec(&Composition::small_network(), base_port, chain_id)?
         };
         // Whatever we did, save it!
         config.save_to_config_dir(config_dir).await?;
@@ -570,7 +621,7 @@ impl Setup {
 
             context.insert("signers_file", &signer_path_str);
             context.insert("chain_url", &self.get_json_rpc_url(true));
-            context.insert("chain_id", &format!("{CHAIN_ID}"));
+            context.insert("chain_id", &format!("{}", self.config.chain_id));
             test_tera
                 .add_raw_template("test_env", include_str!("../resources/test_env.tera.sh"))?;
             let env_str = test_tera
@@ -641,7 +692,7 @@ impl Setup {
             let port = self.get_json_rpc_port(*node_index as u16, false);
             let uccb_data = self.get_uccb_data()?;
             let uccb_config = cfg::UCCBConfig {
-                networks: vec![],
+                networks: HashMap::new(),
                 chain_gateway: uccb_data.chain_gateway_address,
                 start_block: None,
             };
@@ -656,7 +707,7 @@ impl Setup {
                 load_checkpoint: None,
                 adjust_state: vec![],
                 do_checkpoints: false,
-                eth_chain_id: eth_chain_id_default(),
+                eth_chain_id: self.config.chain_id,
                 consensus: ConsensusConfig {
                     scilla_address: scilla_address_default(),
                     scilla_stdlib_dir: scilla_stdlib_dir_default(),
@@ -707,7 +758,7 @@ impl Setup {
             // Create if doesn't exist
             let data_dir_path = self.get_data_dir(*node_index)?;
             tokio::fs::create_dir(&data_dir_path).await?;
-            node_config.eth_chain_id = CHAIN_ID | 0x8000;
+            node_config.eth_chain_id = self.config.chain_id | 0x8000;
             node_config.data_dir = Some(utils::string_from_path(&data_dir_path)?);
             node_config.enable_ots_indices = *node_index == 0;
             node_config
@@ -750,6 +801,7 @@ impl Setup {
     }
 
     pub async fn preprocess_config_file(
+        &self,
         config_file: &Path,
         checkpoint: Option<&zilliqa::cfg::Checkpoint>,
     ) -> Result<()> {
@@ -758,6 +810,19 @@ impl Setup {
             .await
             .context(format!("Cannot read from {0} - are you sure you are trying to start a node that actually exists?", config_file.to_string_lossy()))?;
         let mut loaded_config: zilliqa::cfg::Config = toml::from_str(&loaded_config_str)?;
+        let uccb_data = self.get_uccb_data()?;
+        // Add any foreign UCCB networks
+        for node in loaded_config.nodes.iter_mut() {
+            node.uccb = Some(cfg::UCCBConfig {
+                networks: self
+                    .config
+                    .uccb
+                    .clone()
+                    .map_or_else(HashMap::new, |x| x.clone()),
+                chain_gateway: uccb_data.chain_gateway_address,
+                start_block: None,
+            })
+        }
         let mut any_checkpoints = false;
         for node in loaded_config.nodes.iter_mut() {
             if let Some(cp) = checkpoint {
@@ -811,7 +876,8 @@ impl Setup {
                 for idx in for_nodes.nodes.keys() {
                     let config_file = self.get_config_path(*idx)?;
                     // Now, we need to rewrite the config file to take account of checkpoints...
-                    Self::preprocess_config_file(&config_file, checkpoints.for_node(*idx)).await?;
+                    self.preprocess_config_file(&config_file, checkpoints.for_node(*idx))
+                        .await?;
                     let node_data = self
                         .config
                         .node_data

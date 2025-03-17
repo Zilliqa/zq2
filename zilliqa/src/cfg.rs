@@ -6,6 +6,7 @@ use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::json;
+use std::collections::HashMap;
 
 use crate::{
     crypto::{Hash, NodePublicKey},
@@ -831,6 +832,9 @@ pub struct UCCBNetwork {
     /// Block to start monitoring from, if later than the block in the database, or if
     /// specified on the comamnd line.
     pub start_block: u64,
+    /// Bidirectional? If bidirectional, we will submit to this network as well as
+    /// reading from it.
+    pub bidirectional: bool,
 }
 
 /// If configured, a UCCB node watches the local network and relays what it finds there to one of the other
@@ -839,7 +843,7 @@ pub struct UCCBNetwork {
 #[serde(deny_unknown_fields)]
 pub struct UCCBConfig {
     /// Networks to monitor (excluding our own)
-    pub networks: Vec<UCCBNetwork>,
+    pub networks: HashMap<String, UCCBNetwork>,
 
     /// Chain gateway for our own network
     pub chain_gateway: Address,

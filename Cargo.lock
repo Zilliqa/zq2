@@ -10594,6 +10594,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "url",
  "vergen",
  "zilliqa",
  "zilliqa-macros",

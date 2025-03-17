@@ -1,8 +1,12 @@
-use alloy::primitives::B256;
+use alloy::{
+    primitives::{Address, B256},
+    providers::{Provider, ProviderBuilder},
+};
 use anyhow::{Context, Result, anyhow};
 use colored::Colorize;
 use std::{collections::HashSet, fmt, path::PathBuf, str::FromStr};
 use tokio::{fs, process::Command};
+use url::Url;
 use zilliqa::crypto::SecretKey;
 
 use crate::{
@@ -35,7 +39,7 @@ impl fmt::Display for NetworkType {
 }
 
 pub async fn print_ports(base_port: u16, base_dir: &str, config_dir: &str) -> Result<()> {
-    let setup_obj = setup::Setup::ephemeral(base_port, base_dir, config_dir)?;
+    let setup_obj = setup::Setup::ephemeral(base_port, base_dir, config_dir, &None)?;
     println!("{0}", setup_obj.get_port_map());
     Ok(())
 }
@@ -77,6 +81,7 @@ pub async fn run_net(
     watch: bool,
     checkpoints: &utils::CheckpointConfiguration,
     secret_key_hex: Option<String>,
+    chain_id: &Option<u64>,
 ) -> Result<()> {
     println!("RUST_LOG = {log_spec}");
     println!("Running network {spec}");
@@ -95,6 +100,7 @@ pub async fn run_net(
                 base_dir,
                 keep_old_network,
                 watch,
+                chain_id,
             )
             .await?
         }
@@ -525,5 +531,23 @@ pub async fn populate_network(config_dir: &str, base_dir: &str) -> Result<()> {
     init_chain::init_chain(&setup_obj).await?;
     println!("Setting up UCCB .. ");
 
+    Ok(())
+}
+
+pub async fn add_bridge(
+    config_dir: &str,
+    base_dir: &str,
+    name: &str,
+    api_url: &str,
+    gateway: &Address,
+    bidirectional: bool,
+) -> Result<()> {
+    let mut setup_obj = setup::Setup::load(config_dir, "", base_dir, false).await?;
+    let other_provider = ProviderBuilder::new().on_http(Url::parse(api_url)?);
+    let chain_id = other_provider.get_chain_id().await?;
+    println!(" Adding a bridge called {name} on {config_dir} to {api_url} , chain id {chain_id}");
+    setup_obj
+        .add_uccb_foreign_network(name, api_url, chain_id, gateway, 0, bidirectional)
+        .await?;
     Ok(())
 }
