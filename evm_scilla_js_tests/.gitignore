@@ -1,5 +1,6 @@
 node_modules/
-artifacts/
+artifacts/*
+!artifacts/scilla.cache
 cache/
 typechain-types/
 dist/
