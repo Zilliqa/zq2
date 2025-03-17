@@ -552,6 +552,19 @@ impl P2pNode {
                         break;
                     }
                 }
+                Some(res) = self.uccb_threads.join_next() => {
+                    info!("uccb thread died - {res:?}");
+                    match res {
+                        Err(e) => {
+                            // join failed.
+                            error!(%e);
+                        },
+                        Ok(e) => {
+                            error!("UCCB thread died - terminating: {e:?}");
+                        }
+                    }
+                    return Err(anyhow!("UCCB thread died"));
+                }
                 () = &mut sleep => {
                     let net_info = self.swarm.network_info();
                     trace!("p2p_node tick {0} / {1} ", net_info.num_peers(), net_info.connection_counters().num_connections() );

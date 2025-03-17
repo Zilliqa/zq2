@@ -12,6 +12,7 @@
 // @todo we make blocking API calls to foreign blockchains - making these nonblocking (ie. processing our own messages between them) will be "challenging".
 
 pub mod contracts;
+pub mod external_network;
 pub mod launcher;
 pub mod message;
 pub mod node;

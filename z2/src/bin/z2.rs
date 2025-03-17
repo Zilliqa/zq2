@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use alloy::primitives::B256;
+use alloy::primitives::{Address, B256};
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand, builder::ArgAction};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
@@ -67,6 +67,8 @@ enum Commands {
     //Bridge(BridgeStruct),
     /// Set up a network - this deploys various useful contracts into a fresh network
     Populate(PopulateStruct),
+    /// Write config to cause a network to monitor another.
+    AddBridge(AddBridgeStruct),
 }
 
 #[derive(Subcommand, Debug)]
@@ -415,6 +417,9 @@ struct RunStruct {
     #[clap(long, default_value = "4000")]
     base_port: u16,
 
+    #[clap(long)]
+    chain_id: Option<u64>,
+
     /// If --watch is specified, we will auto-reload Zilliqa 2 (but not other programs!) when the source changes.
     #[clap(long, action=ArgAction::SetTrue)]
     watch: bool,
@@ -478,6 +483,9 @@ struct OnlyStruct {
 
     #[clap(long, default_value = "4000")]
     base_port: u16,
+
+    #[clap(long)]
+    chain_id: Option<u64>,
 
     /// If --watch is specified, we will auto-reload Zilliqa 2 (but not other programs!) when the source changes.
     #[clap(long, action=ArgAction::SetTrue)]
@@ -696,6 +704,31 @@ struct PopulateStruct {
 }
 
 #[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
+enum BridgeKind {
+    Unidirectional,
+    Bidirectional,
+}
+
+#[derive(Args, Debug)]
+struct AddBridgeStruct {
+    /// Config dir
+    config_dir: String,
+
+    /// Name for the remote network
+    name: String,
+
+    /// JSON RPC URL for the remote network
+    api_url: String,
+
+    /// Chain gateway on the remote network which we will (implicitly) trust
+    gateway: Address,
+
+    /// Bidirectional? If true, we will submit txns to the other network. If false, we will assume that it is monitoring us and
+    /// will only submit transactions to our network.
+    kind: BridgeKind,
+}
+
+#[derive(Clone, PartialEq, Debug, clap::ValueEnum)]
 enum LogLevel {
     Warn,
     Info,
@@ -799,6 +832,7 @@ async fn main() -> Result<()> {
                 arg.watch,
                 &utils::CheckpointConfiguration::None,
                 None,
+                &arg.chain_id,
             )
             .await?;
             Ok(())
@@ -855,6 +889,7 @@ async fn main() -> Result<()> {
                 arg.watch,
                 &checkpoints,
                 None,
+                &arg.chain_id,
             )
             .await?;
             Ok(())
@@ -1358,6 +1393,7 @@ async fn main() -> Result<()> {
                 arg.watch,
                 &checkpoints,
                 Some(secret_key_hex),
+                &None,
             )
             .await?;
             Ok(())
@@ -1365,6 +1401,18 @@ async fn main() -> Result<()> {
         Commands::Populate(arg) => {
             // Populate the network.
             plumbing::populate_network(&arg.config_dir, &base_dir).await?;
+            Ok(())
+        }
+        Commands::AddBridge(arg) => {
+            plumbing::add_bridge(
+                &arg.config_dir,
+                &base_dir,
+                &arg.name,
+                &arg.api_url,
+                &arg.gateway,
+                arg.kind == BridgeKind::Bidirectional,
+            )
+            .await?;
             Ok(())
         }
     }

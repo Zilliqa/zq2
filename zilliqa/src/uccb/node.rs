@@ -4,6 +4,7 @@ use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::Node;
 use crate::p2p_node::{LocalMessageTuple, OutboundMessageTuple};
 use crate::transaction::{EvmLog, Log, TransactionReceipt};
+use crate::uccb::external_network::ExternalNetwork;
 use crate::uccb::launcher::{
     UCCBLocalMessageTuple, UCCBMessageFailure, UCCBOutboundMessageTuple, UCCBRequestId,
     UCCBResponseChannel,
@@ -65,6 +66,8 @@ pub struct UCCBNode {
     pub node: Arc<Mutex<Node>>,
     /// The latest block we've requested to scan on our native chain.
     pub latest_scanned_block: Option<u64>,
+    /// Threads monitoring external networks
+    pub external_threads: JoinSet<Result<()>>,
 }
 
 pub async fn handle_local(
@@ -98,6 +101,7 @@ impl UCCBNode {
             local_channel: local_sender_channel,
             request_id: UCCBRequestId::default(),
         };
+        let external_threads = JoinSet::new();
 
         let uccb_config = node_config
             .clone()
@@ -111,7 +115,22 @@ impl UCCBNode {
             sender,
             node,
             latest_scanned_block: None,
+            external_threads,
         })
+    }
+
+    pub async fn start_external_networks(for_object: Arc<Mutex<UCCBNode>>) -> Result<()> {
+        let mut node = for_object
+            .lock()
+            .map_err(|_| anyhow!("failed to lock uccb node mutex"))?;
+        let networks = node.uccb_config.networks.clone();
+        for (name, network) in networks.iter() {
+            let mut ext_obj = ExternalNetwork::new(for_object.clone(), name, network.clone())?;
+            info!("Starting network monitor for {name} .. ");
+            node.external_threads
+                .spawn(async move { ext_obj.start().await });
+        }
+        Ok(())
     }
 
     pub fn handle_broadcast(&mut self, _from: PeerId, _message: UCCBExternalMessage) -> Result<()> {
@@ -196,6 +215,11 @@ impl UCCBNode {
 
     pub fn handle_tick(&mut self) -> Result<()> {
         debug!("uccb_tick()");
+        // Check for threads.
+        if let Some(res) = self.external_threads.try_join_next() {
+            info!("External thread terminated - dying");
+            return Err(anyhow!("External thread terminated - {res:?}"));
+        }
         // Find the latest safe block.
         if let Some(latest_finalized_block) = self
             .node

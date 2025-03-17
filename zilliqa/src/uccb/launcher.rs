@@ -161,6 +161,9 @@ impl UCCBLauncher {
 
         self.node_launched = true;
 
+        // Start the external monitor threads.
+        UCCBNode::start_external_networks(self.node.clone()).await?;
+
         let meter = opentelemetry::global::meter("uccb");
         let messaging_process_duration = meter
             .f64_histogram(MESSAGING_PROCESS_DURATION)
@@ -243,7 +246,9 @@ impl UCCBLauncher {
                 () = &mut tick_time => {
                     let attributes = get_attributes("tick");
                     let start = SystemTime::now();
-                    let _ = self.node.lock().unwrap().handle_tick();
+                    info!("Before handle");
+                    self.node.lock().unwrap().handle_tick()?;
+                    info!("After handle");
                     tick_time.as_mut().reset(Instant::now() + Duration::from_millis(1000));
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
