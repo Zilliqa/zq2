@@ -1,4 +1,4 @@
-name: zq2-prototestnet
+name: zq2-testnet
 eth_chain_id: 33103
 roles:
 - bootstrap
@@ -9,7 +9,7 @@ roles:
 - persistence
 - private-api
 versions:
-  zq2: v0.7.1
+  zq2: v0.7.0
   otterscan: develop
   spout: main
   stats_dashboard: v0.0.4
