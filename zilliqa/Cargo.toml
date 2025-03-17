@@ -26,7 +26,7 @@ anyhow = { version = "1.0.97", features = ["backtrace"] }
 vergen = { version = "8.3.2", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
+alloy = { version = "0.12.5", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
 anyhow = { version = "1.0.97", features = ["backtrace"] }
 async-trait = "0.1.88"
 base64 = "0.22.1"
@@ -85,7 +85,7 @@ semver = "1.0.23"
 foundry-compilers = { version = "0.13.5", features = ["svm-solc"] }
 
 [dev-dependencies]
-alloy = { version = "0.12.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
+alloy = { version = "0.12.5", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
 async-trait = "0.1.88"
 criterion = "0.5.1"
 ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
