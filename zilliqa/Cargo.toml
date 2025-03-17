@@ -62,7 +62,7 @@ serde_bytes = "0.11.17"
 serde_json = { version = "1.0.140", features = ["raw_value","arbitrary_precision"] }
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-tempfile = "3.18.0"
+tempfile = "3.19.0"
 time = { version = "0.3.37", features = ["formatting", "macros"] }
 tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.17"
