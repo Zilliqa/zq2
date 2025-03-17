@@ -46,4 +46,4 @@ highest block in the chain is somewhere near block 1781.
 | `id`      | string | Required | `"1"`           |
 | `jsonrpc` | string | Required | `"2.0"`         |
 | `method`  | string | Required | `"eth_syncing"`  |
-| `params`  | array  | Requred  | can be anything |
+| `params`  | array  | Required | can be anything |
