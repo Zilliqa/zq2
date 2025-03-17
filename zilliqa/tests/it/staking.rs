@@ -61,6 +61,9 @@ async fn deposit_stake(
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake)
+        // Set a high gas limit manually, in case the gas estimate and transaction cross an epoch boundary, in which
+        // case our estimate will be incorrect.
+        .gas(5_000_000)
         .data(
             contracts::deposit::DEPOSIT
                 .encode_input(&[
@@ -111,6 +114,9 @@ async fn deposit_v3_stake(
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake)
+        // Set a high gas limit manually, in case the gas estimate and transaction cross an epoch boundary, in which
+        // case our estimate will be incorrect.
+        .gas(5_000_000)
         .data(
             contracts::deposit_v3::DEPOSIT
                 .encode_input(&[

@@ -19,20 +19,20 @@ pub enum Chain {
         props(
             subdomain = "zq2-richard.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=info"
         )
     )]
     Zq2Richard,
-    #[value(name = "zq2-uccbtest")]
+    #[value(name = "zq2-persistence")]
     #[strum(
-        serialize = "zq2-uccbtest",
+        serialize = "zq2-persistence",
         props(
-            subdomain = "zq2-uccbtest.zilstg.dev",
+            subdomain = "zq2-persistence.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=info"
         )
     )]
-    Zq2UccbTest,
+    Zq2Persistence,
     #[value(name = "zq2-infratest")]
     #[strum(
         serialize = "zq2-infratest",
@@ -49,7 +49,7 @@ pub enum Chain {
         props(
             subdomain = "zq2-perftest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=info"
         )
     )]
     Zq2PerfTest,
@@ -83,33 +83,35 @@ pub enum Chain {
         )
     )]
     Zq2ProtoMainnet,
-    // #[value(name = "zq2-testnet")]
-    // #[strum(
-    //     serialize = "zq2-testnet",
-    //     props(
-    //         subdomain = "zq2-testnet.zilliqa.com",
-    //         project_id = "prj-d-zq2-testnet-g13pnaa8",
-    //         log_level = "zilliqa=trace"
-    //     )
-    // )]
-    // Zq2Testnet,
-    // #[value(name = "zq2-mainnet")]
-    // #[strum(
-    //     serialize = "zq2-mainnet",
-    //     props(
-    //         subdomain = "zq2-mainnet.zilliqa.com",
-    //         project_id = "prj-p-zq2-mainnet-sn5n8wfl",
-    //         log_level = "zilliqa=trace"
-    //     )
-    // )]
-    // Zq2Mainnet,
+    #[value(name = "zq2-testnet")]
+    #[strum(
+        serialize = "zq2-testnet",
+        props(
+            subdomain = "zq2-testnet.zilliqa.com",
+            project_id = "prj-d-zq2-testnet-g13pnaa8",
+            log_level = "zilliqa=trace"
+        )
+    )]
+    Zq2Testnet,
+    #[value(name = "zq2-mainnet")]
+    #[strum(
+        serialize = "zq2-mainnet",
+        props(
+            subdomain = "zq2-mainnet.zilliqa.com",
+            project_id = "prj-p-zq2-mainnet-sn5n8wfl",
+            log_level = "zilliqa=trace"
+        )
+    )]
+    Zq2Mainnet,
 }
 
 impl Chain {
     pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
         match chain_name {
             "zq2-richard" => Ok(include_str!("../resources/chain-specs/zq2-richard.toml")),
-            "zq2-uccbtest" => Ok(include_str!("../resources/chain-specs/zq2-uccbtest.toml")),
+            "zq2-persistence" => Ok(include_str!(
+                "../resources/chain-specs/zq2-persistence.toml"
+            )),
             "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
             "zq2-infratest" => Ok(include_str!("../resources/chain-specs/zq2-infratest.toml")),
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
@@ -119,6 +121,8 @@ impl Chain {
             "zq2-protomainnet" => Ok(include_str!(
                 "../resources/chain-specs/zq2-protomainnet.toml"
             )),
+            "zq2-testnet" => Ok(include_str!("../resources/chain-specs/zq2-testnet.toml")),
+            "zq2-mainnet" => Ok(include_str!("../resources/chain-specs/zq2-mainnet.toml")),
             _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
         }
     }
@@ -141,13 +145,15 @@ impl Chain {
                 deposit_v3: Some(ContractUpgradeConfig::from_height(5342400)),
                 // estimated: 2025-02-12T13:25:00Z
                 deposit_v4: Some(ContractUpgradeConfig::from_height(7966800)),
-                deposit_v5: None,
+                // estimated: 2025-03-17T13:16:37Z
+                deposit_v5: Some(ContractUpgradeConfig::from_height(9010800)),
             },
             Self::Zq2ProtoTestnet => ContractUpgrades {
                 deposit_v3: Some(ContractUpgradeConfig::from_height(8406000)),
                 // estimated: 2025-02-03T13:55:00Z
                 deposit_v4: Some(ContractUpgradeConfig::from_height(10890000)),
-                deposit_v5: None,
+                // estimated: 2025-03-12T15:00:00Z
+                deposit_v5: Some(ContractUpgradeConfig::from_height(12934800)),
             },
             _ => ContractUpgrades::default(),
         }
@@ -235,6 +241,8 @@ impl Chain {
                 json!({ "at_height": 7685881, "scilla_json_preserve_order": true }),
                 // estimated: 2025-02-12T13:25:00Z
                 json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true }),
+                // estimated: 2025-03-17T13:16:37Z
+                json!({ "at_height": 9010800, "scilla_call_respects_evm_state_changes": true, "only_mutated_accounts_update_state": true, "scilla_block_number_returns_current_block": true, "scilla_maps_are_encoded_correctly": true }),
             ]),
             _ => None,
         }
