@@ -290,32 +290,45 @@ impl Sync {
         if !matches!(self.state, SyncState::Phase3) {
             anyhow::bail!("sync::RecentBlocks : invalid state");
         }
-        if let Some(block) = self.recent_proposals.front() {
-            let ancestor_hash = block.header.qc.block_hash;
+        if !self.recent_proposals.is_empty() {
+            // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
+            let highest_block = self
+                .db
+                .get_highest_recorded_block()?
+                .expect("db is not empty");
+
+            // drain, filter and sort cached-blocks.
+            let proposals = self
+                .recent_proposals
+                .drain(..)
+                .filter(|b| b.number() > highest_block.number()) // newer blocks
+                .sorted_by(|a, b| match b.number().cmp(&a.number()) {
+                    Ordering::Equal => b.header.timestamp.cmp(&a.header.timestamp),
+                    o => o,
+                }) // descending sort
+                .collect_vec();
+
+            // extract chain segment, ascending order
+            let mut hash = proposals.first().expect("contains newer blocks").hash();
+            let mut proposals = proposals
+                .into_iter()
+                .filter(|b| {
+                    if b.hash() == hash {
+                        hash = b.header.qc.block_hash; // find the parent
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .collect_vec();
+            proposals.reverse();
+
+            // inject if it links up
+            let ancestor_hash = proposals.first().expect(">= 1 block").header.qc.block_hash;
+            let range = proposals.first().as_ref().unwrap().number()
+                ..=proposals.last().as_ref().unwrap().number();
+            tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
             if self.db.contains_canonical_block(&ancestor_hash)? {
-                // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
-                let highest_block = self.db.get_highest_canonical_block_number()?.unwrap();
-                let mut hash = self.recent_proposals.back().unwrap().hash();
-                let proposals = self
-                    .recent_proposals
-                    .drain(..)
-                    .rev()
-                    .filter(|b| {
-                        // filter the chain
-                        if hash == b.hash() {
-                            hash = b.header.qc.block_hash;
-                            b.number() > highest_block
-                        } else {
-                            false
-                        }
-                    })
-                    .collect_vec()
-                    .into_iter()
-                    .rev()
-                    .collect_vec();
-                let range = proposals.first().as_ref().unwrap().number()
-                    ..=proposals.last().as_ref().unwrap().number();
-                tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
                 self.inject_proposals(proposals)?;
             }
         }
