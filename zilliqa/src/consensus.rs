@@ -793,7 +793,7 @@ impl Consensus {
                     self.create_next_block_on_timeout = false;
                 }
                 if self.early_proposal.is_some() {
-                    let (_, txns, _, _) = self.early_proposal.take().unwrap();
+                    let (_, txns, _, _, _) = self.early_proposal.take().unwrap();
                     for txn in txns.into_iter().rev() {
                         self.transaction_pool.insert_ready_transaction(txn)?;
                     }
