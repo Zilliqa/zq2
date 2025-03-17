@@ -173,6 +173,7 @@ impl Chain {
                 "scilla_call_gas_exempt_addrs": [],
                 "scilla_block_number_returns_current_block": false,
                 "scilla_maps_are_encoded_correctly": false,
+                "transfer_gas_fee_to_zero_account": false,
             })),
             _ => None,
         }
