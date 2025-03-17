@@ -276,12 +276,10 @@ pub enum ExternalMessage {
     Acknowledgement,
     /// The following are used for the new sync protocol
     InjectedProposal(InjectedProposal),
-    // 0.6.0
     MetaDataRequest(RequestBlocksByHeight),
     MetaDataResponse(Vec<BlockHeader>),
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),
-    // 0.7.0
     SyncBlockHeaders(Vec<SyncBlockHeader>),
 }
 

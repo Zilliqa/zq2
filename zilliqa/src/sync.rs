@@ -210,11 +210,6 @@ impl Sync {
         Ok(())
     }
 
-    // TODO: Passive-sync place-holder - https://github.com/Zilliqa/zq2/issues/2232
-    pub fn sync_to_genesis(&mut self) -> Result<()> {
-        Ok(())
-    }
-
     /// Phase 0: Sync a block proposal.
     ///
     /// This is the main entry point for active-syncing a block proposal.
@@ -222,14 +217,29 @@ impl Sync {
     /// If the parent block exists, we do nothing. Otherwise, we check the least recent one.
     /// If we find its parent in history, we inject the entire queue. Otherwise, we start syncing.
     ///
-    /// Returns TRUE iff node is in active-sync.
-    pub fn sync_from_proposal(&mut self, proposal: Proposal) -> Result<bool> {
+    /// We do not perform checks on the Proposal here. This is done in the consensus layer.
+    pub fn sync_from_proposal(&mut self, proposal: Proposal) -> Result<()> {
         // just stuff the latest proposal into the fixed-size queue.
         while self.recent_proposals.len() >= self.max_batch_size {
             self.recent_proposals.pop_front();
         }
         self.highest_block_seen = self.highest_block_seen.max(proposal.number());
         self.recent_proposals.push_back(proposal);
+
+        self.do_sync()
+    }
+
+    // TODO: Passive-sync place-holder - https://github.com/Zilliqa/zq2/issues/2232
+    pub fn sync_to_genesis(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn do_sync(&mut self) -> Result<()> {
+        if self.recent_proposals.is_empty() {
+            // Do nothing if there's no recent proposals.
+            tracing::debug!("sync::DoSync : missing recent proposals");
+            return Ok(());
+        }
 
         match self.state {
             // Check if we are out of sync
@@ -281,7 +291,7 @@ impl Sync {
             }
         }
 
-        Ok(!matches!(self.state, SyncState::Phase0))
+        Ok(())
     }
 
     /// Update the startingBlock value.
