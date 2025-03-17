@@ -437,9 +437,6 @@ impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<
     }
 }
 
-// As per EIP-150
-pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
-
 const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
 pub enum BaseFeeCheck {
@@ -1029,6 +1026,39 @@ impl State {
         Ok(Some(PeerId::from_bytes(&data)?))
     }
 
+    /// Returns the maximum gas a caller could pay for a given transaction. This is clamped the minimum of:
+    /// 1. The block gas limit.
+    /// 2. The gas limit specified by the caller.
+    /// 3. The caller's balance after paying for any funds sent by the transaction.
+    ///
+    /// Returns an error if the caller does not have funds to pay for the transaction.
+    fn max_gas_for_caller(
+        &self,
+        caller: Address,
+        tx_value: u128,
+        gas_price: u128,
+        requested_gas_limit: Option<EvmGas>,
+    ) -> Result<EvmGas> {
+        let mut gas = self.block_gas_limit;
+
+        if let Some(requested_gas_limit) = requested_gas_limit {
+            gas = gas.min(requested_gas_limit);
+        }
+
+        if gas_price != 0 {
+            let balance = self.get_account(caller)?.balance;
+            // Calculate how much the caller has left to pay for gas after the transaction value is subtracted.
+            let balance = balance.checked_sub(tx_value).ok_or_else(|| {
+                anyhow!("caller has insufficient funds - has: {balance}, needs: {tx_value}")
+            })?;
+            // Calculate the gas the caller could pay for at this gas price.
+            let max_gas = EvmGas((balance / gas_price) as u64);
+            gas = gas.min(max_gas);
+        }
+
+        Ok(gas)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
         &self,
@@ -1042,7 +1072,8 @@ impl State {
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
-        let mut max = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
+        let mut max = self.max_gas_for_caller(from_addr, value, gas_price, gas)?.0;
+
         let upper_bound = max;
 
         // Check if estimation succeeds with the highest possible gas

@@ -1,5 +1,5 @@
-name: zq2-prototestnet
-eth_chain_id: 33103
+name: zq2-persistence
+eth_chain_id: 33469
 roles:
 - bootstrap
 - validator
@@ -9,9 +9,8 @@ roles:
 - persistence
 - private-api
 versions:
-  zq2: v0.7.1
+  zq2: v0.7.0
   otterscan: develop
   spout: main
   stats_dashboard: v0.0.4
   stats_agent: v0.0.2
-  zq2_metrics: v0.0.1
