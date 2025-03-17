@@ -810,7 +810,10 @@ pub fn storage_key(var_name: &str, indices: &[Vec<u8>]) -> Bytes {
 }
 
 pub fn split_storage_key(key: impl AsRef<[u8]>) -> Result<(String, Vec<Vec<u8>>)> {
-    let mut parts = key.as_ref().split(|b| *b == SEPARATOR);
+    let mut parts = key
+        .as_ref()
+        .split(|b| *b == SEPARATOR)
+        .filter(|part| !part.is_empty());
     let var_name = parts.next().expect("split always returns one element");
     let var_name = String::from_utf8(var_name.to_vec())?;
     let indices = parts.map(|s| s.to_vec()).collect();
