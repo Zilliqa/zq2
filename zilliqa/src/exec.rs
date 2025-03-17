@@ -715,7 +715,9 @@ impl State {
             let (result, state) =
                 self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 
-            self.apply_delta_scilla(&state, current_block.number)?;
+            if result.success {
+                self.apply_delta_scilla(&state, current_block.number)?;
+            }
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {

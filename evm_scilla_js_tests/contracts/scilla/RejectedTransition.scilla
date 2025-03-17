@@ -1,0 +1,18 @@
+scilla_version 0
+
+contract RejectedTransition ()
+
+field f_s1 : String = "421"
+
+procedure expected_fail (tname : String)
+  e = { _exception : "Test failed as expected"; test_name : tname };
+  throw e
+end
+
+(* Set field f_s1 and fail. *)
+transition f1 ()
+  tname = "f1";
+  s = "422";
+  f_s1 := s;
+  expected_fail tname
+end
