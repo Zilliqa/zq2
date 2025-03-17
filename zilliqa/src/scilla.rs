@@ -795,10 +795,16 @@ pub fn storage_key(var_name: &str, indices: &[Vec<u8>]) -> Bytes {
     let len = var_name.len() + indices.len() + indices.iter().map(|v| v.len()).sum::<usize>();
     let mut bytes = BytesMut::with_capacity(len);
     bytes.extend_from_slice(var_name.as_bytes());
+
+    // This separator should be added before iterating over the indices.
+    // Otherwise, if the indices are empty, there's a chance that a variable like `collection_owning_brand`
+    // will have a storage key that is a prefix of a variable like `collection_owning_brand_size`,
+    // and `iter_by_prefix` will incorrectly return the latter when the former is requested.
+    bytes.put_u8(SEPARATOR);
     for index in indices {
         assert!(!index.contains(&SEPARATOR));
-        bytes.put_u8(SEPARATOR);
         bytes.extend_from_slice(index.as_slice());
+        bytes.put_u8(SEPARATOR);
     }
     bytes.freeze()
 }
