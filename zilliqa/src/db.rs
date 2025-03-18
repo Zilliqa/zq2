@@ -1076,7 +1076,7 @@ impl Db {
             return Ok(None);
         };
         if self.executable_blocks_height.is_some()
-            && block.header.number <= self.executable_blocks_height.unwrap()
+            && block.header.number < self.executable_blocks_height.unwrap()
         {
             debug!("fetched ZQ1 block so setting state root hash to zeros");
             block.header.state_root_hash = Hash::ZERO;

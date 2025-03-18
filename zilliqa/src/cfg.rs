@@ -566,7 +566,7 @@ pub enum ForkName {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ForkDelta {
     pub at_height: u64,
-    /// If true then transactions can be executed against blocks.
+    /// If true then transactions can be executed against blocks at and above this height
     /// Currently used to mark the height at which ZQ1 blocks end and ZQ2 blocks begin in converted persistence networks. This is required because their state root hashes are set to Hash::ZERO.
     pub executable_blocks: Option<bool>,
     /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`

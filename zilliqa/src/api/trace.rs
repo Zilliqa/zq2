@@ -62,6 +62,9 @@ fn trace_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TraceResul
         .consensus
         .state()
         .at_root(parent.state_root_hash().into());
+    if state.is_empty() {
+        return Err(anyhow!("State required to execute request does not exist"));
+    }
 
     let mut traces = Vec::new();
 
@@ -164,6 +167,9 @@ fn trace_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<TraceResu
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         // Process each transaction in the block
         for txn_hash in &block.transactions {
