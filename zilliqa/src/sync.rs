@@ -244,15 +244,15 @@ impl Sync {
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
-                let parent_hash = self.recent_proposals.back().unwrap().header.qc.block_hash;
+                let meta = self.recent_proposals.back().unwrap().header;
+                let parent_hash = meta.qc.block_hash;
+                // No parent block, trigger sync
                 if !self.db.contains_canonical_block(&parent_hash)? {
                     self.active_sync_count = self.active_sync_count.saturating_add(1);
-                    // No parent block, trigger sync
-                    tracing::debug!("sync::DoSync : syncing from {parent_hash}",);
-                    self.update_started_at()?;
+                    tracing::debug!(from_hash = %parent_hash, "sync::DoSync : syncing",);
                     // Ensure started_at_block_number is set before running this.
                     // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
-                    let meta = self.recent_proposals.back().unwrap().header;
+                    self.update_started_at()?;
                     self.request_missing_metadata(Some(meta))?;
                 }
             }
@@ -266,19 +266,7 @@ impl Sync {
             }
             // Wait till 99% synced, zip it up!
             SyncState::Phase3 if self.in_pipeline == 0 => {
-                let ancestor_hash = self.recent_proposals.front().unwrap().header.qc.block_hash;
-                if self.db.contains_canonical_block(&ancestor_hash)? {
-                    tracing::info!(
-                        "sync::DoSync : finishing {} blocks from {}",
-                        self.recent_proposals.len(),
-                        self.peer_id,
-                    );
-                    // inject the proposals
-                    let proposals = self.recent_proposals.drain(..).collect_vec();
-                    self.inject_proposals(proposals)?;
-                }
-                self.db.empty_sync_metadata()?;
-                self.state = SyncState::Phase0;
+                self.inject_recent_blocks()?;
             }
             // Retry to fix sync issues e.g. peers that are now offline
             SyncState::Retry1 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
@@ -291,6 +279,61 @@ impl Sync {
             }
         }
 
+        Ok(())
+    }
+
+    /// Injects the recent proposals
+    ///
+    /// The recent proposals have been buffering while active-sync is in process to 99%.
+    /// This injects the last 1% to finish it up.
+    fn inject_recent_blocks(&mut self) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase3) {
+            anyhow::bail!("sync::RecentBlocks : invalid state");
+        }
+        // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
+        let highest_block = self
+            .db
+            .get_highest_recorded_block()?
+            .expect("db is not empty");
+
+        // drain, filter and sort cached-blocks.
+        let proposals = self
+            .recent_proposals
+            .drain(..)
+            .filter(|b| b.number() > highest_block.number()) // newer blocks
+            .sorted_by(|a, b| match b.number().cmp(&a.number()) {
+                Ordering::Equal => b.header.timestamp.cmp(&a.header.timestamp),
+                o => o,
+            }) // descending sort
+            .collect_vec();
+
+        if !proposals.is_empty() {
+            // extract chain segment, ascending order
+            let mut hash = proposals.first().expect("contains newer blocks").hash();
+            let mut proposals = proposals
+                .into_iter()
+                .filter(|b| {
+                    if b.hash() == hash {
+                        hash = b.header.qc.block_hash; // find the parent
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .collect_vec();
+            proposals.reverse();
+
+            // inject if it links up
+            let ancestor_hash = proposals.first().expect(">= 1 block").header.qc.block_hash;
+            let range = proposals.first().as_ref().unwrap().number()
+                ..=proposals.last().as_ref().unwrap().number();
+            tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
+            if self.db.contains_canonical_block(&ancestor_hash)? {
+                self.inject_proposals(proposals)?;
+            }
+        }
+        self.db.empty_sync_metadata()?;
+        self.state = SyncState::Phase0;
         Ok(())
     }
 
@@ -307,6 +350,7 @@ impl Sync {
             )?
             .expect("missing canonical block");
         self.started_at = highest_block.number();
+        self.checkpoint_at = highest_block.number();
         Ok(())
     }
 
@@ -953,7 +997,7 @@ impl Sync {
         if let Some((when, injected, prev_highest)) = self.inject_at {
             let diff = injected - self.in_pipeline;
             let rate = diff as f32 / when.elapsed().as_secs_f32();
-            tracing::debug!("sync::InjectProposals : synced {rate} block/s");
+            tracing::debug!(%rate, "sync::InjectProposals : injected");
             // Detect if node is stuck i.e. active-sync is not making progress
             if highest_number == prev_highest
                 && proposals
@@ -1002,6 +1046,16 @@ impl Sync {
     pub fn mark_received_proposal(&mut self, number: u64) -> Result<()> {
         tracing::trace!(%number, "sync::MarkReceivedProposal : received");
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
+        // speed-up block transfers, w/o waiting for proposals
+        if Self::DO_SPECULATIVE {
+            match self.state {
+                SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
+                    self.request_missing_blocks()?
+                }
+                SyncState::Phase3 if self.in_pipeline == 0 => self.inject_recent_blocks()?,
+                _ => {}
+            }
+        }
         Ok(())
     }
 
