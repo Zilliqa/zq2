@@ -723,7 +723,7 @@ impl State {
             if !update_state_only_if_transaction_succeeds || result.success {
                 self.apply_delta_scilla(&state, current_block.number)?;
             } else {
-                // If the transaction failed, we must update the nonce and balance of the sender account.
+                // If the transaction rejected, we must update the nonce and balance of the sender account.
                 let from_account = state
                     .get(&from_addr)
                     .ok_or(anyhow!("from account not found"))?;
