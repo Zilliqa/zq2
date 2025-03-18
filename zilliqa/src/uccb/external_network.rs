@@ -13,6 +13,8 @@ use crate::uccb::message::{UCCBExternalMessage, UCCBInternalMessage};
 use crate::uccb::node::UCCBNode;
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
 use alloy::eips::BlockNumberOrTag;
+use alloy::eips::eip1898::BlockId;
+use alloy::network::primitives::BlockTransactionsKind;
 use alloy::sol_types::SolEvent;
 use alloy::{
     primitives::{Address, B256},
@@ -43,11 +45,14 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::*;
 use url::Url;
 
+// Max # blocks to query via getLogs() - @todo: make this configurable.
+const MAX_GETLOGS_BLOCKS: u64 = 100;
+
 pub struct ExternalNetwork {
     _parent: Arc<Mutex<UCCBNode>>,
     name: String,
     network: UCCBNetwork,
-    last_block: u64,
+    next_block_to_scan: u64,
 }
 
 pub enum ShouldAbort {
@@ -56,12 +61,12 @@ pub enum ShouldAbort {
 }
 impl ExternalNetwork {
     pub fn new(parent: Arc<Mutex<UCCBNode>>, name: &str, network: UCCBNetwork) -> Result<Self> {
-        let last_block = network.start_block;
+        let next_block_to_scan = network.start_block;
         Ok(ExternalNetwork {
             _parent: parent,
             name: name.to_string(),
             network,
-            last_block,
+            next_block_to_scan,
         })
     }
 
@@ -76,41 +81,68 @@ impl ExternalNetwork {
                 &self.name, self.network.chain_id
             )));
         }
-        info!(
-            "Getting logs from block {}, chain id {}",
-            self.last_block, self.network.chain_id
-        );
 
         let relay_contract = IRELAYER_EVENTS::new(self.network.chain_gateway, provider.clone());
-        let dispatch_contract = IDISPATCHER_EVENTS::new(self.network.chain_gateway, provider);
-        let mut relayer_filter = relay_contract
-            .Relayed_filter()
-            .from_block(self.last_block)
-            .watch()
-            .await?
-            .into_stream();
-        let mut dispatcher_filter = dispatch_contract
-            .Dispatched_filter()
-            .from_block(self.last_block)
-            .watch()
-            .await?
-            .into_stream();
-        loop {
-            select! {
-                Some(result) = relayer_filter.next() => {
-                    if let Ok((relay, _log)) = result {
-                        info!("Relay event nonce {} to {}", relay.nonce, relay.targetChainId);
-                    }
-                },
-                Some(result) = dispatcher_filter.next() => {
-                    if let Ok((dispatch, _log)) = result {
-                        info!("Dispatch event nonce {} from {}", dispatch.nonce, dispatch.sourceChainId);
-                    }
-                },
-            }
+        let dispatch_contract =
+            IDISPATCHER_EVENTS::new(self.network.chain_gateway, provider.clone());
+        let finalized_block = provider
+            .get_block(
+                BlockId::Number(BlockNumberOrTag::Finalized),
+                BlockTransactionsKind::Hashes,
+            )
+            .await?;
+        let finalized_block_num = finalized_block.map_or(0, |x| x.header.number);
+        info!("latest finalized block is {}", finalized_block_num);
+
+        // If we don't have a next block to scan, start scanning at the end.
+        if self.next_block_to_scan == 0 {
+            self.next_block_to_scan = finalized_block_num;
         }
 
-        //return Ok(ShouldAbort::Continue);
+        // Do a chunk, then restart.
+        let to_block = std::cmp::min(
+            finalized_block_num,
+            self.next_block_to_scan + MAX_GETLOGS_BLOCKS,
+        );
+        if to_block >= self.next_block_to_scan {
+            debug!(
+                "External chain {} - querying logs {} to {to_block}",
+                self.name, self.next_block_to_scan
+            );
+            let relayer_logs = relay_contract
+                .Relayed_filter()
+                .from_block(self.next_block_to_scan)
+                .to_block(to_block)
+                .query()
+                .await?;
+
+            let dispatcher_logs = dispatch_contract
+                .Dispatched_filter()
+                .from_block(self.next_block_to_scan)
+                .to_block(to_block)
+                .query()
+                .await?;
+
+            for (relayer_log, _) in relayer_logs {
+                debug!(
+                    "Got a relayer log - nonce {}, target {}",
+                    relayer_log.targetChainId, relayer_log.nonce
+                );
+            }
+            for (dispatcher_log, _) in dispatcher_logs {
+                debug!(
+                    "Got a disptatcher log -  nonce {}, source {}",
+                    dispatcher_log.nonce, dispatcher_log.sourceChainId
+                );
+            }
+            self.next_block_to_scan = to_block + 1;
+        } else {
+            debug!(
+                "External chain {} - no blocks to query at {to_block}",
+                self.name
+            );
+        }
+        Ok(ShouldAbort::Continue)
     }
 
     pub async fn start(&mut self) -> Result<()> {
