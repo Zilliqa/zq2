@@ -1356,9 +1356,7 @@ impl SyncSegments {
 
     /// Peeks into the top of the segment stack.
     fn last_sync_segment(&self) -> Option<(BlockHeader, PeerInfo)> {
-        let Some((hash, peer)) = self.segments.last() else {
-            return None;
-        };
+        let (hash, peer) = self.segments.last()?;
         let header = self.headers.get(hash).cloned()?;
         let peer = PeerInfo {
             last_used: Instant::now(),
@@ -1370,14 +1368,14 @@ impl SyncSegments {
 
     /// Pushes a particular segment into the stack.
     fn push_sync_segment(&mut self, peer: &PeerInfo, meta: &BlockHeader) {
-        self.headers.insert(meta.hash, meta.clone());
+        self.headers.insert(meta.hash, *meta);
         self.segments.push((meta.hash, peer.clone()));
     }
 
     /// Bulk inserts a bunch of metadata.
     fn insert_sync_metadata(&mut self, metas: &Vec<BlockHeader>) {
         for meta in metas {
-            self.headers.insert(meta.hash, meta.clone());
+            self.headers.insert(meta.hash, *meta);
         }
     }
 
