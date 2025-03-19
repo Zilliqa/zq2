@@ -91,6 +91,8 @@ pub struct Sync {
     headers_downloaded: usize,
     blocks_downloaded: usize,
     active_sync_count: usize,
+    // internal structure for syncing
+    segments: SyncSegments,
 }
 
 impl Sync {
@@ -149,6 +151,7 @@ impl Sync {
             active_sync_count: 0,
             p1_response: BTreeMap::new(),
             checkpoint_at: u64::MIN,
+            segments: SyncSegments::default(),
         })
     }
 
@@ -332,7 +335,7 @@ impl Sync {
                 self.inject_proposals(proposals)?;
             }
         }
-        self.db.empty_sync_metadata()?;
+        self.segments.empty_sync_metadata();
         self.state = SyncState::Phase0;
         Ok(())
     }
@@ -381,7 +384,7 @@ impl Sync {
     /// If this function is called many times, it will eventually restart from Phase 0.
     fn retry_phase1(&mut self) -> Result<()> {
         self.retry_count = self.retry_count.saturating_add(1);
-        let segment_count = self.db.count_sync_segments()?;
+        let segment_count = self.segments.count_sync_segments();
         if segment_count == 0 {
             tracing::error!("sync::Retry1 : no metadata segments");
             self.state = SyncState::Phase0;
@@ -391,8 +394,11 @@ impl Sync {
         tracing::debug!("sync::Retry1 : retrying segment #{segment_count}");
 
         // remove the last segment from the chain metadata
-        let (meta, _) = self.db.last_sync_segment()?.unwrap();
-        self.db.pop_sync_segment()?;
+        let (meta, _) = self
+            .segments
+            .last_sync_segment()
+            .expect("segment_count > 0");
+        self.segments.pop_sync_segment();
         self.inject_at = None;
         self.state = SyncState::Phase1(meta);
         Ok(())
@@ -474,14 +480,14 @@ impl Sync {
             .collect_vec();
 
         if self.inject_proposals(proposals)? {
-            self.db.pop_sync_segment()?;
+            self.segments.pop_sync_segment();
         } else {
             // sync is stuck, cancel sync and restart, should be fast for peers that are already near the tip.
             self.state = SyncState::Phase3;
             return Ok(());
         };
 
-        if self.db.count_sync_segments()? == 0 {
+        if self.segments.count_sync_segments() == 0 {
             self.state = SyncState::Phase3;
         } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
             self.request_missing_blocks()?;
@@ -547,8 +553,8 @@ impl Sync {
             self.peers.reinsert_peer(peer)?;
 
             // If we have no chain_segments, we have nothing to do
-            if let Some((meta, peer_info)) = self.db.last_sync_segment()? {
-                let request_hashes = self.db.get_sync_segment(meta.qc.block_hash)?;
+            if let Some((meta, peer_info)) = self.segments.last_sync_segment() {
+                let request_hashes = self.segments.get_sync_segment(meta.qc.block_hash);
 
                 // Checksum of the request hashes
                 let checksum = request_hashes
@@ -558,7 +564,10 @@ impl Sync {
                     })
                     .finalize();
                 let range = Range {
-                    start: self.db.last_sync_block_number()?,
+                    start: self
+                        .segments
+                        .sync_block_number(request_hashes.last().as_ref().unwrap())
+                        .unwrap(),
                     end: meta.number.saturating_sub(1),
                 };
 
@@ -730,7 +739,7 @@ impl Sync {
                 );
                 // Unless, it is the first segment, where it will restart the entire sync.
                 // https://github.com/Zilliqa/zq2/issues/2416
-                if self.db.count_sync_segments()? <= 1 {
+                if self.segments.count_sync_segments() <= 1 {
                     self.state = SyncState::Phase3; // flush, drop all segments, and restart
                 }
                 return Ok(());
@@ -755,10 +764,10 @@ impl Sync {
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
         // Record the constructed chain metadata
-        self.db.insert_sync_metadata(&segment)?;
+        self.segments.insert_sync_metadata(&segment);
 
         // Record landmark(s), including peer that has this set of blocks
-        self.db.push_sync_segment(&segment_peer, meta)?;
+        self.segments.push_sync_segment(&segment_peer, meta);
 
         // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
         let mut block_size: usize = 0;
@@ -773,8 +782,8 @@ impl Sync {
             } else {
                 false
             }
-        }) {
-            self.db.push_sync_segment(&segment_peer, header)?;
+        }).collect_vec().into_iter().rev() {
+            self.segments.push_sync_segment(&segment_peer, header);
         }
 
         // Record the oldest block in the segment
@@ -1325,5 +1334,78 @@ impl FromSql for PeerVer {
 impl ToSql for PeerVer {
     fn to_sql(&self) -> Result<ToSqlOutput, rusqlite::Error> {
         Ok((self.clone() as u32).into())
+    }
+}
+
+#[derive(Debug, Default)]
+struct SyncSegments {
+    headers: BTreeMap<Hash, BlockHeader>,
+    segments: Vec<(Hash, PeerInfo)>,
+}
+
+impl SyncSegments {
+    /// Returns the lowest block number of stored sync segments
+    fn sync_block_number(&self, hash: &Hash) -> Option<u64> {
+        self.headers.get(hash).map(|h| h.number)
+    }
+
+    /// Returns the number of stored sync segments
+    fn count_sync_segments(&self) -> usize {
+        self.segments.len()
+    }
+
+    /// Retrieves bulk metadata information from the given block_hash (inclusive)
+    fn get_sync_segment(&self, mut hash: Hash) -> Vec<Hash> {
+        let mut result = vec![];
+
+        // This implementation skips the final segment in the chain. I don't know if that's intended or not.
+        while let Some(header) = self.headers.get(&hash) {
+            result.push(header.hash);
+            hash = header.qc.block_hash;
+        }
+
+        result
+    }
+
+    /// Peeks into the top of the segment stack.
+    fn last_sync_segment(&self) -> Option<(BlockHeader, PeerInfo)> {
+        let Some((hash, peer)) = self.segments.last() else {
+            return None;
+        };
+        let header = self.headers.get(hash).cloned()?;
+        let peer = PeerInfo {
+            last_used: Instant::now(),
+            score: u32::MAX,
+            ..peer.clone()
+        };
+        Some((header, peer))
+    }
+
+    /// Pushes a particular segment into the stack.
+    fn push_sync_segment(&mut self, peer: &PeerInfo, meta: &BlockHeader) {
+        self.segments.push((meta.hash, peer.clone()));
+    }
+
+    /// Bulk inserts a bunch of metadata.
+    fn insert_sync_metadata(&mut self, metas: &Vec<BlockHeader>) {
+        for meta in metas {
+            self.headers.insert(meta.hash, meta.clone());
+        }
+    }
+
+    /// Empty the metadata table.
+    fn empty_sync_metadata(&mut self) {
+        self.segments.clear();
+        self.headers.clear();
+    }
+
+    /// Pops a segment from the stack; and bulk removes all metadata associated with it.
+    fn pop_sync_segment(&mut self) {
+        let (hash, _) = self.segments.pop().expect("non-empty stack");
+        let header = self.headers.get(&hash).expect("non-empty headers");
+        let mut hash = header.qc.block_hash;
+        while let Some(h) = self.headers.remove(&hash) {
+            hash = h.qc.block_hash;
+        }
     }
 }
