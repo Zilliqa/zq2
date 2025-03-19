@@ -13,7 +13,9 @@ use blsful::{
     Signature, inner_types::Group, vsss_rs::ShareIdentifier,
 };
 use itertools::Itertools;
-use k256::ecdsa::{Signature as EcdsaSignature, VerifyingKey, signature::hazmat::PrehashVerifier};
+use k256::ecdsa::{
+    Signature as EcdsaSignature, SigningKey, VerifyingKey, signature::hazmat::PrehashVerifier,
+};
 use serde::{
     Deserialize, Serialize,
     de::{self, Unexpected},
@@ -311,6 +313,10 @@ impl SecretKey {
         let tx_pubkey =
             TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
         tx_pubkey.into_addr()
+    }
+
+    pub fn to_signing_key(&self) -> SigningKey {
+        k256::ecdsa::SigningKey::from_slice(&self.bytes).unwrap()
     }
 }
 

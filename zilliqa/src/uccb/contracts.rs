@@ -20,3 +20,7 @@ sol!(
     IDISPATCHER_EVENTS,
     "src/uccb/abi/IChainDispatcherEvents.json"
 );
+
+sol! {
+    function SignRelayFunction(uint256 sourceChainId, uint256 targetChainId, address target, bytes calldata bytes, uint256 gasLimit, uint256 nonce);
+}

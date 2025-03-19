@@ -14,6 +14,7 @@ use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
 use alloy::eips::BlockNumberOrTag;
 use alloy::sol_types::SolEvent;
 use anyhow::{Result, anyhow};
+use k256::ecdsa::SigningKey;
 use libp2p::{PeerId, futures::StreamExt, request_response::OutboundFailure};
 use opentelemetry::KeyValue;
 use opentelemetry_semantic_conventions::{
@@ -50,6 +51,11 @@ pub struct UCCBMessageSender {
 }
 
 impl UCCBMessageSender {
+    pub fn broadcast_external_message(&self, msg: UCCBExternalMessage) -> Result<()> {
+        Ok(self
+            .outbound_channel
+            .send((None, self.our_shard, ExternalMessage::UCCB(msg)))?)
+    }
     pub fn send_local_message(&self, msg: UCCBInternalMessage) -> Result<()> {
         self.local_channel
             .send((self.our_shard, self.our_shard, InternalMessage::UCCB(msg)))?;
@@ -58,7 +64,7 @@ impl UCCBMessageSender {
 }
 
 pub struct UCCBNode {
-    pub secret_key: SecretKey,
+    pub signing_key: SigningKey,
     pub node_config: NodeConfig,
     pub uccb_config: UCCBConfig,
     pub request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
@@ -86,14 +92,14 @@ pub async fn handle_local(
 impl UCCBNode {
     /// Starts up the UCCBNode for NodeConfig.
     pub fn new(
-        secret_key: SecretKey,
+        signing_key: SigningKey,
+        peer_id: PeerId,
         node_config: NodeConfig,
         message_sender_channel: UnboundedSender<OutboundMessageTuple>,
         local_sender_channel: UnboundedSender<LocalMessageTuple>,
         request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         node: Arc<Mutex<Node>>,
     ) -> Result<Self> {
-        let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let sender = UCCBMessageSender {
             our_shard: node_config.eth_chain_id,
             our_peer_id: peer_id,
@@ -108,7 +114,7 @@ impl UCCBNode {
             .uccb
             .ok_or(anyhow!("No UCCB config when instantiating UCCB node"))?;
         Ok(Self {
-            secret_key,
+            signing_key,
             node_config,
             uccb_config,
             request_responses,
@@ -131,6 +137,10 @@ impl UCCBNode {
                 .spawn(async move { ext_obj.start().await });
         }
         Ok(())
+    }
+
+    pub fn get_peer_id(&self) -> PeerId {
+        return self.sender.our_peer_id;
     }
 
     pub fn handle_broadcast(&mut self, _from: PeerId, _message: UCCBExternalMessage) -> Result<()> {

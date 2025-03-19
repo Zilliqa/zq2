@@ -122,7 +122,8 @@ impl UCCBLauncher {
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
         let peers: Arc<SyncPeers> = Arc::new(SyncPeers::new(peer_id));
         let node = Arc::new(Mutex::new(UCCBNode::new(
-            secret_key,
+            secret_key.to_signing_key(),
+            peer_id,
             config.clone(),
             outbound_message_sender,
             local_outbound_message_sender,
