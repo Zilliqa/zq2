@@ -877,17 +877,26 @@ impl Sync {
             return Ok(());
         }
 
-        let good_set = if self.peers.count() > Self::MAX_CONCURRENT_PEERS {
-            Self::MAX_CONCURRENT_PEERS.min(self.peers.count_good_peers())
+        let good_count = self.peers.count_good_peers();
+        let peer_count = self.peers.count();
+        let peer_set = if good_count > Self::MAX_CONCURRENT_PEERS {
+            Self::MAX_CONCURRENT_PEERS // ideal case, more than enough good peers
+        } else if good_count > 1 {
+            good_count.saturating_sub(1) // leave one spare, for handling issues; eventually degenerates to 1-peer
+        } else if peer_count > Self::MAX_CONCURRENT_PEERS {
+            Self::MAX_CONCURRENT_PEERS // then, retry with non-good ones too; trying to bump up peers
+        } else if peer_count > 1 {
+            peer_count.saturating_sub(1) // leave one spare, for handling issues.
         } else {
-            self.peers.count_good_peers().saturating_sub(1) // leave one spare, for handling issues
+            peer_count // last ditch effort, with only 1-peer (or none)
         };
-        if good_set == 0 {
-            tracing::warn!("sync::RequestMissingMetadata : no good peers to handle request");
+
+        if peer_set == 0 {
+            tracing::warn!("sync::RequestMissingMetadata : no peers to handle request");
             return Ok(());
         }
 
-        self.do_missing_metadata(meta, good_set)
+        self.do_missing_metadata(meta, peer_set)
     }
 
     /// Phase 1: Request chain metadata from a peer.
@@ -961,7 +970,8 @@ impl Sync {
                 tracing::info!(?range, from = %peer_info.peer_id,
                     "sync::MissingMetadata : requesting ({num}/{num_peers})",
                 );
-                offset += self.max_batch_size as u64;
+                let count = range.count();
+                offset = offset.saturating_add(count as u64);
 
                 let request_id = self
                     .message_sender
