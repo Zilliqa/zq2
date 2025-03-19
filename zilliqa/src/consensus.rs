@@ -2794,15 +2794,6 @@ impl Consensus {
             self.state
                 .set_to_root(parent_block.state_root_hash().into());
 
-            // Ensure the transaction pool is consistent by recreating it. This is moderately costly, but forks are
-            // rare.
-            let existing_txns = self.transaction_pool.drain();
-
-            for txn in existing_txns {
-                let account_nonce = self.state.get_account(txn.signer)?.nonce;
-                self.transaction_pool.insert_transaction(txn, account_nonce);
-            }
-
             // block transactions need to be removed from self.transactions and re-injected
             for tx_hash in &head_block.transactions {
                 let orig_tx = self.get_transaction_by_hash(*tx_hash)?.unwrap();
