@@ -9,7 +9,9 @@ use crate::uccb::launcher::{
     UCCBLocalMessageTuple, UCCBMessageFailure, UCCBOutboundMessageTuple, UCCBRequestId,
     UCCBResponseChannel,
 };
-use crate::uccb::message::{UCCBExternalMessage, UCCBInternalMessage};
+use crate::uccb::message::{
+    RelayedMessage, SignedRelayedMessage, UCCBExternalMessage, UCCBInternalMessage,
+};
 use crate::uccb::node::UCCBNode;
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
 use alloy::eips::BlockNumberOrTag;
@@ -17,7 +19,7 @@ use alloy::eips::eip1898::BlockId;
 use alloy::network::primitives::BlockTransactionsKind;
 use alloy::sol_types::SolEvent;
 use alloy::{
-    primitives::{Address, B256},
+    primitives::{Address, B256, TxHash, U256},
     providers::{Provider, ProviderBuilder},
 };
 use anyhow::{Result, anyhow};
@@ -49,7 +51,7 @@ use url::Url;
 const MAX_GETLOGS_BLOCKS: u64 = 100;
 
 pub struct ExternalNetwork {
-    _parent: Arc<Mutex<UCCBNode>>,
+    parent: Arc<Mutex<UCCBNode>>,
     name: String,
     network: UCCBNetwork,
     next_block_to_scan: u64,
@@ -63,7 +65,7 @@ impl ExternalNetwork {
     pub fn new(parent: Arc<Mutex<UCCBNode>>, name: &str, network: UCCBNetwork) -> Result<Self> {
         let next_block_to_scan = network.start_block;
         Ok(ExternalNetwork {
-            _parent: parent,
+            parent,
             name: name.to_string(),
             network,
             next_block_to_scan,
@@ -123,7 +125,25 @@ impl ExternalNetwork {
                 .query()
                 .await?;
 
-            for (relayer_log, _) in relayer_logs {
+            for (relayer_log, log) in relayer_logs {
+                // we'll need these to query the txn if we need to re-sign later.
+                if let (Some(tx_hash), Some(blk_num)) = (log.transaction_hash, log.block_number) {
+                    // We've found a log and believe it to be authentic. Great! Sign it and send it off.
+                    let msg = RelayedMessage::from_relayed_event(
+                        U256::from(chain_id),
+                        blk_num,
+                        tx_hash,
+                        &relayer_log,
+                    );
+                    let node = self.parent.lock().unwrap();
+                    let signature =
+                        crate::uccb::crypto::sign_relayed_message(&msg, &node.signing_key)?;
+                    let signed = SignedRelayedMessage::from_message(msg)
+                        .with_signature(node.get_peer_id(), &signature);
+                    node.sender
+                        .broadcast_external_message(UCCBExternalMessage::Signature(signed))?;
+                }
+
                 debug!(
                     "Got a relayer log - nonce {}, target {}",
                     relayer_log.targetChainId, relayer_log.nonce

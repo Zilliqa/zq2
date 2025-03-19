@@ -26,7 +26,7 @@ anyhow = { version = "1.0.97", features = ["backtrace"] }
 vergen = { version = "8.3.2", features = ["git", "git2"] }
 
 [dependencies]
-alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "contract", "reqwest"] }
+alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types", "contract", "reqwest", "signers", "signer-local" ] }
 anyhow = { version = "1.0.97", features = ["backtrace"] }
 async-trait = "0.1.88"
 base64 = "0.22.1"
