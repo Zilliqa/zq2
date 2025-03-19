@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap, VecDeque},
-    ops::Range,
+    ops::RangeInclusive,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -563,16 +563,14 @@ impl Sync {
                         sum.with(h.as_bytes())
                     })
                     .finalize();
-                let range = Range {
-                    start: self
-                        .segments
-                        .sync_block_number(request_hashes.last().as_ref().unwrap())
-                        .unwrap(),
-                    end: self
+                let range = self
+                    .segments
+                    .sync_block_number(request_hashes.last().as_ref().unwrap())
+                    .unwrap()
+                    ..=self
                         .segments
                         .sync_block_number(request_hashes.first().as_ref().unwrap())
-                        .unwrap(),
-                };
+                        .unwrap();
 
                 // Fire request, to the original peer that sent the segment metadata
                 tracing::info!(?range, from = %peer_info.peer_id,
@@ -665,10 +663,8 @@ impl Sync {
                 // Only process a full response
                 if let Some(response) = response {
                     if !response.is_empty() {
-                        let range = Range {
-                            start: response.last().unwrap().header.number,
-                            end: response.first().unwrap().header.number,
-                        };
+                        let range = response.last().unwrap().header.number
+                            ..=response.first().unwrap().header.number;
                         tracing::info!(?range, from = %peer_id,
                             "sync::MetadataResponse : received",
                         );
@@ -799,7 +795,7 @@ impl Sync {
             .contains_canonical_block(&block_hash)
             .unwrap_or_default()
         {
-            self.state = SyncState::Phase2((Hash::ZERO, Range::default()));
+            self.state = SyncState::Phase2((Hash::ZERO, 0..=0));
             // drop all pending requests & responses
             self.p1_response.clear();
             for p in self.in_flight.drain(..) {
@@ -823,10 +819,7 @@ impl Sync {
         from: PeerId,
         request: RequestBlocksByHeight,
     ) -> Result<ExternalMessage> {
-        let range = Range {
-            start: request.from_height,
-            end: request.to_height,
-        };
+        let range = request.from_height..=request.to_height;
         tracing::debug!(?range, %from,
             "sync::MetadataRequest : received",
         );
@@ -924,37 +917,33 @@ impl Sync {
                         }),
                         PeerVer::V2,
                     ) => {
-                        let range = Range {
-                            start: block_number
-                                .saturating_sub(offset)
-                                .saturating_sub(self.max_batch_size as u64)
-                                .max(self.checkpoint_at),
-                            end: block_number.saturating_sub(offset).saturating_sub(1),
-                        };
+                        let range = block_number
+                            .saturating_sub(offset)
+                            .saturating_sub(self.max_batch_size as u64)
+                            .max(self.checkpoint_at)
+                            ..=block_number.saturating_sub(offset).saturating_sub(1);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
-                            to_height: range.end,
-                            from_height: range.start,
+                            to_height: *range.end(),
+                            from_height: *range.start(),
                         });
-                        (message, range.start <= self.started_at, range)
+                        (message, *range.start() <= self.started_at, range)
                     }
                     (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
                         let meta = meta.unwrap();
                         let block_number = meta.number;
-                        let range = Range {
-                            start: block_number
-                                .saturating_sub(offset)
-                                .saturating_sub(self.max_batch_size as u64)
-                                .max(self.checkpoint_at),
-                            end: block_number.saturating_sub(offset).saturating_sub(1),
-                        };
+                        let range = block_number
+                            .saturating_sub(offset)
+                            .saturating_sub(self.max_batch_size as u64)
+                            .max(self.checkpoint_at)
+                            ..=block_number.saturating_sub(offset).saturating_sub(1);
                         self.state = SyncState::Phase1(meta);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
-                            to_height: range.end,
-                            from_height: range.start,
+                            to_height: *range.end(),
+                            from_height: *range.start(),
                         });
-                        (message, range.start <= self.started_at, range)
+                        (message, *range.start() <= self.started_at, range)
                     }
                     (SyncState::Phase0, PeerVer::V1) | (SyncState::Phase1(_), PeerVer::V1) => {
                         // Fire a V1 query as a V2 negotiation/hello.
@@ -965,7 +954,7 @@ impl Sync {
                             to_view: 0,
                             from_view: 0,
                         });
-                        (message, true, Range::default())
+                        (message, true, 0..=0)
                     }
                     _ => unimplemented!("sync::DoMissingMetadata"),
                 };
@@ -973,7 +962,7 @@ impl Sync {
                 tracing::info!(?range, from = %peer_info.peer_id,
                     "sync::MissingMetadata : requesting ({num}/{num_peers})",
                 );
-                offset += self.max_batch_size as u64;
+                offset += range.clone().count() as u64;
 
                 let request_id = self
                     .message_sender
@@ -1293,7 +1282,7 @@ impl PartialOrd for DownGrade {
 enum SyncState {
     Phase0,
     Phase1(BlockHeader),
-    Phase2((Hash, Range<u64>)),
+    Phase2((Hash, RangeInclusive<u64>)),
     Phase3,
     Retry1,
 }
