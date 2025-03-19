@@ -554,7 +554,7 @@ impl Sync {
 
             // If we have no chain_segments, we have nothing to do
             if let Some((meta, peer_info)) = self.segments.last_sync_segment() {
-                let request_hashes = self.segments.get_sync_segment(meta.qc.block_hash);
+                let request_hashes = self.segments.get_sync_segment(&meta);
 
                 // Checksum of the request hashes
                 let checksum = request_hashes
@@ -568,7 +568,10 @@ impl Sync {
                         .segments
                         .sync_block_number(request_hashes.last().as_ref().unwrap())
                         .unwrap(),
-                    end: meta.number.saturating_sub(1),
+                    end: self
+                        .segments
+                        .sync_block_number(request_hashes.first().as_ref().unwrap())
+                        .unwrap(),
                 };
 
                 // Fire request, to the original peer that sent the segment metadata
@@ -1355,9 +1358,10 @@ impl SyncSegments {
     }
 
     /// Retrieves bulk metadata information from the given block_hash (inclusive)
-    fn get_sync_segment(&self, mut hash: Hash) -> Vec<Hash> {
+    fn get_sync_segment(&self, block: &BlockHeader) -> Vec<Hash> {
         let mut result = vec![];
 
+        let mut hash = block.qc.block_hash;
         // This implementation skips the final segment in the chain. I don't know if that's intended or not.
         while let Some(header) = self.headers.get(&hash) {
             result.push(header.hash);
@@ -1383,6 +1387,7 @@ impl SyncSegments {
 
     /// Pushes a particular segment into the stack.
     fn push_sync_segment(&mut self, peer: &PeerInfo, meta: &BlockHeader) {
+        self.headers.insert(meta.hash, meta.clone());
         self.segments.push((meta.hash, peer.clone()));
     }
 
@@ -1402,7 +1407,7 @@ impl SyncSegments {
     /// Pops a segment from the stack; and bulk removes all metadata associated with it.
     fn pop_sync_segment(&mut self) {
         let (hash, _) = self.segments.pop().expect("non-empty stack");
-        let header = self.headers.get(&hash).expect("non-empty headers");
+        let header = self.headers.get(&hash).unwrap();
         let mut hash = header.qc.block_hash;
         while let Some(h) = self.headers.remove(&hash) {
             hash = h.qc.block_hash;
