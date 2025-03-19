@@ -119,12 +119,6 @@ impl Sync {
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
 
         // Start from reset, or continue sync
-        let state = if db.count_sync_segments()? == 0 {
-            SyncState::Phase0
-        } else {
-            SyncState::Retry1 // continue sync
-        };
-
         let latest_block_number = latest_block
             .as_ref()
             .map_or_else(|| u64::MIN, |b| b.number());
@@ -138,7 +132,7 @@ impl Sync {
             max_blocks_in_flight,
             in_flight: VecDeque::with_capacity(Self::MAX_CONCURRENT_PEERS),
             in_pipeline: usize::MIN,
-            state,
+            state: SyncState::Phase0,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
             started_at: latest_block_number,
@@ -330,7 +324,7 @@ impl Sync {
             let ancestor_hash = proposals.first().expect(">= 1 block").header.qc.block_hash;
             let range = proposals.first().as_ref().unwrap().number()
                 ..=proposals.last().as_ref().unwrap().number();
-            tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
+            tracing::info!(?range, "sync::DoSync : finishing");
             if self.db.contains_canonical_block(&ancestor_hash)? {
                 self.inject_proposals(proposals)?;
             }
@@ -1064,7 +1058,7 @@ impl Sync {
     pub fn am_syncing(&self) -> Result<bool> {
         Ok(self.in_pipeline != 0
             || !matches!(self.state, SyncState::Phase0)
-            || self.db.count_sync_segments()? != 0)
+            || self.segments.count_sync_segments() != 0)
     }
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,
