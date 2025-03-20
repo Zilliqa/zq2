@@ -4,14 +4,19 @@ use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::Node;
 use crate::p2p_node::{LocalMessageTuple, OutboundMessageTuple};
 use crate::transaction::{EvmLog, Log, TransactionReceipt};
+use crate::uccb::contracts::{IDISPATCHER_EVENTS, IRELAYER_EVENTS};
 use crate::uccb::external_network::ExternalNetwork;
 use crate::uccb::launcher::{
     UCCBLocalMessageTuple, UCCBMessageFailure, UCCBOutboundMessageTuple, UCCBRequestId,
     UCCBResponseChannel,
 };
-use crate::uccb::message::{UCCBExternalMessage, UCCBInternalMessage};
+use crate::uccb::message::{
+    DispatchedMessage, RelayedMessage, SignedRelayedMessage, UCCBExternalMessage,
+    UCCBInternalMessage,
+};
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
 use alloy::eips::BlockNumberOrTag;
+use alloy::primitives::{TxHash, U256};
 use alloy::sol_types::SolEvent;
 use anyhow::{Result, anyhow};
 use k256::ecdsa::SigningKey;
@@ -89,6 +94,42 @@ pub async fn handle_local(
     Ok(())
 }
 
+// Here to avoid polluting messages.rs with zilliqa and sol_contract dependencies.
+fn relayed_message_from_evm_log(
+    chain_id: u64,
+    blk: u64,
+    tx_hash: TxHash,
+    log_idx: usize,
+    log: &EvmLog,
+) -> Result<RelayedMessage> {
+    let decoded = IRELAYER_EVENTS::Relayed::decode_raw_log(&log.topics, &log.data, true)?;
+    Ok(RelayedMessage::from_relayed_event(
+        U256::from(chain_id),
+        blk,
+        u64::try_from(log_idx)?,
+        tx_hash,
+        &decoded,
+    ))
+}
+
+// Here to avoid polluting messages.rs with zilliqa and sol_contract dependencies.
+fn dispatched_message_from_evm_log(
+    chain_id: u64,
+    blk: u64,
+    tx_hash: TxHash,
+    log_idx: usize,
+    log: &EvmLog,
+) -> Result<DispatchedMessage> {
+    let decoded = IDISPATCHER_EVENTS::Dispatched::decode_raw_log(&log.topics, &log.data, true)?;
+    Ok(DispatchedMessage::from_dispatched_event(
+        U256::from(chain_id),
+        blk,
+        u64::try_from(log_idx)?,
+        tx_hash,
+        &decoded,
+    ))
+}
+
 impl UCCBNode {
     /// Starts up the UCCBNode for NodeConfig.
     pub fn new(
@@ -140,7 +181,7 @@ impl UCCBNode {
     }
 
     pub fn get_peer_id(&self) -> PeerId {
-        return self.sender.our_peer_id;
+        self.sender.our_peer_id
     }
 
     pub fn handle_broadcast(&mut self, _from: PeerId, _message: UCCBExternalMessage) -> Result<()> {
@@ -186,7 +227,7 @@ impl UCCBNode {
             zq2_node.get_transaction_receipts_in_block(block.hash())?
         };
         // Now look through the receipts
-        let to_relay: Vec<EvmLog> = receipts
+        let to_relay: Vec<(Option<SignedRelayedMessage>, Option<DispatchedMessage>)> = receipts
             .iter()
             .filter_map(|x| {
                 // Unsuccessful transactions emit no relayer events
@@ -201,16 +242,32 @@ impl UCCBNode {
                         _ => None,
                     })
                     .filter(|e| e.address == chain_gateway_address)
-                    .filter(|e| {
+                    .enumerate()
+                    .filter_map(|(log_idx, e)| {
                         // First topic should be the relayed topic
                         if let Some(v) = e.topics.get(0) {
-                            *v == crate::uccb::contracts::IRELAYER_EVENTS::Relayed::SIGNATURE_HASH
-                        } else {
-                            false
+                            match *v {
+                                crate::uccb::contracts::IRELAYER_EVENTS::Relayed::SIGNATURE_HASH => {
+                                    let relayed = relayed_message_from_evm_log(self.node_config.eth_chain_id, blk, x.tx_hash.into(), log_idx, e);
+                                    if let Ok(r) = relayed {
+                                        let signature = crate::uccb::crypto::sign_relayed_message(&r, &self.signing_key);
+                                        if let Ok(s) = signature {
+                                            return Some((Some(SignedRelayedMessage::from_message(r).with_signature(self.get_peer_id(), &s)), None))
+                                        }
+                                    }
+                                },
+                                crate::uccb::contracts::IDISPATCHER_EVENTS::Dispatched::SIGNATURE_HASH => {
+                                    let dispatched = dispatched_message_from_evm_log(self.node_config.eth_chain_id, blk, x.tx_hash.into(), log_idx, e);
+                                    if let Ok(d) = dispatched {
+                                        return Some((None, Some(d)))
+                                    }
+                                },
+                                _ => ()
+                            }
                         }
+                        None
                     })
-                    .cloned()
-                    .collect::<Vec<EvmLog>>();
+                    .collect::<Vec<(Option<SignedRelayedMessage>, Option<DispatchedMessage>)>>();
                 if valid_logs.is_empty() {
                     None
                 } else {

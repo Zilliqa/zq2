@@ -127,11 +127,14 @@ impl ExternalNetwork {
 
             for (relayer_log, log) in relayer_logs {
                 // we'll need these to query the txn if we need to re-sign later.
-                if let (Some(tx_hash), Some(blk_num)) = (log.transaction_hash, log.block_number) {
+                if let (Some(tx_hash), Some(blk_num), Some(log_index)) =
+                    (log.transaction_hash, log.block_number, log.log_index)
+                {
                     // We've found a log and believe it to be authentic. Great! Sign it and send it off.
                     let msg = RelayedMessage::from_relayed_event(
                         U256::from(chain_id),
                         blk_num,
+                        log_index,
                         tx_hash,
                         &relayer_log,
                     );
