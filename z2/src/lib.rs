@@ -12,8 +12,6 @@ pub mod mitmweb;
 pub mod node_spec;
 pub mod otel;
 pub mod otterscan;
-pub mod perf;
-pub mod perf_mod;
 pub mod plumbing;
 pub mod scilla;
 mod secret;

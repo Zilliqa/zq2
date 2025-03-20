@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.26;
-import {Deposit, Staker} from "../deposit_v5.sol";
+import {Deposit} from "../deposit_v5.sol";
 import {DepositInit, InitialStaker} from "../deposit_v1.sol";
 import {Test, console2 as console} from "@openzeppelin/lib/forge-std/src/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -357,13 +357,12 @@ contract DepositTest is Test {
         uint256 withdrawals
     ) public view {
         uint256 gasBefore = gasleft();
-        (, , Staker memory stakerData) = depositContract.getStakerData(
-            blsPubKey
-        );
+        (, , Deposit.StakerData memory stakerData) = depositContract
+            .getStakerData(blsPubKey);
         if (printGasUsage) {
             console.log("\ngetStakerData Gas used: %s", gasBefore - gasleft());
         }
-        assertEq(stakerData.withdrawals.values.length, withdrawals);
+        assertEq(stakerData.withdrawals.length, withdrawals);
     }
 
     // function checkGetStakersData(

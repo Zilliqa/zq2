@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::ValueEnum;
 use cliclack::MultiProgress;
 use colored::Colorize;
@@ -20,14 +20,14 @@ use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 use crate::{
     address::EthereumAddress,
     chain::{
+        Chain,
         config::NetworkConfig,
         instance::ChainInstance,
         node::{ChainNode, NodePort, NodeRole},
     },
     secret::Secret,
     utils::format_amount,
-    validators,
-    validators::SignerClient,
+    validators::{self, SignerClient},
 };
 
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
@@ -156,7 +156,11 @@ async fn execute_install_or_upgrade(
 }
 
 async fn post_install(chain: ChainInstance) -> Result<()> {
-    if chain.name().contains("prototestnet") || chain.name().contains("protomainnet") {
+    if chain.chain()? == Chain::Zq2ProtoTestnet
+        || chain.chain()? == Chain::Zq2ProtoMainnet
+        || chain.chain()? == Chain::Zq2Testnet
+        || chain.chain()? == Chain::Zq2Mainnet
+    {
         log::info!("Skipping post install actions for chain: {}", chain.name());
         return anyhow::Ok(());
     }
@@ -456,7 +460,9 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         for failure in failures {
             log::error!("FAILURE: {}", failure);
         }
-        log::error!("Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node");
+        log::error!(
+            "Run `z2 deployer get-deposit-commands <chain_file>` to get the deposit command each node"
+        );
     }
 
     Ok(())
@@ -727,9 +733,8 @@ pub async fn run_rpc_call(
         let current_params = params.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
-            let result = machine
-                .get_rpc_response(&current_method, &current_params, timeout, current_port)
-                .await;
+            let result =
+                machine.get_rpc_response(&current_method, &current_params, timeout, current_port);
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -801,7 +806,7 @@ pub async fn run_ssh_command(
         let current_command = command.to_owned();
         let permit = semaphore.clone().acquire_owned().await?;
         let future = task::spawn(async move {
-            let result = machine.run(&current_command.join(" "), false).await;
+            let result = machine.run(&current_command.join(" "), false);
             drop(permit); // Release the permit when the task is done
             (machine, result)
         });
@@ -813,7 +818,7 @@ pub async fn run_ssh_command(
     for result in results {
         match result? {
             (machine, Ok(output)) => {
-                let output = if !output.success {
+                let output = if !output.status.success() {
                     format!(
                         "{}: {}",
                         "ERROR".red(),
@@ -1201,7 +1206,7 @@ async fn generate_secret(
 
     // Retrieve existing secret
     progress_bar.start(format!("{}: Retrieving existing secret", name));
-    let mut secrets = Secret::get_secrets(project_id, filters).await?;
+    let mut secrets = Secret::get_secrets(project_id, filters)?;
     if secrets.len() > 1 {
         return Err(anyhow!(
             "Error: found multiple secrets with the filter {filters}"
@@ -1212,7 +1217,7 @@ async fn generate_secret(
     // If force and present delete the old secret before
     if !secrets.is_empty() && force {
         progress_bar.start(format!("{}: Deleting existing secret", name));
-        secrets[0].delete().await?;
+        secrets[0].delete()?;
         secrets.clear();
         progress_bar.inc(1);
     }
@@ -1220,7 +1225,7 @@ async fn generate_secret(
     // Create secret if does not exist
     progress_bar.start(format!("{}: Create secret if does not exist", name));
     if secrets.is_empty() {
-        let secret = Secret::create(project_id, name, labels).await?;
+        let secret = Secret::create(project_id, name, labels)?;
         secrets.push(secret);
     }
     progress_bar.inc(1);
@@ -1230,12 +1235,10 @@ async fn generate_secret(
         "{}: Creating new secret version if not exist",
         name
     ));
-    let secret_value = &Secret::generate_random_secret().await?;
+    let secret_value = Secret::generate_random_secret();
 
-    if let Some(error) = secrets[0].value().await.err() {
-        if error.to_string().contains("has no versions") {
-            secrets[0].add_version(secret_value).await?;
-        }
+    if secrets[0].value().is_err() {
+        secrets[0].add_version(&secret_value)?;
     }
     progress_bar.inc(1);
 

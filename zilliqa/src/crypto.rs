@@ -7,17 +7,16 @@
 use std::fmt::Display;
 
 use alloy::primitives::{Address, B256};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use blsful::{
-    inner_types::Group, vsss_rs::ShareIdentifier, AggregateSignature, Bls12381G2, Bls12381G2Impl,
-    MultiPublicKey, MultiSignature, PublicKey, Signature,
+    AggregateSignature, Bls12381G2, Bls12381G2Impl, MultiPublicKey, MultiSignature, PublicKey,
+    Signature, inner_types::Group, vsss_rs::ShareIdentifier,
 };
-use crypto_bigint::generic_array::GenericArray;
 use itertools::Itertools;
-use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
+use k256::ecdsa::{Signature as EcdsaSignature, VerifyingKey, signature::hazmat::PrehashVerifier};
 use serde::{
-    de::{self, Unexpected},
     Deserialize, Serialize,
+    de::{self, Unexpected},
 };
 use sha3::{Digest, Keccak256};
 
@@ -155,7 +154,7 @@ impl NodePublicKey {
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
-        self.0 .0.to_compressed().to_vec()
+        self.0.0.to_compressed().to_vec()
     }
 
     pub fn verify(&self, message: &[u8], signature: BlsSignature) -> Result<()> {
@@ -308,8 +307,7 @@ impl SecretKey {
     }
 
     pub fn to_evm_address(&self) -> Address {
-        let ecdsa_key =
-            k256::ecdsa::SigningKey::from_bytes(GenericArray::from_slice(&self.bytes)).unwrap();
+        let ecdsa_key = k256::ecdsa::SigningKey::from_slice(&self.bytes).unwrap();
         let tx_pubkey =
             TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
         tx_pubkey.into_addr()

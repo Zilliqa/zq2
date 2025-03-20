@@ -3,23 +3,21 @@ use std::{
     fmt::Debug,
     fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    ops::Range,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Context, Result};
-use eth_trie::{EthTrie, MemoryDB, Trie, DB};
+use anyhow::{Context, Result, anyhow};
+use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
-use libp2p::PeerId;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
 use rusqlite::{
-    named_params,
+    Connection, OptionalExtension, Row, ToSql, named_params,
     types::{FromSql, FromSqlError, ToSqlOutput},
-    Connection, OptionalExtension, Row, ToSql,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -29,7 +27,6 @@ use crate::{
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     state::Account,
-    sync::PeerInfo,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
@@ -214,7 +211,9 @@ impl Db {
                 version_file.read_to_string(&mut version)?;
 
                 if !version.is_empty() && version != CURRENT_DB_VERSION {
-                    return Err(anyhow!("data is incompatible with this version - please delete the data and re-sync"));
+                    return Err(anyhow!(
+                        "data is incompatible with this version - please delete the data and re-sync"
+                    ));
                 }
 
                 version_file.seek(SeekFrom::Start(0))?;
@@ -336,18 +335,6 @@ impl Db {
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
             ",
         )?;
-        connection.execute_batch(
-            "CREATE TEMP TABLE IF NOT EXISTS sync_metadata (
-            block_hash BLOB NOT NULL UNIQUE,
-            parent_hash BLOB NOT NULL,
-            block_number INTEGER NOT NULL PRIMARY KEY,
-            version INTEGER DEFAULT 0,
-            peer BLOB DEFAULT NULL,
-            rawdata BLOB NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_sync_metadata ON sync_metadata(block_number) WHERE peer IS NOT NULL;",
-        )?;
-
         Ok(())
     }
 
@@ -362,159 +349,13 @@ impl Db {
         Ok(Some(base_path.join("checkpoints").into_boxed_path()))
     }
 
-    /// Returns the lowest block number of stored sync segments
-    pub fn last_sync_block_number(&self) -> Result<u64> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT MIN(block_number) FROM sync_metadata")?
-            .query_row([], |row| row.get(0))
-            .unwrap_or_default())
-    }
-
-    /// Returns the number of stored sync segments
-    pub fn count_sync_segments(&self) -> Result<usize> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT COUNT(block_number) FROM sync_metadata WHERE peer IS NOT NULL")?
-            .query_row([], |row| row.get(0))
-            .optional()?
-            .unwrap_or_default())
-    }
-
-    /// Checks if the stored metadata exists
-    pub fn contains_sync_metadata(&self, block_hash: &Hash) -> Result<bool> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
-            .query_row([block_hash], |row| row.get::<_, Hash>(0))
-            .optional()?
-            .is_some())
-    }
-
-    /// Retrieves bulk metadata information from the given block_hash (inclusive)
-    pub fn get_sync_segment(&self, hash: Hash) -> Result<Vec<Hash>> {
+    /// Returns the lowest and highest block numbers of stored blocks
+    pub fn available_range(&self) -> Result<RangeInclusive<u64>> {
         let db = self.db.lock().unwrap();
-
-        let mut hashes = Vec::new();
-        let mut block_hash = hash;
-
-        while let Some(parent_hash) = db
-            .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
-            .query_row([block_hash], |row| row.get::<_, Hash>(0))
-            .optional()?
-        {
-            hashes.push(block_hash);
-            block_hash = parent_hash;
-        }
-        Ok(hashes)
-    }
-
-    /// Peeks into the top of the segment stack.
-    pub fn last_sync_segment(&self) -> Result<Option<(BlockHeader, PeerInfo)>> {
-        let db = self.db.lock().unwrap();
-        let r = db.prepare_cached("SELECT rawdata, version, peer FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
-        .query_row([], |row| Ok((
-            serde_json::from_slice(row.get::<_,Vec<u8>>(0)?.as_slice()).unwrap(),
-        PeerInfo {
-            last_used: Instant::now(),
-            score: u32::MAX,
-            version: row.get(1)?,
-            peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(2)?.as_slice()).unwrap(),
-        }))).optional()?;
-        Ok(r)
-    }
-
-    /// Pushes a particular segment into the stack.
-    pub fn push_sync_segment(&self, peer: &PeerInfo, meta: &BlockHeader) -> Result<()> {
-        let db = self.db.lock().unwrap();
-        db.prepare_cached(
-                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, version, peer, rawdata) VALUES (:parent_hash, :block_hash, :block_number, :version, :peer, :rawdata)")?
-                .execute(
-                named_params! {
-                    ":parent_hash": meta.qc.block_hash,
-                    ":block_hash": meta.hash,
-                    ":block_number": meta.number,
-                    ":peer": peer.peer_id.to_bytes(),
-                    ":version": peer.version,
-                    ":rawdata": serde_json::to_vec(&meta).unwrap(),
-                },
-            )?;
-        Ok(())
-    }
-
-    /// Bulk inserts a bunch of metadata.
-    pub fn insert_sync_metadata(&self, metas: &Vec<BlockHeader>) -> Result<()> {
-        let mut db = self.db.lock().unwrap();
-        let tx = db.transaction()?;
-
-        for meta in metas {
-            tx.prepare_cached(
-                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, rawdata) VALUES (:parent_hash, :block_hash, :block_number, :rawdata)")?
-                .execute(
-                named_params! {
-                    ":parent_hash": meta.qc.block_hash,
-                    ":block_hash": meta.hash,
-                    ":block_number": meta.number,
-                    ":rawdata": serde_json::to_vec(meta).unwrap(),
-            })?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// Empty the metadata table.
-    pub fn empty_sync_metadata(&self) -> Result<()> {
-        self.db
-            .lock()
-            .unwrap()
-            .execute("DELETE FROM sync_metadata", [])?;
-        Ok(())
-    }
-
-    /// Pops a segment from the stack; and bulk removes all metadata associated with it.
-    pub fn pop_sync_segment(&self) -> Result<()> {
-        let mut db = self.db.lock().unwrap();
-        let c = db.transaction()?;
-
-        if let Some(block_hash) = c.prepare_cached("SELECT block_hash FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
-        .query_row([], |row| row.get::<_,Hash>(0)).optional()? {
-            if let Some(parent_hash) = c.prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
-            .query_row([block_hash], |row| row.get(0)).optional()? {
-
-            // update marker
-            c.prepare_cached(
-                "UPDATE sync_metadata SET peer = NULL WHERE block_hash = ?1")?
-                .execute(
-                [block_hash]
-            )?;
-
-            // remove segment                
-            let mut hashes = Vec::new();
-            let mut block_hash = parent_hash;
-            while let Some(parent_hash) = c
-                    .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
-                    .query_row([block_hash], |row| row.get::<_, Hash>(0))
-                    .optional()?
-                {
-                    hashes.push(block_hash);
-                    block_hash = parent_hash;
-                }
-
-            for hash in hashes {
-                c.prepare_cached("DELETE FROM sync_metadata WHERE block_hash = ?1")?
-                .execute([hash])?;
-            }
-            }
-        }
-
-        c.commit()?;
-        Ok(())
+        let (min, max) = db
+            .prepare_cached("SELECT MIN(height), MAX(height) FROM blocks")?
+            .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(min..=max)
     }
 
     /// Fetch checkpoint data from file and initialise db state
@@ -580,7 +421,9 @@ impl Db {
         reader.read_exact(&mut parent_ser)?;
         let parent: Block = bincode::deserialize(&parent_ser)?;
         if block.parent_hash() != parent.hash() {
-            return Err(anyhow!("Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"));
+            return Err(anyhow!(
+                "Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"
+            ));
         }
 
         if state_trie.iter().next().is_some()
@@ -599,7 +442,9 @@ impl Db {
             // usecase for going through the effort to support it and ensure it works as expected.
             if let Some(db_block) = self.get_block_by_hash(&parent.hash())? {
                 if db_block.parent_hash() != parent.parent_hash() {
-                    return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"));
+                    return Err(anyhow!(
+                        "Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"
+                    ));
                 } else {
                     // In this case, the database already has the block contained in this checkpoint. We assume the
                     // database contains the full state for that block too and thus return early, without actually
@@ -607,7 +452,9 @@ impl Db {
                     return Ok(Some((block, transactions, parent)));
                 }
             } else {
-                return Err(anyhow!("Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"));
+                return Err(anyhow!(
+                    "Inconsistent checkpoint file: block loaded from checkpoint file does not exist in non-empty database"
+                ));
             }
         }
 
@@ -686,7 +533,9 @@ impl Db {
                 bincode::deserialize::<Account>(&serialised_account)?.storage_root;
             if account_trie.root_hash()?.as_slice() != account_trie_root {
                 return Err(anyhow!(
-                    "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}", hex::encode(account_trie.root_hash()?.as_slice()), hex::encode(account_trie_root)
+                    "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}",
+                    hex::encode(account_trie.root_hash()?.as_slice()),
+                    hex::encode(account_trie_root)
                 ));
             }
             if processed_storage_items > maximum_sql_parameters {
@@ -1086,6 +935,17 @@ impl Db {
             .is_some())
     }
 
+    pub fn contains_canonical_block(&self, block_hash: &Hash) -> Result<bool> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT 1 FROM blocks WHERE is_canonical = TRUE AND block_hash = ?1")?
+            .query_row([block_hash], |row| row.get::<_, i64>(0))
+            .optional()?
+            .is_some())
+    }
+
     fn make_view_range(row: &Row) -> rusqlite::Result<Range<u64>> {
         // Add one to end because the range returned from SQL is inclusive.
         let start: u64 = row.get(0)?;
@@ -1444,8 +1304,8 @@ impl eth_trie::DB for TrieStorage {
 mod tests {
     use alloy::consensus::EMPTY_ROOT_HASH;
     use rand::{
-        distributions::{Distribution, Uniform},
         Rng, SeedableRng,
+        distributions::{Distribution, Uniform},
     };
     use rand_chacha::ChaCha8Rng;
     use tempfile::tempdir;
@@ -1464,16 +1324,16 @@ mod tests {
         let distribution = Uniform::new(1, 50);
         let mut root_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
         for _ in 0..100 {
-            let account_address: [u8; 20] = rng.gen();
+            let account_address: [u8; 20] = rng.r#gen();
             let mut account_trie = EthTrie::new(Arc::new(db.state_trie().unwrap()));
             let mut key = Vec::<u8>::with_capacity(50);
             let mut value = Vec::<u8>::with_capacity(50);
             for _ in 0..distribution.sample(&mut rng) {
                 for _ in 0..distribution.sample(&mut rng) {
-                    key.push(rng.gen());
+                    key.push(rng.r#gen());
                 }
                 for _ in 0..distribution.sample(&mut rng) {
-                    value.push(rng.gen());
+                    value.push(rng.r#gen());
                 }
                 account_trie.insert(&key, &value).unwrap();
             }

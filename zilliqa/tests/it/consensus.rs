@@ -3,11 +3,11 @@ use ethers::{
     providers::Middleware,
     types::{TransactionRequest, U64},
 };
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U256};
 use tracing::*;
 use zilliqa::{crypto::Hash, state::contract_addr};
 
-use crate::Network;
+use crate::{Network, get_reward_address, get_stakers};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
@@ -191,7 +191,6 @@ async fn handle_forking_correctly(mut network: Network) {
 #[zilliqa_macros::test]
 async fn zero_account_per_block_balance_updates(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    let provider = wallet.provider();
 
     // Check inital account values
     let block_height = wallet.get_block_number().await.unwrap();
@@ -205,7 +204,7 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .genesis_accounts
         .clone()[0]
         .1
-         .0;
+        .0;
     let genesis_account_balance: u128 = wallet
         .get_balance(wallet.address(), None)
         .await
@@ -276,10 +275,14 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .await
         .unwrap();
     assert!(zero_account_balance_before > zero_account_balance_after);
-    let zero_acount_balance_change_rewards_only =
-        zero_account_balance_before - zero_account_balance_after;
+}
 
-    // Check gas is sunk to zero account
+#[zilliqa_macros::test]
+async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    network.run_until_block(&wallet, 1.into(), 50).await;
     let hash = wallet
         .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
         .await
@@ -299,6 +302,23 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .unwrap();
     assert_eq!(block.transactions.len(), 1);
 
+    let mut total_rewards = U256::zero();
+    let stakers = get_stakers(&wallet).await;
+    for staker in stakers {
+        let reward_address = get_reward_address(&wallet, &staker).await;
+        let reward_address_balance_before = wallet
+            .get_balance(reward_address, Some((block.number.unwrap() - 1).into()))
+            .await
+            .unwrap();
+        let reward_address_balance_after = wallet
+            .get_balance(reward_address, Some(block.number.unwrap().into()))
+            .await
+            .unwrap();
+
+        total_rewards += reward_address_balance_after - reward_address_balance_before;
+    }
+
+    let zero_account = H160::zero();
     let zero_account_balance_before = wallet
         .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
         .await
@@ -307,11 +327,10 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .get_balance(zero_account, Some(block.number.unwrap().into()))
         .await
         .unwrap();
-    let zero_acount_balance_change_with_gas_spent =
-        zero_account_balance_before - zero_account_balance_after;
 
     assert_eq!(
-        zero_acount_balance_change_with_gas_spent + block.gas_used,
-        zero_acount_balance_change_rewards_only
+        zero_account_balance_after,
+        zero_account_balance_before - total_rewards
+            + (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap())
     );
 }

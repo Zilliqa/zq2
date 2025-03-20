@@ -8,7 +8,7 @@ use alloy::{
     consensus::EMPTY_ROOT_HASH,
     primitives::{Address, B256},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use eth_trie::{EthTrie as PatriciaTrie, Trie};
 use ethabi::Token;
 use once_cell::sync::Lazy;
@@ -17,7 +17,7 @@ use sha3::{Digest, Keccak256};
 use tracing::{debug, info};
 
 use crate::{
-    cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ScillaExtLibsPath},
+    cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ReinitialiseParams, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
     db::{Db, TrieStorage},
@@ -51,7 +51,6 @@ pub struct State {
     pub scilla_ext_libs_path: ScillaExtLibsPath,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
-    pub scilla_call_gas_exempt_addrs: Vec<Address>,
     pub chain_id: ChainId,
     pub forks: Forks,
 }
@@ -70,7 +69,6 @@ impl State {
             scilla_ext_libs_path: consensus_config.scilla_ext_libs_path.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
-            scilla_call_gas_exempt_addrs: consensus_config.scilla_call_gas_exempt_addrs.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
             forks: consensus_config.get_forks()?,
             sql,
@@ -128,7 +126,7 @@ impl State {
                     .consensus
                     .genesis_accounts
                     .iter()
-                    .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0),
+                    .fold(0, |acc, item: &(Address, Amount)| acc + item.1.0),
             )
             .expect("Genesis accounts sum to more than total native token supply")
             .checked_sub(
@@ -174,15 +172,15 @@ impl State {
         config: &ConsensusConfig,
         block_header: BlockHeader,
     ) -> Result<()> {
-        if let Some(deposit_v3_deploy_height) = config.contract_upgrade_block_heights.deposit_v3 {
-            if deposit_v3_deploy_height == block_header.number {
+        if let Some(deposit_v3_deploy_config) = &config.contract_upgrades.deposit_v3 {
+            if deposit_v3_deploy_config.height == block_header.number {
                 let deposit_v3_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
                 self.upgrade_deposit_contract(block_header, deposit_v3_contract, None)?;
             }
         }
-        if let Some(deposit_v4_deploy_height) = config.contract_upgrade_block_heights.deposit_v4 {
-            if deposit_v4_deploy_height == block_header.number {
+        if let Some(deposit_v4_deploy_config) = &config.contract_upgrades.deposit_v4 {
+            if deposit_v4_deploy_config.height == block_header.number {
                 // The below account mutation fixes the Zero account's nonce in prototestnet and protomainnet.
                 // Issue #2254 explains how the nonce was incorrect due to a bug in the ZQ1 persistence converter.
                 // This code should run once for these networks in order for the deposit_v4 contract to be deployed, then this code can be removed.
@@ -198,12 +196,16 @@ impl State {
                 self.upgrade_deposit_contract(block_header, deposit_v4_contract, None)?;
             }
         }
-        if let Some(deposit_v5_deploy_height) = config.contract_upgrade_block_heights.deposit_v5 {
-            if deposit_v5_deploy_height == block_header.number {
+        if let Some(deposit_v5_deploy_config) = &config.contract_upgrades.deposit_v5 {
+            if deposit_v5_deploy_config.height == block_header.number {
                 let deposit_v5_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v5::CONTRACT);
+                let reinitialise_params = deposit_v5_deploy_config
+                    .reinitialise_params
+                    .clone()
+                    .unwrap_or(ReinitialiseParams::default());
                 let deposit_v5_reinitialise_data = contracts::deposit_v5::REINITIALIZE
-                    .encode_input(&[Token::Uint(config.staker_withdrawal_period.into())])?;
+                    .encode_input(&[Token::Uint(reinitialise_params.withdrawal_period.into())])?;
                 self.upgrade_deposit_contract(
                     block_header,
                     deposit_v5_contract,
@@ -325,7 +327,6 @@ impl State {
             scilla_ext_libs_path: self.scilla_ext_libs_path.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
-            scilla_call_gas_exempt_addrs: self.scilla_call_gas_exempt_addrs.clone(),
             chain_id: self.chain_id,
             forks: self.forks.clone(),
             sql: self.sql.clone(),
@@ -397,7 +398,10 @@ impl State {
 
     /// Returns an error if there are any issues fetching the account from the state trie
     pub fn get_account_storage(&self, address: Address, index: B256) -> Result<B256> {
-        match self.get_account_trie(address)?.get(&Self::account_storage_key(address, index).0) {
+        match self
+            .get_account_trie(address)?
+            .get(&Self::account_storage_key(address, index).0)
+        {
             // from_slice will only panic if vec.len != B256::len_bytes, i.e. 32
             Ok(Some(vec)) if vec.len() == 32 => Ok(B256::from_slice(&vec)),
             // empty storage location
@@ -490,9 +494,7 @@ impl ContractInit {
     pub fn is_library(&self) -> Result<bool> {
         for entry in &self.0 {
             if entry.name == "_library" {
-                return Ok(entry.value["constructor"]
-                    .as_str()
-                    .map_or(false, |value| value == "True"));
+                return Ok(entry.value["constructor"].as_str() == Some("True"));
             }
         }
         Ok(false)
@@ -671,9 +673,11 @@ mod tests {
             )
             .unwrap();
         // this is the eip 1967 contract's _implementation storage spot for the proxy address. It should point to deposit init address.
-        assert!(proxy_storage_at
-            .to_hex()
-            .contains(&deposit_init_addr.0.to_string().split_off(2)));
+        assert!(
+            proxy_storage_at
+                .to_hex()
+                .contains(&deposit_init_addr.0.to_string().split_off(2))
+        );
 
         // Update to deposit v2
         let deposit_v2 = Lazy::<contracts::Contract>::force(&contracts::deposit_v2::CONTRACT);
@@ -697,9 +701,11 @@ mod tests {
             )
             .unwrap();
         // this is the eip 1967 contract's _implementation storage spot for the proxy address. It should now point to deposit v2 address.
-        assert!(proxy_storage_at
-            .to_hex()
-            .contains(&deposit_v2_addr.0.to_string().split_off(2)));
+        assert!(
+            proxy_storage_at
+                .to_hex()
+                .contains(&deposit_v2_addr.0.to_string().split_off(2))
+        );
 
         let version = state
             .deposit_contract_version(genesis_block_header)

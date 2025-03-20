@@ -4,7 +4,7 @@ use std::{
     fmt,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use zilliqa::range_map::RangeMap;
 
