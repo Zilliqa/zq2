@@ -129,6 +129,17 @@ pub struct SyncConfig {
     pub sync_base_height: u64,
 }
 
+impl Default for SyncConfig {
+    fn default() -> Self {
+        SyncConfig {
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
+            prune_interval: u64_max(),
+            sync_base_height: u64_max(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
@@ -172,6 +183,7 @@ pub struct NodeConfig {
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
     /// Sync configuration
+    #[serde(default)]
     pub sync: SyncConfig,
 }
 
