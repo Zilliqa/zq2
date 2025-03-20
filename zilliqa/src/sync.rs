@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BinaryHeap, VecDeque},
+    collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
     ops::RangeInclusive,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -765,9 +765,10 @@ impl Sync {
         // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
         let mut block_size: usize = 0;
         for SyncBlockHeader { header, .. } in response.iter().rev().filter(|&sb| {
-            // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
+            // The segment markers are computed in ascending order, so that the segment markers are always outside the segment.
             block_size = block_size.saturating_add(sb.size_estimate);
             tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
+            // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
             // Try to fill up >90% of RESPONSE_SIZE_MAXIMUM.
             if block_size > 9 * 1024 * 1024 {
                 block_size = 0;
@@ -775,7 +776,8 @@ impl Sync {
             } else {
                 false
             }
-        }).collect_vec().into_iter().rev() {
+        }).rev() {
+            // segment markers are inserted in descending order, which is the order in the stack.
             self.segments.push_sync_segment(&segment_peer, header);
         }
 
@@ -1335,7 +1337,7 @@ impl ToSql for PeerVer {
 
 #[derive(Debug, Default)]
 struct SyncSegments {
-    headers: BTreeMap<Hash, BlockHeader>,
+    headers: HashMap<Hash, BlockHeader>,
     segments: Vec<(Hash, PeerInfo)>,
 }
 
@@ -1355,7 +1357,9 @@ impl SyncSegments {
         let mut result = vec![];
 
         let mut hash = block.qc.block_hash;
-        // This implementation skips the final segment in the chain. I don't know if that's intended or not.
+        // This implementation skips the final segment in the chain.
+        // By design, the marker for the segment is always outside the segment.
+        // empty_sync_metadata() will remove the final marker.
         while let Some(header) = self.headers.get(&hash) {
             result.push(header.hash);
             hash = header.qc.block_hash;
