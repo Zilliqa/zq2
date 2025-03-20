@@ -239,7 +239,11 @@ impl Sync {
             tracing::debug!("sync::DoSync : missing recent proposals");
             return Ok(());
         }
-
+        if !self.in_flight.is_empty() {
+            // do not interrupt existing requests
+            tracing::debug!("sync::DoSync : waiting for in-flight requests");
+            return Ok(());
+        }
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
@@ -268,7 +272,7 @@ impl Sync {
                 self.inject_recent_blocks()?;
             }
             // Retry to fix sync issues e.g. peers that are now offline
-            SyncState::Retry1 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
+            SyncState::Retry1 if self.in_pipeline == 0 => {
                 self.update_started_at()?;
                 // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
@@ -277,7 +281,6 @@ impl Sync {
                 tracing::debug!("sync::DoSync : syncing {} blocks", self.in_pipeline);
             }
         }
-
         Ok(())
     }
 
@@ -485,10 +488,11 @@ impl Sync {
 
         if self.segments.count_sync_segments() == 0 {
             self.state = SyncState::Phase3;
-        } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
-            self.request_missing_blocks()?;
         }
-
+        // perform next block transfers, where possible
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
+        }
         Ok(())
     }
 
@@ -799,9 +803,11 @@ impl Sync {
             for p in self.in_flight.drain(..) {
                 self.peers.done_with_peer(Some(p), DownGrade::None);
             }
-        } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
+        }
+        // perform next block transfers, where possible
+        if Self::DO_SPECULATIVE {
             self.p1_response.clear();
-            self.request_missing_metadata(None)?;
+            self.do_sync()?;
         }
 
         Ok(())
@@ -1055,15 +1061,9 @@ impl Sync {
     pub fn mark_received_proposal(&mut self, number: u64) -> Result<()> {
         tracing::trace!(%number, "sync::MarkReceivedProposal : received");
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
-        // speed-up block transfers, w/o waiting for proposals
+        // perform next block transfers, where possible
         if Self::DO_SPECULATIVE {
-            match self.state {
-                SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
-                    self.request_missing_blocks()?
-                }
-                SyncState::Phase3 if self.in_pipeline == 0 => self.inject_recent_blocks()?,
-                _ => {}
-            }
+            self.do_sync()?;
         }
         Ok(())
     }
