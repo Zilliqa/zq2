@@ -10,7 +10,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use eth_trie::{EthTrie, MemoryDB, Trie, DB};
+use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use lz4::{Decoder, EncoderBuilder};
 use redb::{Database, backends::InMemoryBackend};
 pub use tables::*;

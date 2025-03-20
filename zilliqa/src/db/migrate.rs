@@ -1,13 +1,14 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, mem, sync::Arc, time::Duration};
 
 use anyhow::Result;
+use indicatif::{ProgressBar, ProgressIterator, ProgressStyle};
+use itertools::Itertools;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use revm::primitives::Address;
 use rusqlite::{
     Connection, ToSql,
     types::{FromSql, FromSqlError, ToSqlOutput},
 };
-use rustc_hash::{FxBuildHasher, FxHashMap};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -186,6 +187,7 @@ struct BlockRow {
     qc: Bytes,
     agg: Option<AggregateQc>,
     is_canonical: bool,
+    transactions: Bytes,
 }
 
 impl Db {
@@ -209,8 +211,18 @@ impl Db {
         let mut high_qc = write.high_qc()?;
         let mut state_trie = write.state_trie()?;
 
+        fn progress(message: &'static str) -> ProgressBar {
+            ProgressBar::new_spinner()
+                .with_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner} {human_pos} ({per_sec}) {msg}")
+                        .unwrap(),
+                )
+                .with_message(message)
+        }
+        const CHUNK_SIZE: usize = 500_000;
+
         info!("migrating blocks");
-        // FIXME: THIS EXCLUDES BLOCKS WITH NO TRANSACTIONS!!!
         let mut old_blocks = sql.prepare(
             r#"
             SELECT
@@ -226,9 +238,17 @@ impl Db {
                 b.gas_limit,
                 b.qc,
                 b.agg,
-                b.is_canonical
+                b.is_canonical,
+                r.tx_hashes
             FROM
                 blocks b
+            LEFT JOIN (
+                SELECT
+                    block_hash,
+                    GROUP_CONCAT(tx_hash, "") AS tx_hashes
+                FROM receipts
+                GROUP BY block_hash
+            ) r USING (block_hash)
             ;
         "#,
         )?;
@@ -248,12 +268,51 @@ impl Db {
                     qc: row.get(10)?,
                     agg: row.get(11)?,
                     is_canonical: row.get(12)?,
+                    transactions: row.get(13)?,
                 })
             })?
-            .collect::<Vec<_>>();
-        info!("collected {} blocks", old_blocks.len());
+            .progress_with(progress("migrating blocks"))
+            .chunks(CHUNK_SIZE);
+        let old_blocks = old_blocks.into_iter().flat_map(|chunk| {
+            let chunk = chunk.collect_vec();
+            let mut converted = Vec::with_capacity(chunk.len());
+            chunk.into_par_iter().map(|row| {
+                let block = row.unwrap();
+                let is_canonical = block.is_canonical;
+                let block = Block {
+                    header: BlockHeader {
+                        view: block.view,
+                        number: block.height,
+                        hash: block.block_hash,
+                        qc: bincode::deserialize(&block.qc.0).unwrap(),
+                        signature: bincode::deserialize(&block.signature.0).unwrap(),
+                        state_root_hash: block.state_root_hash,
+                        transactions_root_hash: block.transactions_root_hash,
+                        receipts_root_hash: block.receipts_root_hash,
+                        timestamp: block.timestamp.into(),
+                        gas_used: block.gas_used,
+                        gas_limit: block.gas_limit,
+                    },
+                    agg: block.agg,
+                    transactions: block
+                        .transactions
+                        .0
+                        .chunks_exact(32)
+                        .map(|b| Hash::from_bytes(b).unwrap())
+                        .collect(),
+                };
+                (block, is_canonical)
+            }).collect_into_vec(&mut converted);
+            converted
+        });
+        for (block, is_canonical) in old_blocks {
+            blocks.insert(&block)?;
+            if !is_canonical {
+                blocks.set_non_canonical(block.view())?;
+            }
+        }
 
-        info!("collecting receipts");
+        info!("migrating receipts");
         let mut old_receipts = sql.prepare(
             "
             SELECT
@@ -271,80 +330,36 @@ impl Db {
                 exceptions
             FROM
                 receipts
+            ORDER BY tx_hash ASC
             ;
         ",
         )?;
-        let mut old_receipts = old_receipts
-            .query_map((), |row| {
-                Ok(TransactionReceipt {
-                    block_hash: row.get(0)?,
-                    index: row.get(1)?,
-                    tx_hash: row.get(2)?,
-                    success: row.get(3)?,
-                    gas_used: row.get(4)?,
-                    cumulative_gas_used: row.get(5)?,
-                    contract_address: row.get::<_, Option<AddressSqlable>>(6)?.map(|a| a.0),
-                    logs: row.get::<_, VecLogSqlable>(7)?.0,
-                    transitions: row.get::<_, VecScillaTransitionSqlable>(8)?.0,
-                    accepted: row.get(9)?,
-                    errors: row.get::<_, MapScillaErrorSqlable>(10)?.0,
-                    exceptions: row.get::<_, VecScillaExceptionSqlable>(11)?.0,
-                })
-            })?
-            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
-        info!("collected {} receipts", old_receipts.len());
-        old_receipts.sort_unstable_by_key(|r| r.tx_hash.0);
-        info!("sorted receipts");
-        for receipt in &old_receipts {
-            receipts.insert(receipt)?;
-        }
-        info!("migrated receipts");
-
-        info!("building block to transaction map");
-        let mut txn_map: FxHashMap<_, Vec<_>> =
-            FxHashMap::with_capacity_and_hasher(old_blocks.len(), FxBuildHasher);
-        for receipt in &old_receipts {
-            txn_map
-                .entry(receipt.block_hash)
-                .or_default()
-                .push(receipt.tx_hash);
-        }
-
-        let mut new_blocks: Vec<_> = Vec::with_capacity(old_blocks.len());
-        old_blocks
-            .into_par_iter()
-            .map(|block| {
-                let block = block.unwrap();
-                let is_canonical = block.is_canonical;
-                let block = Block {
-                    header: BlockHeader {
-                        view: block.view,
-                        number: block.height,
-                        hash: block.block_hash,
-                        qc: bincode::deserialize(&block.qc.0).unwrap(),
-                        signature: bincode::deserialize(&block.signature.0).unwrap(),
-                        state_root_hash: block.state_root_hash,
-                        transactions_root_hash: block.transactions_root_hash,
-                        receipts_root_hash: block.receipts_root_hash,
-                        timestamp: block.timestamp.into(),
-                        gas_used: block.gas_used,
-                        gas_limit: block.gas_limit,
-                    },
-                    agg: block.agg,
-                    transactions: txn_map.get(&block.block_hash).cloned().unwrap_or_default(),
-                };
-                (block, is_canonical)
+        let old_receipts = old_receipts.query_map((), |row| {
+            Ok(TransactionReceipt {
+                block_hash: row.get(0)?,
+                index: row.get(1)?,
+                tx_hash: row.get(2)?,
+                success: row.get(3)?,
+                gas_used: row.get(4)?,
+                cumulative_gas_used: row.get(5)?,
+                contract_address: row.get::<_, Option<AddressSqlable>>(6)?.map(|a| a.0),
+                logs: row.get::<_, VecLogSqlable>(7)?.0,
+                transitions: row.get::<_, VecScillaTransitionSqlable>(8)?.0,
+                accepted: row.get(9)?,
+                errors: row.get::<_, MapScillaErrorSqlable>(10)?.0,
+                exceptions: row.get::<_, VecScillaExceptionSqlable>(11)?.0,
             })
-            .collect_into_vec(&mut new_blocks);
-        info!("converted blocks");
-
-        for (block, is_canonical) in new_blocks {
-            blocks.insert(&block)?;
-            if !is_canonical {
-                blocks.set_non_canonical(block.view())?;
+        })?;
+        for chunk in old_receipts
+            .progress_with(progress("migrating receipts"))
+            .chunks(CHUNK_SIZE)
+            .into_iter()
+        {
+            let chunk = chunk.collect_vec();
+            for receipt in chunk {
+                receipts.insert(&receipt?)?;
             }
         }
-        info!("migrated blocks");
 
         info!("migrating transactions");
         let mut old_txns = sql.prepare(
@@ -357,12 +372,17 @@ impl Db {
             ;
         ",
         )?;
-        let old_txns = old_txns
-            .query_map((), |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<Vec<_>>();
-        for txn in old_txns {
-            let (txn_hash, txn) = txn?;
-            transactions.insert(txn_hash, &txn)?;
+        let old_txns = old_txns.query_map((), |row| Ok((row.get(0)?, row.get(1)?)))?;
+        for chunk in old_txns
+            .progress_with(progress("migrating transactions"))
+            .chunks(CHUNK_SIZE)
+            .into_iter()
+        {
+            let chunk = chunk.collect_vec();
+            for txn in chunk {
+                let (txn_hash, txn) = txn?;
+                transactions.insert(txn_hash, &txn)?;
+            }
         }
 
         info!("migrating touched address index");
@@ -376,15 +396,20 @@ impl Db {
             ;
         ",
         )?;
-        let old_touched_address_index = old_touched_address_index
-            .query_map((), |row| {
-                Ok((row.get::<_, AddressSqlable>(0)?, row.get(1)?))
-            })?
-            .collect::<Vec<_>>();
+        let old_touched_address_index = old_touched_address_index.query_map((), |row| {
+            Ok((row.get::<_, AddressSqlable>(0)?, row.get(1)?))
+        })?;
 
-        for pair in old_touched_address_index {
-            let (address, txn_hash) = pair?;
-            touched_address_index.insert(address.0, txn_hash)?;
+        for chunk in old_touched_address_index
+            .progress_with(progress("migrating touched address index"))
+            .chunks(CHUNK_SIZE)
+            .into_iter()
+        {
+            let chunk = chunk.collect_vec();
+            for pair in chunk {
+                let (address, txn_hash) = pair?;
+                touched_address_index.insert(address.0, txn_hash)?;
+            }
         }
 
         info!("migrating consensus info");
@@ -425,15 +450,21 @@ impl Db {
             ;
         ",
         )?;
-        let old_state_trie = old_state_trie
-            .query_map((), |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get(1)?)))?
-            .collect::<Vec<_>>();
+        let old_state_trie =
+            old_state_trie.query_map((), |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get(1)?)))?;
 
-        for pair in old_state_trie {
-            let (key, value) = pair?;
-            state_trie.insert(&key, &value)?;
+        for chunk in old_state_trie
+            .progress_with(progress("migrating state trie"))
+            .chunks(CHUNK_SIZE)
+            .into_iter()
+        {
+            let chunk = chunk.collect_vec();
+            for pair in chunk {
+                let (key, value) = pair?;
+                state_trie.insert(&key, &value)?;
+            }
         }
-        std::mem::drop((
+        mem::drop((
             blocks,
             transactions,
             receipts,
