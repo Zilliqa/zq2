@@ -70,7 +70,8 @@ use zilliqa::{
     cfg::{
         Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
         Fork, GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
-        block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
+        block_request_batch_size_default, block_request_limit_default,
+        default_genesis_block_at_height, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
         max_rpc_response_size_default, scilla_address_default, scilla_ext_libs_path_default,
         scilla_stdlib_dir_default, state_cache_size_default, state_rpc_limit_default,
@@ -379,6 +380,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
+                genesis_block_at_height: default_genesis_block_at_height(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -536,6 +538,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
+                genesis_block_at_height: default_genesis_block_at_height(),
             },
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),

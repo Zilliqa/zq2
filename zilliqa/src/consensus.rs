@@ -338,22 +338,9 @@ impl Consensus {
             new_transaction_hashes: broadcast::Sender::new(128),
             prune_interval,
         };
+
         consensus.db.set_view(start_view)?;
         consensus.set_finalized_view(finalized_view)?;
-
-        // If we're at genesis, add the genesis block and return
-        if latest_block_view == 0 {
-            if let Some(genesis) = latest_block {
-                // The genesis block might already be stored and we were interrupted before we got a
-                // QC for it.
-                if consensus.get_block(&genesis.hash())?.is_none() {
-                    consensus.add_block(None, genesis.clone())?;
-                }
-            }
-            // treat genesis as finalized
-            consensus.set_finalized_view(latest_block_view)?;
-            return Ok(consensus);
-        }
 
         // If we started from a checkpoint, execute the checkpointed block now
         if let Some((block, transactions, parent)) = checkpoint_data {
@@ -368,6 +355,22 @@ impl Consensus {
             )?;
 
             consensus.sync.set_checkpoint(&block);
+            consensus.set_finalized_view(block.view())?;
+            consensus.set_view(block.view() + 1)?;
+        } else {
+            // If we're at genesis, add the genesis block and return
+            if latest_block_view == 0 {
+                if let Some(genesis) = latest_block {
+                    // The genesis block might already be stored and we were interrupted before we got a
+                    // QC for it.
+                    if consensus.get_block(&genesis.hash())?.is_none() {
+                        consensus.add_block(None, genesis.clone())?;
+                    }
+                }
+                // treat genesis as finalized
+                consensus.set_finalized_view(latest_block_view)?;
+                return Ok(consensus);
+            }
         }
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
@@ -2176,7 +2179,7 @@ impl Consensus {
         }
 
         if self.block_is_first_in_epoch(block.number())
-            && !block.is_genesis()
+            && !block.is_genesis(&self.config.consensus)
             && self.config.do_checkpoints
             && self.epoch_is_checkpoint(self.epoch_number(block.number()))
         {
@@ -2478,6 +2481,11 @@ impl Consensus {
         }
 
         Ok(block.header.qc)
+    }
+
+    pub fn get_genesis_block(&self) -> Result<Option<Block>> {
+        self.db
+            .get_canonical_block_by_number(self.config.consensus.genesis_block_at_height)
     }
 
     pub fn get_block(&self, key: &Hash) -> Result<Option<Block>> {
