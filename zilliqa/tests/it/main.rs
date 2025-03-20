@@ -69,7 +69,7 @@ use zilliqa::{
     api,
     cfg::{
         Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
-        Fork, GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
+        Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
         max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
@@ -91,6 +91,7 @@ pub struct NewNodeOptions {
     onchain_key: Option<SigningKey>,
     checkpoint: Option<Checkpoint>,
     prune_interval: Option<u64>,
+    sync_base_height: Option<u64>,
 }
 
 impl NewNodeOptions {
@@ -389,13 +390,16 @@ impl Network {
             load_checkpoint: None,
             do_checkpoints,
             block_request_limit: block_request_limit_default(),
-            max_blocks_in_flight: max_blocks_in_flight_default(),
-            block_request_batch_size: block_request_batch_size_default(),
+            sync: SyncConfig {
+                max_blocks_in_flight: max_blocks_in_flight_default(),
+                block_request_batch_size: block_request_batch_size_default(),
+                prune_interval: u64_max(),
+                sync_base_height: u64_max(),
+            },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
-            prune_interval: u64_max(),
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -537,13 +541,16 @@ impl Network {
                 },
             },
             block_request_limit: block_request_limit_default(),
-            max_blocks_in_flight: max_blocks_in_flight_default(),
-            block_request_batch_size: block_request_batch_size_default(),
+            sync: SyncConfig {
+                max_blocks_in_flight: max_blocks_in_flight_default(),
+                block_request_batch_size: block_request_batch_size_default(),
+                prune_interval: options.prune_interval.unwrap_or(u64_max()),
+                sync_base_height: options.sync_base_height.unwrap_or(u64_max()),
+            },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
-            prune_interval: options.prune_interval.unwrap_or(u64_max()),
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());

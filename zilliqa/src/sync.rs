@@ -112,9 +112,11 @@ impl Sync {
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
         let max_batch_size = config
+            .sync
             .block_request_batch_size
             .clamp(100, Self::MAX_BATCH_SIZE);
         let max_blocks_in_flight = config
+            .sync
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
 
