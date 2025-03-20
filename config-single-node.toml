@@ -5,6 +5,7 @@ api_servers = [
     { port = 4201, enabled_apis = [ "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] }
 ]
 eth_chain_id = 0x8001
+consensus.scilla_address = "http://localhost:3000"
 consensus.consensus_timeout = { secs = 5, nanos = 0 }
 consensus.genesis_deposits = [
     ["b27aebb3b54effd7af87c4a064a711554ee0f3f5abf56ca910b46422f2b21603bc383d42eb3b927c4c3b0b8381ca30a3", "12D3KooWESMZ2ttSxDwjfnNe23sHCqsJf6sNEKwgHkdgtCHDsbWU", "10000000000000000000000000", "7E5F4552091A69125d5DfCb7b8C2659029395Bdf", "7E5F4552091A69125d5DfCb7b8C2659029395Bdf"],
@@ -28,8 +29,6 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
 consensus.local_address = "host.docker.internal"
-
-consensus.genesis_fork = { at_height = 0, call_mode_1_sets_caller_to_parent_caller = false, failed_scilla_call_from_gas_exempt_caller_causes_revert = false, scilla_messages_can_call_evm_contracts = false, scilla_contract_creation_increments_account_balance = true, scilla_json_preserve_order = true }
 
 txn_pool.maximum_global_size = 100000
 txn_pool.maximum_txn_count_per_sender = 20

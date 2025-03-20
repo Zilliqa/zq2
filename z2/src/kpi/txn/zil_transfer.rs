@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use futures::future::join_all;
 use zilliqa_rs::{
-    core::{parse_zil, CreateTransactionResponse},
+    core::{CreateTransactionResponse, parse_zil},
     middlewares::Middleware,
     signers::LocalWallet,
     transaction::TransactionBuilder,

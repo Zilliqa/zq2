@@ -2,7 +2,7 @@
 use std::env;
 use std::{convert::TryFrom, path::Path, sync::Arc};
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use ethabi::Token;
 use ethers::{
     contract::abigen,

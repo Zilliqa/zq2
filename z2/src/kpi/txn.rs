@@ -5,8 +5,8 @@ mod scilla_transition_call;
 mod zil_transfer;
 
 use super::{
-    config::{self, Config, SendTransactions},
     KpiResult, ScenarioAgent,
+    config::{self, Config, SendTransactions},
 };
 
 impl ScenarioAgent for SendTransactions {

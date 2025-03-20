@@ -10,7 +10,36 @@ eth_chain_id = 33103
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
 consensus.genesis_accounts = [ ["0x5e1f6f14a75f12e055599a137229cfa012554695", "900_000_000_000_000_000_000_000_000" ] ]
-consensus.genesis_deposits = [ ["95f1b0d4d47dfdd782e5ea823c2a175098e1a1afd9525c9f7e2f9fec6da080ab654ff27210d20d81331038bd10e0b08e", "12D3KooWSe8gG2PYGg9qemHNZDsuZcFjkvcU2Fr49bomHGZD2k8x", "20_000_000_000_000_000_000_000_000", "0x0000000000000000000000000000000000000000", "0x5e1f6f14a75f12e055599a137229cfa012554695"] ]
+consensus.genesis_deposits = [
+  [
+    "ac86018ebbf1a2d43404b78e899bd9ab1849788343b4c3c2310f54743d59ed9c1be3eb5f7ea85c3f6d7ef21b3f2a0edd",
+    "12D3KooWQP73gxrQFygc5LNKriH7PEGgDLfJzsSjnEy9quFvM4w1",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x5e1f6f14a75f12e055599a137229cfa012554695"
+  ],
+  [
+    "b429dc1638e87307b51129e5f0d7b7f235a9f0c4568e64bb7bb1cae0deb427110405b225e697a48bd1b72117cb16a86e",
+    "12D3KooWE4v1DEabS7GroFWVrhxKLb78resRg2T6GNYzChBmsUyi",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x5e1f6f14a75f12e055599a137229cfa012554695"
+  ],
+  [
+    "8864235715d70863b5081f405705b2d5ff4436383896a707b94c572f50c28e931f17d7a1e11dabd32aa8241ef8d05c4e",
+    "12D3KooWEFs2RfcMqDF2XELuv4y3LB8rz2bxjcLtkEG8jLxPnuxm",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x5e1f6f14a75f12e055599a137229cfa012554695"
+  ],
+  [
+    "85bff2233c7934f5a5d637182a1903268afad2bf60bad0a7fe9b8eb45c87954ceb13db8f1c1029e5ef4d3fceabc6aa30",
+    "12D3KooWRzmLvdMFUHfia8x9Ng8by6t7AyrkowSA5Gn8hNZjU5Mh",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x5e1f6f14a75f12e055599a137229cfa012554695"
+  ]
+]
 
 # Reward parameters
 consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
@@ -20,7 +49,6 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
 consensus.scilla_call_gas_exempt_addrs = []
-consensus.contract_upgrade_block_heights = { deposit_v4 = 0 }
 
 api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
 

@@ -1,8 +1,8 @@
-pub use k256::{ecdsa::Signature, PublicKey, SecretKey};
 use k256::{
-    elliptic_curve::{ops::Reduce, sec1::ToEncodedPoint, Group},
     AffinePoint, Scalar, U256,
+    elliptic_curve::{Group, ops::Reduce, sec1::ToEncodedPoint},
 };
+pub use k256::{PublicKey, SecretKey, ecdsa::Signature};
 use sha2::{Digest, Sha256};
 
 #[allow(unused)]
@@ -74,7 +74,7 @@ pub fn verify(message: &[u8], public_key: PublicKey, signature: Signature) -> Op
 
 #[cfg(test)]
 mod tests {
-    use k256::{elliptic_curve::PrimeField, FieldBytes, PublicKey, Scalar, SecretKey};
+    use k256::{FieldBytes, PublicKey, Scalar, SecretKey, elliptic_curve::PrimeField};
 
     use super::{sign_inner, verify};
 

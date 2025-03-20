@@ -1,26 +1,26 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use alloy::primitives::{hex, Address};
-use ethabi::{ethereum_types::U64, Token};
+use alloy::primitives::{Address, hex};
+use ethabi::{Token, ethereum_types::U64};
 use ethers::{
     abi::FunctionExt,
     core::types::{Bytes, Signature},
     providers::{Middleware, MiddlewareError, Provider},
     types::{
+        BlockId, BlockNumber, Eip1559TransactionRequest, Eip2930TransactionRequest, Filter,
+        Transaction, TransactionReceipt, TransactionRequest,
         transaction::{
             eip2718::TypedTransaction,
             eip2930::{AccessList, AccessListItem},
         },
-        BlockId, BlockNumber, Eip1559TransactionRequest, Eip2930TransactionRequest, Filter,
-        Transaction, TransactionReceipt, TransactionRequest,
     },
     utils::keccak256,
 };
-use futures::{future::join_all, StreamExt};
+use futures::{StreamExt, future::join_all};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
 
-use crate::{deploy_contract, LocalRpcClient, Network, Wallet};
+use crate::{LocalRpcClient, Network, Wallet, deploy_contract};
 
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
@@ -382,6 +382,57 @@ async fn eth_get_transaction_receipt(mut network: Network) {
     assert!(receipt.effective_gas_price.unwrap_or_default() > 0.into());
     assert!(receipt.gas_used.unwrap_or_default() > 0.into());
     assert_eq!(receipt.status.unwrap_or_default(), 1.into());
+}
+
+#[zilliqa_macros::test]
+async fn get_transaction_receipt_sequential_log_indexes(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Deploy a contract that can emit events
+    let (hash1, abi) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt1 = network.run_until_receipt(&wallet, hash1, 50).await;
+    let contract_address = receipt1.contract_address.unwrap();
+
+    // Call emitEvents() to generate some logs in block 1
+    let emit_events = abi.function("emitEvents").unwrap();
+    let tx1 = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_events.encode_input(&[]).unwrap());
+
+    let tx1_hash = wallet.send_transaction(tx1, None).await.unwrap().tx_hash();
+
+    let receipt1 = network.run_until_receipt(&wallet, tx1_hash, 50).await;
+
+    // Verify logs in first block have sequential indexes starting at 0
+    assert!(receipt1.logs.len() > 1);
+    for (i, log) in receipt1.logs.iter().enumerate() {
+        assert_eq!(log.log_index.unwrap().as_u64(), i as u64);
+    }
+
+    // Create another transaction in a new block
+    let tx2 = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_events.encode_input(&[]).unwrap());
+
+    let tx2_hash = wallet.send_transaction(tx2, None).await.unwrap().tx_hash();
+
+    let receipt2 = network.run_until_receipt(&wallet, tx2_hash, 50).await;
+
+    // Verify logs in second block also start at index 0
+    assert!(receipt2.logs.len() > 1);
+    for (i, log) in receipt2.logs.iter().enumerate() {
+        assert_eq!(log.log_index.unwrap().as_u64(), i as u64);
+    }
+
+    // Verify blocks are different
+    assert_ne!(receipt1.block_hash, receipt2.block_hash);
 }
 
 #[zilliqa_macros::test]

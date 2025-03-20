@@ -1,5 +1,5 @@
 use std::{
-    cmp::{max, Ordering, PartialOrd},
+    cmp::{Ordering, PartialOrd, max},
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
     ops::{Add, AddAssign, Sub},
@@ -7,24 +7,26 @@ use std::{
 };
 
 use alloy::{
-    consensus::{transaction::RlpEcdsaTx, SignableTransaction, TxEip1559, TxEip2930, TxLegacy},
-    primitives::{keccak256, Address, PrimitiveSignature, TxKind, B256, U256},
-    rlp::{Encodable, Header, EMPTY_STRING_CODE},
+    consensus::{
+        SignableTransaction, TxEip1559, TxEip2930, TxLegacy, transaction::RlpEcdsaEncodableTx,
+    },
+    primitives::{Address, B256, PrimitiveSignature, TxKind, U256, keccak256},
+    rlp::{EMPTY_STRING_CODE, Encodable, Header},
     sol_types::SolValue,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use itertools::Itertools;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use sha3::{
+    Digest, Keccak256,
     digest::generic_array::{
+        GenericArray,
         sequence::Split,
         typenum::{U12, U20},
-        GenericArray,
     },
-    Digest, Keccak256,
 };
 use tracing::warn;
 
@@ -84,11 +86,7 @@ impl ValidationOutcome {
     where
         T: FnOnce() -> Result<ValidationOutcome>,
     {
-        if self.is_ok() {
-            test()
-        } else {
-            Ok(*self)
-        }
+        if self.is_ok() { test() } else { Ok(*self) }
     }
 
     pub fn is_ok(&self) -> bool {
@@ -177,7 +175,7 @@ mod ser_rlp {
     use std::marker::PhantomData;
 
     use alloy::rlp::{Decodable, Encodable};
-    use serde::{de, Deserializer, Serializer};
+    use serde::{Deserializer, Serializer, de};
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -513,7 +511,9 @@ impl SignedTransaction {
         }
 
         if tx_kind == TxKind::Create && input_size > EVM_MAX_INIT_CODE_SIZE {
-            warn!("Evm transaction initcode size: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}");
+            warn!(
+                "Evm transaction initcode size: {input_size} exceeds limit: {EVM_MAX_INIT_CODE_SIZE}"
+            );
             return Ok(ValidationOutcome::InitCodeSizeExceeded(
                 input_size,
                 EVM_MAX_INIT_CODE_SIZE,
@@ -536,7 +536,10 @@ impl SignedTransaction {
         if let SignedTransaction::Zilliqa { tx, .. } = self {
             let required_gas = tx.get_deposit_gas()?;
             if tx.gas_limit < required_gas {
-                warn!("Insufficient gas give for zil transaction, given: {}, required: {required_gas}!", tx.gas_limit);
+                warn!(
+                    "Insufficient gas give for zil transaction, given: {}, required: {required_gas}!",
+                    tx.gas_limit
+                );
                 return Ok(ValidationOutcome::InsufficientGasZil(
                     tx.gas_limit,
                     required_gas,
@@ -548,7 +551,9 @@ impl SignedTransaction {
         let gas_limit = self.gas_limit();
 
         if gas_limit < EVM_MIN_GAS_UNITS {
-            warn!("Insufficient gas give for evm transaction, given: {gas_limit}, required: {EVM_MIN_GAS_UNITS}!");
+            warn!(
+                "Insufficient gas give for evm transaction, given: {gas_limit}, required: {EVM_MIN_GAS_UNITS}!"
+            );
             return Ok(ValidationOutcome::InsufficientGasEvm(
                 gas_limit,
                 EVM_MIN_GAS_UNITS,

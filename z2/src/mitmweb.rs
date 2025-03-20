@@ -34,7 +34,9 @@ impl Runner {
         mgmt_port: u16,
         channel: &mpsc::Sender<collector::Message>,
     ) -> Result<Self> {
-        println!("Starting mitmproxy FROM {from_port} (send requests here <---) TO {to_port} (where they go) MGMT {mgmt_port}");
+        println!(
+            "Starting mitmproxy FROM {from_port} (send requests here <---) TO {to_port} (where they go) MGMT {mgmt_port}"
+        );
         let mut cmd = Command::new("mitmweb");
         cmd.arg("--mode");
         cmd.arg(format!("reverse:http://localhost:{}", to_port));
