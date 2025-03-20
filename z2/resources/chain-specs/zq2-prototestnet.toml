@@ -40,3 +40,7 @@ consensus.forks = [
     { at_height = 12884400, only_mutated_accounts_update_state = true, scilla_block_number_returns_current_block = true },
     { at_height = 12931200, scilla_maps_are_encoded_correctly = true },
 ]
+
+txn_pool.maximum_global_size = 100000
+txn_pool.maximum_txn_count_per_sender = 200
+txn_pool.total_slots_for_all_senders = 50000
