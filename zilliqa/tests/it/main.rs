@@ -69,7 +69,7 @@ use zilliqa::{
     api,
     cfg::{
         Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
-        Fork, GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
+        Fork, GenesisDeposit, NodeConfig, TxnPoolConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
         max_rpc_response_size_default, scilla_address_default, scilla_ext_libs_path_default,
@@ -380,6 +380,7 @@ impl Network {
                     ..genesis_fork_default()
                 },
             },
+            txn_pool: TxnPoolConfig::default(),
             api_servers: vec![ApiServer {
                 port: 4201,
                 enabled_apis: api::all_enabled(),
@@ -537,6 +538,7 @@ impl Network {
                     ..genesis_fork_default()
                 },
             },
+            txn_pool: TxnPoolConfig::default(),
             block_request_limit: block_request_limit_default(),
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),

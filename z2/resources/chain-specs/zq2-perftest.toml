@@ -51,3 +51,8 @@ consensus.gas_price = "4_761_904_800_000"
 consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } } }
 
 api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
+
+txn_pool.maximum_global_size = 100000
+txn_pool.maximum_txn_count_per_sender = 200
+txn_pool.total_slots_for_all_senders = 50000
+txn_pool.remove_expired_txns_after_hrs = 24
