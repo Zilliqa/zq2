@@ -10,10 +10,14 @@ exporters:
 
 processors:
   batch:
+  resourcedetection/docker:
+    detectors: [env, docker]
+    timeout: 2s
+    override: true
 
 service:
   pipelines:
     metrics:
       receivers: [otlp]
-      processors: []
+      processors: [resourcedetection/docker, batch]
       exporters: [prometheusremotewrite]

@@ -46,13 +46,16 @@ jobs:
     steps:
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Install nightly
-        run: rustup toolchain install nightly
+      - run: rustup show active-toolchain
       - name: Install dependencies
         run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Install default toolchain
+        run: rustup toolchain install
+      - name: Install nightly toolchain (for cargo fmt)
+        run: rustup toolchain install nightly
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --all-targets --all-features
@@ -74,7 +77,6 @@ jobs:
           - 3000:3000
         volumes:
           - /tmp:/scilla_ext_libs
-
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,6 +86,8 @@ jobs:
         run: curl http://localhost:3000
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install default toolchain
+        run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: JS test framework
         run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh

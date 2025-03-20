@@ -19,7 +19,7 @@ use zilliqa::{
     state::contract_addr,
 };
 
-use crate::{fund_wallet, LocalRpcClient, Network, Wallet};
+use crate::{LocalRpcClient, Network, Wallet, fund_wallet, get_reward_address, get_stakers};
 
 async fn check_miner_got_reward(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
@@ -61,6 +61,9 @@ async fn deposit_stake(
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake)
+        // Set a high gas limit manually, in case the gas estimate and transaction cross an epoch boundary, in which
+        // case our estimate will be incorrect.
+        .gas(5_000_000)
         .data(
             contracts::deposit::DEPOSIT
                 .encode_input(&[
@@ -111,6 +114,9 @@ async fn deposit_v3_stake(
     let tx = TransactionRequest::new()
         .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
         .value(stake)
+        // Set a high gas limit manually, in case the gas estimate and transaction cross an epoch boundary, in which
+        // case our estimate will be incorrect.
+        .gas(5_000_000)
         .data(
             contracts::deposit_v3::DEPOSIT
                 .encode_input(&[
@@ -222,26 +228,6 @@ async fn get_total_stake(wallet: &Wallet) -> u128 {
     stake.as_u128()
 }
 
-async fn get_stakers(
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-) -> Vec<NodePublicKey> {
-    let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-        .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
-    let stakers = wallet.call(&tx.into(), None).await.unwrap();
-    let stakers = contracts::deposit::GET_STAKERS
-        .decode_output(&stakers)
-        .unwrap()[0]
-        .clone()
-        .into_array()
-        .unwrap();
-
-    stakers
-        .into_iter()
-        .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
-        .collect()
-}
-
 async fn get_minimum_deposit(
     wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
 ) -> u128 {
@@ -298,26 +284,6 @@ async fn get_blocks_per_epoch(
         .unwrap();
 
     deposit.as_u64()
-}
-
-async fn get_reward_address(
-    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
-    staker: &NodePublicKey,
-) -> H160 {
-    let tx = TransactionRequest::new()
-        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-        .data(
-            contracts::deposit::GET_REWARD_ADDRESS
-                .encode_input(&[Token::Bytes(staker.as_bytes())])
-                .unwrap(),
-        );
-    let return_value = wallet.call(&tx.into(), None).await.unwrap();
-    contracts::deposit::GET_REWARD_ADDRESS
-        .decode_output(&return_value)
-        .unwrap()[0]
-        .clone()
-        .into_address()
-        .unwrap()
 }
 
 async fn get_signing_address(

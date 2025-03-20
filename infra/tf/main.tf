@@ -27,69 +27,6 @@ resource "google_project_service" "cloud_dns" {
 }
 
 ################################################################################
-# PERSISTENCE BUCKET
-################################################################################
-
-resource "google_storage_bucket" "persistence" {
-  name     = join("-", compact([var.chain_name, "persistence"]))
-  project  = var.project_id
-  location = var.region
-  labels   = local.labels
-
-  force_destroy               = var.persistence_bucket_force_destroy
-  uniform_bucket_level_access = true
-  public_access_prevention    = "inherited"
-
-  versioning {
-    enabled = var.persistence_bucket_versioning
-  }
-
-  lifecycle_rule {
-    action {
-      type          = "SetStorageClass"
-      storage_class = "NEARLINE"
-    }
-    condition {
-      age = 7
-    }
-  }
-
-  lifecycle_rule {
-    action {
-      type          = "SetStorageClass"
-      storage_class = "COLDLINE"
-    }
-    condition {
-      age = 37 # 7 days in Standard + 30 days in Nearline
-    }
-  }
-
-  lifecycle_rule {
-    action {
-      type          = "SetStorageClass"
-      storage_class = "ARCHIVE"
-    }
-    condition {
-      age = 127 # 37 days + 90 days in Coldline
-    }
-  }
-}
-
-resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {
-  bucket = google_storage_bucket.persistence.name
-  role   = "roles/storage.objectAdmin"
-  members = concat([
-    "serviceAccount:${module.bootstraps.service_account.email}",
-    "serviceAccount:${module.validators.service_account.email}",
-    "serviceAccount:${module.apis.service_account.email}",
-    "serviceAccount:${module.checkpoints.service_account.email}",
-    "serviceAccount:${module.persistences.service_account.email}"
-    ],
-    [for private_api in module.private_apis : "serviceAccount:${private_api.service_account.email}"]
-  )
-}
-
-################################################################################
 # FIREWALL POLICIES
 ################################################################################
 
@@ -133,7 +70,7 @@ resource "google_compute_firewall" "allow_external_jsonrpc" {
   network = local.network_name
 
   direction     = "INGRESS"
-  source_ranges = concat(local.google_load_balancer_ip_ranges, ["0.0.0.0/0", local.iap_ip_range])
+  source_ranges = concat(local.google_load_balancer_ip_ranges, [local.iap_ip_range], var.jsonrpc_allowed_sources)
 
   target_tags = [var.chain_name]
 

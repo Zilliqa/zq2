@@ -121,9 +121,10 @@ otlp_collector_endpoint = "http://otel-collector:4317"
 There is a docker-compose project that includes the OpenTelemetry configuration and tech stack that can be run in local environment for testing purposes:
 
 ```bash
-cd infra/opentelemetry
-docker-compose up
+docker-compose -f infra/opentelemetry/compose.yaml up -d
 ```
+
+After the services are running, a sample dashboard could be obtained from the (Grafana)[http://localhost:9010] local service.
 
 ## `rustfmt`
 

@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
 use libp2p::PeerId;
@@ -456,11 +456,7 @@ impl QuorumCertificate {
             .zip(self.cosigned.iter())
             .filter_map(
                 |(public_key, cosigned)| {
-                    if *cosigned {
-                        Some(public_key)
-                    } else {
-                        None
-                    }
+                    if *cosigned { Some(public_key) } else { None }
                 },
             )
             .collect::<Vec<_>>();

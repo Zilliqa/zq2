@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use jsonrpsee::{types::Params, RpcModule};
+use jsonrpsee::{RpcModule, types::Params};
 
 use super::types::eth;
 use crate::{cfg::EnabledApi, node::Node};
@@ -64,7 +64,7 @@ fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
     };
 
     let node = node.lock().unwrap();
-    let logs_bloom = super::eth::get_block_logs_bloom(&node, block)?;
+    let logs_bloom = super::eth::get_block_logs_bloom(&node, block.header.hash)?;
 
     let miner = node.get_proposer_reward_address(block.header)?;
 

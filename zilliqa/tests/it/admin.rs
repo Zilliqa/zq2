@@ -13,11 +13,13 @@ async fn generate_checkpoint(mut network: Network) {
         .await
         .unwrap();
     assert!(response["file_name"].is_string());
-    assert!(!response["file_name"]
-        .as_str()
-        .unwrap()
-        .to_string()
-        .is_empty());
+    assert!(
+        !response["file_name"]
+            .as_str()
+            .unwrap()
+            .to_string()
+            .is_empty()
+    );
     assert!(!response["hash"].as_str().unwrap().to_string().is_empty());
     assert_eq!(response["block"], "0x4");
 }

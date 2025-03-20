@@ -68,6 +68,8 @@ VERSIONS={
     "stats_dashboard": STATS_DASHBOARD_IMAGE.split(":")[-1] if STATS_DASHBOARD_IMAGE.split(":")[-1] else "latest",
     "stats_agent": STATS_AGENT_IMAGE.split(":")[-1] if STATS_AGENT_IMAGE.split(":")[-1] else "latest",
     "zq2_metrics": ZQ2_METRICS_IMAGE.split(":")[-1] if ZQ2_METRICS_IMAGE.split(":")[-1] else "latest",
+    "node_exporter": "v1.9.0",
+    "process_exporter": "0.8.1",
 }
 
 def query_metadata_ext_ip() -> str:
@@ -130,8 +132,8 @@ def check_sync_status():
     
     # If syncing response is a JSON object
     if isinstance(sync_status, dict):
-        current_block = int(sync_status["currentBlock"])
-        highest_block = int(sync_status["highestBlock"])
+        current_block = int(sync_status["currentBlock"], 16)
+        highest_block = int(sync_status["highestBlock"], 16)
         
         if current_block >= highest_block - 5:
             return jsonify({"message": f"Node is syncing at block {block_number} but behind highest block {highest_block}", "code": 200})
@@ -222,6 +224,8 @@ RestartSec=10
 WantedBy=multi-user.target
 """
 
+SCILLA_SERVER_PORT="62831"
+
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
@@ -235,7 +239,7 @@ start() {
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
-    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} ${1} --log-json
+    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ ${1} --log-json
 }
 
 stop() {
@@ -454,6 +458,7 @@ start() {
     cat > .env << 'EOL'
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4317
 ZQ2_METRICS_RPC_URL=ws://localhost:4201
+ZQ2_METRICS_VALIDATOR_IDENTITIES='{}'
 EOL
     docker rm zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ &> /dev/null || echo 0
     docker run -td --name zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ \
@@ -481,6 +486,90 @@ Description=ZQ2 metrics app
 Type=forking
 ExecStart=/usr/local/bin/zq2_metrics.sh start
 ExecStop=/usr/local/bin/zq2_metrics.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+NODE_EXPORTER_SCRIPT="""#!/bin/bash
+NODE_EXPORTER_IMAGE='docker.io/prom/node-exporter:""" + VERSIONS.get('node_exporter') + """'
+
+start() {
+    docker rm node-exporter-""" + VERSIONS.get('node_exporter') + """ &> /dev/null || echo 0
+    docker run -td -p 9100:9100 --name node-exporter-""" + VERSIONS.get('node_exporter') + """ \
+        --net=host --restart=unless-stopped --pull=always \
+        ${NODE_EXPORTER_IMAGE} &> /dev/null &
+}
+
+stop() {
+    docker stop node-exporter-""" + VERSIONS.get('node_exporter') + """
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0
+"""
+
+NODE_EXPORTER_SERVICE_DESC="""
+[Unit]
+Description=Prometheus Node exporter
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/node_exporter.sh start
+ExecStop=/usr/local/bin/node_exporter.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+PROCESS_EXPORTER_SCRIPT="""#!/bin/bash
+PROCESS_EXPORTER_IMAGE='docker.io/ncabatoff/process-exporter:""" + VERSIONS.get('process_exporter') + """'
+
+start() {
+    cat > process-exporter.yml << 'EOL'
+process_names:
+  - name: "{""" + """{.Comm}""" + """}"
+    cmdline:
+    - '.+'
+EOL
+    docker rm process-exporter-""" + VERSIONS.get('process_exporter') + """ &> /dev/null || echo 0
+    docker run -td -p 9256:9256 --name process-exporter-""" + VERSIONS.get('process_exporter') + """ \
+        --net=host --restart=unless-stopped --pull=always \
+        --privileged -v /proc:/host/proc -v `pwd`:/config \
+        ${PROCESS_EXPORTER_IMAGE} \
+        --procfs /host/proc -config.path /config/process-exporter.yml &> /dev/null &
+}
+
+stop() {
+    docker stop process-exporter-""" + VERSIONS.get('process_exporter') + """
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0
+"""
+
+PROCESS_EXPORTER_SERVICE_DESC="""
+[Unit]
+Description=Prometheus Process exporter
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/process_exporter.sh start
+ExecStop=/usr/local/bin/process_exporter.sh stop
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
@@ -531,24 +620,23 @@ logging:
         processors: [ parse_log, parse_log_with_field, move_fields ]
 metrics:
   receivers:
-    hostmetrics:
-      type: hostmetrics
-      collection_interval: 60s
-  processors:
-    metrics_filter:
-      type: exclude_metrics
-      metrics_pattern:
-      - agent.googleapis.com/gpu/*
-      - agent.googleapis.com/interface/*
-      - agent.googleapis.com/network/*
-      - agent.googleapis.com/swap/*
-      - agent.googleapis.com/pagefile/*
+    prometheus:
+      type: prometheus
+      config:
+        scrape_configs:
+          - job_name: 'node_exporter'
+            scrape_interval: 15s
+            static_configs:
+              - targets: ['localhost:9100']
+          - job_name: 'process_exporter'
+            scrape_interval: 30s
+            static_configs:
+              - targets: ['localhost:9256']
   service:
     log_level: info
     pipelines:
       default_pipeline:
-        receivers: [hostmetrics]
-        processors: [metrics_filter]
+        receivers: [prometheus]
       otlp:
         receivers: [otlp]
 traces:
@@ -712,6 +800,9 @@ def go(role):
     a_list.extend(INSTALL_PKGS)
     run_or_die(sudo_noninteractive_apt_env(a_list))
     install_docker()
+    stop_exporters()
+    install_exporters()
+    start_exporters()
     install_ops_agent()
     install_gcloud()
     login_registry()
@@ -921,6 +1012,38 @@ def install_zq2_metrics():
     run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/zq2_metrics.service", "/etc/systemd/system/multi-user.target.wants/zq2_metrics.service"])
     run_or_die(["sudo", "systemctl", "enable", "zq2_metrics.service"])
 
+def install_node_exporter():
+    with open(f"/tmp/node_exporter.sh", "w") as f:
+        f.write(NODE_EXPORTER_SCRIPT)
+    run_or_die(["sudo", "cp", "/tmp/node_exporter.sh", f"/usr/local/bin/node_exporter-{VERSIONS.get('node_exporter')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/node_exporter-{VERSIONS.get('node_exporter')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/node_exporter-{VERSIONS.get('node_exporter')}.sh", "/usr/local/bin/node_exporter.sh"])
+
+    with open("/tmp/node_exporter.service", "w") as f:
+        f.write(NODE_EXPORTER_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/node_exporter.service","/etc/systemd/system/node_exporter.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/node_exporter.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/node_exporter.service", "/etc/systemd/system/multi-user.target.wants/node_exporter.service"])
+    run_or_die(["sudo", "systemctl", "enable", "node_exporter.service"])
+
+def install_process_exporter():
+    with open(f"/tmp/process_exporter.sh", "w") as f:
+        f.write(PROCESS_EXPORTER_SCRIPT)
+    run_or_die(["sudo", "cp", "/tmp/process_exporter.sh", f"/usr/local/bin/process_exporter-{VERSIONS.get('process_exporter')}.sh"])
+    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/process_exporter-{VERSIONS.get('process_exporter')}.sh"])
+    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/process_exporter-{VERSIONS.get('process_exporter')}.sh", "/usr/local/bin/process_exporter.sh"])
+
+    with open("/tmp/process_exporter.service", "w") as f:
+        f.write(PROCESS_EXPORTER_SERVICE_DESC)
+    run_or_die(["sudo","cp","/tmp/process_exporter.service","/etc/systemd/system/process_exporter.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/process_exporter.service"])
+    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/process_exporter.service", "/etc/systemd/system/multi-user.target.wants/process_exporter.service"])
+    run_or_die(["sudo", "systemctl", "enable", "process_exporter.service"])
+
+def install_exporters():
+    install_node_exporter()
+    install_process_exporter()
+
 def start_apps():
     for app in [ "otterscan", "spout", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
@@ -947,6 +1070,18 @@ def start_zq2_metrics():
 def stop_zq2_metrics():
     if os.path.exists("/etc/systemd/system/zq2_metrics.service"):
         run_or_die(["sudo", "systemctl", "stop", "zq2_metrics"])
+    pass
+
+def start_exporters():
+    for app in [ "node_exporter", "process_exporter" ]:
+        if os.path.exists(f"/etc/systemd/system/{app}.service"):
+            run_or_die(["sudo", "systemctl", "start", f"{app}"])
+    pass
+
+def stop_exporters():
+    for app in [ "node_exporter", "process_exporter" ]:
+        if os.path.exists(f"/etc/systemd/system/{app}.service"):
+            run_or_die(["sudo", "systemctl", "stop", f"{app}"])
     pass
 
 def configure_logrotate():

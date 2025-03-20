@@ -15,7 +15,7 @@ use crate::{
         to_hex::ToHex,
         zilliqa::{TRANSACTIONS_PER_PAGE, TX_BLOCKS_PER_DS_BLOCK},
     },
-    exec::{ScillaError, ScillaException},
+    exec::ScillaException,
     message::Block,
     schnorr,
     scilla::ParamValue,
@@ -359,7 +359,7 @@ impl GetTxResponse {
                     .map(|log| EventLog {
                         address: log.address,
                         event_name: log.event_name,
-                        params: log.params.into_iter().map(ParamValue::from).collect(),
+                        params: log.params,
                     })
                     .collect(),
                 success: receipt.success,
@@ -679,35 +679,9 @@ pub struct TransactionReceiptResponse {
 #[derive(Serialize_repr, Deserialize_repr, Clone)]
 #[repr(u8)] // Because otherwise it's weird that 255 is a special case
 pub enum TxnStatusCode {
-    NotPresent = 0,
     Dispatched = 1,
-    SoftConfirmed = 2,
     Confirmed = 3,
-    // Pending
     PresentNonceHigh = 4,
-    PresentGasExceeded = 5,
-    PresentValidConsensusNotReached = 6,
-    // RareDropped
-    MathError = 10,
-    FailScillaLib = 11,
-    FailContractInit = 12,
-    InvalidFromAccount = 13,
-    HighGasLimit = 14,
-    IncorrectTxnType = 15,
-    IncorrectShard = 16,
-    ContractCallWrongShard = 17,
-    HighByteSizeCode = 18,
-    VerifError = 19,
-    //
-    InsufficientGasLimit = 20,
-    InsufficientBalance = 21,
-    InsufficientGas = 22,
-    MempoolAlreadyPresent = 23,
-    MempoolSameNonceLowerGas = 24,
-    //
-    InvalidToAccount = 25,
-    FailContractAccountCreation = 26,
-    NonceTooLow = 27,
     Error = 255, // MiscError
 }
 
@@ -742,8 +716,21 @@ pub struct TransactionStatusResponse {
     pub version: String,
 }
 
+#[derive(Clone, Copy)]
+pub enum TransactionState {
+    Queued,
+    Pending,
+    Finalized,
+    Error,
+}
+
 impl TransactionStatusResponse {
-    pub fn new(tx: VerifiedTransaction, receipt: TransactionReceipt, block: Block) -> Result<Self> {
+    pub fn new(
+        tx: VerifiedTransaction,
+        success: bool,
+        block: Option<Block>,
+        state: TransactionState,
+    ) -> Result<Self> {
         let amount = tx.tx.zil_amount();
         let gas_price = tx.tx.gas_price_per_scilla_gas();
         let gas_limit = tx.tx.gas_limit_scilla();
@@ -800,47 +787,50 @@ impl TransactionStatusResponse {
                 tx.to_addr.is_some().then(|| hex::encode(&tx.payload)),
             ),
         };
-        let status_code =
-            if receipt.accepted.is_some() && receipt.accepted.unwrap() && receipt.success {
-                TxnStatusCode::Confirmed
-            } else if receipt.success {
-                TxnStatusCode::Dispatched
-            } else {
-                let errors: Vec<ScillaError> =
-                    receipt.errors.into_iter().flat_map(|(_k, v)| v).collect();
-                if errors.len() == 1 {
-                    match errors[0] {
-                        ScillaError::CallContractFailed => TxnStatusCode::FailScillaLib,
-                        ScillaError::CreateContractFailed => TxnStatusCode::Error,
-                        ScillaError::GasNotSufficient => TxnStatusCode::InsufficientGas,
-                        ScillaError::BalanceTransferFailed => TxnStatusCode::InsufficientBalance,
-                        _ => TxnStatusCode::Error,
-                    }
-                } else {
-                    TxnStatusCode::Error
-                }
-            };
-        let modification_state = if receipt.accepted.is_none() { 0 } else { 2 };
+        let (status_code, modification_state) = match state {
+            TransactionState::Error => (TxnStatusCode::Error, 2),
+            TransactionState::Finalized => (TxnStatusCode::Confirmed, 2),
+            TransactionState::Pending => (TxnStatusCode::Dispatched, 1),
+            TransactionState::Queued => (TxnStatusCode::PresentNonceHigh, 1),
+        };
+        let epoch_inserted = if let Some(block) = &block {
+            block.number().to_string()
+        } else {
+            "".to_string()
+        };
+        let epoch_updated = if let Some(block) = &block {
+            block.number().to_string()
+        } else {
+            "".to_string()
+        };
+        let last_modified = if let Some(block) = &block {
+            block
+                .timestamp()
+                .duration_since(SystemTime::UNIX_EPOCH)?
+                .as_micros()
+                .to_string()
+        } else {
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)?
+                .as_micros()
+                .to_string()
+        };
         Ok(Self {
             id: tx.hash.to_string(),
             _id: serde_json::Value::Null,
             amount: amount.to_string(),
             data: data.unwrap_or_default(),
-            epoch_inserted: block.number().to_string(),
-            epoch_updated: block.number().to_string(),
+            epoch_inserted,
+            epoch_updated,
             gas_limit: gas_limit.to_string(),
             gas_price: gas_price.to_string(),
-            last_modified: block
-                .timestamp()
-                .duration_since(SystemTime::UNIX_EPOCH)?
-                .as_micros()
-                .to_string(),
+            last_modified,
             modification_state,
             status: status_code,
             nonce: nonce.to_string(),
             sender_addr: sender_pub_key,
             signature,
-            success: receipt.success,
+            success,
             to_addr: to_addr.to_hex(),
             version: version.to_string(),
         })
