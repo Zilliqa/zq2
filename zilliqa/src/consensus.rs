@@ -2850,7 +2850,10 @@ impl Consensus {
                 .state
                 .at_root(parent.state_root_hash().into())
                 .get_stakers(block_pointer.header)?;
-            self.execute_block(None, &block_pointer, transactions, &committee)?;
+            if let Err(err) = self.execute_block(None, &block_pointer, transactions, &committee) {
+                // Rough solution restarts the node in this circumstance so that it can re-requets proposals via sync mechanism
+                panic!("Failed to execute block during fork: {err}");
+            }
         }
 
         Ok(())
@@ -3008,11 +3011,10 @@ impl Consensus {
         })?;
 
         if cumulative_gas_used != block.gas_used() {
-            warn!(
-                "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}",
+            return Err(anyhow!(
+                "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different than the one provided in the block: {}",
                 block.gas_used()
-            );
-            return Ok(());
+            ));
         }
 
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
