@@ -232,7 +232,7 @@ impl Consensus {
 
         let (start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
-                Some(qc) => {
+                Some(mut qc) => {
                     let high_block = db
                         .get_block_by_hash(&qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
@@ -278,12 +278,12 @@ impl Consensus {
                             head_block.view()
                         );
 
-                        if head_block.view() > high_block.view()
-                            && head_block.view() > finalized_number
-                        {
+                        if head_block.view() > finalized_number {
                             trace!("recovery: stored block {0} reverted", head_block.number());
                             db.remove_transactions_executed_in_block(&head_block.hash())?;
                             db.remove_block(&head_block)?;
+                            db.set_high_qc(head_block.header.qc)?;
+                            qc = head_block.header.qc;
                         } else {
                             break;
                         }
