@@ -9,7 +9,7 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum UCCBExternalMessage {
     Hello,
-    // Here's a signature
+    /// Here's a signature
     Signature(SignedEvent),
 }
 
@@ -18,6 +18,8 @@ pub enum UCCBInternalMessage {
     HelloInternal,
     /// Request a scan for this block on our chain.
     RequestScan(u64),
+    /// Submit this txn and its signatures to the target chain, please
+    SubmitRelay(SignedEvent),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -103,6 +105,10 @@ impl SignedEvent {
         signatures.iter().for_each(|(peer, sig)| {
             self.signatures.insert(*peer, sig.clone());
         });
+    }
+
+    pub fn has_signature_from(&self, id: &PeerId) -> bool {
+        self.signatures.contains_key(id)
     }
 }
 
