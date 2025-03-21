@@ -662,11 +662,9 @@ async fn validators_can_unstake(mut network: Network) {
     // unstake validator's entire stake
     let stake = get_stake(&wallet, &validator_blskey).await;
     let unstake_hash = unstake_amount(&mut network, &validator_control_wallet, stake).await;
-    let unstake_block = wallet
-        .get_transaction_receipt(unstake_hash)
+    let unstake_block = network
+        .run_until_receipt(&wallet, unstake_hash, 100)
         .await
-        .unwrap()
-        .unwrap()
         .block_number
         .unwrap()
         .as_u64();

@@ -44,8 +44,7 @@ async fn network_can_die_restart(mut network: Network) {
         .expect("Failed to progress to target block");
 }
 
-fn get_block_number(n: &mut Network) -> u64 {
-    let index = n.random_index();
+fn get_block_number(n: &Network, index: usize) -> u64 {
     n.get_node(index).get_finalized_height().unwrap()
 }
 
@@ -58,13 +57,12 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     let start_block = 5;
     let finish_block = 8;
 
+    let index = network.random_index();
+
     // wait until at least 5 blocks have been produced
     network
         .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index).get_finalized_height().unwrap() >= start_block
-            },
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
             100,
         )
         .await
@@ -73,16 +71,16 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     // now, wait until block 15 has been produced, but dropping 10% of the messages.
     for _ in 0..1000000 {
         network.randomly_drop_messages_then_tick(failure_rate).await;
-        if get_block_number(&mut network) >= finish_block {
+        if get_block_number(&network, index) >= finish_block {
             break;
         }
     }
 
     assert!(
-        get_block_number(&mut network) >= finish_block,
+        get_block_number(&network, index) >= finish_block,
         "block number should be at least {}, but was {}",
         finish_block,
-        get_block_number(&mut network)
+        get_block_number(&network, index)
     );
 }
 
