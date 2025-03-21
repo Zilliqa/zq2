@@ -10,7 +10,8 @@ use crate::uccb::launcher::{
     UCCBResponseChannel,
 };
 use crate::uccb::message::{
-    RelayedMessage, SignedRelayedMessage, UCCBExternalMessage, UCCBInternalMessage,
+    BridgeEvent, DispatchedMessage, RelayedMessage, SignedEvent, UCCBExternalMessage,
+    UCCBInternalMessage,
 };
 use crate::uccb::node::UCCBNode;
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
@@ -141,7 +142,7 @@ impl ExternalNetwork {
                     let node = self.parent.lock().unwrap();
                     let signature =
                         crate::uccb::crypto::sign_relayed_message(&msg, &node.signing_key)?;
-                    let signed = SignedRelayedMessage::from_message(msg)
+                    let signed = SignedEvent::from_event(BridgeEvent::Relayed(msg))
                         .with_signature(node.get_peer_id(), &signature);
                     node.sender
                         .broadcast_external_message(UCCBExternalMessage::Signature(signed))?;
@@ -152,11 +153,29 @@ impl ExternalNetwork {
                     relayer_log.targetChainId, relayer_log.nonce
                 );
             }
-            for (dispatcher_log, _) in dispatcher_logs {
+            for (dispatcher_log, log) in dispatcher_logs {
                 debug!(
                     "Got a disptatcher log -  nonce {}, source {}",
                     dispatcher_log.nonce, dispatcher_log.sourceChainId
                 );
+                if let (Some(tx_hash), Some(blk_num), Some(log_index)) =
+                    (log.transaction_hash, log.block_number, log.log_index)
+                {
+                    let msg = DispatchedMessage::from_dispatched_event(
+                        U256::from(chain_id),
+                        blk_num,
+                        log_index,
+                        tx_hash,
+                        &dispatcher_log,
+                    );
+                    let node = self.parent.lock().unwrap();
+                    let signature =
+                        crate::uccb::crypto::sign_dispatched_message(&msg, &node.signing_key)?;
+                    let signed = SignedEvent::from_event(BridgeEvent::Dispatched(msg))
+                        .with_signature(node.get_peer_id(), &signature);
+                    node.sender
+                        .broadcast_external_message(UCCBExternalMessage::Signature(signed))?;
+                }
             }
             self.next_block_to_scan = to_block + 1;
         } else {
