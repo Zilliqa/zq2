@@ -1739,7 +1739,7 @@ impl Consensus {
         &mut self,
         new_view: NewView,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        trace!("Received new view for height: {:?}", new_view.view);
+        trace!("Received new view for view: {:?}", new_view.view);
 
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;

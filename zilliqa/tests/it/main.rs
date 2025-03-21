@@ -72,9 +72,8 @@ use zilliqa::{
         Fork, GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
-        max_rpc_response_size_default, scilla_address_default, scilla_ext_libs_path_default,
-        scilla_stdlib_dir_default, state_cache_size_default, state_rpc_limit_default,
-        total_native_token_supply_default, u64_max,
+        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -519,10 +518,10 @@ impl Network {
                 eth_block_gas_limit: EvmGas(84000000),
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
-                scilla_address: scilla_address_default(),
+                scilla_address: self.scilla_address.clone(),
                 blocks_per_epoch: self.blocks_per_epoch,
                 epochs_per_checkpoint: 1,
-                scilla_stdlib_dir: scilla_stdlib_dir_default(),
+                scilla_stdlib_dir: self.scilla_stdlib_dir.clone(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
                 contract_upgrades,
@@ -1452,7 +1451,7 @@ async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wa
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(from_wallet, hash, 100).await;
+    network.run_until_receipt(to_wallet, hash, 100).await;
 }
 
 async fn get_reward_address(
