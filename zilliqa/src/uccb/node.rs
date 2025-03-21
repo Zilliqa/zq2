@@ -14,6 +14,7 @@ use crate::uccb::message::{
     BridgeEvent, DispatchedMessage, RelayedMessage, SignedEvent, UCCBExternalMessage,
     UCCBInternalMessage,
 };
+use crate::uccb::signatures::Signatures;
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
 use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{TxHash, U256};
@@ -79,6 +80,9 @@ pub struct UCCBNode {
     pub latest_scanned_block: Option<u64>,
     /// Threads monitoring external networks
     pub external_threads: JoinSet<Result<()>>,
+    /// The signatures we've collected so far, indexed by
+    /// @todo Cache management!
+    pub signatures: Signatures,
 }
 
 pub async fn handle_local(
@@ -163,6 +167,7 @@ impl UCCBNode {
             node,
             latest_scanned_block: None,
             external_threads,
+            signatures: Default::default(),
         })
     }
 
@@ -184,8 +189,22 @@ impl UCCBNode {
         self.sender.our_peer_id
     }
 
-    pub fn handle_broadcast(&mut self, _from: PeerId, _message: UCCBExternalMessage) -> Result<()> {
-        debug!("uccb_handle_broadcast()");
+    pub fn handle_broadcast(&mut self, from: PeerId, message: UCCBExternalMessage) -> Result<()> {
+        trace!("from={from:?} message={message:?}");
+        let result = match message {
+            UCCBExternalMessage::Signature(ev) => self.incoming_signature(ev),
+            _ => Ok(()),
+        };
+        if let Err(v) = result {
+            warn!("Couldn't process incoming broadcast - {v:?}");
+        }
+        Ok(())
+    }
+
+    pub fn incoming_signature(&mut self, sig: SignedEvent) -> Result<()> {
+        // Stash the signature and then let's see if we should issue this txn
+        let merged = self.signatures.put(sig);
+        info!("Got merged requests {merged:?}");
         Ok(())
     }
 

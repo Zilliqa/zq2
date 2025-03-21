@@ -20,7 +20,7 @@ pub enum UCCBInternalMessage {
     RequestScan(u64),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct RelayedMessage {
     pub source_chain_id: U256,
     pub block_number: u64,
@@ -33,7 +33,7 @@ pub struct RelayedMessage {
     pub nonce: U256,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum BridgeEvent {
     Relayed(RelayedMessage),
     Dispatched(DispatchedMessage),
@@ -48,7 +48,7 @@ pub struct SignedEvent {
 /// We always specify chain ids as the source and destination of the bridge request
 /// hence, a DispatchedMessage arrives on the _destination_ chain (of the bridge request)
 /// and is sent to the source chain.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct DispatchedMessage {
     pub target_chain_id: U256,
     pub block_number: u64,
@@ -97,6 +97,12 @@ impl SignedEvent {
         next.signatures
             .insert(id, Bytes::copy_from_slice(signature));
         next
+    }
+
+    pub fn merge_signatures(&mut self, signatures: &HashMap<PeerId, Bytes>) {
+        signatures.iter().for_each(|(peer, sig)| {
+            self.signatures.insert(*peer, sig.clone());
+        });
     }
 }
 
