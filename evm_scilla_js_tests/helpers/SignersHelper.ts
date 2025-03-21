@@ -50,6 +50,12 @@ export const getZilBalance = async (hre: HardhatRuntimeEnvironment, address: str
   return new BN(balanceResult.result.balance);
 };
 
+export async function getNonce(hre: HardhatRuntimeEnvironment, address: string): Promise<number> {
+  let zilliqa = new Zilliqa(hre.getNetworkUrl());
+  const balance = await zilliqa.blockchain.getBalance(address);
+  return balance.result.nonce as number;
+}
+
 export const getZilAddress = (privateKey: string): string => {
   return getAddressFromPrivateKey(privateKey).toLowerCase();
 };

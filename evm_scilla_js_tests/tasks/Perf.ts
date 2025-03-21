@@ -10,7 +10,6 @@ import {
   fundAccount,
   generateAccount,
   getContractAbi,
-  getNonce,
   PerfStatistics,
   printBlocksInfo,
   printResults,
@@ -25,6 +24,7 @@ import {perfConfig} from "./Perf.config";
 import {HardhatRuntimeEnvironment} from "hardhat/types";
 import {Block} from "@ethersproject/providers";
 import {ethers} from "ethers";
+import { getNonce } from "../helpers/SignersHelper";
 
 let web3Account: ethers.Wallet;
 
@@ -93,7 +93,7 @@ async function generateSimpleTransferTransactions(
 ): Promise<Promise<TransactionCallResult>[]> {
   const {iterations} = transferConfig;
 
-  let nonce = await getNonce(zilliqa, getAddressFromPrivateKey(perfConfig.sourceOfFunds));
+  let nonce = await getNonce(hre, getAddressFromPrivateKey(perfConfig.sourceOfFunds));
   const promises = Array.from({length: iterations}, async (_, i): Promise<TransactionCallResult> => {
     const account = generateAccount();
     const start = Date.now();
@@ -147,7 +147,7 @@ async function generateCallContractTransactions(
   hre: HardhatRuntimeEnvironment,
   callContractConfig: CallContractConfig
 ): Promise<Promise<TransactionCallResult>[]> {
-  let nonce = await getNonce(zilliqa, getAddressFromPrivateKey(perfConfig.sourceOfFunds));
+  let nonce = await getNonce(hre, getAddressFromPrivateKey(perfConfig.sourceOfFunds));
   let promises: Promise<TransactionCallResult>[] = [];
   for (const callContract of callContractConfig.calls) {
     const contract = zilliqa.contracts.at(callContract.address);
