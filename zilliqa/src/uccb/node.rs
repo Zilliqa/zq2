@@ -11,7 +11,7 @@ use crate::uccb::launcher::{
     UCCBResponseChannel,
 };
 use crate::uccb::message::{
-    DispatchedMessage, RelayedMessage, SignedRelayedMessage, UCCBExternalMessage,
+    BridgeEvent, DispatchedMessage, RelayedMessage, SignedEvent, UCCBExternalMessage,
     UCCBInternalMessage,
 };
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
@@ -227,7 +227,7 @@ impl UCCBNode {
             zq2_node.get_transaction_receipts_in_block(block.hash())?
         };
         // Now look through the receipts
-        let to_relay: Vec<(Option<SignedRelayedMessage>, Option<DispatchedMessage>)> = receipts
+        receipts
             .iter()
             .filter_map(|x| {
                 // Unsuccessful transactions emit no relayer events
@@ -245,21 +245,24 @@ impl UCCBNode {
                     .enumerate()
                     .filter_map(|(log_idx, e)| {
                         // First topic should be the relayed topic
-                        if let Some(v) = e.topics.get(0) {
+                        if let Some(v) = e.topics.first() {
                             match *v {
                                 crate::uccb::contracts::IRELAYER_EVENTS::Relayed::SIGNATURE_HASH => {
                                     let relayed = relayed_message_from_evm_log(self.node_config.eth_chain_id, blk, x.tx_hash.into(), log_idx, e);
                                     if let Ok(r) = relayed {
                                         let signature = crate::uccb::crypto::sign_relayed_message(&r, &self.signing_key);
                                         if let Ok(s) = signature {
-                                            return Some((Some(SignedRelayedMessage::from_message(r).with_signature(self.get_peer_id(), &s)), None))
+                                            return Some(SignedEvent::from_event(BridgeEvent::Relayed(r)).with_signature(self.get_peer_id(), &s));
                                         }
                                     }
                                 },
                                 crate::uccb::contracts::IDISPATCHER_EVENTS::Dispatched::SIGNATURE_HASH => {
                                     let dispatched = dispatched_message_from_evm_log(self.node_config.eth_chain_id, blk, x.tx_hash.into(), log_idx, e);
                                     if let Ok(d) = dispatched {
-                                        return Some((None, Some(d)))
+                                        let signature = crate::uccb::crypto::sign_dispatched_message(&d, &self.signing_key);
+                                        if let Ok(s) = signature {
+                                            return Some(SignedEvent::from_event(BridgeEvent::Dispatched(d)).with_signature(self.get_peer_id(), &s));
+                                        }
                                     }
                                 },
                                 _ => ()
@@ -267,7 +270,7 @@ impl UCCBNode {
                         }
                         None
                     })
-                    .collect::<Vec<(Option<SignedRelayedMessage>, Option<DispatchedMessage>)>>();
+                    .collect::<Vec<SignedEvent>>();
                 if valid_logs.is_empty() {
                     None
                 } else {
@@ -275,8 +278,11 @@ impl UCCBNode {
                 }
             })
             .flatten()
-            .collect();
-        debug!("scan_block: Found valid logs - {to_relay:?}");
+            .for_each(|ev| {
+                if let Err(e) = self.sender.broadcast_external_message(UCCBExternalMessage::Signature(ev)) {
+                    warn!("Cannot broadcast signature - {e:?}");
+                }
+            });
         Ok(())
     }
 

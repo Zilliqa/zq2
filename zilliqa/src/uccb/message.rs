@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub enum UCCBExternalMessage {
     Hello,
     // Here's a signature
-    Signature(SignedRelayedMessage),
+    Signature(SignedEvent),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -34,8 +34,14 @@ pub struct RelayedMessage {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SignedRelayedMessage {
-    pub message: RelayedMessage,
+pub enum BridgeEvent {
+    Relayed(RelayedMessage),
+    Dispatched(DispatchedMessage),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SignedEvent {
+    pub event: BridgeEvent,
     pub signatures: HashMap<PeerId, Bytes>,
 }
 
@@ -44,7 +50,7 @@ pub struct SignedRelayedMessage {
 /// and is sent to the source chain.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DispatchedMessage {
-    pub destination_chain_id: U256,
+    pub target_chain_id: U256,
     pub block_number: u64,
     pub tx_hash: TxHash,
     pub log_index: u64,
@@ -77,10 +83,10 @@ impl RelayedMessage {
     }
 }
 
-impl SignedRelayedMessage {
-    pub fn from_message(message: RelayedMessage) -> Self {
-        SignedRelayedMessage {
-            message,
+impl SignedEvent {
+    pub fn from_event(event: BridgeEvent) -> Self {
+        SignedEvent {
+            event,
             signatures: HashMap::new(),
         }
     }
@@ -96,14 +102,14 @@ impl SignedRelayedMessage {
 
 impl DispatchedMessage {
     pub fn from_dispatched_event(
-        destination_chain_id: U256,
+        target_chain_id: U256,
         block_number: u64,
         log_index: u64,
         tx_hash: TxHash,
         dispatched: &IDISPATCHER_EVENTS::Dispatched,
     ) -> DispatchedMessage {
         Self {
-            destination_chain_id,
+            target_chain_id,
             block_number,
             tx_hash,
             log_index,
