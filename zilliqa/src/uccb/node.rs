@@ -31,6 +31,7 @@ use opentelemetry_semantic_conventions::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    str::FromStr,
     sync::Arc,
     sync::Mutex,
     time::{Duration, SystemTime},
@@ -93,6 +94,9 @@ pub async fn handle_local(
     debug!("uccb_handle_local(2): {:?}", message);
     match message {
         UCCBInternalMessage::RequestScan(blk) => node.lock().unwrap().scan_block(blk)?,
+        UCCBInternalMessage::SubmitRelay(signed_ev) => {
+            node.lock().unwrap().submit_txn(signed_ev)?
+        }
         _ => (),
     }
     Ok(())
@@ -201,10 +205,40 @@ impl UCCBNode {
         Ok(())
     }
 
+    /// @todo This does kinda need fixing :-) - the explicit constant here keeps to-be-deleted
+    /// config out of the actual configuration files.
+    pub fn should_submit(&self, sig: &SignedEvent) -> bool {
+        sig.has_signature_from(
+            &PeerId::from_str("12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp").unwrap(),
+        )
+    }
+
+    pub fn submit_txn(&mut self, sig: SignedEvent) -> Result<()> {
+        info!("Submit {sig:?}");
+        Ok(())
+    }
+
     pub fn incoming_signature(&mut self, sig: SignedEvent) -> Result<()> {
         // Stash the signature and then let's see if we should issue this txn
-        let merged = self.signatures.put(sig);
+        let merged = self.signatures.put(sig)?;
         info!("Got merged requests {merged:?}");
+        match merged.event {
+            BridgeEvent::Relayed(_) => {
+                if self.should_submit(&merged) {
+                    // We should submit this transaction. Let's have a go ..
+                    // This needs to be a message so that we can break up our actions.
+                    let result = self
+                        .sender
+                        .send_local_message(UCCBInternalMessage::SubmitRelay(merged.clone()));
+                    if let Err(v) = result {
+                        warn!("Couldn't submit txn {merged:?} for chain submission - {v:?}");
+                    }
+                }
+            }
+            BridgeEvent::Dispatched(_) => {
+                info!("Received a dispatched event merge");
+            }
+        }
         Ok(())
     }
 
