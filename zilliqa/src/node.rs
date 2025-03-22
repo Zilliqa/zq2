@@ -230,11 +230,6 @@ impl Node {
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
         match message {
-            // This just breaks down group block messages into individual messages to stop them blocking threads
-            // for long periods.
-            ExternalMessage::InjectedProposal(p) => {
-                self.handle_injected_proposal(from, p)?;
-            }
             // `NewTransaction`s are always broadcasted.
             ExternalMessage::NewTransaction(t) => {
                 // Don't process again txn sent by this node (it's already in the mempool)
@@ -302,6 +297,11 @@ impl Node {
                 // respond with an invalid response
                 let message = self.consensus.sync.handle_block_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
+            }
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
             }
             // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
             // a Request by the underlying layer, with a faux request-id. This is to mitigate issues when there are
