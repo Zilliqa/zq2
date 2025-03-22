@@ -67,7 +67,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let node = network.remove_node(index);
 
     let inner = node.inner.lock().unwrap();
-    let last_number = inner.number() - 1;
+    let last_number = inner.number() - 2;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
     let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
     let last_block = inner.get_block(last_number).unwrap().unwrap();

@@ -34,7 +34,7 @@ use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
     crypto::SecretKey,
     db,
-    message::{ExternalMessage, InternalMessage},
+    message::{BlockRequest, ExternalMessage, InternalMessage},
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
     sync::SyncPeers,
@@ -258,6 +258,9 @@ impl P2pNode {
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.add_peer(peer_id);
+                                // fires a probe request - keep in-sync with Sync::probe_peer().
+                                let shard_id = self.config.nodes.iter().find(|n| Self::shard_id_to_topic(n.eth_chain_id).hash() == topic).map(|n| n.eth_chain_id).unwrap();
+                                self.outbound_message_sender.send((Some((peer_id, RequestId::random())), shard_id, ExternalMessage::BlockRequest(BlockRequest::default())))?;
                             }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) => {
@@ -384,15 +387,7 @@ impl P2pNode {
                             debug!(%from, %dest, %message, ?request_id, "sending direct message");
                             let id = format!("{:?}", request_id);
                             if from == dest {
-                                match message {
-                                    // Route sync messages as broadcast, to allow other requests to be prioritized.
-                                    ExternalMessage::InjectedProposal(_) => {
-                                        self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
-                                    },
-                                    _ => {
-                                        self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
-                                    }
-                                };
+                                self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
                             } else {
                                 let libp2p_request_id = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
                                 self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));

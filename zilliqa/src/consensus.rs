@@ -311,7 +311,7 @@ impl Consensus {
             peers.clone(),
         )?;
 
-        let prune_interval = config.prune_interval;
+        let prune_interval = config.sync.prune_interval;
 
         let mut consensus = Consensus {
             secret_key,

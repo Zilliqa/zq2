@@ -1,89 +1,64 @@
-# zq2 block fetching
+# ZQ2 block fetching
 
 Zilliqa 2 nodes will, in general, start from either genesis or a checkpoint.
 
-These will both be behind the current head of the blockchain, and the
-node will thus want to catch up. To do so, it will attempt to request
-blocks from other nodes.
+These will both be behind the current head of the blockchain, and the node will thus want to catch up. To do so, it will attempt to request blocks from other nodes.
 
 This operation is complicated because:
 
- - Other nodes in the network may not be reliable - fail to reply,
-   lie, or attempt to stop the node syncing.
- - Other nodes will, in general, not have all the blocks themselves -
-   they may be syncing, or have pruned some blocks for resource
-   management reasons.
- - We want to avoid overloading a single node with too much work.
- - The syncing node wants to catch up quickly.
+- Other nodes in the network may not be reliable - fail to reply, lie, or attempt to stop the node syncing.
+- Other nodes will, in general, not have all the blocks themselves - they may be syncing, or have pruned some blocks for resource management reasons.
+- We want to avoid overloading a single node with too much work.
+- The syncing node wants to catch up quickly.
 
-As a result, the code for fetching blocks to complete our view of the
-chain is somewhat complex. It consists of:
+As a result, the code for fetching blocks to complete our view of the chain is somewhat complex.
 
-Blocks are fetched by view, not block number; it's important to keep
-these distinct - there may be many blocks with block number 5, but
-only one view.
+# Active Sync
 
-## A range map implementation
+Active-sync is the process of catching up to the head of the blockchain.
+This process is designed to be aggressive i.e. it tries to catch up to the head as fast as possible.
 
-In `range_map.rs`; this is a simple representation of a ranged set. I
-did look for crates which did this, but found none which were
-moderately simple and recently maintained.
+This process consists of 3 main phases:
+- Phase 1, downloading headers;
+- Phase 2, downloading blocks; and
+- Phase 3, finishing up.
 
-## A block store
+## Phase 1
 
-The block store is implemented in `block_store.rs` - see that file for
-details; the block store is responsible for providing access to the
-blocks requested by the rest of the system.
+During this phase, the node will download headers, from segments of the chain, in descending order from the latest block seen. This way, it only downloads valid headers by simply following the chain of parent hashes. 
 
-To do so, it contains mechanisms to request blocks and to cache blocks
-which it may one day be able to prove are part of the canonical chain.
+Since this phase is I/O bound, the node fires multiple concurrent requests for different segments, to multiple peers. If it encounters any networking issues, it will resend the request for that segment to a subsequent peer. It checks and discards responses that are not linked by the chain of hashes and requests the same segment from a subsequent peer.
 
-## A tick hook
+It does this until it downloads headers that link up to its own internal history, checkpoint, or genesis.
 
-This is in `node_launcher.rs`, and calls `consensus.rs` periodically to
-drive the block fetching state machine.
+## Phase 2
 
-## A block store
+During this phase, the node will download blocks in ascending order starting from the block that it has in its history. It sends the request to the same peer that provided the response in Phase 1.
 
-This is held in `block_store.rs`
+Since this phase is CPU bound, the node requests one segment of the chain at a time. In order to avoid overflowing memory, it buffers only about 1,000 blocks at a time. If it encounters any networking issues, it will discard the response and repeat Phase 1 with the troublesome segment.
 
-## Block arrival
+It does this until it has successfully downloaded all the blocks that it is aware of. This will bring it close to the head of the chain.
 
-When blocks arrive (via `node.rs`'s `BlockResponse` handler), we put
-them directly in the block store's buffer cache. The tick will then
-process them next time it runs.
+## Phase 3
 
-When new proposals arrive (from us via `process_block()`) via the
-`ProcessProposal` message, we will attempt to process them. If this
-results in a next proposal to process from the block buffer cache, we
-will send another `ProcessProposal` message to process that one too.
+Phase 1 and 2 may be repeated multiple times, which will bring the node close to the head of the chain but never quite reaching it. While Phase 1 and 2 are running, the node is also buffering the latest Proposals that it receives.
 
-## Forks
+If the blocks that it has buffered, link up to its history, it will inject those blocks from its internal buffer. This will allow it to catch up to the head of the chain.
 
-Forks are problematic. In particular, they break the flow of
-parent-child hashes, so we have to go hunting for blocks in our buffer
-which have parent hashes which our database knows about - we do this
-using a progressive additive range search to avoid penalising our
-database too much (see `fork_counter` in `block_store.rs`).
+# Passive Sync
 
-We may also never pick up a fork. Suppose the chain forked at view
-202, giving a left hand block at 202 and a right hand block at 204
-which then became the rest of the chain.
+Passive-sync is the process of filling out the rest of the chain. This process is designed to be non-aggressive as it happens in the background.
 
-Now suppose we get 204, but never 202. How would we ever know that 202
-existed? Well, we might not and will thus never store it in our
-database. Be aware of this.
+A node that is started from a checkpoint, will run active-sync to catch up to the head. Then, it may run passive-sync to fill out the rest of the chain history going backwards.
 
-Also, the maximum depth of a fork is the maximum lookahead of our
-cache. Suppose we have a fork 100 deep starting at view 202. We'll
-fetch it, go to the end, and stop.
+This process consists of 2 main phases:
+- Phase 4, downloading headers; and
+- Phase 5, downloading blocks;
 
-How would we ever know that there was another block whose parent was
-the block at view 200? Well, unless we ask for subsequent blocks, we
-won't. And we won't ask for subsequent blocks because we're too busy
-re-requesting the ones we can't process.
+## Phase 4
 
-This is theoretically fixable and we should one day - but I've not
-done it today because long forks in Zilliqa 2 are not envisioned and
-it would be hard both to write and to test.
+This phase is similar to Phase 1 in terms of functionality. The main difference is that it starts not from the latest known block but from its oldest block in history; and it immediately switches to Phase 5 upon receiving a successful response (that links up from the starting block) for a single chain segment.
 
+## Phase 5
+
+This phase is similar to Phase 2 in terms of functionality. The main difference is that it does not execute the blocks but merely stores them in its database; and it then repeats Phase 4 if there is nothing else to do (as it is supposed to be running in the background).

@@ -63,6 +63,7 @@ pub struct Sync {
     message_sender: MessageSender,
     // internal peers
     peers: Arc<SyncPeers>,
+    initial_probed: bool, // sync by initial probe at startup
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
     p1_response: BTreeMap<PeerId, Option<Vec<SyncBlockHeader>>>,
@@ -112,9 +113,11 @@ impl Sync {
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
         let max_batch_size = config
+            .sync
             .block_request_batch_size
             .clamp(100, Self::MAX_BATCH_SIZE);
         let max_blocks_in_flight = config
+            .sync
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
 
@@ -146,30 +149,8 @@ impl Sync {
             p1_response: BTreeMap::new(),
             checkpoint_at: u64::MIN,
             segments: SyncSegments::default(),
+            initial_probed: false,
         })
-    }
-
-    /// Skip Failure
-    ///
-    /// We get a plain ACK in certain cases - treated as an empty response.
-    /// FIXME: Remove once all nodes upgraded to next version.
-    pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
-        self.empty_count = self.empty_count.saturating_add(1);
-        if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
-            tracing::warn!(from = %from,
-                "sync::Acknowledgement"
-            );
-            match &self.state {
-                SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, Some(vec![]))?;
-                }
-                SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(from, Some(vec![]))?;
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     /// P2P Failure
@@ -237,7 +218,11 @@ impl Sync {
             tracing::debug!("sync::DoSync : missing recent proposals");
             return Ok(());
         }
-
+        if !self.in_flight.is_empty() {
+            // do not interrupt existing requests
+            tracing::debug!("sync::DoSync : waiting for in-flight requests");
+            return Ok(());
+        }
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
@@ -266,7 +251,7 @@ impl Sync {
                 self.inject_recent_blocks()?;
             }
             // Retry to fix sync issues e.g. peers that are now offline
-            SyncState::Retry1 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
+            SyncState::Retry1 if self.in_pipeline == 0 => {
                 self.update_started_at()?;
                 // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
@@ -275,7 +260,6 @@ impl Sync {
                 tracing::debug!("sync::DoSync : syncing {} blocks", self.in_pipeline);
             }
         }
-
         Ok(())
     }
 
@@ -483,10 +467,11 @@ impl Sync {
 
         if self.segments.count_sync_segments() == 0 {
             self.state = SyncState::Phase3;
-        } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
-            self.request_missing_blocks()?;
         }
-
+        // perform next block transfers, where possible
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
+        }
         Ok(())
     }
 
@@ -544,7 +529,7 @@ impl Sync {
         // will be re-inserted below
         if let Some(peer) = self.peers.get_next_peer() {
             // reinsert peer, as we will use a faux peer below, to force the request to go to the original responder
-            self.peers.reinsert_peer(peer)?;
+            self.peers.reinsert_peer(peer);
 
             // If we have no chain_segments, we have nothing to do
             if let Some((meta, peer_info)) = self.segments.last_sync_segment() {
@@ -597,35 +582,82 @@ impl Sync {
         Ok(())
     }
 
-    /// Phase 0/\1: Handle a V1 block response
+    /// Phase 0: Handle a probe response
     ///
-    /// Drop V1 peers from our set.
-    pub fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
-        // V2 response
-        if response.availability.is_none()
-            && response.proposals.is_empty()
-            && response.from_view == u64::MAX
-        {
-            if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
-                tracing::debug!("sync::BlockResponse : upgrade {from}",);
-                p.version = PeerVer::V2;
-            };
-        } else if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
-            tracing::warn!("sync::BlockResponse : dropped {from}",);
-            p.score = u32::MAX;
-        };
-
-        match &self.state {
-            SyncState::Phase1(_) => {
-                self.handle_metadata_response(from, Some(vec![]))?;
+    /// Handle probe response
+    pub fn handle_block_response(&mut self, _from: PeerId, response: BlockResponse) -> Result<()> {
+        match self.state {
+            SyncState::Phase0
+                if !self.initial_probed
+                    && response.availability.is_none()
+                    && !response.proposals.is_empty()
+                    && response.from_view == u64::MAX =>
+            {
+                let proposal = response.proposals.first().unwrap();
+                if proposal.number() > self.started_at {
+                    tracing::info!(number = %proposal.number(),
+                        "sync::BlockResponse : received proposal",
+                    );
+                    self.recent_proposals.push_back(proposal.clone());
+                    if Self::DO_SPECULATIVE {
+                        return self.do_sync();
+                    }
+                }
+                self.initial_probed = true; // we accept the first response as 'best'
+                Ok(())
             }
-            SyncState::Phase2(_) => {
-                self.handle_multiblock_response(from, Some(vec![]))?;
-            }
-            _ => {}
+            _ => Ok(()),
         }
-        Ok(())
     }
+
+    /// Handle probe request
+    ///
+    /// This is the first step in the syncing algorithm, where we receive a probe request and respond with the highest block we have.
+    pub fn handle_block_request(
+        &mut self,
+        from: PeerId,
+        request: BlockRequest,
+    ) -> Result<ExternalMessage> {
+        // probe message is BlockRequest::default()
+        if request != BlockRequest::default() || from == self.peer_id {
+            return Ok(ExternalMessage::Acknowledgement);
+        }
+
+        // Must be at least 1 block, genesis/checkpoint
+        let block_vec = self.db.get_highest_block_hashes(1)?;
+        let block = self
+            .db
+            .get_block_by_hash(block_vec.first().unwrap())?
+            .unwrap();
+
+        // Construct the proposal
+        let prop = self.block_to_proposal(block);
+        let message = ExternalMessage::BlockResponse(BlockResponse {
+            proposals: vec![prop],
+            from_view: u64::MAX,
+            availability: None,
+        });
+        Ok(message)
+    }
+
+    // /// Probe a peer for syncing
+    // ///
+    // /// Sends a probe to a peer, in an attempt to start syncing, if necessary.
+    // pub fn probe_peer(&mut self) -> Result<()> {
+    //     if self.initial_probed || !matches!(self.state, SyncState::Phase0) {
+    //         return Ok(()); // do not probe if we are already syncing, or successfully probed
+    //     }
+    //     if let Some(peer_info) = self.peers.get_next_peer() {
+    //         let peer = peer_info.peer_id;
+    //         self.peers.append_peer(peer_info);
+    //         tracing::debug!(%peer, "sync::ProbePeer : probe");
+    //         self.message_sender.send_external_message(
+    //             peer,
+    //             ExternalMessage::BlockRequest(BlockRequest::default()),
+    //         )?;
+    //     }
+    //     Ok(())
+    // }
 
     /// Phase 1: Handle a response to a metadata request.
     ///
@@ -797,9 +829,10 @@ impl Sync {
             for p in self.in_flight.drain(..) {
                 self.peers.done_with_peer(Some(p), DownGrade::None);
             }
-        } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
-            self.p1_response.clear();
-            self.request_missing_metadata(None)?;
+        }
+        // perform next block transfers, where possible
+        if Self::DO_SPECULATIVE && self.p1_response.is_empty() {
+            self.do_sync()?;
         }
 
         Ok(())
@@ -950,17 +983,6 @@ impl Sync {
                         });
                         (message, *range.start() <= self.started_at, range)
                     }
-                    (SyncState::Phase0, PeerVer::V1) | (SyncState::Phase1(_), PeerVer::V1) => {
-                        // Fire a V1 query as a V2 negotiation/hello.
-                        if let Some(meta) = meta {
-                            self.state = SyncState::Phase1(meta);
-                        }
-                        let message = ExternalMessage::BlockRequest(BlockRequest {
-                            to_view: 0,
-                            from_view: 0,
-                        });
-                        (message, true, 0..=0)
-                    }
                     _ => unimplemented!("sync::DoMissingMetadata"),
                 };
 
@@ -1053,15 +1075,9 @@ impl Sync {
     pub fn mark_received_proposal(&mut self, number: u64) -> Result<()> {
         tracing::trace!(%number, "sync::MarkReceivedProposal : received");
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
-        // speed-up block transfers, w/o waiting for proposals
+        // perform next block transfers, where possible
         if Self::DO_SPECULATIVE {
-            match self.state {
-                SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
-                    self.request_missing_blocks()?
-                }
-                SyncState::Phase3 if self.in_pipeline == 0 => self.inject_recent_blocks()?,
-                _ => {}
-            }
+            self.do_sync()?;
         }
         Ok(())
     }
@@ -1116,6 +1132,13 @@ impl Sync {
     fn add_in_flight(&mut self, peer_info: PeerInfo, request_id: RequestId) {
         self.in_flight.push_back((peer_info, request_id));
     }
+
+    // This is a helper function for the integration test `sync_from_probe()`
+    pub fn probe_peer(&mut self, peer: PeerId) {
+        self.message_sender
+            .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))
+            .ok(); // ignore 
+    }
 }
 
 #[derive(Debug)]
@@ -1161,13 +1184,7 @@ impl SyncPeers {
         // Reinsert peers that are good
         if peer.score < u32::MAX {
             peer.score = peer.score.saturating_add(downgrade as u32);
-            let mut peers = self.peers.lock().unwrap();
-            if !peers.is_empty() {
-                // Ensure that the next peer is equal or better
-                peer.score = peer.score.max(peers.peek().unwrap().score);
-            }
-            peers.retain(|p| p.peer_id != peer.peer_id);
-            peers.push(peer);
+            self.append_peer(peer);
         }
     }
 
@@ -1186,7 +1203,7 @@ impl SyncPeers {
         // if the new peer is not synced, it will get downgraded to the back of heap.
         // but by placing them at the back of the 'best' pack, we get to try them out soon.
         let new_peer = PeerInfo {
-            version: PeerVer::V1, // default to V1
+            version: PeerVer::V2, // default to V2 since >= 0.7.0
             score: peers.iter().map(|p| p.score).min().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
@@ -1194,7 +1211,6 @@ impl SyncPeers {
         // ensure that it is unique
         peers.retain(|p| p.peer_id != peer);
         peers.push(new_peer);
-
         tracing::trace!("sync::AddPeer {peer}/{}", peers.len());
     }
 
@@ -1215,13 +1231,26 @@ impl SyncPeers {
         None
     }
 
-    /// Reinserts the peer such that it is at the front of the queue.
-    fn reinsert_peer(&self, peer: PeerInfo) -> Result<()> {
+    /// Reinserts the peer such that it is at the back of the good queue.
+    fn append_peer(&self, mut peer: PeerInfo) {
         if peer.score == u32::MAX {
-            return Ok(());
+            return;
         }
         let mut peers = self.peers.lock().unwrap();
-        let mut peer = peer;
+        if !peers.is_empty() {
+            // Ensure that the next peer is equal or better
+            peer.score = peer.score.max(peers.peek().unwrap().score);
+        }
+        peers.retain(|p| p.peer_id != peer.peer_id);
+        peers.push(peer);
+    }
+
+    /// Reinserts the peer such that it is at the front of the good queue.
+    fn reinsert_peer(&self, mut peer: PeerInfo) {
+        if peer.score == u32::MAX {
+            return;
+        }
+        let mut peers = self.peers.lock().unwrap();
         if !peers.is_empty() {
             // Ensure that it gets to the head of the line
             peer.last_used = peers
@@ -1234,7 +1263,6 @@ impl SyncPeers {
         // ensure that it is unique
         peers.retain(|p| p.peer_id != peer.peer_id);
         peers.push(peer);
-        Ok(())
     }
 }
 

@@ -332,3 +332,34 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
             + (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap())
     );
 }
+
+// Test that new node joining a stalled network catches up on blocks
+// does not work consistently - due to timeouts
+#[zilliqa_macros::test]
+async fn sync_from_probe(mut network: Network) {
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index)
+                    .get_block(BlockId::latest())
+                    .unwrap()
+                    .map_or(0, |b| b.number())
+                    >= 5
+            },
+            100,
+        )
+        .await
+        .unwrap();
+
+    // pick a random peer to probe
+    let n = network.random_index();
+    let peer_id = network.node_at(n).consensus.peer_id();
+
+    info!("Adding networked node.");
+    let index = network.add_node();
+    // force a sync-probe
+    network.node_at(index).consensus.sync.probe_peer(peer_id);
+
+    network.run_until_synced(index).await;
+}

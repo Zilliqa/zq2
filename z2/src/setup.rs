@@ -19,7 +19,8 @@ use tokio::fs;
 use zilliqa::{
     api,
     cfg::{
-        ApiServer, genesis_fork_default, max_rpc_response_size_default, state_cache_size_default,
+        ApiServer, SyncConfig, genesis_fork_default, max_rpc_response_size_default,
+        state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
@@ -546,13 +547,16 @@ impl Setup {
                     genesis_fork: genesis_fork_default(),
                 },
                 block_request_limit: block_request_limit_default(),
-                max_blocks_in_flight: max_blocks_in_flight_default(),
-                block_request_batch_size: block_request_batch_size_default(),
+                sync: SyncConfig {
+                    max_blocks_in_flight: max_blocks_in_flight_default(),
+                    block_request_batch_size: block_request_batch_size_default(),
+                    prune_interval: cfg::u64_max(),
+                    sync_base_height: cfg::u64_max(),
+                },
                 state_rpc_limit: state_rpc_limit_default(),
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
-                prune_interval: cfg::u64_max(),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 
