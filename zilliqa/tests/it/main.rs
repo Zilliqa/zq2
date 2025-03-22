@@ -773,6 +773,37 @@ impl Network {
         trace!("Finished dropping propose messages except one");
     }
 
+    pub async fn drop_propose_messages(&mut self) {
+        trace!("Dropping all propose messages");
+
+        for _ in 0..50 {
+            // Generate some messages
+            self.tick().await;
+
+            let mut messages = self.collect_messages();
+
+            if messages.is_empty() {
+                warn!("Messages were empty - advance time faster!");
+                zilliqa::time::advance(Duration::from_millis(50));
+                continue;
+            }
+
+            // Remove the matching messages
+            messages.retain(|(_, _, m)| {
+                if let AnyMessage::External(ExternalMessage::Proposal(_)) = m {
+                    true
+                } else {
+                    false
+                }
+            });
+
+            // Requeue the other messages
+            for message in messages {
+                self.resend_message.send(message).unwrap();
+            }
+        }
+    }
+
     // Drop the first message in each node queue with N% probability per tick
     pub async fn randomly_drop_messages_then_tick(&mut self, failure_rate: f64) {
         if !(0.0..=1.0).contains(&failure_rate) {
@@ -1113,7 +1144,7 @@ impl Network {
     async fn run_until_synced(&mut self, index: usize) {
         let check = loop {
             let i = self.random_index();
-            if i != index {
+            if i != index && !self.disconnected.contains(&i) {
                 break i;
             }
         };

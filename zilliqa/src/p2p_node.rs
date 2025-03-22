@@ -258,7 +258,7 @@ impl P2pNode {
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.add_peer(peer_id);
-                                // fires a probe request
+                                // fires a probe request - keep in-sync with Sync::probe_peer().
                                 let shard_id = self.config.nodes.iter().find(|n| Self::shard_id_to_topic(n.eth_chain_id).hash() == topic).map(|n| n.eth_chain_id).unwrap();
                                 self.outbound_message_sender.send((Some((peer_id, RequestId::random())), shard_id, ExternalMessage::BlockRequest(BlockRequest::default())))?;
                             }
