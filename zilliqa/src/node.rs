@@ -36,8 +36,8 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockHeader, BlockResponse, ExternalMessage, InjectedProposal, InternalMessage,
-        IntershardCall, Proposal,
+        Block, BlockHeader, ExternalMessage, InjectedProposal, InternalMessage, IntershardCall,
+        Proposal,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -290,14 +290,10 @@ impl Node {
                 let message = self.consensus.sync.handle_metadata_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
-            // Respond negatively to block request from old nodes
-            ExternalMessage::BlockRequest(_) => {
+            // Respond to block probe requests.
+            ExternalMessage::BlockRequest(request) => {
                 // respond with an invalid response
-                let message = ExternalMessage::BlockResponse(BlockResponse {
-                    availability: None,
-                    proposals: vec![],
-                    from_view: u64::MAX,
-                });
+                let message = self.consensus.sync.handle_block_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
@@ -345,7 +341,7 @@ impl Node {
                 .consensus
                 .sync
                 .handle_metadata_response(from, Some(response))?,
-            // < 0.6.0
+            // >= 0.8.0 probe response
             ExternalMessage::BlockResponse(response) => {
                 self.consensus.sync.handle_block_response(from, response)?
             }

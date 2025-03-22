@@ -203,7 +203,7 @@ pub enum BlockStrategy {
     Latest(u64),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct BlockRequest {
     pub from_view: u64,
     pub to_view: u64,

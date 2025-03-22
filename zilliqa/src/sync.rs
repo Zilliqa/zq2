@@ -17,8 +17,8 @@ use crate::{
     crypto::Hash,
     db::Db,
     message::{
-        Block, BlockHeader, BlockResponse, ExternalMessage, InjectedProposal, Proposal,
-        RequestBlocksByHeight, SyncBlockHeader,
+        Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InjectedProposal,
+        Proposal, RequestBlocksByHeight, SyncBlockHeader,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
@@ -580,19 +580,72 @@ impl Sync {
         Ok(())
     }
 
-    /// Phase 0/1: Handle a V1 block response
+    /// Phase 0: Handle a probe response
     ///
-    /// Drop V1 peers from our good set.
-    pub fn handle_block_response(&mut self, from: PeerId, _response: BlockResponse) -> Result<()> {
-        match &self.state {
-            SyncState::Phase1(_) => {
-                self.handle_metadata_response(from, Some(vec![]))?;
+    /// Handle probe response
+    pub fn handle_block_response(&mut self, _from: PeerId, response: BlockResponse) -> Result<()> {
+        match self.state {
+            SyncState::Phase0
+                if response.availability.is_none()
+                    && !response.proposals.is_empty()
+                    && response.from_view == u64::MAX =>
+            {
+                let proposal = response.proposals.first().unwrap();
+                if proposal.number() > self.started_at {
+                    tracing::info!(number = %proposal.number(),
+                        "sync::BlockResponse : received proposal",
+                    );
+                    self.recent_proposals.push_back(proposal.clone());
+                    if Self::DO_SPECULATIVE {
+                        return self.do_sync();
+                    }
+                }
+                Ok(())
             }
-            SyncState::Phase2(_) => {
-                self.handle_multiblock_response(from, Some(vec![]))?;
-            }
-            _ => {}
+            _ => Ok(()),
         }
+    }
+
+    /// Handle probe request
+    ///
+    /// This is the first step in the syncing algorithm, where we receive a probe request and respond with the highest block we have.
+    pub fn handle_block_request(
+        &mut self,
+        from: PeerId,
+        request: BlockRequest,
+    ) -> Result<ExternalMessage> {
+        // probe message is BlockRequest::default()
+        if request != BlockRequest::default() || from == self.peer_id {
+            return Ok(ExternalMessage::Acknowledgement);
+        }
+
+        // Must be at least 1 block, genesis/checkpoint
+        let block_vec = self.db.get_highest_block_hashes(1)?;
+        let block = self
+            .db
+            .get_block_by_hash(block_vec.first().unwrap())?
+            .unwrap();
+
+        // Construct the proposal
+        let prop = self.block_to_proposal(block);
+        let message = ExternalMessage::BlockResponse(BlockResponse {
+            proposals: vec![prop],
+            from_view: u64::MAX,
+            availability: None,
+        });
+        Ok(message)
+    }
+
+    /// Probe a peer for syncing
+    ///
+    /// Sends a probe to a peer, in an attempt to start syncing with it.
+    pub fn probe_peer(&mut self, peer: PeerId) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase0) {
+            return Ok(()); // do not probe if we are already syncing
+        }
+        tracing::trace!(%peer, "sync::ProbePeer : probing");
+        self.message_sender
+            .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))?;
         Ok(())
     }
 
@@ -1148,7 +1201,6 @@ impl SyncPeers {
         // ensure that it is unique
         peers.retain(|p| p.peer_id != peer);
         peers.push(new_peer);
-
         tracing::trace!("sync::AddPeer {peer}/{}", peers.len());
     }
 
