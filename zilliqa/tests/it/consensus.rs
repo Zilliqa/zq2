@@ -352,33 +352,14 @@ async fn sync_from_probe(mut network: Network) {
         .await
         .unwrap();
 
-    let mut peers = Vec::new();
-    for n in 0..network.nodes.len() {
-        peers.push(network.get_node(n).consensus.peer_id());
-    }
-
-    // disconnect half the network, preventing new blocks from being produced
-    let count = network.nodes.len() / 2;
-    for _ in 0..count {
-        let mut n = network.random_index();
-        while network.disconnected.contains(&n) {
-            n = network.random_index();
-        }
-        let peer_id = network.get_node(n).consensus.peer_id();
-        info!("Disconnecting node {}", peer_id);
-        network.disconnect_node(n);
-    }
-
-    network.drop_propose_messages().await;
+    // pick a random peer to probe
+    let n = network.random_index();
+    let peer_id = network.node_at(n).consensus.peer_id();
 
     info!("Adding networked node.");
     let index = network.add_node();
-    // avoid probing the disconnected nodes
-    for (n, peer_id) in peers.into_iter().enumerate() {
-        if !network.disconnected.contains(&n) {
-            network.node_at(index).consensus.sync.probe_peer(peer_id);
-        }
-    }
+    // force a sync-probe
+    network.node_at(index).consensus.sync.probe_peer(peer_id);
 
     network.run_until_synced(index).await;
 }
