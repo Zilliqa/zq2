@@ -63,6 +63,7 @@ pub struct Sync {
     message_sender: MessageSender,
     // internal peers
     peers: Arc<SyncPeers>,
+    initial_probed: bool, // sync by initial probe at startup
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
     p1_response: BTreeMap<PeerId, Option<Vec<SyncBlockHeader>>>,
@@ -148,6 +149,7 @@ impl Sync {
             p1_response: BTreeMap::new(),
             checkpoint_at: u64::MIN,
             segments: SyncSegments::default(),
+            initial_probed: false,
         })
     }
 
@@ -527,7 +529,7 @@ impl Sync {
         // will be re-inserted below
         if let Some(peer) = self.peers.get_next_peer() {
             // reinsert peer, as we will use a faux peer below, to force the request to go to the original responder
-            self.peers.reinsert_peer(peer)?;
+            self.peers.reinsert_peer(peer);
 
             // If we have no chain_segments, we have nothing to do
             if let Some((meta, peer_info)) = self.segments.last_sync_segment() {
@@ -586,7 +588,8 @@ impl Sync {
     pub fn handle_block_response(&mut self, _from: PeerId, response: BlockResponse) -> Result<()> {
         match self.state {
             SyncState::Phase0
-                if response.availability.is_none()
+                if !self.initial_probed
+                    && response.availability.is_none()
                     && !response.proposals.is_empty()
                     && response.from_view == u64::MAX =>
             {
@@ -600,6 +603,7 @@ impl Sync {
                         return self.do_sync();
                     }
                 }
+                self.initial_probed = true; // we accept the first response as 'best'
                 Ok(())
             }
             _ => Ok(()),
@@ -638,14 +642,20 @@ impl Sync {
 
     /// Probe a peer for syncing
     ///
-    /// Sends a probe to a peer, in an attempt to start syncing with it.
-    pub fn probe_peer(&mut self, peer: PeerId) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase0) {
-            return Ok(()); // do not probe if we are already syncing
+    /// Sends a probe to a peer, in an attempt to start syncing, if necessary.
+    pub fn probe_peer(&mut self) -> Result<()> {
+        if self.initial_probed || !matches!(self.state, SyncState::Phase0) {
+            return Ok(()); // do not probe if we are already syncing, or successfully probed
         }
-        tracing::trace!(%peer, "sync::ProbePeer : probing");
-        self.message_sender
-            .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))?;
+        if let Some(peer_info) = self.peers.get_next_peer() {
+            let peer = peer_info.peer_id;
+            self.peers.append_peer(peer_info);
+            tracing::debug!(%peer, "sync::ProbePeer : probe");
+            self.message_sender.send_external_message(
+                peer,
+                ExternalMessage::BlockRequest(BlockRequest::default()),
+            )?;
+        }
         Ok(())
     }
 
@@ -1168,13 +1178,7 @@ impl SyncPeers {
         // Reinsert peers that are good
         if peer.score < u32::MAX {
             peer.score = peer.score.saturating_add(downgrade as u32);
-            let mut peers = self.peers.lock().unwrap();
-            if !peers.is_empty() {
-                // Ensure that the next peer is equal or better
-                peer.score = peer.score.max(peers.peek().unwrap().score);
-            }
-            peers.retain(|p| p.peer_id != peer.peer_id);
-            peers.push(peer);
+            self.append_peer(peer);
         }
     }
 
@@ -1221,13 +1225,26 @@ impl SyncPeers {
         None
     }
 
-    /// Reinserts the peer such that it is at the front of the queue.
-    fn reinsert_peer(&self, peer: PeerInfo) -> Result<()> {
+    /// Reinserts the peer such that it is at the back of the good queue.
+    fn append_peer(&self, mut peer: PeerInfo) {
         if peer.score == u32::MAX {
-            return Ok(());
+            return;
         }
         let mut peers = self.peers.lock().unwrap();
-        let mut peer = peer;
+        if !peers.is_empty() {
+            // Ensure that the next peer is equal or better
+            peer.score = peer.score.max(peers.peek().unwrap().score);
+        }
+        peers.retain(|p| p.peer_id != peer.peer_id);
+        peers.push(peer);
+    }
+
+    /// Reinserts the peer such that it is at the front of the good queue.
+    fn reinsert_peer(&self, mut peer: PeerInfo) {
+        if peer.score == u32::MAX {
+            return;
+        }
+        let mut peers = self.peers.lock().unwrap();
         if !peers.is_empty() {
             // Ensure that it gets to the head of the line
             peer.last_used = peers
@@ -1240,7 +1257,6 @@ impl SyncPeers {
         // ensure that it is unique
         peers.retain(|p| p.peer_id != peer.peer_id);
         peers.push(peer);
-        Ok(())
     }
 }
 
