@@ -20,6 +20,7 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 use libp2p::{PeerId, request_response::OutboundFailure};
+use rand::RngCore;
 use revm::{Inspector, primitives::ExecutionResult};
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
@@ -51,6 +52,12 @@ use crate::{
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct RequestId(u64);
+
+impl RequestId {
+    pub fn random() -> Self {
+        Self(rand::thread_rng().next_u64())
+    }
+}
 
 #[derive(Debug)]
 pub struct OutgoingMessageFailure {

@@ -831,8 +831,7 @@ impl Sync {
             }
         }
         // perform next block transfers, where possible
-        if Self::DO_SPECULATIVE {
-            self.p1_response.clear();
+        if Self::DO_SPECULATIVE && self.p1_response.is_empty() {
             self.do_sync()?;
         }
 
