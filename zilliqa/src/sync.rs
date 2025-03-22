@@ -17,8 +17,8 @@ use crate::{
     crypto::Hash,
     db::Db,
     message::{
-        Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InjectedProposal,
-        Proposal, RequestBlocksByHeight, SyncBlockHeader,
+        Block, BlockHeader, BlockResponse, ExternalMessage, InjectedProposal, Proposal,
+        RequestBlocksByHeight, SyncBlockHeader,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
@@ -582,22 +582,8 @@ impl Sync {
 
     /// Phase 0/1: Handle a V1 block response
     ///
-    /// Drop V1 peers from our set.
-    pub fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
-        // V2 response
-        if response.availability.is_none()
-            && response.proposals.is_empty()
-            && response.from_view == u64::MAX
-        {
-            if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
-                tracing::debug!("sync::BlockResponse : upgrade {from}",);
-                p.version = PeerVer::V2;
-            };
-        } else if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
-            tracing::warn!("sync::BlockResponse : dropped {from}",);
-            p.score = u32::MAX;
-        };
-
+    /// Drop V1 peers from our good set.
+    pub fn handle_block_response(&mut self, from: PeerId, _response: BlockResponse) -> Result<()> {
         match &self.state {
             SyncState::Phase1(_) => {
                 self.handle_metadata_response(from, Some(vec![]))?;
@@ -935,17 +921,6 @@ impl Sync {
                         });
                         (message, *range.start() <= self.started_at, range)
                     }
-                    (SyncState::Phase0, PeerVer::V1) | (SyncState::Phase1(_), PeerVer::V1) => {
-                        // Fire a V1 query as a V2 negotiation/hello.
-                        if let Some(meta) = meta {
-                            self.state = SyncState::Phase1(meta);
-                        }
-                        let message = ExternalMessage::BlockRequest(BlockRequest {
-                            to_view: 0,
-                            from_view: 0,
-                        });
-                        (message, true, 0..=0)
-                    }
                     _ => unimplemented!("sync::DoMissingMetadata"),
                 };
 
@@ -1165,7 +1140,7 @@ impl SyncPeers {
         // if the new peer is not synced, it will get downgraded to the back of heap.
         // but by placing them at the back of the 'best' pack, we get to try them out soon.
         let new_peer = PeerInfo {
-            version: PeerVer::V1, // default to V1
+            version: PeerVer::V2, // default to V2 since >= 0.7.0
             score: peers.iter().map(|p| p.score).min().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
