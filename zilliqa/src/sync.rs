@@ -640,25 +640,6 @@ impl Sync {
         Ok(message)
     }
 
-    // /// Probe a peer for syncing
-    // ///
-    // /// Sends a probe to a peer, in an attempt to start syncing, if necessary.
-    // pub fn probe_peer(&mut self) -> Result<()> {
-    //     if self.initial_probed || !matches!(self.state, SyncState::Phase0) {
-    //         return Ok(()); // do not probe if we are already syncing, or successfully probed
-    //     }
-    //     if let Some(peer_info) = self.peers.get_next_peer() {
-    //         let peer = peer_info.peer_id;
-    //         self.peers.append_peer(peer_info);
-    //         tracing::debug!(%peer, "sync::ProbePeer : probe");
-    //         self.message_sender.send_external_message(
-    //             peer,
-    //             ExternalMessage::BlockRequest(BlockRequest::default()),
-    //         )?;
-    //     }
-    //     Ok(())
-    // }
-
     /// Phase 1: Handle a response to a metadata request.
     ///
     /// This is the first step in the syncing algorithm, where we receive a set of metadata and use it to
