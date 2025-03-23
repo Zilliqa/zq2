@@ -17,5 +17,6 @@ pub mod external_network;
 pub mod launcher;
 pub mod message;
 pub mod node;
+pub mod provider;
 pub mod scan;
 pub mod signatures;

@@ -20,6 +20,16 @@ pub enum UCCBInternalMessage {
     RequestScan(u64),
     /// Submit this txn and its signatures to the target chain, please
     SubmitRelay(SignedEvent),
+    /// Submit this txn to an external network.
+    SubmitViaExternalNetwork(TransactionToSubmitMessage),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionToSubmitMessage {
+    /// Purely for tracing and debug - not having this in the existing implementation was a major pain :-)
+    pub orig: SignedEvent,
+    pub txn_bytes: Bytes,
+    pub gas_limit: U256,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]

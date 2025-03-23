@@ -50,12 +50,14 @@ use url::Url;
 
 // Max # blocks to query via getLogs() - @todo: make this configurable.
 const MAX_GETLOGS_BLOCKS: u64 = 100;
+const SLEEP_TIME_MS: u64 = 1000;
 
 pub struct ExternalNetwork {
     parent: Arc<Mutex<UCCBNode>>,
     name: String,
     network: UCCBNetwork,
     next_block_to_scan: u64,
+    receiver: UnboundedReceiverStream<UCCBInternalMessage>,
 }
 
 pub enum ShouldAbort {
@@ -63,13 +65,19 @@ pub enum ShouldAbort {
     Abort(String),
 }
 impl ExternalNetwork {
-    pub fn new(parent: Arc<Mutex<UCCBNode>>, name: &str, network: UCCBNetwork) -> Result<Self> {
+    pub fn new(
+        parent: Arc<Mutex<UCCBNode>>,
+        name: &str,
+        network: UCCBNetwork,
+        receiver: UnboundedReceiverStream<UCCBInternalMessage>,
+    ) -> Result<Self> {
         let next_block_to_scan = network.start_block;
         Ok(ExternalNetwork {
             parent,
             name: name.to_string(),
             network,
             next_block_to_scan,
+            receiver,
         })
     }
 
@@ -188,22 +196,29 @@ impl ExternalNetwork {
     }
 
     pub async fn start(&mut self) -> Result<()> {
+        let tick_time = time::sleep(Duration::from_millis(SLEEP_TIME_MS));
+        tokio::pin!(tick_time);
+
         loop {
-            match self.inner().await {
-                Err(v) => {
-                    debug!("Restarting network {} on error - {:?}", self.name, v);
-                    // Go back.
-                    sleep(Duration::from_millis(1000)).await;
-                }
-                Ok(ShouldAbort::Continue) => {
-                    debug!("Restarting network {} on completion", self.name);
-                    // Go back.
-                    sleep(Duration::from_millis(1000)).await;
-                }
-                Ok(ShouldAbort::Abort(v)) => {
-                    // Abort!
-                    warn!("External network {} died - {}", self.name, v);
-                    return Err(anyhow!("{}", v));
+            select! {
+                message = self.receiver.next() => {
+                    info!("External network receives message {message:?}!");
+                },
+                () = &mut tick_time => {
+                    match self.inner().await {
+                        Err(v) => {
+                            debug!("Restarting network {} on error - {:?}", self.name, v);
+                        }
+                        Ok(ShouldAbort::Continue) => {
+                            debug!("Restarting network {} on completion", self.name);
+                        }
+                        Ok(ShouldAbort::Abort(v)) => {
+                            // Abort!
+                            warn!("External network {} died - {}", self.name, v);
+                            return Err(anyhow!("{}", v));
+                        }
+                    }
+                    tick_time.as_mut().reset(Instant::now() + Duration::from_millis(SLEEP_TIME_MS));
                 }
             }
         }

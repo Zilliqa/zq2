@@ -1,24 +1,26 @@
 #![allow(unused_imports)]
-use crate::cfg::{NodeConfig, UCCBConfig};
+use crate::cfg::{NodeConfig, UCCBConfig, UCCBNetwork};
 use crate::message::{ExternalMessage, InternalMessage};
 use crate::node::Node;
 use crate::p2p_node::{LocalMessageTuple, OutboundMessageTuple};
 use crate::transaction::{EvmLog, Log, TransactionReceipt};
-use crate::uccb::contracts::{IDISPATCHER_EVENTS, IRELAYER_EVENTS};
+use crate::uccb::contracts::{ICHAINDISPATCHER, IDISPATCHER_EVENTS, IRELAYER_EVENTS};
 use crate::uccb::external_network::ExternalNetwork;
 use crate::uccb::launcher::{
     UCCBLocalMessageTuple, UCCBMessageFailure, UCCBOutboundMessageTuple, UCCBRequestId,
     UCCBResponseChannel,
 };
 use crate::uccb::message::{
-    BridgeEvent, DispatchedMessage, RelayedMessage, SignedEvent, UCCBExternalMessage,
-    UCCBInternalMessage,
+    BridgeEvent, DispatchedMessage, RelayedMessage, SignedEvent, TransactionToSubmitMessage,
+    UCCBExternalMessage, UCCBInternalMessage,
 };
+use crate::uccb::provider::UCCBProvider;
 use crate::uccb::signatures::Signatures;
 use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
 use alloy::eips::BlockNumberOrTag;
-use alloy::primitives::{TxHash, U256};
-use alloy::sol_types::SolEvent;
+use alloy::primitives::{Bytes, TxHash, U256};
+use alloy::providers::Provider;
+use alloy::sol_types::{SolCall, SolEvent};
 use anyhow::{Result, anyhow};
 use k256::ecdsa::SigningKey;
 use libp2p::{PeerId, futures::StreamExt, request_response::OutboundFailure};
@@ -30,6 +32,7 @@ use opentelemetry_semantic_conventions::{
     metric::MESSAGING_PROCESS_DURATION,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::{
     str::FromStr,
     sync::Arc,
@@ -74,13 +77,18 @@ pub struct UCCBNode {
     pub signing_key: SigningKey,
     pub node_config: NodeConfig,
     pub uccb_config: UCCBConfig,
+    pub external_networks: HashMap<u64, (UCCBProvider, UCCBNetwork)>,
     pub request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
     pub sender: UCCBMessageSender,
     pub node: Arc<Mutex<Node>>,
+    pub provider: UCCBProvider,
     /// The latest block we've requested to scan on our native chain.
     pub latest_scanned_block: Option<u64>,
     /// Threads monitoring external networks
     pub external_threads: JoinSet<Result<()>>,
+    /// The external threads can communicate with us by sending local messages.
+    /// We communicate with them by sending messages down this channel.
+    pub external_thread_comms: HashMap<u64, UnboundedSender<UCCBInternalMessage>>,
     /// The signatures we've collected so far, indexed by
     /// @todo Cache management!
     pub signatures: Signatures,
@@ -162,6 +170,24 @@ impl UCCBNode {
             .clone()
             .uccb
             .ok_or(anyhow!("No UCCB config when instantiating UCCB node"))?;
+        let external_networks = uccb_config
+            .networks
+            .values()
+            .map(|x| {
+                (
+                    x.chain_id,
+                    (
+                        UCCBProvider::from_external(x, signing_key.clone()),
+                        x.clone(),
+                    ),
+                )
+            })
+            .collect::<HashMap<u64, (UCCBProvider, UCCBNetwork)>>();
+        let provider = UCCBProvider::from_local(
+            uccb_config.chain_gateway,
+            node_config.eth_chain_id,
+            signing_key.clone(),
+        );
         Ok(Self {
             signing_key,
             node_config,
@@ -169,8 +195,11 @@ impl UCCBNode {
             request_responses,
             sender,
             node,
+            provider,
             latest_scanned_block: None,
             external_threads,
+            external_networks,
+            external_thread_comms: HashMap::new(),
             signatures: Default::default(),
         })
     }
@@ -181,7 +210,12 @@ impl UCCBNode {
             .map_err(|_| anyhow!("failed to lock uccb node mutex"))?;
         let networks = node.uccb_config.networks.clone();
         for (name, network) in networks.iter() {
-            let mut ext_obj = ExternalNetwork::new(for_object.clone(), name, network.clone())?;
+            let (thread_message_sender, thread_message_receiver) = mpsc::unbounded_channel();
+            let receiver = UnboundedReceiverStream::new(thread_message_receiver);
+            let mut ext_obj =
+                ExternalNetwork::new(for_object.clone(), name, network.clone(), receiver)?;
+            node.external_thread_comms
+                .insert(network.chain_id, thread_message_sender);
             info!("Starting network monitor for {name} .. ");
             node.external_threads
                 .spawn(async move { ext_obj.start().await });
@@ -215,6 +249,38 @@ impl UCCBNode {
 
     pub fn submit_txn(&mut self, sig: SignedEvent) -> Result<()> {
         info!("Submit {sig:?}");
+        let BridgeEvent::Relayed(msg) = &sig.event else {
+            return Err(anyhow!("Attempt to submit a non-relayed event"));
+        };
+        let sigs_to_send = sig.signatures.values().cloned().collect::<Vec<Bytes>>();
+        let a_call = ICHAINDISPATCHER::dispatchCall {
+            sourceChainId: msg.source_chain_id,
+            target: msg.target,
+            call: msg.call.clone(),
+            gasLimit: msg.gas_limit,
+            nonce: msg.nonce,
+            signatures: sigs_to_send,
+        };
+
+        if msg.target_chain_id == U256::from(self.node_config.eth_chain_id) {
+            // Submit locally
+        } else {
+            // We're an external network.
+            let comms = &self
+                .external_thread_comms
+                .get(&self.node_config.eth_chain_id)
+                .ok_or(anyhow!(
+                    "No chain configured for target chain id {}",
+                    self.node_config.eth_chain_id
+                ))?;
+            comms.send(UCCBInternalMessage::SubmitViaExternalNetwork(
+                TransactionToSubmitMessage {
+                    orig: sig.clone(),
+                    txn_bytes: a_call.abi_encode().into(),
+                    gas_limit: msg.gas_limit,
+                },
+            ))?;
+        }
         Ok(())
     }
 
