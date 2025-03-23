@@ -25,11 +25,27 @@ This process consists of 3 main phases:
 
 ## Phase 1
 
-During this phase, the node will download headers, from segments of the chain, in descending order from the latest block seen. This way, it only downloads valid headers by simply following the chain of parent hashes. 
+During this phase, the node will download headers, from segments of the chain, in descending order from the latest block seen. This way, it only downloads valid headers by simply following the chain of parent hashes.
 
 Since this phase is I/O bound, the node fires multiple concurrent requests for different segments, to multiple peers. If it encounters any networking issues, it will resend the request for that segment to a subsequent peer. It checks and discards responses that are not linked by the chain of hashes and requests the same segment from a subsequent peer.
 
 It does this until it downloads headers that link up to its own internal history, checkpoint, or genesis.
+
+A node may enter this phase under two conditions:
+- Sync from probe; or
+- Sync from proposal.
+
+### Sync From Probe
+
+At startup, a node will probe its neighbouring peers for their best block and it will start syncing if the block is higher than what it has in its own history.
+
+This is mainly used for nodes that have been started or restarted.
+
+### Sync Form Proposal
+
+During normal operations, a node will check each block proposal received and it will start syncing if the block has a parent that does not exist in its own history.
+
+This is the normal form of sync, triggered whenever a node falls *out of sync* with the rest of the network, for whatever reason.
 
 ## Phase 2
 
@@ -58,6 +74,8 @@ This process consists of 2 main phases:
 ## Phase 4
 
 This phase is similar to Phase 1 in terms of functionality. The main difference is that it starts not from the latest known block but from its oldest block in history; and it immediately switches to Phase 5 upon receiving a successful response (that links up from the starting block) for a single chain segment.
+
+A node enters this phase only during normal operations, when it encounters a block Proposal that is successfully handled normally.
 
 ## Phase 5
 
