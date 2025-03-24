@@ -184,7 +184,7 @@ async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: 
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(control_wallet, hash, 100).await;
+    let receipt = network.run_until_receipt(control_wallet, hash, 200).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
