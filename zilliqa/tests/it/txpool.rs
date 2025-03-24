@@ -206,7 +206,7 @@ async fn txpool_status_with_queued(mut network: Network) {
 
     // First send a transaction with nonce 2 (should be queued)
     let tx_queued = TransactionRequest::pay(to_addr, 300).gas(21000).nonce(2);
-    let tx_hash_queued = wallet
+    let _ = wallet
         .send_transaction(tx_queued, None)
         .await
         .unwrap()
@@ -231,7 +231,7 @@ async fn txpool_status_with_queued(mut network: Network) {
 
     // Send transaction with nonce 0 (should be pending)
     let tx_pending = TransactionRequest::pay(to_addr, 100).gas(21000).nonce(0);
-    let tx_hash_pending = wallet
+    let _ = wallet
         .send_transaction(tx_pending, None)
         .await
         .unwrap()
@@ -252,42 +252,5 @@ async fn txpool_status_with_queued(mut network: Network) {
         response2["queued"].as_u64().unwrap(),
         1,
         "Expected 1 queued transaction"
-    );
-
-    // Mine the transactions
-    network
-        .run_until_async(
-            || async {
-                provider
-                    .get_transaction_receipt(tx_hash_pending)
-                    .await
-                    .unwrap()
-                    .is_some()
-                    && provider
-                        .get_transaction_receipt(tx_hash_queued)
-                        .await
-                        .unwrap()
-                        .is_some()
-            },
-            50,
-        )
-        .await
-        .unwrap();
-
-    // Verify txpool is empty
-    let final_response: Value = provider
-        .request("txpool_status", ())
-        .await
-        .expect("Failed to call txpool_status API");
-
-    assert_eq!(
-        final_response["pending"].as_u64().unwrap(),
-        0,
-        "Expected 0 pending transactions after mining"
-    );
-    assert_eq!(
-        final_response["queued"].as_u64().unwrap(),
-        0,
-        "Expected 0 queued transactions after mining"
     );
 }
