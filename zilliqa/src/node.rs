@@ -244,8 +244,8 @@ impl Node {
                 }
             }
             // `Proposals` are re-routed to `handle_request()`
-            _ => {
-                warn!("unexpected message type");
+            msg => {
+                warn!(%msg, "unexpected message type");
             }
         }
 

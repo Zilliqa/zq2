@@ -3195,11 +3195,9 @@ impl Consensus {
 
     pub fn tick(&mut self) -> Result<()> {
         trace!("consensus::tick()");
-        trace!("request_missing_blocks from timer");
-
-        // TODO: Drive passive-sync from Timeouts
+        // Trigger a probe from a timeout, is safer than the other options.
         if !self.sync.am_syncing()? {
-            self.sync.sync_to_genesis()?;
+            self.sync.sync_from_probe()?;
         } else {
             trace!("not syncing ...");
         }

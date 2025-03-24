@@ -62,7 +62,7 @@ pub struct Sync {
     // message bus
     message_sender: MessageSender,
     // internal peers
-    peers: Arc<SyncPeers>,
+    pub peers: Arc<SyncPeers>,
     initial_probed: bool, // sync by initial probe at startup
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
@@ -203,12 +203,26 @@ impl Sync {
         }
         self.highest_block_seen = self.highest_block_seen.max(proposal.number());
         self.recent_proposals.push_back(proposal);
-
         self.do_sync()
     }
 
-    // TODO: Passive-sync place-holder - https://github.com/Zilliqa/zq2/issues/2232
-    pub fn sync_to_genesis(&mut self) -> Result<()> {
+    /// Phase 0: Sync from a probe.
+    ///
+    /// This is invoked from a timeout, which means that we have not received any proposals.
+    /// At the start, the list of peers is unpopulated, and are gradually added after we join a topic.
+    /// Probing peers as they are added to the topic, would allow a peer to trigger when probing happens.
+    /// Probing from an internal timeout, allows us to control when probing happens.
+    pub fn sync_from_probe(&mut self) -> Result<()> {
+        // only do this upon start/restart
+        if self.initial_probed {
+            return Ok(());
+        }
+        // inevitably picks a bootstrap node
+        if let Some(peer_info) = self.peers.get_next_peer() {
+            let peer = peer_info.peer_id;
+            self.peers.append_peer(peer_info);
+            self.probe_peer(peer);
+        }
         Ok(())
     }
 
@@ -223,6 +237,7 @@ impl Sync {
             tracing::debug!("sync::DoSync : waiting for in-flight requests");
             return Ok(());
         }
+        self.initial_probed = true;
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
@@ -584,26 +599,31 @@ impl Sync {
 
     /// Phase 0: Handle a probe response
     ///
-    /// Handle probe response
-    pub fn handle_block_response(&mut self, _from: PeerId, response: BlockResponse) -> Result<()> {
+    /// Handle probe response:
+    /// - Starts the sync-from-probe process.
+    pub fn handle_block_response(
+        &mut self,
+        from: PeerId,
+        mut response: BlockResponse,
+    ) -> Result<()> {
         match self.state {
+            // Start sync-from-probe
             SyncState::Phase0
                 if !self.initial_probed
                     && response.availability.is_none()
-                    && !response.proposals.is_empty()
-                    && response.from_view == u64::MAX =>
+                    && !response.proposals.is_empty() =>
             {
-                let proposal = response.proposals.first().unwrap();
+                let proposal = response.proposals.pop().unwrap();
                 if proposal.number() > self.started_at {
-                    tracing::info!(number = %proposal.number(),
-                        "sync::BlockResponse : received proposal",
+                    // inevitably from one of the bootstrap nodes
+                    tracing::info!(number = %proposal.number(), %from,
+                        "sync::BlockResponse : probed",
                     );
-                    self.recent_proposals.push_back(proposal.clone());
+                    self.recent_proposals.push_back(proposal);
                     if Self::DO_SPECULATIVE {
                         return self.do_sync();
                     }
                 }
-                self.initial_probed = true; // we accept the first response as 'best'
                 Ok(())
             }
             _ => Ok(()),
@@ -622,6 +642,8 @@ impl Sync {
         if request != BlockRequest::default() || from == self.peer_id {
             return Ok(ExternalMessage::Acknowledgement);
         }
+
+        tracing::info!(%from, "sync::BlockRequest : received probe");
 
         // Must be at least 1 block, genesis/checkpoint
         let block_vec = self.db.get_highest_block_hashes(1)?;
@@ -1114,8 +1136,9 @@ impl Sync {
         self.in_flight.push_back((peer_info, request_id));
     }
 
-    // This is a helper function for the integration test `sync_from_probe()`
+    // Fired from both [Self::sync_from_probe(); and [Consensus::sync_from_probe()] test.
     pub fn probe_peer(&mut self, peer: PeerId) {
+        tracing::info!(%peer, "sync::SyncFromProbe : probing");
         self.message_sender
             .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))
             .ok(); // ignore 
