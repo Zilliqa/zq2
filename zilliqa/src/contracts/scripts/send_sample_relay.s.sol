@@ -14,7 +14,7 @@ contract SendSampleRelay is Script {
     vm.startBroadcast(deployerPrivateKey);
     gateway.register(deployerAddress);
     gateway.relayWithMetadata(
-        0x123456,
+        33468,
         address(0x1),
         SendSampleRelay.run.selector,
         "",

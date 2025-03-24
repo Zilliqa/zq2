@@ -16,13 +16,20 @@ use crate::uccb::message::{
 };
 use crate::uccb::provider::UCCBProvider;
 use crate::uccb::signatures::Signatures;
-use crate::{crypto::SecretKey, node_launcher::ResponseChannel, sync::SyncPeers};
-use alloy::eips::BlockNumberOrTag;
-use alloy::primitives::{Bytes, TxHash, U256};
+use crate::{
+    crypto::{SecretKey, TransactionPublicKey},
+    node_launcher::ResponseChannel,
+    sync::SyncPeers,
+};
+use alloy::consensus::{SignableTransaction, TxLegacy};
+use alloy::eips::{BlockId, BlockNumberOrTag};
+use alloy::network::TxSignerSync;
+use alloy::primitives::{Address, Bytes, TxHash, TxKind, U256};
 use alloy::providers::Provider;
+use alloy::signers::local::LocalSigner;
 use alloy::sol_types::{SolCall, SolEvent};
 use anyhow::{Result, anyhow};
-use k256::ecdsa::SigningKey;
+use k256::ecdsa::{SigningKey, signature::Signer};
 use libp2p::{PeerId, futures::StreamExt, request_response::OutboundFailure};
 use opentelemetry::KeyValue;
 use opentelemetry_semantic_conventions::{
@@ -92,6 +99,10 @@ pub struct UCCBNode {
     /// The signatures we've collected so far, indexed by
     /// @todo Cache management!
     pub signatures: Signatures,
+    /// The address we dispatch from - derived from the signing key
+    pub dispatch_address: Address,
+    /// Oddly enough, our latest nonce, since getting the mempool to give it to us is hard.
+    pub dispatch_nonce: u64,
 }
 
 pub async fn handle_local(
@@ -165,7 +176,9 @@ impl UCCBNode {
             request_id: UCCBRequestId::default(),
         };
         let external_threads = JoinSet::new();
-
+        let dispatch_address =
+            TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(signing_key.clone()), true)
+                .into_addr();
         let uccb_config = node_config
             .clone()
             .uccb
@@ -201,6 +214,8 @@ impl UCCBNode {
             external_networks,
             external_thread_comms: HashMap::new(),
             signatures: Default::default(),
+            dispatch_address,
+            dispatch_nonce: 0,
         })
     }
 
@@ -263,7 +278,38 @@ impl UCCBNode {
         };
 
         if msg.target_chain_id == U256::from(self.node_config.eth_chain_id) {
-            // Submit locally
+            debug!("Submit transaction locally");
+            // Do what the man said
+            let mut node = self.node.lock().unwrap();
+            let block = node
+                .get_block(BlockId::Number(BlockNumberOrTag::Latest))?
+                .ok_or(anyhow!(
+                    "Can't find the latest block for target chain submission"
+                ))?;
+            let nonce = node
+                .get_state(&block)?
+                .get_account(self.dispatch_address)?
+                .nonce;
+            if nonce > self.dispatch_nonce {
+                self.dispatch_nonce = nonce;
+            }
+            debug!("nonce = {}", self.dispatch_nonce);
+            let mut tx = TxLegacy {
+                chain_id: Some(msg.target_chain_id.try_into()?),
+                nonce: self.dispatch_nonce,
+                gas_price: node.get_gas_price(),
+                gas_limit: msg.gas_limit.try_into()?,
+                to: TxKind::Call(self.uccb_config.chain_gateway),
+                value: U256::from(0),
+                input: a_call.abi_encode().into(),
+            };
+            //let encoded = tx.encoded_for_signing();
+            let signer = LocalSigner::from_signing_key(self.signing_key.clone());
+            let sig = signer.sign_transaction_sync(&mut tx)?;
+            let txn = crate::transaction::SignedTransaction::Legacy { tx, sig };
+            let result = node.create_transaction(txn)?;
+            self.dispatch_nonce += 1;
+            debug!("Txn result = {result:?}");
         } else {
             // We're an external network.
             let comms = &self
@@ -271,7 +317,7 @@ impl UCCBNode {
                 .get(&self.node_config.eth_chain_id)
                 .ok_or(anyhow!(
                     "No chain configured for target chain id {}",
-                    self.node_config.eth_chain_id
+                    msg.target_chain_id
                 ))?;
             comms.send(UCCBInternalMessage::SubmitViaExternalNetwork(
                 TransactionToSubmitMessage {
@@ -280,7 +326,7 @@ impl UCCBNode {
                     gas_limit: msg.gas_limit,
                 },
             ))?;
-        }
+        };
         Ok(())
     }
 
