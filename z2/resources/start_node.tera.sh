@@ -95,7 +95,7 @@ start() {
     docker rm zilliqa-${ZQ_VERSION} &> /dev/null || echo 0
     if [[ -n "${CHECKPOINT_FILE}" && -f "${CHECKPOINT_FILE}" ]]; then
         # Mount the checkpoint file at /<file_name> inside the container
-        MOUNT_OPTION="-v ${CHECKPOINT_FILE}:/$(basename "$CHECKPOINT_FILE")"
+        MOUNT_OPTION="-v $(pwd)/${CHECKPOINT_FILE}:/$(basename "$CHECKPOINT_FILE")"
     else
         MOUNT_OPTION=""
     fi
