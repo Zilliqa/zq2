@@ -21,7 +21,7 @@ test = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local"] }
+alloy = { version = "0.12.6", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local"] }
 anyhow = "1.0.97"
 async-trait = "0.1.88"
 base64 = "0.22.0"
@@ -50,7 +50,7 @@ prost = "0.13.5"
 rand = "0.8.5"
 regex = "1.11.1"
 reqwest = {version = "0.12.14", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
-revm = {version = "19.6.0", features = ["optional_balance_check"]}
+revm = {version = "19.7.0", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 rustls = "0.23.23"
 scopeguard = "1.2.0"
