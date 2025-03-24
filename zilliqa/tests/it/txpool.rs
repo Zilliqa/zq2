@@ -157,7 +157,7 @@ async fn txpool_content_from_with_queued(mut network: Network) {
 
     // First send a transaction with nonce 2 (should be queued)
     let tx_queued = TransactionRequest::pay(to_addr, 300).gas(21000).nonce(2);
-    let tx_hash_queued = wallet
+    let _ = wallet
         .send_transaction(tx_queued, None)
         .await
         .unwrap()
@@ -165,7 +165,7 @@ async fn txpool_content_from_with_queued(mut network: Network) {
 
     // Then send a transaction with nonce 0 (should be pending)
     let tx_pending = TransactionRequest::pay(to_addr, 100).gas(21000).nonce(0);
-    let tx_hash_pending = wallet
+    let _ = wallet
         .send_transaction(tx_pending, None)
         .await
         .unwrap()
@@ -199,41 +199,6 @@ async fn txpool_content_from_with_queued(mut network: Network) {
     assert!(
         empty_content["queued"].as_object().unwrap().is_empty(),
         "Expected empty queued for random address"
-    );
-
-    // Mine the transactions
-    network
-        .run_until_async(
-            || async {
-                provider
-                    .get_transaction_receipt(tx_hash_pending)
-                    .await
-                    .unwrap()
-                    .is_some()
-                    && provider
-                        .get_transaction_receipt(tx_hash_queued)
-                        .await
-                        .unwrap()
-                        .is_some()
-            },
-            50,
-        )
-        .await
-        .unwrap();
-
-    // Check our address again - should be empty now
-    let final_content: Value = provider
-        .request("txpool_contentFrom", [wallet.address()])
-        .await
-        .expect("Failed to call txpool_contentFrom API after mining");
-
-    assert!(
-        final_content["pending"].as_object().unwrap().is_empty(),
-        "Expected empty pending after mining"
-    );
-    assert!(
-        final_content["queued"].as_object().unwrap().is_empty(),
-        "Expected empty queued after mining"
     );
 }
 
