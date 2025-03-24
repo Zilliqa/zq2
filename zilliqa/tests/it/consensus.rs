@@ -352,14 +352,28 @@ async fn sync_from_probe(mut network: Network) {
         .await
         .unwrap();
 
-    // pick a random peer to probe
-    let n = network.random_index();
-    let peer_id = network.node_at(n).consensus.peer_id();
+    // pick a random node to sync against
+    let rnd_node = network.random_index();
+    let peer_id = network.node_at(rnd_node).consensus.peer_id();
 
     info!("Adding networked node.");
-    let index = network.add_node();
-    // force a sync-probe
-    network.node_at(index).consensus.sync.probe_peer(peer_id);
+    let new_node = network.add_node();
 
-    network.run_until_synced(index).await;
+    // disconnect everything except the chosen node to sync against
+    for i in 0..network.nodes.len() {
+        if i != new_node && i != rnd_node {
+            let peer_id = network.node_at(i).consensus.peer_id();
+            network
+                .node_at(new_node)
+                .consensus
+                .sync
+                .peers
+                .remove_peer(peer_id);
+            network.disconnect_node(i);
+        }
+    }
+
+    // force a sync-probe
+    network.node_at(new_node).consensus.sync.probe_peer(peer_id);
+    network.run_until_synced(new_node).await;
 }
