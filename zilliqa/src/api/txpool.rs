@@ -3,7 +3,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy::primitives::Address;
 use anyhow::Result;
 use jsonrpsee::{RpcModule, types::Params};
 
