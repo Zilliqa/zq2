@@ -232,7 +232,7 @@ impl Consensus {
 
         let (start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
-                Some(qc) => {
+                Some(mut qc) => {
                     let high_block = db
                         .get_block_by_hash(&qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
@@ -278,12 +278,12 @@ impl Consensus {
                             head_block.view()
                         );
 
-                        if head_block.view() > high_block.view()
-                            && head_block.view() > finalized_number
-                        {
+                        if head_block.view() > finalized_number {
                             trace!("recovery: stored block {0} reverted", head_block.number());
                             db.remove_transactions_executed_in_block(&head_block.hash())?;
                             db.remove_block(&head_block)?;
+                            db.set_high_qc(head_block.header.qc)?;
+                            qc = head_block.header.qc;
                         } else {
                             break;
                         }
@@ -1739,7 +1739,7 @@ impl Consensus {
         &mut self,
         new_view: NewView,
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        trace!("Received new view for height: {:?}", new_view.view);
+        trace!("Received new view for view: {:?}", new_view.view);
 
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
@@ -2850,7 +2850,10 @@ impl Consensus {
                 .state
                 .at_root(parent.state_root_hash().into())
                 .get_stakers(block_pointer.header)?;
-            self.execute_block(None, &block_pointer, transactions, &committee)?;
+            if let Err(err) = self.execute_block(None, &block_pointer, transactions, &committee) {
+                // Rough solution restarts the node in this circumstance so that it can re-requets proposals via sync mechanism
+                panic!("Failed to execute block during fork: {err}");
+            }
         }
 
         Ok(())
@@ -3008,11 +3011,10 @@ impl Consensus {
         })?;
 
         if cumulative_gas_used != block.gas_used() {
-            warn!(
-                "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}",
+            return Err(anyhow!(
+                "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different than the one provided in the block: {}",
                 block.gas_used()
-            );
-            return Ok(());
+            ));
         }
 
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();

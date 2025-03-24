@@ -170,11 +170,11 @@ async fn checkpoints_test(mut network: Network) {
         .tx_hash();
     network.run_until_receipt(&wallet, update_tx_hash, 50).await;
     // Scilla
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let scilla_contract_address =
-        deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
 
     // Run until block 9 so that we can insert a tx in block 10 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
     network.run_until_block(&wallet, 9.into(), 200).await;
