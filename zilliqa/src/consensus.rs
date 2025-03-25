@@ -236,11 +236,6 @@ impl Consensus {
                     let finalized_view = db
                         .get_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
-                    let finalized_block = db
-                        .get_block_by_view(finalized_view)?
-                        .ok_or_else(|| anyhow!("missing finalized block!"))?;
-
-                    state.set_to_root(finalized_block.header.state_root_hash.into());
 
                     // If latest view was written to disk then always start from there. Otherwise start from finalised view + 1
                     let start_view = db
