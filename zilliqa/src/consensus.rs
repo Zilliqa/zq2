@@ -232,7 +232,7 @@ impl Consensus {
 
         let (start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
-                Some(qc) => {
+                Some(mut qc) => {
                     let high_block = db
                         .get_block_by_hash(&qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
@@ -282,8 +282,8 @@ impl Consensus {
                             trace!("recovery: stored block {0} reverted", head_block.number());
                             db.remove_transactions_executed_in_block(&head_block.hash())?;
                             db.remove_block(&head_block)?;
-                            // Note that we don't update our `high_qc`, meaning it may be left pointing to a block
-                            // we've removed. Other bits of code are expected to handle this situation gracefully.
+                            db.set_high_qc(head_block.header.qc)?;
+                            qc = head_block.header.qc;
                         } else {
                             break;
                         }
@@ -421,11 +421,10 @@ impl Consensus {
     /// Build NewView message for this view
     fn build_new_view(&mut self) -> Result<NetworkMessage> {
         let view = self.get_view()?;
-        // If we don't have the block corresponding to our high QC, we broadcast the `NewView`, since we don't know who
-        // the view's leader is.
-        let leader = self
-            .get_block(&self.high_qc.block_hash)?
-            .and_then(|block| self.leader_at_block(&block, view));
+        let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
+            anyhow!("missing block corresponding to our high qc - this should never happen")
+        })?;
+        let leader = self.leader_at_block(&block, view);
         let new_view_message = (
             leader.map(|leader: Validator| leader.peer_id),
             ExternalMessage::NewView(Box::new(NewView::new(
@@ -567,26 +566,26 @@ impl Consensus {
             self.head_block().hash()
         );
 
-        if let Some(block) = self.get_block(&self.high_qc.block_hash)? {
-            // Get the list of stakers for the next block.
-            let next_block_header = BlockHeader {
-                number: block.number() + 1,
-                ..block.header
-            };
-            let stakers = self
-                .state
-                .at_root(block.state_root_hash().into())
-                .get_stakers(next_block_header)?;
-            if !stakers.iter().any(|v| *v == self.public_key()) {
-                debug!(
-                    "can't vote for new view, we aren't in the committee of length {:?}",
-                    stakers.len()
-                );
-                return Ok(None);
-            }
+        let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
+            anyhow!("missing block corresponding to our high qc - this should never happen")
+        })?;
+
+        // Get the list of stakers for the next block.
+        let next_block_header = BlockHeader {
+            number: block.number() + 1,
+            ..block.header
+        };
+        let stakers = self
+            .state
+            .at_root(block.state_root_hash().into())
+            .get_stakers(next_block_header)?;
+        if !stakers.iter().any(|v| *v == self.public_key()) {
+            debug!(
+                "can't vote for new view, we aren't in the committee of length {:?}",
+                stakers.len()
+            );
+            return Ok(None);
         }
-        // If we don't have the block corresponding to our high QC, we still proceed with a view change and send a
-        // `NewView`.
 
         let next_view = view + 1;
         let next_exponential_backoff_timeout = self.exponential_backoff_timeout(next_view);
