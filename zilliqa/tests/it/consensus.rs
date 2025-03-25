@@ -337,24 +337,15 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
 // does not work consistently - due to timeouts
 #[zilliqa_macros::test]
 async fn sync_from_probe(mut network: Network) {
+    // pick a random node to sync against
+    let rnd_node = network.random_index();
     network
         .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index)
-                    .get_block(BlockId::latest())
-                    .unwrap()
-                    .map_or(0, |b| b.number())
-                    >= 5
-            },
+            |n| n.node_at(rnd_node).get_finalized_height().unwrap() >= 5,
             100,
         )
         .await
         .unwrap();
-
-    // pick a random node to sync against
-    let rnd_node = network.random_index();
-    let peer_id = network.node_at(rnd_node).consensus.peer_id();
 
     info!("Adding networked node.");
     let new_node = network.add_node();
@@ -362,18 +353,21 @@ async fn sync_from_probe(mut network: Network) {
     // disconnect everything except the chosen node to sync against
     for i in 0..network.nodes.len() {
         if i != new_node && i != rnd_node {
-            let peer_id = network.node_at(i).consensus.peer_id();
-            network
-                .node_at(new_node)
-                .consensus
-                .sync
-                .peers
-                .remove_peer(peer_id);
             network.disconnect_node(i);
+            network.nodes[new_node]
+                .peers
+                .remove_peer(network.nodes[i].peer_id);
         }
     }
 
-    // force a sync-probe
+    // force a sync-probe, since there are no more proposals
+    let peer_id = network.node_at(rnd_node).consensus.peer_id();
     network.node_at(new_node).consensus.sync.probe_peer(peer_id);
-    network.run_until_synced(new_node).await;
+    network
+        .run_until(
+            |n| n.node_at(new_node).get_finalized_height().unwrap() >= 5,
+            500,
+        )
+        .await
+        .unwrap();
 }

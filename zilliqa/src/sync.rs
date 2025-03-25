@@ -62,7 +62,7 @@ pub struct Sync {
     // message bus
     message_sender: MessageSender,
     // internal peers
-    pub peers: Arc<SyncPeers>,
+    peers: Arc<SyncPeers>,
     initial_probed: bool, // sync by initial probe at startup
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
