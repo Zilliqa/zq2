@@ -233,38 +233,25 @@ impl Consensus {
         let (start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
-                    let high_block = db
-                        .get_block_by_hash(&qc.block_hash)?
-                        .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-                    let finalized_number = db
+                    let finalized_view = db
                         .get_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
                     let finalized_block = db
-                        .get_block_by_view(finalized_number)?
+                        .get_block_by_view(finalized_view)?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
-                    // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
+                    state.set_to_root(finalized_block.header.state_root_hash.into());
+
+                    // If latest view was written to disk then always start from there. Otherwise start from finalised view + 1
                     let start_view = db
                         .get_view()?
-                        .or_else(|| {
-                            Some(std::cmp::max(high_block.view(), finalized_block.view()) + 1)
-                        })
+                        .or_else(|| Some(finalized_block.view() + 1))
                         .unwrap();
 
                     trace!(
-                        "recovery: high_block view {0}, finalized_number {1}, start_view {2}",
-                        high_block.view(),
-                        finalized_number,
-                        start_view
+                        "recovery: finalized_view {0}, start_view {1}",
+                        finalized_view, start_view
                     );
-
-                    if finalized_number > high_block.view() {
-                        // We know of a finalized view higher than the view in finalized_number; start there.
-                        state.set_to_root(finalized_block.header.state_root_hash.into());
-                    } else {
-                        // The high_block contains the latest finalized view. Start there.
-                        state.set_to_root(high_block.header.state_root_hash.into());
-                    }
 
                     // If we have newer blocks, erase them
                     // @todo .. more elegantly :-)
@@ -278,7 +265,7 @@ impl Consensus {
                             head_block.view()
                         );
 
-                        if head_block.view() > finalized_number {
+                        if head_block.view() > finalized_view {
                             trace!("recovery: stored block {0} reverted", head_block.number());
                             db.remove_transactions_executed_in_block(&head_block.hash())?;
                             db.remove_block(&head_block)?;
@@ -291,9 +278,9 @@ impl Consensus {
 
                     info!(
                         "During recovery, starting consensus at view {}, finalised view {}",
-                        start_view, finalized_number
+                        start_view, finalized_view
                     );
-                    (start_view, finalized_number, qc)
+                    (start_view, finalized_view, qc)
                 }
                 None => {
                     let start_view = 1;
@@ -389,30 +376,6 @@ impl Consensus {
                 // Build NewView so that we can immediately contribute to consensus moving along if it has halted
                 consensus.build_new_view()?;
             }
-
-            // Remind block_store of our peers and request any potentially missing blocks
-            let high_block = consensus
-                .db
-                .get_block_by_hash(&high_qc.block_hash)?
-                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-
-            let executed_block = BlockHeader {
-                number: high_block.header.number + 1,
-                ..Default::default()
-            };
-            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
-
-            // Grab last seen committee's peerIds in case others also went offline
-            let committee = state_at.get_stakers(executed_block)?;
-            let recent_peer_ids = committee
-                .iter()
-                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
-                .filter_map(|&peer_public_key| {
-                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
-                })
-                .collect_vec();
-
-            peers.add_peers(recent_peer_ids);
         }
 
         Ok(consensus)
