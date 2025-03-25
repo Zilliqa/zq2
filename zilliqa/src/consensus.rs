@@ -1950,17 +1950,11 @@ impl Consensus {
             self.db.set_high_qc(new_high_qc)?;
             self.high_qc = new_high_qc;
         } else {
-            let current_high_qc_view = self
-                .get_block(&self.high_qc.block_hash)?
-                .ok_or_else(|| {
-                    anyhow!("missing block corresponding to our high qc - this should never happen")
-                })?
-                .view();
             // If `from_agg` then we always release the lock because the supermajority has a different high_qc.
-            if from_agg || new_high_qc_view > current_high_qc_view {
+            if from_agg || new_high_qc_view > self.high_qc.view {
                 trace!(
                     new_high_qc_view,
-                    current_high_qc_view,
+                    current_high_qc_view = self.high_qc.view,
                     current_view = view,
                     "updating high qc"
                 );
