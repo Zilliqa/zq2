@@ -419,13 +419,6 @@ impl TransactionPool {
         }
     }
 
-    /// Clear the transaction pool, returning all remaining transactions in an unspecified order.
-    pub fn drain(&mut self) -> impl Iterator<Item = VerifiedTransaction> + use<> {
-        self.hash_to_index.clear();
-        self.gas_index.clear();
-        std::mem::take(&mut self.transactions).into_values()
-    }
-
     /// Check the ready transactions in arbitrary order, for one that is Ready
     pub fn has_txn_ready(&self) -> bool {
         !self.gas_index.is_empty()
