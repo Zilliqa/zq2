@@ -1337,6 +1337,10 @@ pub async fn run_monitor(
     let chain = ChainInstance::new(config).await?;
     let mut chain_nodes = chain.nodes().await?;
     chain_nodes.retain(|node| node.role != NodeRole::Apps);
+    if matches!(metric, Metrics::ConsensusInfo) {
+        chain_nodes
+            .retain(|node| node.role == NodeRole::Bootstrap || node.role == NodeRole::Validator);
+    }
 
     let node_names = chain_nodes
         .iter()
