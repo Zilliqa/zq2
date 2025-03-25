@@ -232,7 +232,7 @@ impl Consensus {
 
         let (start_view, finalized_view, high_qc) = {
             match db.get_high_qc()? {
-                Some(mut qc) => {
+                Some(qc) => {
                     let high_block = db
                         .get_block_by_hash(&qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
@@ -282,8 +282,8 @@ impl Consensus {
                             trace!("recovery: stored block {0} reverted", head_block.number());
                             db.remove_transactions_executed_in_block(&head_block.hash())?;
                             db.remove_block(&head_block)?;
-                            db.set_high_qc(head_block.header.qc)?;
-                            qc = head_block.header.qc;
+                            // Note that we don't update our `high_qc`, meaning it may be left pointing to a block
+                            // we've removed. Other bits of code are expected to handle this situation gracefully.
                         } else {
                             break;
                         }
@@ -421,10 +421,11 @@ impl Consensus {
     /// Build NewView message for this view
     fn build_new_view(&mut self) -> Result<NetworkMessage> {
         let view = self.get_view()?;
-        let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
-            anyhow!("missing block corresponding to our high qc - this should never happen")
-        })?;
-        let leader = self.leader_at_block(&block, view);
+        // If we don't have the block corresponding to our high QC, we broadcast the `NewView`, since we don't know who
+        // the view's leader is.
+        let leader = self
+            .get_block(&self.high_qc.block_hash)?
+            .and_then(|block| self.leader_at_block(&block, view));
         let new_view_message = (
             leader.map(|leader: Validator| leader.peer_id),
             ExternalMessage::NewView(Box::new(NewView::new(
@@ -566,26 +567,26 @@ impl Consensus {
             self.head_block().hash()
         );
 
-        let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
-            anyhow!("missing block corresponding to our high qc - this should never happen")
-        })?;
-
-        // Get the list of stakers for the next block.
-        let next_block_header = BlockHeader {
-            number: block.number() + 1,
-            ..block.header
-        };
-        let stakers = self
-            .state
-            .at_root(block.state_root_hash().into())
-            .get_stakers(next_block_header)?;
-        if !stakers.iter().any(|v| *v == self.public_key()) {
-            debug!(
-                "can't vote for new view, we aren't in the committee of length {:?}",
-                stakers.len()
-            );
-            return Ok(None);
+        if let Some(block) = self.get_block(&self.high_qc.block_hash)? {
+            // Get the list of stakers for the next block.
+            let next_block_header = BlockHeader {
+                number: block.number() + 1,
+                ..block.header
+            };
+            let stakers = self
+                .state
+                .at_root(block.state_root_hash().into())
+                .get_stakers(next_block_header)?;
+            if !stakers.iter().any(|v| *v == self.public_key()) {
+                debug!(
+                    "can't vote for new view, we aren't in the committee of length {:?}",
+                    stakers.len()
+                );
+                return Ok(None);
+            }
         }
+        // If we don't have the block corresponding to our high QC, we still proceed with a view change and send a
+        // `NewView`.
 
         let next_view = view + 1;
         let next_exponential_backoff_timeout = self.exponential_backoff_timeout(next_view);
@@ -1741,6 +1742,26 @@ impl Consensus {
     ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
         trace!("Received new view for view: {:?}", new_view.view);
 
+        let mut current_view = self.get_view()?;
+        // if the vote is too old and does not count anymore
+        if new_view.view < current_view {
+            trace!(
+                new_view.view,
+                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
+                current_view,
+                new_view.view
+            );
+            return Ok(None);
+        }
+
+        // The leader for this view should be chosen according to the parent of the highest QC
+        // What happens when there are multiple QCs with different parents?
+        // if we are not the leader of the round in which the vote counts
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
+            trace!(new_view.view, "skipping new view, not the leader");
+            return Ok(None);
+        }
+
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
         // verify the sender's signature on the block hash
@@ -1762,26 +1783,6 @@ impl Consensus {
 
         // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
-
-        // The leader for this view should be chosen according to the parent of the highest QC
-        // What happens when there are multiple QCs with different parents?
-        // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            trace!(new_view.view, "skipping new view, not the leader");
-            return Ok(None);
-        }
-
-        let mut current_view = self.get_view()?;
-        // if the vote is too old and does not count anymore
-        if new_view.view < current_view {
-            trace!(
-                new_view.view,
-                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
-                current_view,
-                new_view.view
-            );
-            return Ok(None);
-        }
 
         let NewViewVote {
             mut signatures,
