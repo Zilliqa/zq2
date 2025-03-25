@@ -156,7 +156,11 @@ async fn execute_install_or_upgrade(
 }
 
 async fn post_install(chain: ChainInstance) -> Result<()> {
-    if chain.chain()? == Chain::Zq2ProtoTestnet || chain.chain()? == Chain::Zq2ProtoMainnet {
+    if chain.chain()? == Chain::Zq2ProtoTestnet
+        || chain.chain()? == Chain::Zq2ProtoMainnet
+        || chain.chain()? == Chain::Zq2Testnet
+        || chain.chain()? == Chain::Zq2Mainnet
+    {
         log::info!("Skipping post install actions for chain: {}", chain.name());
         return anyhow::Ok(());
     }
@@ -1233,10 +1237,8 @@ async fn generate_secret(
     ));
     let secret_value = Secret::generate_random_secret();
 
-    if let Some(error) = secrets[0].value().err() {
-        if error.to_string().contains("has no versions") {
-            secrets[0].add_version(&secret_value)?;
-        }
+    if secrets[0].value().is_err() {
+        secrets[0].add_version(&secret_value)?;
     }
     progress_bar.inc(1);
 
@@ -1335,6 +1337,10 @@ pub async fn run_monitor(
     let chain = ChainInstance::new(config).await?;
     let mut chain_nodes = chain.nodes().await?;
     chain_nodes.retain(|node| node.role != NodeRole::Apps);
+    if matches!(metric, Metrics::ConsensusInfo) {
+        chain_nodes
+            .retain(|node| node.role == NodeRole::Bootstrap || node.role == NodeRole::Validator);
+    }
 
     let node_names = chain_nodes
         .iter()

@@ -16,6 +16,8 @@ PartiallyImplemented
 
 This API is partially implemented - see (<https://github.com/Zilliqa/zq2/issues/79>)
 
+Note: the `Rewards` field is included for backwards compatibility and will always return `0`.
+
 # Curl
 
 ```shell

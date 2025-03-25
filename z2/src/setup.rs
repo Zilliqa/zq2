@@ -19,14 +19,13 @@ use tokio::fs;
 use zilliqa::{
     api,
     cfg::{
-        ApiServer, genesis_fork_default, max_rpc_response_size_default,
-        staker_withdrawal_period_default, state_cache_size_default,
+        ApiServer, genesis_fork_default, max_rpc_response_size_default, state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
 use zilliqa::{
     cfg::{
-        self, Amount, ConsensusConfig, ContractUpgradesBlockHeights, GenesisDeposit,
+        self, Amount, ConsensusConfig, ContractUpgrades, GenesisDeposit,
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, block_time_default, consensus_timeout_default,
         eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
@@ -530,7 +529,6 @@ impl Setup {
                     main_shard_id: None,
                     local_address: local_address_default(),
                     consensus_timeout: consensus_timeout_default(),
-                    staker_withdrawal_period: staker_withdrawal_period_default(),
                     genesis_deposits: Vec::new(),
                     eth_block_gas_limit: EvmGas(84000000),
                     gas_price: 4_761_904_800_000u128.into(),
@@ -543,8 +541,7 @@ impl Setup {
                     epochs_per_checkpoint: 24,
                     rewards_per_hour: 51_000_000_000_000_000_000_000u128.into(),
                     total_native_token_supply: total_native_token_supply_default(),
-                    scilla_call_gas_exempt_addrs: vec![],
-                    contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
+                    contract_upgrades: ContractUpgrades::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
                 },
@@ -555,6 +552,7 @@ impl Setup {
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
+                prune_interval: cfg::u64_max(),
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 

@@ -101,7 +101,7 @@ async fn search_transactions_paging(mut network: Network) {
     .await;
 
     for h in hashes {
-        network.run_until_receipt(&wallet, h, 50).await;
+        network.run_until_receipt(&wallet, h, 100).await;
     }
 
     let page_size = 8;

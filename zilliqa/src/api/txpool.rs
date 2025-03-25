@@ -6,7 +6,7 @@ use std::{
 use anyhow::Result;
 use jsonrpsee::{RpcModule, types::Params};
 
-use super::types::eth;
+use super::types;
 use crate::{api::types::eth::Transaction, cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
@@ -26,11 +26,14 @@ pub fn rpc_module(
 }
 
 /// txpool_content
-fn txpool_content(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth::TxPoolContent>> {
+fn txpool_content(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<Option<types::txpool::TxPoolContent>> {
     let node = node.lock().unwrap();
     let content = node.txpool_content()?;
 
-    let mut result = eth::TxPoolContent {
+    let mut result = types::txpool::TxPoolContent {
         pending: HashMap::new(),
         queued: HashMap::new(),
     };
@@ -54,13 +57,13 @@ fn txpool_content(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<eth
     Ok(Some(result))
 }
 
-/// txpool_inspect
-fn txpool_inspect(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+/// txpool_contentFrom
+fn txpool_content_from(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 
-/// txpool_contentFrom
-fn txpool_content_from(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
+/// txpool_inspect
+fn txpool_inspect(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
     todo!("Endpoint not implemented yet")
 }
 

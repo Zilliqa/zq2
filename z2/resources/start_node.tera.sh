@@ -8,6 +8,7 @@ NODE_PRIVATE_KEY=""
 CONFIG_FILE="${CHAIN_NAME}.toml"
 CHECKPOINT_FILE=""  # The optional checkpoint file to mount, if provided.
 DATA_FOLDER=$(pwd)/data
+SCILLA_SERVER_PORT=62831
 
 # Define a function to show help using EOF
 help() {
@@ -15,10 +16,11 @@ help() {
         Usage: ${0} -k <node-private-key> [-c <config-file>] [-p <checkpoint-file>]
 
         Options:
-            -k, --key           NODE_PRIVATE_KEY (mandatory)
-            -c, --config        Path to the config file (optional, default: ${CHAIN_NAME}.toml)
-            -p, --checkpoint    Path to the checkpoint file (optional, it is needed only the first time a node is started)
-            -h, --help          Display this help message
+            -k, --key                   NODE_PRIVATE_KEY (mandatory)
+            -c, --config                Path to the config file (optional, default: ${CHAIN_NAME}.toml)
+            -p, --checkpoint            Path to the checkpoint file (optional, it is needed only the first time a node is started)
+                --scilla-server-port    Specify Scilla Server port (WARNING: if set then your consensus.scilla_address config variable must match. eg. "http://localhost:$SCILLA_SERVER_PORT")
+            -h, --help                  Display this help message
 
         Examples:
             ${0} -k <NODE_KEY> -c config.toml -p checkpoint.dat
@@ -41,6 +43,10 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         -p|--checkpoint)
             CHECKPOINT_FILE="$2"
+            shift 2
+            ;;
+        --scilla-server-port)
+            SCILLA_SERVER_PORT="$2"
             shift 2
             ;;
         -h|--help)
@@ -89,7 +95,7 @@ start() {
     docker rm zilliqa-${ZQ_VERSION} &> /dev/null || echo 0
     if [[ -n "${CHECKPOINT_FILE}" && -f "${CHECKPOINT_FILE}" ]]; then
         # Mount the checkpoint file at /<file_name> inside the container
-        MOUNT_OPTION="-v ${CHECKPOINT_FILE}:/$(basename "$CHECKPOINT_FILE")"
+        MOUNT_OPTION="-v $(pwd)/${CHECKPOINT_FILE}:/$(basename "$CHECKPOINT_FILE")"
     else
         MOUNT_OPTION=""
     fi
@@ -110,10 +116,9 @@ start() {
     if [[ -n "$MOUNT_OPTION" ]]; then
         DOCKER_COMMAND="$DOCKER_COMMAND $MOUNT_OPTION"
     fi
-    DOCKER_COMMAND="$DOCKER_COMMAND $ZQ2_IMAGE $NODE_PRIVATE_KEY --log-json"
+    DOCKER_COMMAND="$DOCKER_COMMAND $ZQ2_IMAGE $SCILLA_SERVER_PORT $NODE_PRIVATE_KEY --log-json"
     echo "Running Docker command: $DOCKER_COMMAND"
     eval "$DOCKER_COMMAND"
-
 }
 
 ### main ###

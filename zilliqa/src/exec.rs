@@ -17,7 +17,7 @@ use ethabi::Token;
 use jsonrpsee::types::ErrorObjectOwned;
 use libp2p::PeerId;
 use revm::{
-    Database, DatabaseRef, Evm, GetInspector, Inspector, inspector_handle_register,
+    Database, DatabaseRef, Evm, GetInspector, Inspector, JournaledState, inspector_handle_register,
     primitives::{
         AccountInfo, B256, BlockEnv, Bytecode, Env, ExecutionResult, HaltReason, HandlerCfg,
         KECCAK_EMPTY, Output, ResultAndState, SpecId, TxEnv,
@@ -423,8 +423,7 @@ impl DatabaseRef for &State {
 /// The external context used by [Evm].
 pub struct ExternalContext<'a, I> {
     pub inspector: I,
-    pub fork: Fork,
-    pub scilla_call_gas_exempt_addrs: &'a [Address],
+    pub fork: &'a Fork,
     // This flag is only used for zq1 whitelisted contracts, and it's used to detect if the entire transaction should be marked as failed
     pub enforce_transaction_failure: bool,
     /// The caller of each call in the call-stack. This is needed because the `scilla_call` precompile needs to peek
@@ -437,9 +436,6 @@ impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<
         &mut self.inspector
     }
 }
-
-// As per EIP-150
-pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
 
 const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
@@ -459,6 +455,7 @@ impl State {
         override_address: Option<Address>,
         amount: u128,
     ) -> Result<Address> {
+        let current_block = BlockHeader::genesis(Hash::ZERO);
         let (ResultAndState { result, mut state }, ..) = self.apply_transaction_evm(
             Address::ZERO,
             None,
@@ -468,7 +465,7 @@ impl State {
             amount,
             creation_bytecode,
             None,
-            BlockHeader::genesis(Hash::ZERO),
+            current_block,
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
@@ -490,7 +487,7 @@ impl State {
                     addr
                 };
 
-                self.apply_delta_evm(&state)?;
+                self.apply_delta_evm(&state, current_block.number)?;
                 Ok(addr)
             }
             ExecutionResult::Success { .. } => Err(anyhow!("deployment did not create a contract")),
@@ -521,7 +518,6 @@ impl State {
         let external_context = ExternalContext {
             inspector,
             fork: self.forks.get(current_block.number),
-            scilla_call_gas_exempt_addrs: &self.scilla_call_gas_exempt_addrs,
             enforce_transaction_failure: false,
             callers: vec![from_addr],
         };
@@ -674,6 +670,7 @@ impl State {
                 inspector,
                 &self.scilla_ext_libs_path,
                 self.forks.get(current_block.number),
+                current_block.number,
             )
         }?;
 
@@ -720,7 +717,7 @@ impl State {
             let (result, state) =
                 self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 
-            self.apply_delta_scilla(&state)?;
+            self.apply_delta_scilla(&state, current_block.number)?;
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {
@@ -744,8 +741,8 @@ impl State {
                     },
                 )?;
 
-            self.apply_delta_evm(&state)?;
-            self.apply_delta_scilla(&scilla_state)?;
+            self.apply_delta_evm(&state, current_block.number)?;
+            self.apply_delta_scilla(&scilla_state, current_block.number)?;
 
             Ok(TransactionApplyResult::Evm(
                 ResultAndState { result, state },
@@ -755,11 +752,22 @@ impl State {
     }
 
     /// Applies a state delta from a Scilla execution to the state.
-    fn apply_delta_scilla(&mut self, state: &HashMap<Address, PendingAccount>) -> Result<()> {
+    fn apply_delta_scilla(
+        &mut self,
+        state: &HashMap<Address, PendingAccount>,
+        current_block_number: u64,
+    ) -> Result<()> {
+        let only_mutated_accounts_update_state = self
+            .forks
+            .get(current_block_number)
+            .only_mutated_accounts_update_state;
         for (&address, account) in state {
-            if !account.touched {
+            if only_mutated_accounts_update_state && !account.touched {
                 continue;
             }
+
+            // We shouldn't mutate accounts that were from EVM.
+            assert!(!account.from_evm);
 
             let mut storage = self.get_account_trie(address)?;
 
@@ -822,9 +830,14 @@ impl State {
     pub fn apply_delta_evm(
         &mut self,
         state: &revm::primitives::HashMap<Address, revm::primitives::Account>,
+        current_block_number: u64,
     ) -> Result<()> {
+        let only_mutated_accounts_update_state = self
+            .forks
+            .get(current_block_number)
+            .only_mutated_accounts_update_state;
         for (&address, account) in state {
-            if !account.is_touched() {
+            if only_mutated_accounts_update_state && !account.is_touched() {
                 continue;
             }
 
@@ -1016,6 +1029,39 @@ impl State {
         Ok(Some(PeerId::from_bytes(&data)?))
     }
 
+    /// Returns the maximum gas a caller could pay for a given transaction. This is clamped the minimum of:
+    /// 1. The block gas limit.
+    /// 2. The gas limit specified by the caller.
+    /// 3. The caller's balance after paying for any funds sent by the transaction.
+    ///
+    /// Returns an error if the caller does not have funds to pay for the transaction.
+    fn max_gas_for_caller(
+        &self,
+        caller: Address,
+        tx_value: u128,
+        gas_price: u128,
+        requested_gas_limit: Option<EvmGas>,
+    ) -> Result<EvmGas> {
+        let mut gas = self.block_gas_limit;
+
+        if let Some(requested_gas_limit) = requested_gas_limit {
+            gas = gas.min(requested_gas_limit);
+        }
+
+        if gas_price != 0 {
+            let balance = self.get_account(caller)?.balance;
+            // Calculate how much the caller has left to pay for gas after the transaction value is subtracted.
+            let balance = balance.checked_sub(tx_value).ok_or_else(|| {
+                anyhow!("caller has insufficient funds - has: {balance}, needs: {tx_value}")
+            })?;
+            // Calculate the gas the caller could pay for at this gas price.
+            let max_gas = EvmGas((balance / gas_price) as u64);
+            gas = gas.min(max_gas);
+        }
+
+        Ok(gas)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
         &self,
@@ -1029,7 +1075,8 @@ impl State {
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
-        let mut max = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
+        let mut max = self.max_gas_for_caller(from_addr, value, gas_price, gas)?.0;
+
         let upper_bound = max;
 
         // Check if estimation succeeds with the highest possible gas
@@ -1165,7 +1212,7 @@ impl State {
             false,
             BaseFeeCheck::Ignore,
         )?;
-        self.apply_delta_evm(&state)?;
+        self.apply_delta_evm(&state, current_block.number)?;
 
         Ok(result)
     }
@@ -1185,6 +1232,9 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 pub struct PendingState {
     pub pre_state: State,
     pub new_state: HashMap<Address, PendingAccount>,
+    // Read-only copy of the current cached EVM state. Only `Some` when this Scilla call is made by the `scilla_call`
+    // precompile.
+    pub evm_state: Option<JournaledState>,
 }
 
 /// Private helper function for `PendingState::load_account`. The only difference is that the fields of `PendingState`
@@ -1193,11 +1243,40 @@ pub struct PendingState {
 fn load_account<'a>(
     pre_state: &State,
     new_state: &'a mut HashMap<Address, PendingAccount>,
+    evm_state: &Option<JournaledState>,
     address: Address,
 ) -> Result<&'a mut PendingAccount> {
-    match new_state.entry(address) {
-        Entry::Occupied(entry) => Ok(entry.into_mut()),
-        Entry::Vacant(vac) => {
+    match (
+        new_state.entry(address),
+        evm_state.as_ref().and_then(|s| s.state.get(&address)),
+    ) {
+        (Entry::Occupied(entry), _) => Ok(entry.into_mut()),
+        (Entry::Vacant(vac), Some(account)) => {
+            let account = Account {
+                nonce: account.info.nonce,
+                balance: account.info.balance.to(),
+                code: Code::Evm(if account.info.code_hash == KECCAK_EMPTY {
+                    vec![]
+                } else {
+                    account
+                        .info
+                        .code
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("account should have code"))?
+                        .original_bytes()
+                        .to_vec()
+                }),
+                storage_root: B256::ZERO, // There's no need to set this, since Scilla cannot query EVM contracts' state.
+            };
+            let account = PendingAccount {
+                account,
+                storage: BTreeMap::new(),
+                from_evm: true,
+                touched: false,
+            };
+            Ok(vac.insert(account))
+        }
+        (Entry::Vacant(vac), None) => {
             let account = pre_state.get_account(address)?;
             Ok(vac.insert(account.into()))
         }
@@ -1209,6 +1288,7 @@ impl PendingState {
         PendingState {
             pre_state: state,
             new_state: HashMap::new(),
+            evm_state: None,
         }
     }
 
@@ -1231,7 +1311,12 @@ impl PendingState {
     }
 
     pub fn load_account(&mut self, address: Address) -> Result<&mut PendingAccount> {
-        load_account(&self.pre_state, &mut self.new_state, address)
+        load_account(
+            &self.pre_state,
+            &mut self.new_state,
+            &self.evm_state,
+            address,
+        )
     }
 
     pub fn load_var_info(&mut self, address: Address, variable: &str) -> Result<(&str, u8)> {
@@ -1254,7 +1339,12 @@ impl PendingState {
         indices: &[Vec<u8>],
         value: StorageValue,
     ) -> Result<()> {
-        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+        let account = load_account(
+            &self.pre_state,
+            &mut self.new_state,
+            &self.evm_state,
+            address,
+        )?;
 
         let mut current = account
             .storage
@@ -1289,7 +1379,12 @@ impl PendingState {
         var_name: &str,
         indices: &[Vec<u8>],
     ) -> Result<&mut Option<Bytes>> {
-        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+        let account = load_account(
+            &self.pre_state,
+            &mut self.new_state,
+            &self.evm_state,
+            address,
+        )?;
 
         fn get_cached<'a>(
             storage: &'a mut BTreeMap<String, StorageValue>,
@@ -1345,7 +1440,12 @@ impl PendingState {
         var_name: &str,
         indices: &[Vec<u8>],
     ) -> Result<BTreeMap<Vec<u8>, StorageValue>> {
-        let account = load_account(&self.pre_state, &mut self.new_state, address)?;
+        let account = load_account(
+            &self.pre_state,
+            &mut self.new_state,
+            &self.evm_state,
+            address,
+        )?;
 
         // Even if we have something cached for this prefix, we don't know if it is a full representation of the map.
         // It might have been the case that only a few subfields were cached. Therefore, we need to retrieve the full
@@ -1457,6 +1557,7 @@ pub struct PendingAccount {
     pub account: Account,
     /// Cached values of updated or deleted storage. Note that deletions can happen at any level of a map.
     pub storage: BTreeMap<String, StorageValue>,
+    pub from_evm: bool,
     pub touched: bool,
 }
 
@@ -1497,6 +1598,7 @@ impl From<Account> for PendingAccount {
         PendingAccount {
             account,
             storage: BTreeMap::new(),
+            from_evm: false,
             touched: false,
         }
     }
@@ -1552,7 +1654,7 @@ fn scilla_create(
     current_block: BlockHeader,
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
-    fork: Fork,
+    fork: &Fork,
 ) -> Result<(ScillaResult, PendingState)> {
     if txn.data.is_empty() {
         return Err(anyhow!("contract creation without init data"));
@@ -1700,6 +1802,8 @@ fn scilla_create(
         txn.amount,
         &contract_init,
         &ext_libs_dir_in_scilla,
+        fork,
+        current_block.number,
     )?;
     let create_output = match create_output {
         Ok(o) => o,
@@ -1757,7 +1861,8 @@ pub fn scilla_call(
     data: String,
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
-    fork: Fork,
+    fork: &Fork,
+    current_block: u64,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = gas_limit;
 
@@ -1864,6 +1969,7 @@ pub fn scilla_call(
                     .ok_or_else(|| anyhow!("call to a Scilla contract without a message"))?,
                 &ext_libs_dir_in_scilla,
                 fork,
+                current_block,
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 

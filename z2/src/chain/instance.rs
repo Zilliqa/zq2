@@ -241,8 +241,8 @@ impl ChainInstance {
             .output()?;
         if !output.status.success() {
             return Err(anyhow!(
-                "getting local block number failed: {:?}",
-                output.stderr
+                "getting local block number failed: {}",
+                String::from_utf8_lossy(&output.stderr)
             ));
         }
 

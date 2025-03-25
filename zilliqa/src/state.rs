@@ -17,7 +17,7 @@ use sha3::{Digest, Keccak256};
 use tracing::{debug, info};
 
 use crate::{
-    cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ScillaExtLibsPath},
+    cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ReinitialiseParams, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
     db::{Db, TrieStorage},
@@ -51,7 +51,6 @@ pub struct State {
     pub scilla_ext_libs_path: ScillaExtLibsPath,
     pub block_gas_limit: EvmGas,
     pub gas_price: u128,
-    pub scilla_call_gas_exempt_addrs: Vec<Address>,
     pub chain_id: ChainId,
     pub forks: Forks,
 }
@@ -70,7 +69,6 @@ impl State {
             scilla_ext_libs_path: consensus_config.scilla_ext_libs_path.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
             gas_price: *consensus_config.gas_price,
-            scilla_call_gas_exempt_addrs: consensus_config.scilla_call_gas_exempt_addrs.clone(),
             chain_id: ChainId::new(config.eth_chain_id),
             forks: consensus_config.get_forks()?,
             sql,
@@ -174,15 +172,15 @@ impl State {
         config: &ConsensusConfig,
         block_header: BlockHeader,
     ) -> Result<()> {
-        if let Some(deposit_v3_deploy_height) = config.contract_upgrade_block_heights.deposit_v3 {
-            if deposit_v3_deploy_height == block_header.number {
+        if let Some(deposit_v3_deploy_config) = &config.contract_upgrades.deposit_v3 {
+            if deposit_v3_deploy_config.height == block_header.number {
                 let deposit_v3_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
                 self.upgrade_deposit_contract(block_header, deposit_v3_contract, None)?;
             }
         }
-        if let Some(deposit_v4_deploy_height) = config.contract_upgrade_block_heights.deposit_v4 {
-            if deposit_v4_deploy_height == block_header.number {
+        if let Some(deposit_v4_deploy_config) = &config.contract_upgrades.deposit_v4 {
+            if deposit_v4_deploy_config.height == block_header.number {
                 // The below account mutation fixes the Zero account's nonce in prototestnet and protomainnet.
                 // Issue #2254 explains how the nonce was incorrect due to a bug in the ZQ1 persistence converter.
                 // This code should run once for these networks in order for the deposit_v4 contract to be deployed, then this code can be removed.
@@ -198,12 +196,16 @@ impl State {
                 self.upgrade_deposit_contract(block_header, deposit_v4_contract, None)?;
             }
         }
-        if let Some(deposit_v5_deploy_height) = config.contract_upgrade_block_heights.deposit_v5 {
-            if deposit_v5_deploy_height == block_header.number {
+        if let Some(deposit_v5_deploy_config) = &config.contract_upgrades.deposit_v5 {
+            if deposit_v5_deploy_config.height == block_header.number {
                 let deposit_v5_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v5::CONTRACT);
+                let reinitialise_params = deposit_v5_deploy_config
+                    .reinitialise_params
+                    .clone()
+                    .unwrap_or(ReinitialiseParams::default());
                 let deposit_v5_reinitialise_data = contracts::deposit_v5::REINITIALIZE
-                    .encode_input(&[Token::Uint(config.staker_withdrawal_period.into())])?;
+                    .encode_input(&[Token::Uint(reinitialise_params.withdrawal_period.into())])?;
                 self.upgrade_deposit_contract(
                     block_header,
                     deposit_v5_contract,
@@ -325,7 +327,6 @@ impl State {
             scilla_ext_libs_path: self.scilla_ext_libs_path.clone(),
             block_gas_limit: self.block_gas_limit,
             gas_price: self.gas_price,
-            scilla_call_gas_exempt_addrs: self.scilla_call_gas_exempt_addrs.clone(),
             chain_id: self.chain_id,
             forks: self.forks.clone(),
             sql: self.sql.clone(),

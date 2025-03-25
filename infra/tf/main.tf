@@ -70,7 +70,7 @@ resource "google_compute_firewall" "allow_external_jsonrpc" {
   network = local.network_name
 
   direction     = "INGRESS"
-  source_ranges = concat(local.google_load_balancer_ip_ranges, ["0.0.0.0/0", local.iap_ip_range])
+  source_ranges = concat(local.google_load_balancer_ip_ranges, [local.iap_ip_range], var.jsonrpc_allowed_sources)
 
   target_tags = [var.chain_name]
 

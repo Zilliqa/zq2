@@ -77,7 +77,6 @@ jobs:
           - 3000:3000
         volumes:
           - /tmp:/scilla_ext_libs
-
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -266,6 +266,13 @@ variable "private_api" {
   }
 }
 
+variable "jsonrpc_allowed_sources" {
+  description = "A list of CIDR blocks allowed to reach the nodes RPC port."
+  type        = list(string)
+  nullable    = false
+  default     = []
+}
+
 variable "subdomain" {
   description = "The subdomain for the public endpoints"
   type        = string
