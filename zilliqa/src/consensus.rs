@@ -386,8 +386,6 @@ impl Consensus {
                     min_view_since_high_qc_updated
                 );
                 consensus.db.set_view(min_view_since_high_qc_updated)?;
-                // Build NewView so that we can immediately contribute to consensus moving along if it has halted
-                consensus.build_new_view()?;
             }
 
             // Remind block_store of our peers and request any potentially missing blocks
@@ -413,6 +411,13 @@ impl Consensus {
                 .collect_vec();
 
             peers.add_peers(recent_peer_ids);
+        }
+
+        if let Some(highest_vote_view) = consensus.db.get_highest_vote_view()? {
+            if highest_vote_view + 1 < consensus.db.get_view()?.unwrap_or(0) {
+                // Build NewView so that we can immediately contribute to consensus moving along if it has halted
+                consensus.build_new_view()?;
+            }
         }
 
         Ok(consensus)
@@ -478,7 +483,7 @@ impl Consensus {
                     block.hash()
                 );
                 let leader = self.leader_at_block(&block, view).unwrap();
-                let vote = self.vote_from_block(&block);
+                let vote = self.vote_from_block(&block)?;
                 return Ok(Some((
                     Some(leader.peer_id),
                     ExternalMessage::Vote(Box::new(vote)),
@@ -786,7 +791,7 @@ impl Consensus {
                 );
                 return Ok(None);
             } else {
-                let vote = self.vote_from_block(&block);
+                let vote = self.vote_from_block(&block)?;
                 let next_leader = self.leader_at_block(&block, view);
 
                 if self.create_next_block_on_timeout {
@@ -2458,13 +2463,14 @@ impl Consensus {
         epoch_number % self.config.consensus.epochs_per_checkpoint == 0
     }
 
-    fn vote_from_block(&self, block: &Block) -> Vote {
-        Vote::new(
+    fn vote_from_block(&self, block: &Block) -> Result<Vote> {
+        self.db.set_highest_vote_view(block.view())?;
+        Ok(Vote::new(
             self.secret_key,
             block.hash(),
             self.secret_key.node_public_key(),
             block.view(),
-        )
+        ))
     }
 
     fn get_high_qc_from_block(&self, block: &Block) -> Result<QuorumCertificate> {

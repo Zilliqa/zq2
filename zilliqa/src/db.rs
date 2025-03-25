@@ -331,6 +331,7 @@ impl Db {
                 view INTEGER,
                 high_qc BLOB,
                 high_qc_updated_at BLOB,
+                highest_vote_view INTEGER,
                 _single_row INTEGER DEFAULT 0 NOT NULL UNIQUE CHECK (_single_row = 0)); -- max 1 row
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
             ",
@@ -634,6 +635,32 @@ impl Db {
             .lock()
             .unwrap()
             .prepare_cached("SELECT view FROM tip_info")?
+            .query_row((), |row| row.get(0))
+            .optional()
+            .unwrap_or(None))
+    }
+
+    pub fn set_highest_vote_view_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        view: u64,
+    ) -> Result<()> {
+        sqlite_tx
+            .prepare_cached("INSERT INTO tip_info (highest_vote_view) VALUES (?1) ON CONFLICT DO UPDATE SET highest_vote_view = ?1")?
+            .execute([view])?;
+        Ok(())
+    }
+
+    pub fn set_highest_vote_view(&self, view: u64) -> Result<()> {
+        self.set_highest_vote_view_with_db_tx(&self.db.lock().unwrap(), view)
+    }
+
+    pub fn get_highest_vote_view(&self) -> Result<Option<u64>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT highest_vote_view FROM tip_info")?
             .query_row((), |row| row.get(0))
             .optional()
             .unwrap_or(None))
