@@ -170,7 +170,7 @@ pub struct Consensus {
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
     /// Pruning interval i.e. how many blocks to keep in the database.
-    prune_interval: u64,
+    prune_interval: Option<u64>,
 }
 
 impl Consensus {
@@ -3099,12 +3099,12 @@ impl Consensus {
     ///
     /// Performs pruning of 1000-blocks at a time. If the prune_interval is unset (u64::MAX by default), pruning is disabled.
     fn prune_history(&mut self, number: u64) -> Result<()> {
-        if self.prune_interval == u64::MAX {
+        let Some(prune_interval) = self.prune_interval else {
             return Ok(()); // pruning is disabled
-        }
+        };
         let range = self.db.available_range()?;
         let prune_at = number
-            .saturating_sub(self.prune_interval.saturating_sub(1)) // off-by-one
+            .saturating_sub(prune_interval.saturating_sub(1)) // off-by-one
             .min(range.start().saturating_add(1000)); // gradually prune 1000-blocks at a time
         if range.contains(&prune_at) {
             for n in *range.start()..prune_at {

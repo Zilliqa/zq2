@@ -552,7 +552,7 @@ impl Setup {
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
-                prune_interval: cfg::u64_max(),
+                prune_interval: None,
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 

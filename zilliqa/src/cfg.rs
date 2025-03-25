@@ -160,8 +160,7 @@ pub struct NodeConfig {
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
     /// The N number of historical blocks to be kept in the DB during pruning. N > 30.
-    #[serde(default = "u64_max")]
-    pub prune_interval: u64,
+    pub prune_interval: Option<u64>,
 }
 
 impl Default for NodeConfig {
@@ -182,7 +181,7 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
-            prune_interval: u64_max(),
+            prune_interval: None,
         }
     }
 }
@@ -205,7 +204,7 @@ impl NodeConfig {
         }
 
         // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
-        if self.prune_interval < 300 {
+        if self.prune_interval.is_some_and(|x| x < 300) {
             return Err(anyhow!("prune_interval must be at least 300",));
         }
         Ok(())
