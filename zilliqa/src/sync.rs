@@ -963,14 +963,13 @@ impl Sync {
                         let range = block_number
                             .saturating_sub(offset)
                             .saturating_sub(self.max_batch_size as u64)
-                            .max(self.checkpoint_at)
                             ..=block_number.saturating_sub(offset).saturating_sub(1);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
                             to_height: *range.end(),
                             from_height: *range.start(),
                         });
-                        (message, *range.start() <= self.started_at, range)
+                        (message, *range.start() < self.started_at, range)
                     }
                     (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
                         let meta = meta.unwrap();
@@ -978,7 +977,6 @@ impl Sync {
                         let range = block_number
                             .saturating_sub(offset)
                             .saturating_sub(self.max_batch_size as u64)
-                            .max(self.checkpoint_at)
                             ..=block_number.saturating_sub(offset).saturating_sub(1);
                         self.state = SyncState::Phase1(meta);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
@@ -986,7 +984,7 @@ impl Sync {
                             to_height: *range.end(),
                             from_height: *range.start(),
                         });
-                        (message, *range.start() <= self.started_at, range)
+                        (message, *range.start() < self.started_at, range)
                     }
                     _ => unimplemented!("sync::DoMissingMetadata"),
                 };
