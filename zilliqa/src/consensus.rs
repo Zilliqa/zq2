@@ -389,30 +389,6 @@ impl Consensus {
                 // Build NewView so that we can immediately contribute to consensus moving along if it has halted
                 consensus.build_new_view()?;
             }
-
-            // Remind block_store of our peers and request any potentially missing blocks
-            let high_block = consensus
-                .db
-                .get_block_by_hash(&high_qc.block_hash)?
-                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-
-            let executed_block = BlockHeader {
-                number: high_block.header.number + 1,
-                ..Default::default()
-            };
-            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
-
-            // Grab last seen committee's peerIds in case others also went offline
-            let committee = state_at.get_stakers(executed_block)?;
-            let recent_peer_ids = committee
-                .iter()
-                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
-                .filter_map(|&peer_public_key| {
-                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
-                })
-                .collect_vec();
-
-            peers.add_peers(recent_peer_ids);
         }
 
         Ok(consensus)
@@ -1750,6 +1726,12 @@ impl Consensus {
                 current_view,
                 new_view.view
             );
+            return Ok(None);
+        }
+
+        if self.get_block(&new_view.qc.block_hash)?.is_none() {
+            trace!("high_qc block does not exist for NewView. Attemping to fetch block via sync");
+            self.sync.sync_from_probe(true)?;
             return Ok(None);
         }
 
