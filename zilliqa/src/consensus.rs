@@ -3198,7 +3198,7 @@ impl Consensus {
         trace!("consensus::tick()");
         // Trigger a probe from a timeout, is safer than the other options.
         if !self.sync.am_syncing()? {
-            self.sync.sync_from_probe()?;
+            self.sync.sync_from_probe(false)?;
         } else {
             trace!("not syncing ...");
         }

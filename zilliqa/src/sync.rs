@@ -205,24 +205,29 @@ impl Sync {
 
     /// Phase 0: Sync from a probe.
     ///
-    /// This is invoked from a timeout, which means that we have not received any proposals.
-    /// At the start, the list of peers is unpopulated, and are gradually added after we join a topic.
-    /// Probing peers as they are added to the topic, would allow a peer to trigger when probing happens.
-    /// Probing from an internal timeout, allows us to control when probing happens.
-    pub fn sync_from_probe(&mut self) -> Result<()> {
-        // only do this upon start/restart
-        if self.initial_probed {
-            return Ok(());
+    /// This can be invoked from: a timeout; or manually.
+    /// At re/start, the initial timeout will trigger a sync shortly after re/start.
+    /// A resync flag is allowed to allow the rest of the code to redo this process.
+    pub fn sync_from_probe(&mut self, resync: bool) -> Result<()> {
+        if resync {
+            self.initial_probed = false;
         }
-        // inevitably picks a bootstrap node
-        if let Some(peer_info) = self.peers.get_next_peer() {
-            let peer = peer_info.peer_id;
-            self.peers.append_peer(peer_info);
-            self.probe_peer(peer);
+        // only do this upon start/restart
+        if !self.initial_probed {
+            // inevitably picks a bootstrap node
+            if let Some(peer_info) = self.peers.get_next_peer() {
+                let peer = peer_info.peer_id;
+                self.peers.append_peer(peer_info);
+                tracing::info!(%peer, "sync::SyncFromProbe : probing");
+                self.probe_peer(peer);
+            } else {
+                tracing::warn!("sync::SyncFromProbe: no more peers");
+            }
         }
         Ok(())
     }
 
+    /// Drive the sync state-machine.
     fn do_sync(&mut self) -> Result<()> {
         if self.recent_proposals.is_empty() {
             // Do nothing if there's no recent proposals.
@@ -618,14 +623,12 @@ impl Sync {
         match self.state {
             // Start sync-from-probe
             SyncState::Phase0
-                if !self.initial_probed
-                    && response.availability.is_none()
-                    && !response.proposals.is_empty() =>
+                if response.availability.is_none() && !response.proposals.is_empty() =>
             {
                 let proposal = response.proposals.pop().unwrap();
                 if proposal.number() > self.started_at {
                     // inevitably from one of the bootstrap nodes
-                    tracing::info!(block = %proposal.number(), %from,
+                    tracing::info!(self = %self.started_at, block = %proposal.number(), %from,
                         "sync::BlockResponse : probed, starting sync",
                     );
                     self.sync_from_proposal(proposal)?;
@@ -1145,12 +1148,9 @@ impl Sync {
 
     // Fired from both [Self::sync_from_probe(); and [Consensus::sync_from_probe()] test.
     pub fn probe_peer(&mut self, peer: PeerId) {
-        if !self.initial_probed {
-            tracing::info!(%peer, "sync::SyncFromProbe : probing");
-            self.message_sender
-                .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))
-                .ok(); // ignore errors, retry with subsequent peer(s).
-        }
+        self.message_sender
+            .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))
+            .ok(); // ignore errors, retry with subsequent peer(s).
     }
 }
 
