@@ -79,8 +79,6 @@ pub struct Sync {
     state: SyncState,
     // fixed-size queue of the most recent proposals
     recent_proposals: VecDeque<Proposal>,
-    // for checkpoint
-    checkpoint_at: u64,
     // for statistics only
     inject_at: Option<(std::time::Instant, usize, u64)>,
     // record data for eth_syncing() RPC call.
@@ -147,7 +145,6 @@ impl Sync {
             blocks_downloaded: 0,
             active_sync_count: 0,
             p1_response: BTreeMap::new(),
-            checkpoint_at: u64::MIN,
             segments: SyncSegments::default(),
             initial_probed: false,
         })
@@ -350,7 +347,6 @@ impl Sync {
             )?
             .expect("missing canonical block");
         self.started_at = highest_block.number();
-        self.checkpoint_at = highest_block.number();
         Ok(())
     }
 
@@ -1131,10 +1127,8 @@ impl Sync {
     }
 
     /// Sets the checkpoint, if node was started from a checkpoint.
-    pub fn set_checkpoint(&mut self, checkpoint: &Block) {
-        let number = checkpoint.number();
-        tracing::debug!("sync::Checkpoint {}", number);
-        self.checkpoint_at = number;
+    pub fn set_checkpoint(&mut self, _checkpoint: &Block) {
+        tracing::debug!("sync::Checkpoint");
     }
 
     // Add an in-flight request
