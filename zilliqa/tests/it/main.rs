@@ -1,11 +1,13 @@
 use alloy::primitives::Address;
+use ethabi::Token;
 use ethers::{
     abi::Tokenize,
     providers::{Middleware, PubsubClient},
     types::TransactionRequest,
 };
-use primitive_types::U256;
+use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
+use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
 mod admin;
 mod consensus;
 mod eth;
@@ -13,6 +15,7 @@ mod ots;
 mod persistence;
 mod staking;
 mod trace;
+mod txpool;
 mod unreliable;
 mod web3;
 mod zil;
@@ -70,9 +73,8 @@ use zilliqa::{
         Fork, GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
-        max_rpc_response_size_default, scilla_address_default, scilla_ext_libs_path_default,
-        scilla_stdlib_dir_default, state_cache_size_default, state_rpc_limit_default,
-        total_native_token_supply_default, u64_max,
+        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -517,10 +519,10 @@ impl Network {
                 eth_block_gas_limit: EvmGas(84000000),
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
-                scilla_address: scilla_address_default(),
+                scilla_address: self.scilla_address.clone(),
                 blocks_per_epoch: self.blocks_per_epoch,
                 epochs_per_checkpoint: 1,
-                scilla_stdlib_dir: scilla_stdlib_dir_default(),
+                scilla_stdlib_dir: self.scilla_stdlib_dir.clone(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
                 contract_upgrades,
@@ -1033,14 +1035,20 @@ impl Network {
                                     self.pending_responses
                                         .insert(response_channel.clone(), source);
 
-                                    inner
-                                        .handle_request(
-                                            source,
-                                            "(synthetic_id)",
-                                            external_message.clone(),
-                                            response_channel,
-                                        )
-                                        .unwrap();
+                                    match external_message {
+                                        // Re-route Injections from Requests to Broadcasts
+                                        ExternalMessage::InjectedProposal(_) => inner
+                                            .handle_broadcast(source, external_message.clone())
+                                            .unwrap(),
+                                        _ => inner
+                                            .handle_request(
+                                                source,
+                                                "(synthetic_id)",
+                                                external_message.clone(),
+                                                response_channel,
+                                            )
+                                            .unwrap(),
+                                    }
                                 }
                             });
                         }
@@ -1444,7 +1452,47 @@ async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wa
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(from_wallet, hash, 100).await;
+    network.run_until_receipt(to_wallet, hash, 100).await;
+}
+
+async fn get_reward_address(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    staker: &NodePublicKey,
+) -> H160 {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(
+            contracts::deposit::GET_REWARD_ADDRESS
+                .encode_input(&[Token::Bytes(staker.as_bytes())])
+                .unwrap(),
+        );
+    let return_value = wallet.call(&tx.into(), None).await.unwrap();
+    contracts::deposit::GET_REWARD_ADDRESS
+        .decode_output(&return_value)
+        .unwrap()[0]
+        .clone()
+        .into_address()
+        .unwrap()
+}
+
+async fn get_stakers(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+) -> Vec<NodePublicKey> {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
+    let stakers = wallet.call(&tx.into(), None).await.unwrap();
+    let stakers = contracts::deposit::GET_STAKERS
+        .decode_output(&stakers)
+        .unwrap()[0]
+        .clone()
+        .into_array()
+        .unwrap();
+
+    stakers
+        .into_iter()
+        .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
+        .collect()
 }
 
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network

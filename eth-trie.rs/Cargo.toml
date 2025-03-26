@@ -20,4 +20,4 @@ alloy = { version = "0.12.4", default-features = false, features = ["getrandom"]
 rand = "0.8.5"
 hex = "0.4.3"
 criterion = "0.5.1"
-uuid = { version = "1.15.1", features = ["serde", "v4"] }
+uuid = { version = "1.16.0", features = ["serde", "v4"] }

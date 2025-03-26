@@ -3,11 +3,11 @@ use ethers::{
     providers::Middleware,
     types::{TransactionRequest, U64},
 };
-use primitive_types::{H160, H256};
+use primitive_types::{H160, H256, U256};
 use tracing::*;
 use zilliqa::{crypto::Hash, state::contract_addr};
 
-use crate::Network;
+use crate::{Network, get_reward_address, get_stakers};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
@@ -44,8 +44,7 @@ async fn network_can_die_restart(mut network: Network) {
         .expect("Failed to progress to target block");
 }
 
-fn get_block_number(n: &mut Network) -> u64 {
-    let index = n.random_index();
+fn get_block_number(n: &Network, index: usize) -> u64 {
     n.get_node(index).get_finalized_height().unwrap()
 }
 
@@ -58,13 +57,12 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     let start_block = 5;
     let finish_block = 8;
 
+    let index = network.random_index();
+
     // wait until at least 5 blocks have been produced
     network
         .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index).get_finalized_height().unwrap() >= start_block
-            },
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
             100,
         )
         .await
@@ -73,16 +71,16 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     // now, wait until block 15 has been produced, but dropping 10% of the messages.
     for _ in 0..1000000 {
         network.randomly_drop_messages_then_tick(failure_rate).await;
-        if get_block_number(&mut network) >= finish_block {
+        if get_block_number(&network, index) >= finish_block {
             break;
         }
     }
 
     assert!(
-        get_block_number(&mut network) >= finish_block,
+        get_block_number(&network, index) >= finish_block,
         "block number should be at least {}, but was {}",
         finish_block,
-        get_block_number(&mut network)
+        get_block_number(&network, index)
     );
 }
 
@@ -191,7 +189,6 @@ async fn handle_forking_correctly(mut network: Network) {
 #[zilliqa_macros::test]
 async fn zero_account_per_block_balance_updates(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    let provider = wallet.provider();
 
     // Check inital account values
     let block_height = wallet.get_block_number().await.unwrap();
@@ -276,10 +273,14 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .await
         .unwrap();
     assert!(zero_account_balance_before > zero_account_balance_after);
-    let zero_acount_balance_change_rewards_only =
-        zero_account_balance_before - zero_account_balance_after;
+}
 
-    // Check gas is sunk to zero account
+#[zilliqa_macros::test]
+async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    network.run_until_block(&wallet, 1.into(), 50).await;
     let hash = wallet
         .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
         .await
@@ -299,6 +300,23 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .unwrap();
     assert_eq!(block.transactions.len(), 1);
 
+    let mut total_rewards = U256::zero();
+    let stakers = get_stakers(&wallet).await;
+    for staker in stakers {
+        let reward_address = get_reward_address(&wallet, &staker).await;
+        let reward_address_balance_before = wallet
+            .get_balance(reward_address, Some((block.number.unwrap() - 1).into()))
+            .await
+            .unwrap();
+        let reward_address_balance_after = wallet
+            .get_balance(reward_address, Some(block.number.unwrap().into()))
+            .await
+            .unwrap();
+
+        total_rewards += reward_address_balance_after - reward_address_balance_before;
+    }
+
+    let zero_account = H160::zero();
     let zero_account_balance_before = wallet
         .get_balance(zero_account, Some((block.number.unwrap() - 1).into()))
         .await
@@ -307,55 +325,10 @@ async fn zero_account_per_block_balance_updates(mut network: Network) {
         .get_balance(zero_account, Some(block.number.unwrap().into()))
         .await
         .unwrap();
-    let zero_acount_balance_change_with_gas_spent =
-        zero_account_balance_before - zero_account_balance_after;
 
     assert_eq!(
-        zero_acount_balance_change_with_gas_spent + block.gas_used,
-        zero_acount_balance_change_rewards_only
+        zero_account_balance_after,
+        zero_account_balance_before - total_rewards
+            + (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap())
     );
-}
-
-// Test a pruning node does not hold old blocks.
-#[zilliqa_macros::test]
-async fn prune_interval(mut network: Network) {
-    network
-        .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index)
-                    .get_block(BlockId::latest())
-                    .unwrap()
-                    .map_or(0, |b| b.number())
-                    >= 5
-            },
-            100,
-        )
-        .await
-        .unwrap();
-
-    info!("Adding pruned node.");
-    let index = network.add_node_with_options(crate::NewNodeOptions {
-        prune_interval: Some(300),
-        ..Default::default()
-    });
-    network.run_until_synced(index).await;
-
-    network
-        .run_until(
-            |n| {
-                n.node_at(index)
-                    .get_block(BlockId::latest())
-                    .unwrap()
-                    .map_or(0, |b| b.number())
-                    >= 305
-            },
-            5000,
-        )
-        .await
-        .unwrap();
-
-    let range = network.node_at(index).db.available_range().unwrap();
-    info!("Pruned range: {range:?}");
-    assert_eq!(range.count(), 300);
 }
