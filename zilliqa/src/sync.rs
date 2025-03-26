@@ -394,6 +394,9 @@ impl Sync {
         self.segments.pop_sync_segment();
         self.inject_at = None;
         self.state = SyncState::Phase1(meta);
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
+        }
         Ok(())
     }
 
@@ -427,7 +430,7 @@ impl Sync {
                 self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
-                return self.do_multiblock_response(from, response);
+                return self.do_multiblock_response(from, response); // successful 
             } else {
                 // Empty response, downgrade peer and retry phase 1.
                 tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
@@ -436,12 +439,15 @@ impl Sync {
             }
         } else {
             // Network failure, downgrade peer and retry phase 1.
-            tracing::warn!("sync::MultiBlockResponse : error blocks {from}",);
+            tracing::warn!(%from, "sync::MultiBlockResponse : error blocks",);
             self.peers
                 .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
         }
         // failure fall-thru
         self.state = SyncState::Retry1;
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
+        }
         Ok(())
     }
 
@@ -463,6 +469,9 @@ impl Sync {
                 "sync::MultiBlockResponse : unexpected checksum={check_sum} != {computed_sum} from {from}"
             );
             self.state = SyncState::Retry1;
+            if Self::DO_SPECULATIVE {
+                self.do_sync()?;
+            }
             return Ok(());
         }
 
