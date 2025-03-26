@@ -875,7 +875,7 @@ impl Sync {
         let mut metas = Vec::with_capacity(batch_size);
         let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
             tracing::warn!("sync::MetadataRequest : unknown block height");
-            return Ok(ExternalMessage::MetaDataResponse(vec![]));
+            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         };
 
         let mut hash = block.hash();
