@@ -335,6 +335,10 @@ impl Db {
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
             ",
         )?;
+        // Ignore errors here. If the column already exists, there is no work to do.
+        let _ = connection.execute_batch(
+            "ALTER TABLE tip_info ADD COLUMN voted_in_view BOOLEAN NOT NULL DEFAULT FALSE;",
+        );
         Ok(())
     }
 
@@ -563,7 +567,7 @@ impl Db {
             self.insert_block_with_db_tx(tx, parent_ref)?;
             self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
             self.set_high_qc_with_db_tx(tx, block.header.qc)?;
-            self.set_view_with_db_tx(tx, parent_ref.view() + 1)?;
+            self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
             Ok(())
         })?;
 
@@ -616,16 +620,21 @@ impl Db {
             .unwrap_or(None))
     }
 
-    /// Write view and timestamp to table if view is larger than current. Return true if write was successful
-    pub fn set_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
+    /// Write view to table if view is larger than current. Return true if write was successful
+    pub fn set_view_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        view: u64,
+        voted: bool,
+    ) -> Result<bool> {
         let res = sqlite_tx
-            .prepare_cached("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view IS NULL OR tip_info.view < ?1",)?
-            .execute([view])?;
+            .prepare_cached("INSERT INTO tip_info (view, voted_in_view) VALUES (?1, ?2) ON CONFLICT(_single_row) DO UPDATE SET view = ?1, voted_in_view = ?2 WHERE tip_info.view IS NULL OR tip_info.view < ?1",)?
+            .execute((view, voted))?;
         Ok(res != 0)
     }
 
-    pub fn set_view(&self, view: u64) -> Result<bool> {
-        self.set_view_with_db_tx(&self.db.lock().unwrap(), view)
+    pub fn set_view(&self, view: u64, voted: bool) -> Result<bool> {
+        self.set_view_with_db_tx(&self.db.lock().unwrap(), view, voted)
     }
 
     pub fn get_view(&self) -> Result<Option<u64>> {
@@ -637,6 +646,15 @@ impl Db {
             .query_row((), |row| row.get(0))
             .optional()
             .unwrap_or(None))
+    }
+
+    pub fn get_voted_in_view(&self) -> Result<bool> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT voted_in_view FROM tip_info")?
+            .query_row((), |row| row.get(0))?)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {

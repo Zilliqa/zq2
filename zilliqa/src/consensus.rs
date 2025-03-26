@@ -230,17 +230,12 @@ impl Consensus {
             }
         };
 
-        let (start_view, finalized_view, high_qc) = {
+        let (start_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
                     let finalized_view = db
                         .get_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
-                    let finalized_block = db
-                        .get_block_by_view(finalized_view)?
-                        .ok_or_else(|| anyhow!("missing finalized block!"))?;
-
-                    state.set_to_root(finalized_block.header.state_root_hash.into());
 
                     // If latest view was written to disk then always start from there. Otherwise start from finalised view + 1
                     let start_view = db
@@ -280,12 +275,16 @@ impl Consensus {
                         "During recovery, starting consensus at view {}, finalised view {}",
                         start_view, finalized_view
                     );
-                    (start_view, finalized_view, qc)
+                    (start_view, qc)
                 }
                 None => {
                     let start_view = 1;
                     let finalized_view = 0;
-                    (start_view, finalized_view, QuorumCertificate::genesis())
+                    // We always mark view 1 as voted even though we haven't voted yet, because we can only send a
+                    // `Vote` for the genesis block. We can never send `NewView(1)`.
+                    db.set_view(start_view, true)?;
+                    db.set_finalized_view(finalized_view)?;
+                    (start_view, QuorumCertificate::genesis())
                 }
             }
         };
@@ -325,8 +324,6 @@ impl Consensus {
             new_transaction_hashes: broadcast::Sender::new(128),
             prune_interval,
         };
-        consensus.db.set_view(start_view)?;
-        consensus.set_finalized_view(finalized_view)?;
 
         // If we're at genesis, add the genesis block and return
         if latest_block_view == 0 {
@@ -372,10 +369,16 @@ impl Consensus {
                     view_diff,
                     min_view_since_high_qc_updated
                 );
-                consensus.db.set_view(min_view_since_high_qc_updated)?;
-                // Build NewView so that we can immediately contribute to consensus moving along if it has halted
-                consensus.build_new_view()?;
+                consensus
+                    .db
+                    .set_view(min_view_since_high_qc_updated, false)?;
             }
+        }
+
+        // If we haven't already sent a `Vote` in our current view, we can build a `NewView` in case the network is
+        // stuck.
+        if !consensus.db.get_voted_in_view()? {
+            consensus.build_new_view()?;
         }
 
         Ok(consensus)
@@ -558,7 +561,7 @@ impl Consensus {
             view, next_view, next_exponential_backoff_timeout
         );
 
-        self.set_view(next_view)?;
+        self.set_view(next_view, false)?;
         let new_view = self.build_new_view()?;
         Ok(Some(new_view))
     }
@@ -702,7 +705,8 @@ impl Consensus {
 
             if view != proposal_view + 1 {
                 view = proposal_view + 1;
-                self.set_view(view)?;
+                // We will send a vote in this view.
+                self.set_view(view, true)?;
                 debug!("*** setting view to proposal view... view is now {}", view);
             }
 
@@ -1813,7 +1817,7 @@ impl Consensus {
                         new_view.view
                     );
                     current_view = new_view.view;
-                    self.set_view(current_view)?;
+                    self.set_view(current_view, false)?;
                 }
 
                 // if we are already in the round in which the vote counts and have reached supermajority we can propose a block
@@ -1961,7 +1965,7 @@ impl Consensus {
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
                 if new_high_qc_view >= view {
-                    self.set_view(new_high_qc_view + 1)?;
+                    self.set_view(new_high_qc_view + 1, false)?;
                 }
             }
         }
@@ -2416,12 +2420,12 @@ impl Consensus {
     }
 
     fn vote_from_block(&self, block: &Block) -> Vote {
-        Vote::new(
+        Ok(Vote::new(
             self.secret_key,
             block.hash(),
             self.secret_key.node_public_key(),
             block.view(),
-        )
+        ))
     }
 
     fn get_high_qc_from_block(&self, block: &Block) -> Result<QuorumCertificate> {
@@ -2461,8 +2465,8 @@ impl Consensus {
         }))
     }
 
-    fn set_view(&mut self, view: u64) -> Result<()> {
-        if self.db.set_view(view)? {
+    fn set_view(&mut self, view: u64, voted: bool) -> Result<()> {
+        if self.db.set_view(view, voted)? {
             self.view_updated_at = SystemTime::now();
         } else {
             warn!(
