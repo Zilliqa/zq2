@@ -237,13 +237,12 @@ impl Sync {
             tracing::debug!("sync::DoSync : waiting for in-flight requests");
             return Ok(());
         }
-        self.initial_probed = true;
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
                 let meta = self.recent_proposals.back().unwrap().header;
                 let parent_hash = meta.qc.block_hash;
-                // No parent block, trigger sync
+                // No parent block, trigger active-sync
                 if !self.db.contains_canonical_block(&parent_hash)? {
                     self.active_sync_count = self.active_sync_count.saturating_add(1);
                     tracing::debug!(from_hash = %parent_hash, "sync::DoSync : syncing",);
@@ -251,7 +250,12 @@ impl Sync {
                     // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
                     self.update_started_at()?;
                     self.request_missing_metadata(Some(meta))?;
+                } else {
+                    // one-block away from the tip, which can happen during a restart
+                    self.state = SyncState::Phase3;
+                    self.inject_recent_blocks()?;
                 }
+                self.initial_probed = true;
             }
             // Continue phase 1, until we hit history/genesis.
             SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
@@ -616,13 +620,15 @@ impl Sync {
                 let proposal = response.proposals.pop().unwrap();
                 if proposal.number() > self.started_at {
                     // inevitably from one of the bootstrap nodes
-                    tracing::info!(number = %proposal.number(), %from,
-                        "sync::BlockResponse : probed",
+                    tracing::info!(block = %proposal.number(), %from,
+                        "sync::BlockResponse : probed, starting sync",
                     );
-                    self.recent_proposals.push_back(proposal);
-                    if Self::DO_SPECULATIVE {
-                        return self.do_sync();
-                    }
+                    self.sync_from_proposal(proposal)?;
+                } else {
+                    tracing::info!(self = %self.started_at, block = %proposal.number(), %from,
+                        "sync::BlockResponse : probed, not syncing",
+                    );
+                    self.initial_probed = true;
                 }
                 Ok(())
             }
@@ -643,14 +649,14 @@ impl Sync {
             return Ok(ExternalMessage::Acknowledgement);
         }
 
-        tracing::info!(%from, "sync::BlockRequest : received probe");
-
-        // Must be at least 1 block, genesis/checkpoint
+        // Must have at least 1 block, genesis/checkpoint
         let block_vec = self.db.get_highest_block_hashes(1)?;
         let block = self
             .db
             .get_block_by_hash(block_vec.first().unwrap())?
             .unwrap();
+
+        tracing::info!(%from, number = %block.number(), "sync::BlockRequest : received probe");
 
         // Construct the proposal
         let prop = self.block_to_proposal(block);
@@ -1138,10 +1144,12 @@ impl Sync {
 
     // Fired from both [Self::sync_from_probe(); and [Consensus::sync_from_probe()] test.
     pub fn probe_peer(&mut self, peer: PeerId) {
-        tracing::info!(%peer, "sync::SyncFromProbe : probing");
-        self.message_sender
-            .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))
-            .ok(); // ignore 
+        if !self.initial_probed {
+            tracing::info!(%peer, "sync::SyncFromProbe : probing");
+            self.message_sender
+                .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))
+                .ok(); // ignore errors, retry with subsequent peer(s).
+        }
     }
 }
 
