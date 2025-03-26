@@ -311,7 +311,7 @@ impl Consensus {
             peers.clone(),
         )?;
 
-        let prune_interval = config.prune_interval;
+        let prune_interval = config.sync.prune_interval;
 
         let mut consensus = Consensus {
             secret_key,
@@ -3196,11 +3196,9 @@ impl Consensus {
 
     pub fn tick(&mut self) -> Result<()> {
         trace!("consensus::tick()");
-        trace!("request_missing_blocks from timer");
-
-        // TODO: Drive passive-sync from Timeouts
+        // Trigger a probe from a timeout, is safer than the other options.
         if !self.sync.am_syncing()? {
-            self.sync.sync_to_genesis()?;
+            self.sync.sync_from_probe(false)?;
         } else {
             trace!("not syncing ...");
         }
