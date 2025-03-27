@@ -269,29 +269,6 @@ impl Consensus {
                         state.set_to_root(high_block.header.state_root_hash.into());
                     }
 
-                    // If we have newer blocks, erase them
-                    // @todo .. more elegantly :-)
-                    loop {
-                        let head_block = db
-                            .get_highest_recorded_block()?
-                            .ok_or_else(|| anyhow!("can't find highest block in database!"))?;
-                        trace!(
-                            "recovery: highest_block_number {} view {}",
-                            head_block.number(),
-                            head_block.view()
-                        );
-
-                        if head_block.view() > high_block.view()
-                            && head_block.view() > finalized_view
-                        {
-                            trace!("recovery: stored block {0} reverted", head_block.number());
-                            db.remove_transactions_executed_in_block(&head_block.hash())?;
-                            db.remove_block(&head_block)?;
-                        } else {
-                            break;
-                        }
-                    }
-
                     info!(
                         "During recovery, starting consensus at view {}, finalised view {}",
                         start_view, finalized_view
@@ -2812,9 +2789,6 @@ impl Consensus {
                 self.transaction_pool
                     .insert_transaction(orig_tx, account_nonce);
             }
-            // then purge them all from the db, including receipts and indexes
-            self.db
-                .remove_transactions_executed_in_block(&head_block.hash())?;
 
             // this block is no longer in the main chain
             self.db.mark_block_as_non_canonical(head_block.hash())?;
@@ -2859,10 +2833,7 @@ impl Consensus {
                 .state
                 .at_root(parent.state_root_hash().into())
                 .get_stakers(block_pointer.header)?;
-            if let Err(err) = self.execute_block(None, &block_pointer, transactions, &committee) {
-                // Rough solution restarts the node in this circumstance so that it can re-requets proposals via sync mechanism
-                panic!("Failed to execute block during fork: {err}");
-            }
+            self.execute_block(None, &block_pointer, transactions, &committee)?;
         }
 
         Ok(())
@@ -3020,10 +2991,11 @@ impl Consensus {
         })?;
 
         if cumulative_gas_used != block.gas_used() {
-            return Err(anyhow!(
+            warn!(
                 "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different than the one provided in the block: {}",
                 block.gas_used()
-            ));
+            );
+            return Ok(());
         }
 
         let receipts_root_hash: Hash = receipts_trie.root_hash()?.into();
@@ -3119,8 +3091,6 @@ impl Consensus {
                 let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
                 if let Some(block) = block {
                     tracing::trace!(number = %block.number(), hash=%block.hash(), "Prune block");
-                    self.db
-                        .remove_transactions_executed_in_block(&block.hash())?;
                     self.db.remove_block(&block)?;
                 }
             }
