@@ -3213,7 +3213,7 @@ impl Consensus {
                 ));
             }
         };
-        self.set_view(view)?;
+        self.set_view(view, false)?;
         Ok(())
     }
 }
