@@ -2880,7 +2880,7 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
+    network.run_until_block_finalized(7u64, 100).await.unwrap();
 
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
