@@ -1254,24 +1254,42 @@ async fn get_transaction_by_index(mut network: Network) {
     let r1 = network.run_until_receipt(&wallet, h1, 50).await;
     let r2 = network.run_until_receipt(&wallet, h2, 50).await;
 
-    assert_eq!(r1.block_hash, r2.block_hash);
+    // NOTE: they are not always in the same block
+    if r1.block_hash == r2.block_hash {
+        let block_hash = r1.block_hash.unwrap();
+        let block_number = r1.block_number.unwrap();
 
-    let block_hash = r1.block_hash.unwrap();
-    let block_number = r1.block_number.unwrap();
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_hash, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h2);
 
-    let txn = wallet
-        .get_transaction_by_block_and_index(block_hash, 0u64.into())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(txn.hash, h2);
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_number, 1u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h1);
+    } else {
+        let block_hash = r2.block_hash.unwrap();
+        let block_number = r1.block_number.unwrap();
 
-    let txn = wallet
-        .get_transaction_by_block_and_index(block_number, 1u64.into())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(txn.hash, h1);
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_hash, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h2);
+
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_number, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h1);
+    }
 }
 
 #[zilliqa_macros::test]
