@@ -55,7 +55,7 @@ async fn deposit_stake(
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(staker_wallet, hash, 80).await;
+    network.run_until_receipt(staker_wallet, hash, 101).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -85,7 +85,7 @@ async fn deposit_stake(
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(staker_wallet, hash, 80).await;
+    let receipt = network.run_until_receipt(staker_wallet, hash, 102).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
@@ -108,7 +108,7 @@ async fn deposit_v3_stake(
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(staker_wallet, hash, 80).await;
+    network.run_until_receipt(staker_wallet, hash, 103).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -139,7 +139,7 @@ async fn deposit_v3_stake(
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(staker_wallet, hash, 80).await;
+    let receipt = network.run_until_receipt(staker_wallet, hash, 104).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
