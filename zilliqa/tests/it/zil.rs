@@ -1626,7 +1626,7 @@ async fn get_tx_block(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Ensure there is at least one block in the chain
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
+    network.run_until_block_finalized(3u64, 100).await.unwrap();
 
     // Request the first block
     let block_number = "1";
@@ -1718,7 +1718,7 @@ async fn get_tx_block_verbose(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
     // Ensure there is at least one block in the chain
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
+    network.run_until_block_finalized(3u64, 100).await.unwrap();
 
     // Request the first block
     let block_number = "1";
@@ -2055,7 +2055,7 @@ async fn get_tx_block_rate_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
+    network.run_until_block_finalized(3u64, 100).await.unwrap();
 
     let response: Value = wallet
         .provider()
@@ -2120,8 +2120,6 @@ async fn get_tx_rate_1(mut network: Network) {
 
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
-    network.run_until_block_finalized(7u64, 300).await.unwrap();
-
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
@@ -2138,7 +2136,7 @@ async fn get_tx_rate_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(8u64, 300).await.unwrap();
+    network.run_until_block_finalized(2u64, 300).await.unwrap();
 
     let response: Value = wallet
         .provider()
