@@ -2797,6 +2797,9 @@ impl Consensus {
         // Now, we execute forward from the common ancestor to the new block parent which can
         // be required in rare cases.
         // We have the chain of blocks from the ancestor upwards to the proposed block via walking back.
+        // We also keep track of the hash of the block of the previous iteration of this loop, to detect infinite loops
+        // and give up.
+        let mut last_block = block.hash();
         while self.head_block().hash() != block.parent_hash() {
             trace!("Advancing the head block to prepare for proposed block fork.");
             trace!("Head block: {:?}", self.head_block());
@@ -2807,6 +2810,11 @@ impl Consensus {
             let mut block_pointer = self
                 .get_block(&block.parent_hash())?
                 .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
+
+            if block_pointer.hash() == last_block {
+                return Err(anyhow!("entered loop while dealing with fork"));
+            }
+            last_block = block_pointer.hash();
 
             // If the parent of the proposed
             if block_pointer.header.number < desired_block_height {
