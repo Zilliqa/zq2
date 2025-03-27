@@ -2231,6 +2231,8 @@ async fn test_simulate_transactions(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_txns_for_tx_block_ex_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+    network.run_until_block_finalized(1u64, 100).await.unwrap();
+
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
@@ -2248,9 +2250,9 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(8u64, 300).await.unwrap();
+    network.run_until_block_finalized(4u64, 300).await.unwrap();
 
-    let block_number = "1";
+    let block_number = "4";
     let page_number = "0";
 
     let response: Value = wallet
@@ -2277,6 +2279,8 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
 async fn get_txns_for_tx_block_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
+    network.run_until_block_finalized(1u64, 100).await.unwrap();
+
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
@@ -2295,9 +2299,9 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(8u64, 300).await.unwrap();
+    network.run_until_block_finalized(4u64, 300).await.unwrap();
 
-    let block_number = "1";
+    let block_number = "4";
 
     let response: Value = wallet
         .provider()
