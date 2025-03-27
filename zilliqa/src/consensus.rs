@@ -11,6 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
+use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
@@ -171,6 +172,8 @@ pub struct Consensus {
     pub new_transaction_hashes: broadcast::Sender<Hash>,
     /// Pruning interval i.e. how many blocks to keep in the database.
     prune_interval: u64,
+    /// Used for testing and test network recovery
+    force_view: Option<(u64, DateTime)>,
 }
 
 impl Consensus {
@@ -341,6 +344,7 @@ impl Consensus {
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
             prune_interval,
+            force_view: None,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -585,6 +589,7 @@ impl Consensus {
 
     /// All values returned in milliseconds
     pub fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
+        let view = self.get_view()?;
         let milliseconds_since_last_view_change = SystemTime::now()
             .duration_since(self.view_updated_at)
             .unwrap_or_default();
@@ -600,10 +605,23 @@ impl Consensus {
                 .saturating_sub(TIME_TO_ALLOW_PROPOSAL_BROADCAST);
         }
 
+        let mut exponential_backoff_timeout = self.exponential_backoff_timeout(view);
+
+        // Override exponential_backoff_timeout in forced set view scenario
+        match self.force_view {
+            Some((forced_view, timeout_instant)) if view == forced_view => {
+                exponential_backoff_timeout = SystemTime::from(timeout_instant)
+                    .duration_since(SystemTime::now())?
+                    .saturating_sub(milliseconds_since_last_view_change)
+                    .as_millis() as u64;
+            }
+            _ => {}
+        }
+
         Ok((
             milliseconds_since_last_view_change.as_millis() as u64,
             milliseconds_remaining_of_block_time.as_millis() as u64,
-            self.exponential_backoff_timeout(self.get_view()?),
+            exponential_backoff_timeout,
         ))
     }
 
@@ -3197,6 +3215,28 @@ impl Consensus {
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
         self.sync.get_sync_data()
+    }
+
+    /// This function is intended for use only by admin_forceView API. It is dangerous and should not be touched outside of testing or test network recovery.
+    ///
+    /// Force set our view and override exponential timeout such that view timeouts at given timestamp
+    /// View value must be larger than current
+    pub fn force_view(&mut self, view: u64, timeout_at: String) -> Result<()> {
+        if self.get_view()? > view {
+            return Err(anyhow!(
+                "view cannot be forced into lower view than current"
+            ));
+        }
+        match timeout_at.parse::<DateTime>() {
+            Ok(datetime) => self.force_view = Some((view, datetime)),
+            Err(_) => {
+                return Err(anyhow!(
+                    "timeout date must be in format 2001-01-02T12:13:14Z"
+                ));
+            }
+        };
+        self.set_view(view)?;
+        Ok(())
     }
 }
 
