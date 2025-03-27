@@ -11,6 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
+use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
@@ -172,7 +173,7 @@ pub struct Consensus {
     /// Pruning interval i.e. how many blocks to keep in the database.
     prune_interval: u64,
     /// Used for testing and test network recovery
-    force_set_view: Option<(u64, Duration)>,
+    force_view: Option<(u64, DateTime)>,
 }
 
 impl Consensus {
@@ -339,7 +340,7 @@ impl Consensus {
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
             prune_interval,
-            force_set_view: None,
+            force_view: None,
         };
         consensus.db.set_view(start_view)?;
         consensus.set_finalized_view(finalized_view)?;
@@ -615,10 +616,11 @@ impl Consensus {
             .saturating_sub(milliseconds_since_last_view_change);
 
         // Override milliseconds_remaining_of_block_time in forced set view scenario
-        match self.force_set_view {
-            Some((forced_view, timeout)) if view == forced_view => {
-                milliseconds_remaining_of_block_time =
-                    timeout.saturating_sub(milliseconds_since_last_view_change);
+        match self.force_view {
+            Some((forced_view, timeout_instant)) if view == forced_view => {
+                milliseconds_remaining_of_block_time = SystemTime(timeout_instant.to_system_time())
+                    .duration_since(SystemTime::now())?
+                    .saturating_sub(milliseconds_since_last_view_change);
             }
             _ => {}
         }
@@ -3221,18 +3223,18 @@ impl Consensus {
         self.sync.get_sync_data()
     }
 
-    /// This function is intended for use only by admin_forceSetView API. It is dangerous and should not be touched outside of testing or test network recovery.
+    /// This function is intended for use only by admin_forceView API. It is dangerous and should not be touched outside of testing or test network recovery.
     ///
-    /// Force set our view and override exponential timeout value with given value for this view only
+    /// Force set our view and override exponential timeout such that view timeouts at given timestamp
     /// View value must be larger than current
-    pub fn force_set_view(&mut self, view: u64, timeout_mins: u64) -> Result<()> {
-        if self.get_view()? >= view {
+    pub fn force_view(&mut self, view: u64, timeout_at: String) -> Result<()> {
+        if self.get_view()? > view {
             return Err(anyhow!(
                 "view cannot be forced into lower view than current"
             ));
         }
         self.set_view(view)?;
-        self.force_set_view = Some((view, Duration::from_secs(timeout_mins * 60)));
+        self.force_view = Some((view, timeout_at.parse::<DateTime>()?));
         Ok(())
     }
 }

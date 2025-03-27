@@ -18,7 +18,7 @@ mod time_impl {
 
     /// A fake implementation of [std::time::SystemTime]. The value of `SystemTime::now` can be controlled with [advance_time].
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-    pub struct SystemTime(std::time::SystemTime);
+    pub struct SystemTime(pub std::time::SystemTime);
 
     impl SystemTime {
         pub const UNIX_EPOCH: SystemTime = SystemTime(std::time::SystemTime::UNIX_EPOCH);

@@ -24,7 +24,7 @@ pub fn rpc_module(
             ("admin_consensusInfo", consensus_info),
             ("admin_generateCheckpoint", checkpoint),
             ("admin_blockRange", admin_block_range),
-            ("admin_forceSetView", force_set_view),
+            ("admin_forceView", force_view),
         ]
     )
 }
@@ -87,12 +87,11 @@ fn checkpoint(params: Params, node: &Arc<Mutex<Node>>) -> Result<CheckpointRespo
     })
 }
 
-fn force_set_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+fn force_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let mut params = params.sequence();
     let view: U64 = params.next()?;
-    let timeout_mins: U64 = params.next()?;
+    let timeout_at: String = params.next()?;
     let mut node = node.lock().unwrap();
-    node.consensus
-        .force_set_view(view.to::<u64>(), timeout_mins.to::<u64>())?;
+    node.consensus.force_view(view.to::<u64>(), timeout_at)?;
     Ok(true)
 }
