@@ -642,7 +642,7 @@ async fn validators_can_unstake(mut network: Network) {
     // randomise the current epoch state and current leader
     let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
     network
-        .run_until_block(&wallet, blocks_to_prerun.into(), 100)
+        .run_until_block(&wallet, blocks_to_prerun.into(), 400)
         .await;
 
     let validator_idx = network.random_index();
