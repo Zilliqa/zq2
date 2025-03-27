@@ -615,26 +615,29 @@ impl Consensus {
             .block_time
             .saturating_sub(milliseconds_since_last_view_change);
 
-        // Override milliseconds_remaining_of_block_time in forced set view scenario
-        match self.force_view {
-            Some((forced_view, timeout_instant)) if view == forced_view => {
-                milliseconds_remaining_of_block_time = SystemTime(timeout_instant.to_system_time())
-                    .duration_since(SystemTime::now())?
-                    .saturating_sub(milliseconds_since_last_view_change);
-            }
-            _ => {}
-        }
-
         // In order to maintain close to 1 second block times we broadcast 1-TIME_TO_ALLOW_PROPOSAL_BROADCAST seconds after the previous block to allow for network messages and block processing
         if self.config.consensus.block_time > TIME_TO_ALLOW_PROPOSAL_BROADCAST {
             milliseconds_remaining_of_block_time = milliseconds_remaining_of_block_time
                 .saturating_sub(TIME_TO_ALLOW_PROPOSAL_BROADCAST);
         }
 
+        let mut exponential_backoff_timeout = self.exponential_backoff_timeout(view);
+
+        // Override exponential_backoff_timeout in forced set view scenario
+        match self.force_view {
+            Some((forced_view, timeout_instant)) if view == forced_view => {
+                exponential_backoff_timeout = SystemTime::from(timeout_instant)
+                    .duration_since(SystemTime::now())?
+                    .saturating_sub(milliseconds_since_last_view_change)
+                    .as_millis() as u64;
+            }
+            _ => {}
+        }
+
         Ok((
             milliseconds_since_last_view_change.as_millis() as u64,
             milliseconds_remaining_of_block_time.as_millis() as u64,
-            self.exponential_backoff_timeout(view),
+            exponential_backoff_timeout,
         ))
     }
 
@@ -3233,8 +3236,15 @@ impl Consensus {
                 "view cannot be forced into lower view than current"
             ));
         }
+        match timeout_at.parse::<DateTime>() {
+            Ok(datetime) => self.force_view = Some((view, datetime)),
+            Err(_) => {
+                return Err(anyhow!(
+                    "timeout date must be in format 2001-01-02T12:13:14Z"
+                ));
+            }
+        };
         self.set_view(view)?;
-        self.force_view = Some((view, timeout_at.parse::<DateTime>()?));
         Ok(())
     }
 }
