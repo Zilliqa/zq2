@@ -2231,13 +2231,12 @@ async fn test_simulate_transactions(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_txns_for_tx_block_ex_1(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
 
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &wallet,
         &secret_key,
@@ -2250,21 +2249,30 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(4u64, 300).await.unwrap();
+    network.run_until_block_finalized(2u64, 300).await.unwrap();
 
-    let block_number = "4";
-    let page_number = "0";
+    let result: zilliqa::api::types::zil::GetTxResponse =
+        serde_json::from_value(txn).expect("serdes error");
+
+    let block_number = result.receipt.epoch_num;
+    let page_number = 0;
 
     let response: Value = wallet
         .provider()
-        .request("GetTransactionsForTxBlockEx", [block_number, page_number])
+        .request(
+            "GetTransactionsForTxBlockEx",
+            [
+                block_number.to_string().as_str(),
+                page_number.to_string().as_str(),
+            ],
+        )
         .await
         .expect("Failed to call GetTransactionsForTxBlockEx API");
 
     let txns: zilliqa::api::types::zil::TxnsForTxBlockExResponse =
         serde_json::from_value(response).expect("Failed to deserialize response");
 
-    assert_eq!(txns.curr_page, page_number.parse::<u64>().unwrap());
+    assert_eq!(txns.curr_page, page_number);
     assert!(
         txns.transactions.len() <= 2500,
         "Expected Transactions length to be less than or equal to 2500"
@@ -2279,14 +2287,12 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
 async fn get_txns_for_tx_block_0(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
-
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &wallet,
         &secret_key,
@@ -2299,13 +2305,19 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(4u64, 300).await.unwrap();
+    network.run_until_block_finalized(2u64, 300).await.unwrap();
 
-    let block_number = "4";
+    let result: zilliqa::api::types::zil::GetTxResponse =
+        serde_json::from_value(txn).expect("serdes error");
+
+    let block_number = result.receipt.epoch_num;
 
     let response: Value = wallet
         .provider()
-        .request("GetTransactionsForTxBlock", [block_number])
+        .request(
+            "GetTransactionsForTxBlock",
+            [block_number.to_string().as_str()],
+        )
         .await
         .expect("Failed to call GetTransactionsForTxBlock API");
 
@@ -2342,7 +2354,7 @@ async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &wallet,
         &secret_key,
@@ -2355,13 +2367,19 @@ async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(8u64, 300).await.unwrap();
+    network.run_until_block_finalized(2u64, 300).await.unwrap();
 
-    let block_number = "1";
+    let result: zilliqa::api::types::zil::GetTxResponse =
+        serde_json::from_value(txn).expect("serdes error");
+
+    let block_number = result.receipt.epoch_num;
 
     let response: Value = wallet
         .provider()
-        .request("GetTxnBodiesForTxBlock", [block_number])
+        .request(
+            "GetTxnBodiesForTxBlock",
+            [block_number.to_string().as_str()],
+        )
         .await
         .expect("Failed to call GetTxnBodiesForTxBlock API");
 
@@ -2383,7 +2401,7 @@ async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &wallet,
         &secret_key,
@@ -2396,13 +2414,19 @@ async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(8u64, 300).await.unwrap();
+    network.run_until_block_finalized(2u64, 300).await.unwrap();
 
-    let block_number = "1";
+    let result: zilliqa::api::types::zil::GetTxResponse =
+        serde_json::from_value(txn).expect("serdes error");
+
+    let block_number = result.receipt.epoch_num;
 
     let response: Value = wallet
         .provider()
-        .request("GetTxnBodiesForTxBlock", [block_number])
+        .request(
+            "GetTxnBodiesForTxBlock",
+            [block_number.to_string().as_str()],
+        )
         .await
         .expect("Failed to call GetTxnBodiesForTxBlock API");
 
@@ -2428,7 +2452,7 @@ async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &wallet,
         &secret_key,
@@ -2441,21 +2465,30 @@ async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(8u64, 300).await.unwrap();
+    network.run_until_block_finalized(2u64, 300).await.unwrap();
 
-    let block_number = "1";
-    let page_number = "2";
+    let result: zilliqa::api::types::zil::GetTxResponse =
+        serde_json::from_value(txn).expect("serdes error");
+
+    let block_number = result.receipt.epoch_num;
+    let page_number = 2;
 
     let response: Value = wallet
         .provider()
-        .request("GetTxnBodiesForTxBlockEx", [block_number, page_number])
+        .request(
+            "GetTxnBodiesForTxBlockEx",
+            [
+                block_number.to_string().as_str(),
+                page_number.to_string().as_str(),
+            ],
+        )
         .await
         .expect("Failed to call GetTxnBodiesForTxBlockEx API");
 
     let txn_bodies: zilliqa::api::types::zil::TxnBodiesForTxBlockExResponse =
         serde_json::from_value(response).expect("Failed to deserialize response");
 
-    assert_eq!(txn_bodies.curr_page, page_number.parse::<u64>().unwrap());
+    assert_eq!(txn_bodies.curr_page, page_number);
     assert!(
         txn_bodies.num_pages > 0,
         "Expected NumPages to be greater than 0"
@@ -2475,7 +2508,7 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    send_transaction(
+    let (_, txn) = send_transaction(
         &mut network,
         &wallet,
         &secret_key,
@@ -2488,14 +2521,23 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(8u64, 300).await.unwrap();
+    network.run_until_block_finalized(2u64, 300).await.unwrap();
 
-    let block_number = "1";
-    let page_number = "0";
+    let result: zilliqa::api::types::zil::GetTxResponse =
+        serde_json::from_value(txn).expect("serdes error");
+
+    let block_number = result.receipt.epoch_num;
+    let page_number = 0;
 
     let response: Value = wallet
         .provider()
-        .request("GetTxnBodiesForTxBlockEx", [block_number, page_number])
+        .request(
+            "GetTxnBodiesForTxBlockEx",
+            [
+                block_number.to_string().as_str(),
+                page_number.to_string().as_str(),
+            ],
+        )
         .await
         .expect("Failed to call GetTxnBodiesForTxBlockEx API");
 
@@ -2504,7 +2546,7 @@ async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
     let txn_bodies: zilliqa::api::types::zil::TxnBodiesForTxBlockExResponse =
         serde_json::from_value(response).expect("Failed to deserialize response");
 
-    assert_eq!(txn_bodies.curr_page, page_number.parse::<u64>().unwrap());
+    assert_eq!(txn_bodies.curr_page, page_number);
     assert!(
         txn_bodies.num_pages > 0,
         "Expected NumPages to be greater than 0"
