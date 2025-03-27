@@ -2120,7 +2120,7 @@ async fn get_tx_rate_1(mut network: Network) {
 
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
+    network.run_until_block_finalized(7u64, 300).await.unwrap();
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
