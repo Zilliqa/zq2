@@ -2,12 +2,13 @@ use std::sync::{Arc, Mutex};
 
 use alloy::{
     eips::BlockNumberOrTag,
+    primitives::B256,
     rpc::types::trace::geth::{GethDebugTracingOptions, TraceResult},
 };
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
 
-use crate::{cfg::EnabledApi, node::Node};
+use crate::{cfg::EnabledApi, crypto::Hash, inspector, node::Node};
 
 pub fn rpc_module(
     node: Arc<Mutex<Node>>,
@@ -71,7 +72,7 @@ fn debug_trace_block_by_number(
 ) -> Result<Vec<TraceResult>> {
     let mut params = params.sequence();
     let block_number: BlockNumberOrTag = params.next()?;
-    let trace_type: Option<GethDebugTracingOptions> = params.next()?;
+    let trace_type: Option<GethDebugTracingOptions> = params.optional_next()?;
 
     node.lock()
         .unwrap()
@@ -84,8 +85,59 @@ fn debug_trace_call(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 }
 
 /// debug_traceTransaction
-fn debug_trace_transaction(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!(
-        "API method debug_traceTransaction is not implemented yet"
-    ))
+fn debug_trace_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<TraceResult> {
+    let mut params = params.sequence();
+    let txn_hash: B256 = params.next()?;
+    let txn_hash: Hash = txn_hash.into();
+    let trace_opts: Option<GethDebugTracingOptions> = params.optional_next()?;
+
+    let node = node.lock().unwrap();
+
+    // Get transaction and its receipt to find the block it was included in
+    let receipt = node
+        .get_transaction_receipt(txn_hash)?
+        .ok_or_else(|| anyhow!("transaction not mined: {txn_hash}"))?;
+
+    let block = node
+        .get_block(receipt.block_hash)?
+        .ok_or_else(|| anyhow!("missing block: {}", receipt.block_hash))?;
+
+    let parent = node
+        .get_block(block.parent_hash())?
+        .ok_or_else(|| anyhow!("missing parent block: {}", block.parent_hash()))?;
+
+    let mut state = node
+        .consensus
+        .state()
+        .at_root(parent.state_root_hash().into());
+
+    // Find the transaction's index in the block
+    let txn_index = block
+        .transactions
+        .iter()
+        .position(|&h| h == txn_hash)
+        .ok_or_else(|| anyhow!("transaction not found in specified block"))?;
+
+    // Apply all transactions before the target transaction
+    for &prev_tx_hash in &block.transactions[0..txn_index] {
+        let prev_tx = node
+            .get_transaction_by_hash(prev_tx_hash)?
+            .ok_or_else(|| anyhow!("transaction not found: {prev_tx_hash}"))?;
+
+        state.apply_transaction(prev_tx, block.header, inspector::noop(), false)?;
+    }
+
+    // Get the target transaction
+    let _txn = node
+        .get_transaction_by_hash(txn_hash)?
+        .ok_or_else(|| anyhow!("transaction not found: {txn_hash}"))?;
+
+    // Use default options if none provided
+    let trace_opts = trace_opts.unwrap_or_default();
+
+    // Debug trace the transaction
+    let trace_result =
+        node.debug_trace_transaction(&mut state, txn_hash, txn_index, &block, trace_opts)?;
+
+    trace_result.ok_or_else(|| anyhow!("Failed to trace transaction"))
 }
