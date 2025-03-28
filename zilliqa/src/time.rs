@@ -14,6 +14,7 @@ mod time_impl {
     use std::{error::Error, fmt, ops::Add, sync::Mutex, time::Duration};
 
     use futures::Future;
+    use k256::pkcs8::der::DateTime;
     use serde::{Deserialize, Serialize};
 
     /// A fake implementation of [std::time::SystemTime]. The value of `SystemTime::now` can be controlled with [advance_time].
@@ -55,6 +56,12 @@ mod time_impl {
 
         fn add(self, rhs: Duration) -> Self::Output {
             SystemTime(self.0 + rhs)
+        }
+    }
+
+    impl From<DateTime> for SystemTime {
+        fn from(datetime: DateTime) -> Self {
+            SystemTime(datetime.to_system_time())
         }
     }
 
