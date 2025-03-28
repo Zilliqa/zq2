@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy::eips::BlockId;
+use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,7 @@ pub fn rpc_module(
             ("admin_consensusInfo", consensus_info),
             ("admin_generateCheckpoint", checkpoint),
             ("admin_blockRange", admin_block_range),
+            ("admin_forceView", force_view),
         ]
     )
 }
@@ -84,4 +85,13 @@ fn checkpoint(params: Params, node: &Arc<Mutex<Node>>) -> Result<CheckpointRespo
         hash,
         block: block.number().to_hex(),
     })
+}
+
+fn force_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+    let mut params = params.sequence();
+    let view: U64 = params.next()?;
+    let timeout_at: String = params.next()?;
+    let mut node = node.lock().unwrap();
+    node.consensus.force_view(view.to::<u64>(), timeout_at)?;
+    Ok(true)
 }
