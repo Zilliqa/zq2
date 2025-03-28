@@ -113,6 +113,35 @@ pub struct ApiServer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SyncConfig {
+    /// The maximum number of blocks to have outstanding requests for at a time when syncing.
+    #[serde(default = "max_blocks_in_flight_default")]
+    pub max_blocks_in_flight: usize,
+    /// The maximum number of blocks to request in a single message when syncing.
+    #[serde(default = "block_request_batch_size_default")]
+    pub block_request_batch_size: usize,
+    /// The N number of historical blocks to be kept in the DB during pruning. N >= 300.
+    #[serde(default = "u64_max")]
+    pub prune_interval: u64,
+    /// Lowest block to sync from, during passive-sync.
+    /// Cannot be set if prune_interval is set.
+    #[serde(default = "u64_max")]
+    pub sync_base_height: u64,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        SyncConfig {
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
+            prune_interval: u64_max(),
+            sync_base_height: u64_max(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeConfig {
     /// RPC API endpoints to expose.
     #[serde(default)]
@@ -140,12 +169,6 @@ pub struct NodeConfig {
     /// The maximum number of blocks we will send to another node in a single message.
     #[serde(default = "block_request_limit_default")]
     pub block_request_limit: usize,
-    /// The maximum number of blocks to have outstanding requests for at a time when syncing.
-    #[serde(default = "max_blocks_in_flight_default")]
-    pub max_blocks_in_flight: usize,
-    /// The maximum number of blocks to request in a single message when syncing.
-    #[serde(default = "block_request_batch_size_default")]
-    pub block_request_batch_size: usize,
     /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC. Defaults to no limit.
     #[serde(default = "state_rpc_limit_default")]
     pub state_rpc_limit: usize,
@@ -159,9 +182,9 @@ pub struct NodeConfig {
     /// Maximum allowed RPC response size
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
-    /// The N number of historical blocks to be kept in the DB during pruning. N > 30.
-    #[serde(default = "u64_max")]
-    pub prune_interval: u64,
+    /// Sync configuration
+    #[serde(default)]
+    pub sync: SyncConfig,
 }
 
 impl Default for NodeConfig {
@@ -176,13 +199,16 @@ impl Default for NodeConfig {
             load_checkpoint: None,
             do_checkpoints: false,
             block_request_limit: block_request_limit_default(),
-            max_blocks_in_flight: max_blocks_in_flight_default(),
-            block_request_batch_size: block_request_batch_size_default(),
+            sync: SyncConfig {
+                max_blocks_in_flight: max_blocks_in_flight_default(),
+                block_request_batch_size: block_request_batch_size_default(),
+                sync_base_height: u64_max(),
+                prune_interval: u64_max(),
+            },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
-            prune_interval: u64_max(),
         }
     }
 }
@@ -205,8 +231,16 @@ impl NodeConfig {
         }
 
         // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
-        if self.prune_interval < 300 {
+        if self.sync.prune_interval < 300 {
             return Err(anyhow!("prune_interval must be at least 300",));
+        }
+        // 100 is a reasonable minimum for a node to be useful.
+        if self.sync.block_request_batch_size < 100 {
+            return Err(anyhow!("block_request_batch_size must be at least 100"));
+        }
+        // 1000 would saturate a typical node.
+        if self.sync.max_blocks_in_flight > 1000 {
+            return Err(anyhow!("max_blocks_in_flight must be at most 1000"));
         }
         Ok(())
     }
@@ -508,6 +542,7 @@ pub struct Fork {
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
     pub scilla_block_number_returns_current_block: bool,
     pub scilla_maps_are_encoded_correctly: bool,
+    pub transfer_gas_fee_to_zero_account: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -563,6 +598,10 @@ pub struct ForkDelta {
     /// If true, nested Scilla maps are returned to the Scilla intepreter in the correct format and keys are encoded
     /// properly. If false, Scilla transactions will work but they will be incorrect in undetermined ways.
     pub scilla_maps_are_encoded_correctly: Option<bool>,
+    /// If true, the total gas paid by all transactions in a block is transferred to the zero address.
+    /// This keeps the total supply of the network constant. If false, we still transfer funds to the zero address,
+    /// but with an incorrect gas price of 1 Wei per gas.
+    pub transfer_gas_fee_to_zero_account: Option<bool>,
 }
 
 impl Fork {
@@ -601,6 +640,9 @@ impl Fork {
             scilla_maps_are_encoded_correctly: delta
                 .scilla_maps_are_encoded_correctly
                 .unwrap_or(self.scilla_maps_are_encoded_correctly),
+            transfer_gas_fee_to_zero_account: delta
+                .transfer_gas_fee_to_zero_account
+                .unwrap_or(self.transfer_gas_fee_to_zero_account),
         }
     }
 }
@@ -679,6 +721,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_call_gas_exempt_addrs: vec![],
         scilla_block_number_returns_current_block: true,
         scilla_maps_are_encoded_correctly: true,
+        transfer_gas_fee_to_zero_account: true,
     }
 }
 
@@ -805,6 +848,7 @@ mod tests {
                 scilla_call_gas_exempt_addrs: vec![],
                 scilla_block_number_returns_current_block: None,
                 scilla_maps_are_encoded_correctly: None,
+                transfer_gas_fee_to_zero_account: None,
             }],
             ..Default::default()
         };
@@ -838,6 +882,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -851,6 +896,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
                 },
             ],
             ..Default::default()
@@ -898,6 +944,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -911,6 +958,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
                 },
             ],
             ..Default::default()
@@ -949,6 +997,7 @@ mod tests {
                 scilla_call_gas_exempt_addrs: vec![],
                 scilla_block_number_returns_current_block: true,
                 scilla_maps_are_encoded_correctly: true,
+                transfer_gas_fee_to_zero_account: true,
             },
             forks: vec![],
             ..Default::default()
@@ -975,6 +1024,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -988,6 +1038,7 @@ mod tests {
                     scilla_call_gas_exempt_addrs: vec![],
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
                 },
             ],
             ..Default::default()

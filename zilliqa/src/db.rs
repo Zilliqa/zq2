@@ -3,17 +3,16 @@ use std::{
     fmt::Debug,
     fs::{self, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    ops::{Range, RangeInclusive},
+    ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use alloy::primitives::Address;
 use anyhow::{Context, Result, anyhow};
 use eth_trie::{DB, EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
-use libp2p::PeerId;
 use lru_mem::LruCache;
 use lz4::{Decoder, EncoderBuilder};
 use rusqlite::{
@@ -28,7 +27,6 @@ use crate::{
     exec::{ScillaError, ScillaException, ScillaTransition},
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     state::Account,
-    sync::PeerInfo,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
 };
@@ -337,17 +335,61 @@ impl Db {
             CREATE TABLE IF NOT EXISTS state_trie (key BLOB NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
             ",
         )?;
-        connection.execute_batch(
-            "CREATE TEMP TABLE IF NOT EXISTS sync_metadata (
-            block_hash BLOB NOT NULL UNIQUE,
-            parent_hash BLOB NOT NULL,
-            block_number INTEGER NOT NULL PRIMARY KEY,
-            version INTEGER DEFAULT 0,
-            peer BLOB DEFAULT NULL,
-            rawdata BLOB NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_sync_metadata ON sync_metadata(block_number) WHERE peer IS NOT NULL;",
-        )?;
+        connection.execute_batch("
+            CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL PRIMARY KEY) WITHOUT ROWID;
+        ")?;
+        // No version entries implies we are on version 0.
+        let version = connection
+            .query_row("SELECT MAX(version) FROM schema_version", [], |row| {
+                row.get::<_, Option<u32>>(0)
+            })?
+            .unwrap_or_default();
+
+        if version < 1 {
+            connection.execute_batch(
+                "
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (1);
+
+                ALTER TABLE tip_info ADD COLUMN voted_in_view BOOLEAN NOT NULL DEFAULT FALSE;
+
+                COMMIT;
+            ",
+            )?;
+        }
+
+        if version < 2 {
+            connection.execute_batch(
+                "
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (2);
+
+                CREATE TABLE new_receipts (
+                    tx_hash BLOB NOT NULL REFERENCES transactions (tx_hash),
+                    block_hash BLOB NOT NULL REFERENCES blocks (block_hash),
+                    tx_index INTEGER NOT NULL,
+                    success INTEGER NOT NULL,
+                    gas_used INTEGER NOT NULL,
+                    cumulative_gas_used INTEGER NOT NULL,
+                    contract_address BLOB,
+                    logs BLOB,
+                    transitions BLOB,
+                    accepted INTEGER,
+                    errors BLOB,
+                    exceptions BLOB,
+                    PRIMARY KEY (block_hash, tx_hash)
+                );
+                INSERT INTO new_receipts SELECT * FROM receipts;
+                DROP TABLE receipts;
+                ALTER TABLE new_receipts RENAME TO receipts;
+                CREATE INDEX idx_receipts_block_hash ON receipts (block_hash);
+
+                COMMIT;
+            ",
+            )?;
+        }
 
         Ok(())
     }
@@ -361,161 +403,6 @@ impl Db {
             return Ok(None);
         };
         Ok(Some(base_path.join("checkpoints").into_boxed_path()))
-    }
-
-    /// Returns the lowest block number of stored sync segments
-    pub fn last_sync_block_number(&self) -> Result<u64> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT MIN(block_number) FROM sync_metadata")?
-            .query_row([], |row| row.get(0))
-            .unwrap_or_default())
-    }
-
-    /// Returns the number of stored sync segments
-    pub fn count_sync_segments(&self) -> Result<usize> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT COUNT(block_number) FROM sync_metadata WHERE peer IS NOT NULL")?
-            .query_row([], |row| row.get(0))
-            .optional()?
-            .unwrap_or_default())
-    }
-
-    /// Checks if the stored metadata exists
-    pub fn contains_sync_metadata(&self, block_hash: &Hash) -> Result<bool> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
-            .query_row([block_hash], |row| row.get::<_, Hash>(0))
-            .optional()?
-            .is_some())
-    }
-
-    /// Retrieves bulk metadata information from the given block_hash (inclusive)
-    pub fn get_sync_segment(&self, hash: Hash) -> Result<Vec<Hash>> {
-        let db = self.db.lock().unwrap();
-
-        let mut hashes = Vec::new();
-        let mut block_hash = hash;
-
-        while let Some(parent_hash) = db
-            .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
-            .query_row([block_hash], |row| row.get::<_, Hash>(0))
-            .optional()?
-        {
-            hashes.push(block_hash);
-            block_hash = parent_hash;
-        }
-        Ok(hashes)
-    }
-
-    /// Peeks into the top of the segment stack.
-    pub fn last_sync_segment(&self) -> Result<Option<(BlockHeader, PeerInfo)>> {
-        let db = self.db.lock().unwrap();
-        let r = db.prepare_cached("SELECT rawdata, version, peer FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
-        .query_row([], |row| Ok((
-            serde_json::from_slice(row.get::<_,Vec<u8>>(0)?.as_slice()).unwrap(),
-        PeerInfo {
-            last_used: Instant::now(),
-            score: u32::MAX,
-            version: row.get(1)?,
-            peer_id: PeerId::from_bytes(row.get::<_,Vec<u8>>(2)?.as_slice()).unwrap(),
-        }))).optional()?;
-        Ok(r)
-    }
-
-    /// Pushes a particular segment into the stack.
-    pub fn push_sync_segment(&self, peer: &PeerInfo, meta: &BlockHeader) -> Result<()> {
-        let db = self.db.lock().unwrap();
-        db.prepare_cached(
-                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, version, peer, rawdata) VALUES (:parent_hash, :block_hash, :block_number, :version, :peer, :rawdata)")?
-                .execute(
-                named_params! {
-                    ":parent_hash": meta.qc.block_hash,
-                    ":block_hash": meta.hash,
-                    ":block_number": meta.number,
-                    ":peer": peer.peer_id.to_bytes(),
-                    ":version": peer.version,
-                    ":rawdata": serde_json::to_vec(&meta).unwrap(),
-                },
-            )?;
-        Ok(())
-    }
-
-    /// Bulk inserts a bunch of metadata.
-    pub fn insert_sync_metadata(&self, metas: &Vec<BlockHeader>) -> Result<()> {
-        let mut db = self.db.lock().unwrap();
-        let tx = db.transaction()?;
-
-        for meta in metas {
-            tx.prepare_cached(
-                "INSERT OR REPLACE INTO sync_metadata (parent_hash, block_hash, block_number, rawdata) VALUES (:parent_hash, :block_hash, :block_number, :rawdata)")?
-                .execute(
-                named_params! {
-                    ":parent_hash": meta.qc.block_hash,
-                    ":block_hash": meta.hash,
-                    ":block_number": meta.number,
-                    ":rawdata": serde_json::to_vec(meta).unwrap(),
-            })?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// Empty the metadata table.
-    pub fn empty_sync_metadata(&self) -> Result<()> {
-        self.db
-            .lock()
-            .unwrap()
-            .execute("DELETE FROM sync_metadata", [])?;
-        Ok(())
-    }
-
-    /// Pops a segment from the stack; and bulk removes all metadata associated with it.
-    pub fn pop_sync_segment(&self) -> Result<()> {
-        let mut db = self.db.lock().unwrap();
-        let c = db.transaction()?;
-
-        if let Some(block_hash) = c.prepare_cached("SELECT block_hash FROM sync_metadata WHERE peer IS NOT NULL ORDER BY block_number ASC LIMIT 1")?
-        .query_row([], |row| row.get::<_,Hash>(0)).optional()? {
-            if let Some(parent_hash) = c.prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
-            .query_row([block_hash], |row| row.get(0)).optional()? {
-
-            // update marker
-            c.prepare_cached(
-                "UPDATE sync_metadata SET peer = NULL WHERE block_hash = ?1")?
-                .execute(
-                [block_hash]
-            )?;
-
-            // remove segment                
-            let mut hashes = Vec::new();
-            let mut block_hash = parent_hash;
-            while let Some(parent_hash) = c
-                    .prepare_cached("SELECT parent_hash FROM sync_metadata WHERE block_hash = ?1")?
-                    .query_row([block_hash], |row| row.get::<_, Hash>(0))
-                    .optional()?
-                {
-                    hashes.push(block_hash);
-                    block_hash = parent_hash;
-                }
-
-            for hash in hashes {
-                c.prepare_cached("DELETE FROM sync_metadata WHERE block_hash = ?1")?
-                .execute([hash])?;
-            }
-            }
-        }
-
-        c.commit()?;
-        Ok(())
     }
 
     /// Returns the lowest and highest block numbers of stored blocks
@@ -732,7 +619,7 @@ impl Db {
             self.insert_block_with_db_tx(tx, parent_ref)?;
             self.set_finalized_view_with_db_tx(tx, parent_ref.view())?;
             self.set_high_qc_with_db_tx(tx, block.header.qc)?;
-            self.set_view_with_db_tx(tx, parent_ref.view() + 1)?;
+            self.set_view_with_db_tx(tx, parent_ref.view() + 1, false)?;
             Ok(())
         })?;
 
@@ -785,16 +672,21 @@ impl Db {
             .unwrap_or(None))
     }
 
-    /// Write view and timestamp to table if view is larger than current. Return true if write was successful
-    pub fn set_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<bool> {
+    /// Write view to table if view is larger than current. Return true if write was successful
+    pub fn set_view_with_db_tx(
+        &self,
+        sqlite_tx: &Connection,
+        view: u64,
+        voted: bool,
+    ) -> Result<bool> {
         let res = sqlite_tx
-            .prepare_cached("INSERT INTO tip_info (view) VALUES (?1) ON CONFLICT(_single_row) DO UPDATE SET view = ?1 WHERE tip_info.view IS NULL OR tip_info.view < ?1",)?
-            .execute([view])?;
+            .prepare_cached("INSERT INTO tip_info (view, voted_in_view) VALUES (?1, ?2) ON CONFLICT(_single_row) DO UPDATE SET view = ?1, voted_in_view = ?2 WHERE tip_info.view IS NULL OR tip_info.view < ?1",)?
+            .execute((view, voted))?;
         Ok(res != 0)
     }
 
-    pub fn set_view(&self, view: u64) -> Result<bool> {
-        self.set_view_with_db_tx(&self.db.lock().unwrap(), view)
+    pub fn set_view(&self, view: u64, voted: bool) -> Result<bool> {
+        self.set_view_with_db_tx(&self.db.lock().unwrap(), view, voted)
     }
 
     pub fn get_view(&self) -> Result<Option<u64>> {
@@ -806,6 +698,15 @@ impl Db {
             .query_row((), |row| row.get(0))
             .optional()
             .unwrap_or(None))
+    }
+
+    pub fn get_voted_in_view(&self) -> Result<bool> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT voted_in_view FROM tip_info")?
+            .query_row((), |row| row.get(0))?)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
@@ -942,20 +843,12 @@ impl Db {
         self.insert_transaction_with_db_tx(&self.db.lock().unwrap(), hash, tx)
     }
 
-    pub fn remove_transactions_executed_in_block(&self, block_hash: &Hash) -> Result<()> {
-        // foreign key triggers will take care of receipts and touched_address_index
-        self.db.lock().unwrap().prepare_cached("DELETE FROM transactions WHERE tx_hash IN (SELECT tx_hash FROM receipts WHERE block_hash = ?1)",)?.execute(            
-            [block_hash],
-        )?;
-        Ok(())
-    }
-
     pub fn get_block_hash_reverse_index(&self, tx_hash: &Hash) -> Result<Option<Hash>> {
         Ok(self
             .db
             .lock()
             .unwrap()
-            .prepare_cached("SELECT block_hash FROM receipts WHERE tx_hash = ?1")?
+            .prepare_cached("SELECT r.block_hash FROM receipts r INNER JOIN blocks b ON r.block_hash = b.block_hash WHERE r.tx_hash = ?1 AND b.is_canonical = TRUE")?
             .query_row([tx_hash], |row| row.get(0))
             .optional()?)
     }
@@ -970,7 +863,7 @@ impl Db {
         hash: Hash,
         block: &Block,
     ) -> Result<()> {
-        sqlite_tx.prepare_cached(            "INSERT INTO blocks
+        sqlite_tx.prepare_cached("INSERT INTO blocks
         (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, is_canonical)
     VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, TRUE)",)?.execute(
             named_params! {
@@ -1070,7 +963,9 @@ impl Db {
             .db
             .lock()
             .unwrap()
-            .prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
+            .prepare_cached(
+                "SELECT tx_hash FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC",
+            )?
             .query_map([block.header.hash], |row| row.get(0))?
             .collect::<Result<Vec<Hash>, _>>()?;
         block.transactions = transaction_hashes;
@@ -1113,16 +1008,6 @@ impl Db {
             .query_row([block_hash], |row| row.get::<_, i64>(0))
             .optional()?
             .is_some())
-    }
-
-    fn make_view_range(row: &Row) -> rusqlite::Result<Range<u64>> {
-        // Add one to end because the range returned from SQL is inclusive.
-        let start: u64 = row.get(0)?;
-        let end_inc: u64 = row.get(1)?;
-        Ok(Range {
-            start,
-            end: end_inc + 1,
-        })
     }
 
     fn make_receipt(row: &Row) -> rusqlite::Result<TransactionReceipt> {
@@ -1183,69 +1068,8 @@ impl Db {
         Ok(self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
     }
 
-    pub fn remove_transaction_receipts_in_block(&self, block_hash: &Hash) -> Result<()> {
-        self.db
-            .lock()
-            .unwrap()
-            .prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
-            .execute([block_hash])?;
-        Ok(())
-    }
-
     pub fn get_total_transaction_count(&self) -> Result<usize> {
         Ok(0)
-    }
-
-    /// Retrieve a list of the views in our db.
-    /// This is a bit horrific. What we actually do here is to find the view lower and upper bounds for the contiguous block ranges in the database.
-    /// See block_store.rs::availability() for details.
-    pub fn get_view_ranges(&self) -> Result<Vec<Range<u64>>> {
-        // The island field is technically redundant, but it helps with debugging.
-        //
-        // First off, note that this function returns all available blocks - it is up to the ultimate receiver of those blocks
-        // to decide if they are _canonical_ blocks or not. We take no view and serve everything we have.
-        //
-        // This query:
-        //
-        // R1 = SELECT height, MIN(view) as vlb, MAX(view) as vub from blocks GROUP BY height
-        //   - Take everything in the blocks table, group by height and retrieve the max and min view for each block height.
-        //
-        // R2 = SELECT height, vlb, vub, ROW_NUMBER() OVER (ORDER BY height) AS rank FROM R1
-        //   - order the result by height, and find me the height, vlb, vub, and row number in the results (which we call rank).
-        //   (OVER is sqlite magic -see docs for details)
-        //
-        // R3 = SELECT MIN(vlb), MAX(vub), MIN(height), MAX(height), height-rank AS island FROM R2 GROUP BY island ORDER BY MIN(height) ASC
-        //   - now group R2 by island number (i.e contiguous range of heights), and select the max view, min view, max height and min height for this range.
-        //     Return this list ordered by MIN(height) for convenience.
-        //
-        // And now you have the set of ranges you can advertise that you can serve. You could get the same result by SELECT height FROM blocks, putting the results in
-        // a RangeMap and then iterating the resulting ranges - this query just makes the database do the work (and returns the associated views, since block requests
-        // are made by view).
-        Ok(self.db.lock().unwrap()
-            .prepare_cached("SELECT MIN(vlb), MAX(vub), MIN(height),MAX(height),height-rank AS island FROM ( SELECT height,vlb,vub,ROW_NUMBER() OVER (ORDER BY height) AS rank FROM
- (SELECT height,MIN(view) as vlb, MAX(view) as vub from blocks GROUP BY height ) )  GROUP BY island ORDER BY MIN(height) ASC")?
-           .query_map([], Self::make_view_range)?.collect::<Result<Vec<_>,_>>()?)
-    }
-
-    /// Forget about a range of blocks; this saves space, but also allows us to test our block fetch algorithm.
-    pub fn forget_block_range(&self, blocks: Range<u64>) -> Result<()> {
-        self.with_sqlite_tx(move |tx| {
-            // Remove everything!
-            tx.prepare_cached("DELETE FROM tip_info WHERE finalized_view IN (SELECT view FROM blocks WHERE height >= :low AND height < :high)",)?.execute(
-                       named_params! {
-                           ":low" : blocks.start,
-                           ":high" : blocks.end } )?;
-            tx.prepare_cached("DELETE FROM receipts WHERE block_hash IN (SELECT block_hash FROM blocks WHERE height >= :low AND height < :high)",)?.execute(
-                       named_params! {
-                           ":low": blocks.start,
-                           ":high": blocks.end })?;
-            tx.prepare_cached(                "DELETE FROM blocks WHERE height >= :low AND height < :high",)?.execute(
-                named_params! {
-                    ":low": blocks.start,
-                    ":high": blocks.end },
-            )?;
-            Ok(())
-        })
     }
 }
 

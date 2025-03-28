@@ -24,16 +24,15 @@ use zilliqa::{
 
 use crate::{Network, Wallet, deploy_contract};
 
-pub async fn zilliqa_account(network: &mut Network) -> (schnorr::SecretKey, H160) {
-    zilliqa_account_with_funds(network, 1000 * 10u128.pow(18)).await
+pub async fn zilliqa_account(network: &mut Network, wallet: &Wallet) -> (schnorr::SecretKey, H160) {
+    zilliqa_account_with_funds(network, wallet, 1000 * 10u128.pow(18)).await
 }
 
 pub async fn zilliqa_account_with_funds(
     network: &mut Network,
+    wallet: &Wallet,
     funds: u128,
 ) -> (schnorr::SecretKey, H160) {
-    let wallet = network.genesis_wallet().await;
-
     // Generate a Zilliqa account.
     let secret_key = schnorr::SecretKey::random(network.rng.lock().unwrap().deref_mut());
     let public_key = secret_key.public_key();
@@ -163,6 +162,7 @@ async fn issue_create_transaction(
 #[allow(clippy::too_many_arguments)]
 async fn send_transaction(
     network: &mut Network,
+    wallet: &Wallet,
     secret_key: &schnorr::SecretKey,
     nonce: u64,
     to_addr: ToAddr,
@@ -171,7 +171,6 @@ async fn send_transaction(
     code: Option<&str>,
     data: Option<&str>,
 ) -> (Option<H160>, Value) {
-    let wallet = network.random_wallet().await;
     let public_key = secret_key.public_key();
 
     // Get the gas price via the Zilliqa API.
@@ -183,7 +182,7 @@ async fn send_transaction(
     let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
 
     let response = issue_create_transaction(
-        &wallet,
+        wallet,
         &public_key,
         gas_price,
         network,
@@ -208,7 +207,7 @@ async fn send_transaction(
                     .await;
                 response.is_ok()
             },
-            100,
+            400,
         )
         .await
         .unwrap();
@@ -234,6 +233,7 @@ async fn send_transaction(
 #[allow(clippy::too_many_arguments)]
 async fn send_transaction_for_status(
     network: &mut Network,
+    wallet: &Wallet,
     secret_key: &schnorr::SecretKey,
     nonce: u64,
     to_addr: H160,
@@ -242,7 +242,6 @@ async fn send_transaction_for_status(
     code: Option<&str>,
     data: Option<&str>,
 ) -> (u32, Option<H160>, Value) {
-    let wallet = network.random_wallet().await;
     let public_key = secret_key.public_key();
 
     // Get the gas price via the Zilliqa API.
@@ -399,12 +398,14 @@ pub fn scilla_test_contract_data(address: H160) -> String {
 
 pub async fn deploy_scilla_contract(
     network: &mut Network,
+    wallet: &Wallet,
     sender_secret_key: &schnorr::SecretKey,
     code: &str,
     data: &str,
 ) -> H160 {
     let (contract_address, txn) = send_transaction(
         network,
+        wallet,
         sender_secret_key,
         1,
         ToAddr::Address(H160::zero()),
@@ -415,9 +416,7 @@ pub async fn deploy_scilla_contract(
     )
     .await;
 
-    let api_contract_address = network
-        .random_wallet()
-        .await
+    let api_contract_address = wallet
         .provider()
         .request("GetContractAddressFromTransactionID", [&txn["ID"]])
         .await
@@ -430,7 +429,7 @@ pub async fn deploy_scilla_contract(
 // Returns a pair (code, message) if there was one.
 #[allow(clippy::too_many_arguments)]
 async fn run_create_transaction_api_for_error(
-    network: &mut Network,
+    wallet: &Wallet,
     secret_key: &schnorr::SecretKey,
     nonce: u64,
     to_addr: ToAddr,
@@ -441,7 +440,6 @@ async fn run_create_transaction_api_for_error(
     chain_id: Option<u32>,
     bad_signature: bool,
 ) -> Option<(i64, String)> {
-    let wallet = network.random_wallet().await;
     let public_key = secret_key.public_key();
 
     // Get the gas price via the Zilliqa API.
@@ -518,8 +516,8 @@ async fn run_create_transaction_api_for_error(
 
 #[zilliqa_macros::test]
 async fn create_transaction_bad_checksum(mut network: Network) {
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
     let public_key = secret_key.public_key();
 
     // Get the gas price via the Zilliqa API.
@@ -549,9 +547,9 @@ async fn create_transaction_bad_checksum(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn create_transaction_zil_checksum(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
@@ -559,6 +557,7 @@ async fn create_transaction_zil_checksum(mut network: Network) {
 
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::StringVal("0x00000000000000000000000000000000deADbeef".to_string()),
@@ -588,15 +587,16 @@ async fn create_transaction_zil_checksum(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn create_transaction(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -626,15 +626,16 @@ async fn create_transaction(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_balance_via_eth_api(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _) = zilliqa_account(&mut network).await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -661,13 +662,14 @@ async fn get_balance_via_eth_api(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn create_transaction_errors(mut network: Network) {
-    let (secret_key, _) = zilliqa_account(&mut network).await;
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     {
         let (code, msg) = run_create_transaction_api_for_error(
-            &mut network,
+            &wallet,
             &secret_key,
             0,
             ToAddr::Address(to_addr),
@@ -687,7 +689,7 @@ async fn create_transaction_errors(mut network: Network) {
 
     {
         let (code, msg) = run_create_transaction_api_for_error(
-            &mut network,
+            &wallet,
             &secret_key,
             1,
             ToAddr::Address(to_addr),
@@ -707,7 +709,7 @@ async fn create_transaction_errors(mut network: Network) {
 
     {
         let (code, msg) = run_create_transaction_api_for_error(
-            &mut network,
+            &wallet,
             &secret_key,
             1,
             ToAddr::Address(to_addr),
@@ -728,9 +730,9 @@ async fn create_transaction_errors(mut network: Network) {
     {
         // Too little for the deposit.
         let (no_funds_secret_key, _) =
-            zilliqa_account_with_funds(&mut network, 10u128.pow(6)).await;
+            zilliqa_account_with_funds(&mut network, &wallet, 10u128.pow(6)).await;
         let (code, msg) = run_create_transaction_api_for_error(
-            &mut network,
+            &wallet,
             &no_funds_secret_key,
             1,
             ToAddr::Address(to_addr),
@@ -750,10 +752,10 @@ async fn create_transaction_errors(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_transaction(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
     // Create a Zilliqa account and get its secret key and address
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     // Define the recipient address
     let address_string_w_prefix = "0x00000000000000000000000000000000deadbeef";
@@ -762,6 +764,7 @@ async fn get_transaction(mut network: Network) {
     // Send a transaction
     let (_contract_address, returned_transaction) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -832,9 +835,10 @@ async fn get_transaction(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn create_transaction_high_gas_limit(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, address) = zilliqa_account_with_funds(&mut network, 60 * 10u128.pow(18)).await;
+    let (secret_key, address) =
+        zilliqa_account_with_funds(&mut network, &wallet, 60 * 10u128.pow(18)).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
@@ -855,6 +859,7 @@ async fn create_transaction_high_gas_limit(mut network: Network) {
     println!("max_gas {max_gas_we_can_pay_for}");
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -892,11 +897,12 @@ async fn create_transaction_high_gas_limit(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn zil_with_insufficient_gas_should_fail(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
     // Create a contract and check for lack of deposit rejection.
-    let (deployer_key, _) = zilliqa_account_with_funds(&mut network, 60 * 10u128.pow(18)).await;
+    let (deployer_key, _) =
+        zilliqa_account_with_funds(&mut network, &wallet, 60 * 10u128.pow(18)).await;
 
     let code = scilla_test_contract_code();
-    let wallet = network.random_wallet().await;
     let gas_price_str: String = wallet
         .provider()
         .request("GetMinimumGasPrice", ())
@@ -908,9 +914,10 @@ async fn zil_with_insufficient_gas_should_fail(mut network: Network) {
     let zil_value: u128 = (301u128 * gas_price) / 10u128.pow(6);
     let amount_to_request: u128 = zil_value * 10u128.pow(6);
     let (caller_key, caller_address) =
-        zilliqa_account_with_funds(&mut network, amount_to_request).await;
+        zilliqa_account_with_funds(&mut network, &wallet, amount_to_request).await;
     let data = scilla_test_contract_data(caller_address);
-    let contract_address = deploy_scilla_contract(&mut network, &deployer_key, &code, &data).await;
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &deployer_key, &code, &data).await;
     let call = r#"{
         "_tag": "setHello",
         "params": [
@@ -925,6 +932,7 @@ async fn zil_with_insufficient_gas_should_fail(mut network: Network) {
     let max_gas_we_can_pay_for = (50u128 * 10u128.pow(12)) / gas_price;
     let (status, addr, _) = send_transaction_for_status(
         &mut network,
+        &wallet,
         &caller_key,
         1,
         contract_address,
@@ -962,23 +970,21 @@ async fn zil_with_insufficient_gas_should_fail(mut network: Network) {
 // once it invokes Scilla. When many tests are run in parallel, this results in "Too many open files" errors.
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn create_contract(mut network: Network) {
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
-    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
 
-    let api_code: Value = network
-        .random_wallet()
-        .await
+    let api_code: Value = wallet
         .provider()
         .request("GetSmartContractCode", [contract_address])
         .await
         .unwrap();
     assert_eq!(code, api_code["code"]);
 
-    let api_data: Vec<Value> = network
-        .random_wallet()
-        .await
+    let api_data: Vec<Value> = wallet
         .provider()
         .request("GetSmartContractInit", [contract_address])
         .await
@@ -991,7 +997,6 @@ async fn create_contract(mut network: Network) {
             .all(|d| api_data.contains(d))
     );
 
-    let wallet = network.random_wallet().await;
     let old_balance: u128 = {
         let bal_resp: Value = wallet
             .provider()
@@ -1017,6 +1022,7 @@ async fn create_contract(mut network: Network) {
     }"#;
     let (_, txn) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         2,
         ToAddr::Address(contract_address),
@@ -1050,6 +1056,7 @@ async fn create_contract(mut network: Network) {
     }"#;
     let (_, txn) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         3,
         ToAddr::Address(contract_address),
@@ -1064,9 +1071,7 @@ async fn create_contract(mut network: Network) {
         assert_eq!(event["params"][0]["value"], "foobar");
     }
 
-    let state: serde_json::Value = network
-        .random_wallet()
-        .await
+    let state: serde_json::Value = wallet
         .provider()
         .request("GetSmartContractState", [contract_address])
         .await
@@ -1077,7 +1082,7 @@ async fn create_contract(mut network: Network) {
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn scilla_precompiles(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    let (secret_key, _) = zilliqa_account(&mut network).await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
 
     let code = r#"
         scilla_version 0
@@ -1125,6 +1130,7 @@ async fn scilla_precompiles(mut network: Network) {
 
     let (contract_address, _) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(H160::zero()),
@@ -1311,7 +1317,7 @@ async fn scilla_precompiles(mut network: Network) {
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn mutate_evm_then_read_from_scilla(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    let (secret_key, _) = zilliqa_account(&mut network).await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
 
     let code = r#"
         scilla_version 0
@@ -1339,6 +1345,7 @@ async fn mutate_evm_then_read_from_scilla(mut network: Network) {
 
     let (contract_address, _) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(H160::zero()),
@@ -1415,7 +1422,7 @@ async fn mutate_evm_then_read_from_scilla(mut network: Network) {
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn interop_send_funds_from_scilla(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    let (secret_key, _) = zilliqa_account(&mut network).await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
 
     let code = r#"
         scilla_version 0
@@ -1448,6 +1455,7 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
 
     let (contract_address, _) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(H160::zero()),
@@ -1520,7 +1528,7 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn scilla_call_with_bad_gas(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    let (secret_key, _) = zilliqa_account(&mut network).await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
 
     let code = r#"
         scilla_version 0
@@ -1563,6 +1571,7 @@ async fn scilla_call_with_bad_gas(mut network: Network) {
 
     let (contract_address, _) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(H160::zero()),
@@ -1847,13 +1856,14 @@ async fn get_tx_block_verbose(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_smart_contract_init(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
     // Deploy a Scilla contract
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
-    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
 
     // Test the success case
     let response: Value = wallet
@@ -1964,15 +1974,16 @@ async fn get_current_ds_epoch(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn ds_block_listing(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2026,13 +2037,14 @@ async fn get_tx_block_rate_0(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_tx_block_rate_1(mut network: Network) {
-    let wallet = network.random_wallet().await;
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2054,80 +2066,6 @@ async fn get_tx_block_rate_1(mut network: Network) {
     let returned = zilliqa::api::types::zil::TXBlockRateResult::deserialize(&response).unwrap();
 
     assert!(returned.rate > 0.0, "Block rate should be positive");
-}
-
-#[zilliqa_macros::test]
-async fn tx_block_listing(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
-
-    // Create enough blocks to have multiple pages
-    for i in 0..25 {
-        let (secret_key, _) = zilliqa_account(&mut network).await;
-
-        let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
-            .parse()
-            .unwrap();
-        send_transaction(
-            &mut network,
-            &secret_key,
-            1,
-            ToAddr::Address(to_addr),
-            200u128 * 10u128.pow(12),
-            50_000,
-            None,
-            None,
-        )
-        .await;
-
-        network.run_until_block_finalized(i, 50).await.unwrap();
-    }
-
-    let total_blocks = network
-        .get_node(0)
-        .get_latest_finalized_block_number()
-        .unwrap();
-    let expected_pages = (total_blocks / 10) + if total_blocks % 10 != 0 { 1 } else { 0 };
-
-    // Get first page
-    let response1: Value = wallet
-        .provider()
-        .request("TxBlockListing", [1])
-        .await
-        .expect("Failed to call TxBlockListing API");
-
-    let result1 = zilliqa::api::types::zil::TxBlockListingResult::deserialize(&response1).unwrap();
-
-    // Verify pagination info
-    assert_eq!(result1.max_pages, expected_pages);
-
-    // Get second page
-    let response2: Value = wallet
-        .provider()
-        .request("TxBlockListing", [2])
-        .await
-        .expect("Failed to call TxBlockListing API");
-
-    let result2 = zilliqa::api::types::zil::TxBlockListingResult::deserialize(&response2).unwrap();
-
-    // Verify ordering within page (should be descending)
-    for i in 1..result1.data.len() {
-        assert!(result1.data[i - 1].block_num > result1.data[i].block_num);
-    }
-
-    // Verify ordering across pages
-    if !result2.data.is_empty() {
-        assert!(result1.data.last().unwrap().block_num > result2.data[0].block_num);
-    }
-
-    // Test invalid page numbers
-    let response_zero: Result<Value, _> = wallet.provider().request("TxBlockListing", [0]).await;
-    assert!(response_zero.is_err());
-
-    let response_too_high: Result<Value, _> = wallet
-        .provider()
-        .request("TxBlockListing", [expected_pages + 1])
-        .await;
-    assert!(response_too_high.is_err());
 }
 
 #[zilliqa_macros::test]
@@ -2178,9 +2116,9 @@ async fn get_tx_rate_0(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_tx_rate_1(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     network.run_until_block_finalized(1u64, 50).await.unwrap();
 
@@ -2189,6 +2127,7 @@ async fn get_tx_rate_1(mut network: Network) {
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2238,15 +2177,16 @@ async fn get_txns_for_tx_block_ex_0(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn test_simulate_transactions(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2290,13 +2230,14 @@ async fn test_simulate_transactions(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_txns_for_tx_block_ex_1(mut network: Network) {
-    let wallet = network.random_wallet().await;
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2334,15 +2275,16 @@ async fn get_txns_for_tx_block_ex_1(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_txns_for_tx_block_0(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2389,15 +2331,16 @@ async fn get_txns_for_tx_block_0(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2429,15 +2372,16 @@ async fn get_txn_bodies_for_tx_block_0(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2473,15 +2417,16 @@ async fn get_txn_bodies_for_tx_block_1(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2519,15 +2464,16 @@ async fn get_txn_bodies_for_tx_block_ex_0(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_txn_bodies_for_tx_block_ex_1(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2622,15 +2568,16 @@ async fn get_recent_transactions_0(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_recent_transactions_1(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2643,13 +2590,14 @@ async fn get_recent_transactions_1(mut network: Network) {
 
     network.run_until_block_finalized(1u64, 50).await.unwrap();
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2784,15 +2732,16 @@ async fn get_num_txns_ds_epoch_0(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_num_txns_ds_epoch_1(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2805,13 +2754,14 @@ async fn get_num_txns_ds_epoch_1(mut network: Network) {
 
     network.run_until_block_finalized(1u64, 50).await.unwrap();
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2864,15 +2814,16 @@ async fn get_num_txns_tx_epoch_0(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_num_txns_tx_epoch_1(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -2885,13 +2836,14 @@ async fn get_num_txns_tx_epoch_1(mut network: Network) {
 
     network.run_until_block_finalized(1u64, 50).await.unwrap();
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -3106,23 +3058,21 @@ async fn get_sharding_structure(mut network: Network) {
 // once it invokes Scilla. When many tests are run in parallel, this results in "Too many open files" errors.
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn get_smart_contract_sub_state(mut network: Network) {
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
-    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
 
-    let api_code: Value = network
-        .random_wallet()
-        .await
+    let api_code: Value = wallet
         .provider()
         .request("GetSmartContractCode", [contract_address])
         .await
         .unwrap();
     assert_eq!(code, api_code["code"]);
 
-    let api_data: Vec<Value> = network
-        .random_wallet()
-        .await
+    let api_data: Vec<Value> = wallet
         .provider()
         .request("GetSmartContractInit", [contract_address])
         .await
@@ -3147,6 +3097,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     }"#;
     let (_, txn) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         2,
         ToAddr::Address(contract_address),
@@ -3166,6 +3117,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     }"#;
     let (_, txn) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         3,
         ToAddr::Address(contract_address),
@@ -3182,9 +3134,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
 
     network.run_until_block_finalized(2u64, 50).await.unwrap();
 
-    let state: serde_json::Value = network
-        .random_wallet()
-        .await
+    let state: serde_json::Value = wallet
         .provider()
         .request("GetSmartContractState", [contract_address])
         .await
@@ -3192,9 +3142,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     assert_eq!(state["welcome_msg"], "foobar");
 
     let empty_string_vec: Vec<String> = vec![]; // Needed for type annotation
-    let substate0: serde_json::Value = network
-        .random_wallet()
-        .await
+    let substate0: serde_json::Value = wallet
         .provider()
         .request(
             "GetSmartContractSubState",
@@ -3204,9 +3152,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
         .expect("Failed to call GetSmartContractSubState API");
     assert_eq!(substate0, state);
 
-    let substate1: serde_json::Value = network
-        .random_wallet()
-        .await
+    let substate1: serde_json::Value = wallet
         .provider()
         .request(
             "GetSmartContractSubState",
@@ -3217,9 +3163,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     assert_eq!(substate1["welcome_msg"], "foobar");
     assert!(substate1.get("welcome_map").is_none());
 
-    let substate2: serde_json::Value = network
-        .random_wallet()
-        .await
+    let substate2: serde_json::Value = wallet
         .provider()
         .request(
             "GetSmartContractSubState",
@@ -3236,11 +3180,13 @@ async fn get_smart_contract_sub_state(mut network: Network) {
 
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn nested_maps_insert_removal(mut network: Network) {
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
 
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
-    let contract_address = deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
 
     // Set nested map to some value
     {
@@ -3257,6 +3203,7 @@ async fn nested_maps_insert_removal(mut network: Network) {
 
         let (_, txn) = send_transaction(
             &mut network,
+            &wallet,
             &secret_key,
             2,
             ToAddr::Address(contract_address),
@@ -3278,6 +3225,7 @@ async fn nested_maps_insert_removal(mut network: Network) {
     }"#;
         let (_, txn) = send_transaction(
             &mut network,
+            &wallet,
             &secret_key,
             3,
             ToAddr::Address(contract_address),
@@ -3302,6 +3250,7 @@ async fn nested_maps_insert_removal(mut network: Network) {
 
         let (_, txn) = send_transaction(
             &mut network,
+            &wallet,
             &secret_key,
             4,
             ToAddr::Address(contract_address),
@@ -3323,6 +3272,7 @@ async fn nested_maps_insert_removal(mut network: Network) {
     }"#;
         let (_, txn) = send_transaction(
             &mut network,
+            &wallet,
             &secret_key,
             5,
             ToAddr::Address(contract_address),
@@ -3357,15 +3307,16 @@ async fn get_state_proof(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn get_transaction_status(mut network: Network) {
-    let wallet = network.random_wallet().await;
+    let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     let (_contract_address_1, returned_transaction_1) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -3382,13 +3333,14 @@ async fn get_transaction_status(mut network: Network) {
 
     network.run_until_block_finalized(1u64, 50).await.unwrap();
 
-    let (secret_key, _address) = zilliqa_account(&mut network).await;
+    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
     let (_contract_address_2, returned_transaction_2) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         1,
         ToAddr::Address(to_addr),
@@ -3504,7 +3456,8 @@ async fn get_num_tx_blocks_structure(mut network: Network) {
 
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn return_map_and_parse(mut network: Network) {
-    let (secret_key, _) = zilliqa_account(&mut network).await;
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
 
     let code = r#"
         scilla_version 0
@@ -3544,7 +3497,8 @@ async fn return_map_and_parse(mut network: Network) {
         }
     ]"#;
 
-    let contract_address = deploy_scilla_contract(&mut network, &secret_key, code, data).await;
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, code, data).await;
 
     // Set nested map to some value
     let call = r#"{
@@ -3570,6 +3524,7 @@ async fn return_map_and_parse(mut network: Network) {
 
     let (_, _) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         2,
         ToAddr::Address(contract_address),
@@ -3594,6 +3549,7 @@ async fn return_map_and_parse(mut network: Network) {
 
     let (_, txn) = send_transaction(
         &mut network,
+        &wallet,
         &secret_key,
         3,
         ToAddr::Address(contract_address),
