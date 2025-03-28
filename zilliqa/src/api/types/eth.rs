@@ -202,7 +202,7 @@ impl Header {
 }
 
 /// A transaction object, returned by the Ethereum API.
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
     #[serde(serialize_with = "option_hex")]

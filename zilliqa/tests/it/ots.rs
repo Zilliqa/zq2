@@ -43,6 +43,7 @@ async fn search_transactions(
 #[zilliqa_macros::test]
 async fn search_transactions_evm(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+    network.run_until_block(&wallet, 2.into(), 70).await;
 
     let (hash, caller_abi) = deploy_contract(
         "tests/it/contracts/CallingContract.sol",
@@ -88,6 +89,7 @@ async fn search_transactions_evm(mut network: Network) {
 #[zilliqa_macros::test]
 async fn search_transactions_paging(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+    network.run_until_block(&wallet, 2.into(), 70).await;
 
     // Generate 16 transactions.
     let to = H160::random_using(network.rng.lock().unwrap().deref_mut());
@@ -189,6 +191,7 @@ async fn contract_creator(mut network: Network) {
     }
 
     let wallet = network.genesis_wallet().await;
+    network.run_until_block(&wallet, 2.into(), 70).await;
 
     // EOAs have no creator
     assert_eq!(get_contract_creator(&wallet, wallet.address()).await, None);
@@ -241,6 +244,7 @@ async fn trace_transaction(mut network: Network) {
     }
 
     let wallet = network.genesis_wallet().await;
+    network.run_until_block(&wallet, 2.into(), 70).await;
 
     let (hash, caller_abi) = deploy_contract(
         "tests/it/contracts/CallingContract.sol",
@@ -309,6 +313,7 @@ async fn trace_transaction(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_transaction_error(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+    network.run_until_block(&wallet, 2.into(), 70).await;
 
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/RevertMe.sol",

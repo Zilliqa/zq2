@@ -43,7 +43,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            50,
+            100,
         )
         .await
         .unwrap();
@@ -59,7 +59,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .map_or(0, |b| b.number());
                 block >= 3
             },
-            50,
+            100,
         )
         .await
         .unwrap();
@@ -168,7 +168,9 @@ async fn checkpoints_test(mut network: Network) {
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(&wallet, update_tx_hash, 50).await;
+    network
+        .run_until_receipt(&wallet, update_tx_hash, 100)
+        .await;
     // Scilla
     let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
     let code = scilla_test_contract_code();

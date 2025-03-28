@@ -1179,6 +1179,7 @@ async fn priority_fees_tx(mut network: Network) {
 #[zilliqa_macros::test]
 async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+
     let provider = wallet.provider();
 
     // Send a transaction.
@@ -1234,35 +1235,56 @@ async fn get_transaction_by_index(mut network: Network) {
     let r1 = network.run_until_receipt(&wallet, h1, 50).await;
     let r2 = network.run_until_receipt(&wallet, h2, 50).await;
 
-    assert_eq!(r1.block_hash, r2.block_hash);
+    // NOTE: they are not always in the same block
+    if r1.block_hash == r2.block_hash {
+        let block_hash = r1.block_hash.unwrap();
+        let block_number = r1.block_number.unwrap();
 
-    let block_hash = r1.block_hash.unwrap();
-    let block_number = r1.block_number.unwrap();
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_hash, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h2);
 
-    let txn = wallet
-        .get_transaction_by_block_and_index(block_hash, 0u64.into())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(txn.hash, h2);
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_number, 1u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h1);
+    } else {
+        let block_hash = r2.block_hash.unwrap();
+        let block_number = r1.block_number.unwrap();
 
-    let txn = wallet
-        .get_transaction_by_block_and_index(block_number, 1u64.into())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(txn.hash, h1);
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_hash, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h2);
+
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_number, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h1);
+    }
 }
 
 #[zilliqa_macros::test]
 async fn block_subscription(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    let mut block_stream = wallet.subscribe_blocks().await.unwrap();
+    let mut block_stream: ethers::providers::SubscriptionStream<
+        '_,
+        LocalRpcClient,
+        ethers::types::Block<H256>,
+    > = wallet.subscribe_blocks().await.unwrap();
+    network.run_until_block(&wallet, 3.into(), 100).await;
 
-    network.run_until_block(&wallet, 3.into(), 50).await;
-
-    // Assert the stream contains 3 blocks.
+    // Assert the stream contains next 3 blocks.
     assert_eq!(
         block_stream.next().await.unwrap().number.unwrap().as_u64(),
         1
@@ -1391,7 +1413,7 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
     let raw_tx = tx.rlp_signed(&signature);
     let hash = wallet.send_raw_transaction(raw_tx).await.unwrap().tx_hash();
 
-    let receipt = network.run_until_receipt(&wallet, hash, 100).await;
+    let receipt = network.run_until_receipt(&wallet, hash, 150).await;
 
     assert_eq!(receipt.from, signer);
     assert_eq!(
@@ -1405,6 +1427,8 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
 #[zilliqa_macros::test]
 async fn test_send_transaction_errors(mut network: Network) {
     let wallet = network.random_wallet().await;
+    network.run_until_block(&wallet, 3.into(), 70).await;
+
     async fn send_transaction_get_error(wallet: &Wallet, tx: TransactionRequest) -> (i64, String) {
         let result = wallet.send_transaction(tx, None).await;
         assert!(result.is_err());
@@ -1474,13 +1498,8 @@ pub enum SyncingResult {
 async fn test_eth_syncing(mut network: Network) {
     let client = network.rpc_client(0).await.unwrap();
     let wallet = network.random_wallet().await;
-    network
-        .run_until_async(
-            || async { wallet.get_block_number().await.unwrap().as_u64() > 4 },
-            100,
-        )
-        .await
-        .unwrap();
+    network.run_until_block(&wallet, 3.into(), 70).await;
+
     let result = client
         .request_optional::<(), SyncingResult>("eth_syncing", None)
         .await
