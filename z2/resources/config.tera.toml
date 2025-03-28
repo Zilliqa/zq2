@@ -54,7 +54,3 @@ consensus.forks = [
     {%- endfor %}
 ]
 {%- endif %}
-
-{%- if proto_network_persistence_block_height %}
-proto_network_persistence_block_height = {{ proto_network_persistence_block_height }}
-{%- endif %}

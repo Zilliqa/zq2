@@ -31,7 +31,7 @@ use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
-    cfg::NodeConfig,
+    cfg::{ForkName, NodeConfig},
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::Db,
@@ -202,11 +202,15 @@ impl Node {
             local_channel: local_sender_channel,
             request_id: RequestId::default(),
         };
+        let executable_blocks_height = config
+            .consensus
+            .get_forks()?
+            .find_height_fork_first_activated(ForkName::ExecutableBlocks);
         let db = Arc::new(Db::new(
             config.data_dir.as_ref(),
             config.eth_chain_id,
             config.state_cache_size,
-            config.proto_network_persistence_block_height,
+            executable_blocks_height,
         )?);
         let node = Node {
             config: config.clone(),
