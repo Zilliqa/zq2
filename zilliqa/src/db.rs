@@ -360,6 +360,11 @@ impl Db {
         }
 
         if version < 2 {
+            // Increase performance for large table migration
+            connection.pragma_update(None, "synchronous", "OFF")?;
+            connection.pragma_update(None, "journal_mode", "OFF")?;
+            connection.pragma_update(None, "cache_size", 1_000_000_000)?;
+
             connection.execute_batch(
                 "
                 BEGIN;
@@ -389,6 +394,11 @@ impl Db {
                 COMMIT;
             ",
             )?;
+
+            connection.pragma_update(None, "synchronous", "NORMAL")?;
+            connection.pragma_update(None, "journal_mode", "WAL")?;
+            let page_size: i32 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
+            connection.pragma_update(None, "cache_size", (1 << 28) / page_size)?;
         }
 
         Ok(())
