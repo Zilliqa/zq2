@@ -253,7 +253,7 @@ impl Db {
                 .pragma_update_and_check(None, "journal_size_limit", 1 << 25, |r| r.get(0))?;
 
         // cache 1-days data (256MB) in-memory
-        connection.pragma_update(None, "cache_size", (1 << 28) / page_size)?;
+        connection.pragma_update(None, "cache_size", 1 << 26)?;
         let cache_size: i32 = connection.pragma_query_value(None, "cache_size", |r| r.get(0))?;
 
         // increase size of prepared cache
@@ -384,8 +384,8 @@ impl Db {
                     errors BLOB,
                     exceptions BLOB,
                     PRIMARY KEY (block_hash, tx_hash)
-                );
-                INSERT INTO new_receipts SELECT * FROM receipts;
+                ) WITHOUT ROWID;
+                INSERT INTO new_receipts SELECT * FROM receipts ORDER BY block_hash ASC, tx_hash ASC;
                 DROP TABLE receipts;
                 ALTER TABLE new_receipts RENAME TO receipts;
                 CREATE INDEX idx_receipts_block_hash ON receipts (block_hash);
