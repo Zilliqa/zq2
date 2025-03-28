@@ -19,8 +19,8 @@ use alloy::{
     },
 };
 use anyhow::{Result, anyhow};
-use itertools::Itertools;
 use libp2p::{PeerId, request_response::OutboundFailure};
+use rand::RngCore;
 use revm::{Inspector, primitives::ExecutionResult};
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
@@ -37,8 +37,8 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockHeader, BlockResponse, ExternalMessage, InjectedProposal, InternalMessage,
-        IntershardCall, Proposal, SyncBlockHeader,
+        Block, BlockHeader, ExternalMessage, InjectedProposal, InternalMessage, IntershardCall,
+        Proposal,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -52,6 +52,12 @@ use crate::{
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct RequestId(u64);
+
+impl RequestId {
+    pub fn random() -> Self {
+        Self(rand::thread_rng().next_u64())
+    }
+}
 
 #[derive(Debug)]
 pub struct OutgoingMessageFailure {
@@ -224,11 +230,6 @@ impl Node {
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
         match message {
-            // This just breaks down group block messages into individual messages to stop them blocking threads
-            // for long periods.
-            ExternalMessage::InjectedProposal(p) => {
-                self.handle_injected_proposal(from, p)?;
-            }
             // `NewTransaction`s are always broadcasted.
             ExternalMessage::NewTransaction(t) => {
                 // Don't process again txn sent by this node (it's already in the mempool)
@@ -243,8 +244,8 @@ impl Node {
                 }
             }
             // `Proposals` are re-routed to `handle_request()`
-            _ => {
-                warn!("unexpected message type");
+            msg => {
+                warn!(%msg, "unexpected message type");
             }
         }
 
@@ -291,15 +292,16 @@ impl Node {
                 let message = self.consensus.sync.handle_metadata_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
-            // Respond negatively to block request from old nodes
-            ExternalMessage::BlockRequest(_) => {
+            // Respond to block probe requests.
+            ExternalMessage::BlockRequest(request) => {
                 // respond with an invalid response
-                let message = ExternalMessage::BlockResponse(BlockResponse {
-                    availability: None,
-                    proposals: vec![],
-                    from_view: u64::MAX,
-                });
+                let message = self.consensus.sync.handle_block_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
+            }
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
             }
             // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
             // a Request by the underlying layer, with a faux request-id. This is to mitigate issues when there are
@@ -336,33 +338,21 @@ impl Node {
     pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
         match message {
+            // >= 0.6.0
             ExternalMessage::MultiBlockResponse(response) => self
                 .consensus
                 .sync
                 .handle_multiblock_response(from, Some(response))?,
+            // >= 0.7.0
             ExternalMessage::SyncBlockHeaders(response) => self
                 .consensus
                 .sync
                 .handle_metadata_response(from, Some(response))?,
-            // FIXME: 0.6.0 compatibility, to be removed after all nodes >= 0.7.0
-            ExternalMessage::MetaDataResponse(response) => {
-                let response = response
-                    .into_iter()
-                    .map(|bh| SyncBlockHeader {
-                        header: bh,
-                        size_estimate: (1024 * 1024 * bh.gas_used.0 / bh.gas_limit.0) as usize, // guesstimate
-                    })
-                    .collect_vec();
-                self.consensus
-                    .sync
-                    .handle_metadata_response(from, Some(response))?
-            }
+            // >= 0.8.0 probe response
             ExternalMessage::BlockResponse(response) => {
                 self.consensus.sync.handle_block_response(from, response)?
             }
-            ExternalMessage::Acknowledgement => {
-                self.consensus.sync.handle_acknowledgement(from)?;
-            }
+            ExternalMessage::Acknowledgement => {}
             msg => {
                 warn!(%msg, "unexpected message type");
             }
