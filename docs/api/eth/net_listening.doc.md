@@ -34,7 +34,7 @@ Returns true if a client is actively listening for network connections. Always r
 | `id`      | string | Required | `"1"`             |
 | `jsonrpc` | string | Required | `"2.0"`           |
 | `method`  | string | Required | `"net_listening"` |
-| `params`  | array  | Requred  | can be anything   |
+| `params`  | array  | Required | can be anything   |
 
 
 

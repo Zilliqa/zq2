@@ -69,6 +69,6 @@ curl -d '{
 | `id`      | string | Required | `"1"`                                     |
 | `jsonrpc` | string | Required | `"2.0"`                                   |
 | `method`  | string | Required | `"eth_getTransactionByBlockHashAndIndex"` |
-| `params`  | array  | Requred  | `[ block_hash, index]`                    |
+| `params`  | array  | Required | `[ block_hash, index]`                    |
 
 
