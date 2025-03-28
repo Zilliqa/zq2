@@ -2632,8 +2632,6 @@ async fn get_recent_transactions_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
-
     let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
 
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
@@ -2652,7 +2650,7 @@ async fn get_recent_transactions_1(mut network: Network) {
     )
     .await;
 
-    network.run_until_block_finalized(8u64, 300).await.unwrap();
+    network.run_until_block_finalized(1u64, 300).await.unwrap();
 
     let response: Value = wallet
         .provider()
