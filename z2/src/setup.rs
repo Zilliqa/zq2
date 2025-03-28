@@ -558,7 +558,6 @@ impl Setup {
                 enable_ots_indices: false,
                 max_rpc_response_size: max_rpc_response_size_default(),
                 prune_interval: cfg::u64_max(),
-                proto_network_persistence_block_height: None,
             };
             println!("🧩  Node {node_index} has RPC port {port}");
 
