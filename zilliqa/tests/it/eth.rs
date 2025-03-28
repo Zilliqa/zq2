@@ -25,7 +25,6 @@ use crate::{LocalRpcClient, Network, Wallet, deploy_contract};
 #[zilliqa_macros::test]
 async fn call_block_number(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/CallMe.sol",
@@ -96,7 +95,6 @@ async fn call_block_number(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_block_transaction_count(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
     let provider = wallet.provider();
 
     async fn count_by_number<T: Debug + Serialize + Send + Sync>(
@@ -285,7 +283,6 @@ async fn get_transaction_count_pending(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_account_transaction_count(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
     let provider = wallet.provider();
 
     async fn count_at_block(provider: &Provider<LocalRpcClient>, params: (H160, U64)) -> u64 {
@@ -344,7 +341,6 @@ async fn get_account_transaction_count(mut network: Network) {
 #[zilliqa_macros::test]
 async fn eth_get_transaction_receipt(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     // Deploy a contract to generate a transaction receipt
     let (hash, _abi) = deploy_contract(
@@ -391,7 +387,6 @@ async fn eth_get_transaction_receipt(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_transaction_receipt_sequential_log_indexes(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     // Deploy a contract that can emit events
     let (hash1, abi) = deploy_contract(
@@ -443,7 +438,6 @@ async fn get_transaction_receipt_sequential_log_indexes(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_logs(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
@@ -633,7 +627,6 @@ async fn get_logs(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_storage_at(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     // Example from https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getstorageat.
     let (hash, abi) = deploy_contract(
@@ -752,7 +745,6 @@ async fn send_legacy_transaction(mut network: Network) {
     let to = H160::random_using(network.rng.lock().unwrap().deref_mut());
     let tx = TransactionRequest::pay(to, 123).into();
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
     let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 0);
@@ -776,7 +768,6 @@ async fn send_eip2930_transaction(mut network: Network) {
     let tx = Eip2930TransactionRequest::new(TransactionRequest::pay(to, 123), access_list.clone())
         .into();
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
     let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 1);
@@ -807,7 +798,6 @@ async fn send_eip1559_transaction(mut network: Network) {
         .max_priority_fee_per_gas(gas_price)
         .into();
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
     let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 2);
@@ -821,7 +811,6 @@ async fn send_eip1559_transaction(mut network: Network) {
 #[zilliqa_macros::test]
 async fn send_legacy_transaction_without_chain_id(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let to = H160::random_using(network.rng.lock().unwrap().deref_mut());
     let tx = TransactionRequest::pay(to, 123);
@@ -872,7 +861,6 @@ async fn send_legacy_transaction_without_chain_id(mut network: Network) {
 #[zilliqa_macros::test]
 async fn eth_call(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/SetGetContractValue.sol",
@@ -917,7 +905,6 @@ async fn eth_call(mut network: Network) {
 #[zilliqa_macros::test]
 async fn revert_transaction(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/RevertMe.sol",
@@ -970,7 +957,6 @@ async fn revert_transaction(mut network: Network) {
 #[zilliqa_macros::test]
 async fn gas_charged_on_revert(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/RevertMe.sol",
@@ -1029,7 +1015,6 @@ async fn gas_charged_on_revert(mut network: Network) {
 #[zilliqa_macros::test]
 async fn nonces_rejected_too_high(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
@@ -1068,7 +1053,6 @@ async fn nonces_rejected_too_high(mut network: Network) {
 #[zilliqa_macros::test]
 async fn nonces_respected_ordered(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
@@ -1118,7 +1102,6 @@ async fn nonces_respected_ordered(mut network: Network) {
 #[zilliqa_macros::test]
 async fn priority_fees_tx(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let to: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
@@ -1196,7 +1179,6 @@ async fn priority_fees_tx(mut network: Network) {
 #[zilliqa_macros::test]
 async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let provider = wallet.provider();
 
@@ -1236,7 +1218,6 @@ async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network:
 #[zilliqa_macros::test]
 async fn get_transaction_by_index(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     // Send transaction in reverse nonce order to ensure they land in the same block
     let h1 = wallet
@@ -1295,27 +1276,26 @@ async fn get_transaction_by_index(mut network: Network) {
 #[zilliqa_macros::test]
 async fn block_subscription(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let mut block_stream: ethers::providers::SubscriptionStream<
         '_,
         LocalRpcClient,
         ethers::types::Block<H256>,
     > = wallet.subscribe_blocks().await.unwrap();
-    network.run_until_block(&wallet, 6.into(), 70).await;
+    network.run_until_block(&wallet, 3.into(), 100).await;
 
     // Assert the stream contains next 3 blocks.
     assert_eq!(
         block_stream.next().await.unwrap().number.unwrap().as_u64(),
-        4
+        1
     );
     assert_eq!(
         block_stream.next().await.unwrap().number.unwrap().as_u64(),
-        5
+        2
     );
     assert_eq!(
         block_stream.next().await.unwrap().number.unwrap().as_u64(),
-        6
+        3
     );
 
     assert!(block_stream.unsubscribe().await.unwrap());
@@ -1324,7 +1304,6 @@ async fn block_subscription(mut network: Network) {
 #[zilliqa_macros::test]
 async fn logs_subscription(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
@@ -1362,7 +1341,6 @@ async fn logs_subscription(mut network: Network) {
 #[zilliqa_macros::test]
 async fn new_transaction_subscription(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let mut txn_stream = wallet.subscribe_full_pending_txs().await.unwrap();
     let mut hash_stream = wallet.subscribe_pending_txs().await.unwrap();
@@ -1407,7 +1385,6 @@ async fn get_accounts_with_extra_args(mut network: Network) {
 #[zilliqa_macros::test]
 async fn deploy_deterministic_deployment_proxy(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
 
     let signer: H160 = "0x3fab184622dc19b6109349b94811493bf2a45362"
         .parse()
@@ -1533,7 +1510,6 @@ async fn test_eth_syncing(mut network: Network) {
 #[zilliqa_macros::test]
 async fn get_block_receipts(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 3.into(), 70).await;
     let provider = wallet.provider();
 
     // Deploy a contract to generate a transaction
