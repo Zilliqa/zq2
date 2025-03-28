@@ -205,6 +205,7 @@ impl Node {
             config.data_dir.as_ref(),
             config.eth_chain_id,
             config.state_cache_size,
+            config.proto_network_persistence_block_height,
         )?);
         let node = Node {
             config: config.clone(),
@@ -542,10 +543,14 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+
         let mut state = self
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
@@ -593,10 +598,14 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+
         let mut state = self
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
@@ -629,6 +638,9 @@ impl Node {
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         let mut traces: Vec<TraceResult> = Vec::new();
 
@@ -826,6 +838,9 @@ impl Node {
             .consensus
             .state()
             .at_root(block.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         state.call_contract(from_addr, to_addr, data, amount, block.header)
     }
@@ -871,6 +886,9 @@ impl Node {
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
         let state = self.get_state(&block)?;
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         state.estimate_gas(
             from_addr,

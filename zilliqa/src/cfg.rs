@@ -209,6 +209,8 @@ impl Default for NodeConfig {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
             max_rpc_response_size: max_rpc_response_size_default(),
+            prune_interval: u64_max(),
+            proto_network_persistence_block_height: None,
         }
     }
 }
