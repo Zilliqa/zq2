@@ -15,7 +15,7 @@ use prost::Message;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tracing::{debug, info};
+use tracing::debug;
 use zilliqa::{
     api::types::zil::GetTxResponse,
     schnorr,
@@ -1716,7 +1716,7 @@ async fn interop_call_then_revert(mut network: Network) {
     let input = &[
         Token::Address(scilla_contract_address),
         Token::String("InsertIntoMap".to_owned()),
-        Token::Address(wallet.address()),
+        Token::Address(scilla_contract_address),
         Token::Uint(5.into()),
     ];
     let tx = TransactionRequest::new()
@@ -1728,18 +1728,6 @@ async fn interop_call_then_revert(mut network: Network) {
     let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 0);
-
-    // let call = format!(
-    //     r"{{
-    //     "_tag": "GetFromMap",
-    //     "params": [
-    //         {
-    //             "vname": "a",
-    //             "type": "ByStr20",
-    //             "value": "{address:#x}"
-    //         }
-    //     ]
-    // }}");
 
     let call = format!(
         r#"
@@ -1769,16 +1757,7 @@ async fn interop_call_then_revert(mut network: Network) {
     )
     .await;
 
-    info!("Got event: {:?}", txn["receipt"]);
-    // let event = &txn["receipt"]["event_logs"][0];
-    // assert_eq!(event["_eventname"], "Value");
-    // assert_eq!(
-    //     event["params"][1]["value"][0]["arguments"]
-    //         .as_array()
-    //         .unwrap()
-    //         .clone(),
-    //     vec![Value::from("1"), Value::from("100")]
-    // );
+    assert!(txn["receipt"]["event_logs"].as_array().unwrap().is_empty());
 }
 
 #[zilliqa_macros::test]
