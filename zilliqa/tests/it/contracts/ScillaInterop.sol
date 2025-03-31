@@ -423,7 +423,6 @@ contract ScillaInterop {
         return readMapUint128(scillaContract, varName, arg1);
     }
 
-
     function callScillaRevert(
         address scillaContract,
         string memory transitionName,
@@ -432,6 +431,5 @@ contract ScillaInterop {
     ) public {
         scillaContract.callScilla(transitionName, arg1, arg2);
         revert();
-
     }
 }
