@@ -792,13 +792,43 @@ impl Network {
                         unreachable!("stream was terminated, this should be impossible");
                     }
                     Some(Some(message)) => {
-                        info!("***** Randomly dropping message: {:?}", message);
+                        println!("***** Randomly dropping message: {:?}", message);
                     }
                     _ => {}
                 }
             }
         }
 
+        self.tick().await;
+    }
+
+    // Drop messages of a specific type
+    pub async fn drop_message_type_then_tick<F>(&mut self, message_type_filter: F)
+    where
+        F: Fn(&AnyMessage) -> bool,
+    {
+        for receiver in self.receivers.iter_mut() {
+            // Peek at the messages in the queue
+            match tokio::task::unconstrained(receiver.next()).now_or_never() {
+                Some(None) => {
+                    unreachable!("stream was terminated, this should be impossible");
+                }
+                Some(Some(message)) => {
+                    if message_type_filter(&message.2) {
+                        trace!(
+                            "Dropping message of specific type: {:?}",
+                            format_message(&self.nodes, message.0, message.1, &message.2)
+                        );
+                    } else {
+                        // Put the message back if it doesn't match the filter
+                        self.resend_message.send(message).unwrap();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Then proceed with the tick as normal
         self.tick().await;
     }
 
