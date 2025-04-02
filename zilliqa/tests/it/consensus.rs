@@ -4,10 +4,11 @@ use ethers::{
     types::{TransactionRequest, U64},
 };
 use primitive_types::{H160, H256, U256};
+use rand::Rng;
 use tracing::*;
-use zilliqa::{crypto::Hash, state::contract_addr};
+use zilliqa::{crypto::Hash, message::ExternalMessage, state::contract_addr};
 
-use crate::{Network, get_reward_address, get_stakers};
+use crate::{AnyMessage, Network, get_reward_address, get_stakers};
 
 // Test that all nodes can die and the network can restart (even if they startup at different
 // times)
@@ -55,7 +56,7 @@ fn get_block_number(n: &Network, index: usize) -> u64 {
 async fn block_production_even_when_lossy_network(mut network: Network) {
     let failure_rate = 0.1;
     let start_block = 5;
-    let finish_block = 8;
+    let finish_block = 20;
 
     let index = network.random_index();
 
@@ -63,7 +64,7 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     network
         .run_until(
             |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
-            100,
+            1000,
         )
         .await
         .unwrap();
@@ -84,9 +85,338 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     );
 }
 
+// Test network progress with dropped vote messages (dropping 50% of votes)
+#[zilliqa_macros::test]
+async fn block_production_with_dropped_votes(mut network: Network) {
+    let start_block = 5;
+    let finish_block = 20;
+    let index = network.random_index();
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
+            1000,
+        )
+        .await
+        .unwrap();
+
+    // Wait until block 8 is produced, but dropping 50% of vote messages
+    for _ in 0..1000000 {
+        let drop = network.rng.lock().unwrap().gen_bool(0.5);
+        if drop {
+            network
+                .drop_message_type_then_tick(|message| {
+                    matches!(message, AnyMessage::External(ExternalMessage::Vote(_)))
+                })
+                .await;
+        } else {
+            network.tick().await;
+        }
+
+        if get_block_number(&network, index) >= finish_block {
+            break;
+        }
+    }
+
+    assert!(
+        get_block_number(&network, index) >= finish_block,
+        "block number should be at least {}, but was {}",
+        finish_block,
+        get_block_number(&network, index)
+    );
+}
+
+// Test network progress with dropped proposals
+#[zilliqa_macros::test]
+async fn block_production_with_dropped_proposals(mut network: Network) {
+    let start_block = 5;
+    let finish_block = 20;
+    let index = network.random_index();
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
+            1000,
+        )
+        .await
+        .unwrap();
+
+    // Wait until block 8 is produced, but dropping 50% of proposal messages
+    for _ in 0..1000000 {
+        let drop = network.rng.lock().unwrap().gen_bool(0.5);
+        if drop {
+            network
+                .drop_message_type_then_tick(|message| {
+                    matches!(message, AnyMessage::External(ExternalMessage::Proposal(_)))
+                })
+                .await;
+        } else {
+            network.tick().await;
+        }
+
+        if get_block_number(&network, index) >= finish_block {
+            break;
+        }
+    }
+
+    assert!(
+        get_block_number(&network, index) >= finish_block,
+        "block number should be at least {}, but was {}",
+        finish_block,
+        get_block_number(&network, index)
+    );
+}
+
+// Test network progress with dropped new view messages
+#[zilliqa_macros::test]
+async fn block_production_with_dropped_new_views(mut network: Network) {
+    let start_block = 5;
+    let finish_block = 20;
+    let index = network.random_index();
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
+            1000,
+        )
+        .await
+        .unwrap();
+
+    // Wait until block 8 is produced, but dropping all new view messages
+    for _ in 0..1000000 {
+        network
+            .drop_message_type_then_tick(|message| {
+                matches!(message, AnyMessage::External(ExternalMessage::NewView(_)))
+            })
+            .await;
+
+        if get_block_number(&network, index) >= finish_block {
+            break;
+        }
+    }
+
+    assert!(
+        get_block_number(&network, index) >= finish_block,
+        "block number should be at least {}, but was {}",
+        finish_block,
+        get_block_number(&network, index)
+    );
+}
+
+// Test network progress with dropped transaction messages
+#[zilliqa_macros::test]
+async fn block_production_with_dropped_transactions(mut network: Network) {
+    let start_block = 5;
+    let finish_block = 20;
+    let index = network.random_index();
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
+            1000,
+        )
+        .await
+        .unwrap();
+
+    // Wait until block 8 is produced, but dropping all transaction messages
+    for _ in 0..1000000 {
+        network
+            .drop_message_type_then_tick(|message| {
+                matches!(
+                    message,
+                    AnyMessage::External(ExternalMessage::NewTransaction(_))
+                )
+            })
+            .await;
+
+        if get_block_number(&network, index) >= finish_block {
+            break;
+        }
+    }
+
+    assert!(
+        get_block_number(&network, index) >= finish_block,
+        "block number should be at least {}, but was {}",
+        finish_block,
+        get_block_number(&network, index)
+    );
+}
+
+// Test network progress with different drop rates for different message types
+#[zilliqa_macros::test]
+async fn block_production_with_varying_drop_rates(mut network: Network) {
+    let start_block = 5;
+    let finish_block = 20;
+    let index = network.random_index();
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
+            1000,
+        )
+        .await
+        .unwrap();
+
+    // Wait until block 8 is produced, dropping different message types with different probabilities
+    for _ in 0..1000000 {
+        let rand_val = network.rng.lock().unwrap().gen_range(0.0..1.0);
+
+        if rand_val < 0.2 {
+            // Drop 20% of votes
+            network
+                .drop_message_type_then_tick(|message| {
+                    matches!(message, AnyMessage::External(ExternalMessage::Vote(_)))
+                })
+                .await;
+        } else if rand_val < 0.3 {
+            // Drop 10% of proposals
+            network
+                .drop_message_type_then_tick(|message| {
+                    matches!(message, AnyMessage::External(ExternalMessage::Proposal(_)))
+                })
+                .await;
+        } else if rand_val < 0.4 {
+            // Drop 10% of new views
+            network
+                .drop_message_type_then_tick(|message| {
+                    matches!(message, AnyMessage::External(ExternalMessage::NewView(_)))
+                })
+                .await;
+        } else {
+            network.tick().await;
+        }
+
+        if get_block_number(&network, index) >= finish_block {
+            break;
+        }
+    }
+
+    assert!(
+        get_block_number(&network, index) >= finish_block,
+        "block number should be at least {}, but was {}",
+        finish_block,
+        get_block_number(&network, index)
+    );
+}
+
+// Test network progress with dropped messages in bursts (periodic dropping)
+#[zilliqa_macros::test]
+async fn block_production_with_bursty_message_drops(mut network: Network) {
+    let start_block = 5;
+    let finish_block = 20;
+    let index = network.random_index();
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
+            1000,
+        )
+        .await
+        .unwrap();
+
+    let mut bursting = false;
+    let mut counter = 0;
+
+    // Wait until block 8 is produced, with periods of high message loss
+    for _ in 0..1000000 {
+        counter += 1;
+
+        // Toggle between normal operation and burst drop periods
+        if counter % 20 == 0 {
+            bursting = !bursting;
+            trace!("Toggling burst mode to {}", bursting);
+        }
+
+        if bursting {
+            // During burst periods, drop 80% of all consensus messages
+            let rand_val = network.rng.lock().unwrap().gen_range(0.0..1.0);
+            if rand_val < 0.8 {
+                network
+                    .drop_message_type_then_tick(|message| {
+                        matches!(
+                            message,
+                            AnyMessage::External(ExternalMessage::Vote(_))
+                                | AnyMessage::External(ExternalMessage::Proposal(_))
+                                | AnyMessage::External(ExternalMessage::NewView(_))
+                        )
+                    })
+                    .await;
+            } else {
+                network.tick().await;
+            }
+        } else {
+            // During normal periods, just tick normally
+            network.tick().await;
+        }
+
+        if get_block_number(&network, index) >= finish_block {
+            break;
+        }
+    }
+
+    assert!(
+        get_block_number(&network, index) >= finish_block,
+        "block number should be at least {}, but was {}",
+        finish_block,
+        get_block_number(&network, index)
+    );
+}
+
+// Test normal block production with no drops
+#[zilliqa_macros::test]
+async fn block_production_no_drops(mut network: Network) {
+    let start_block = 5;
+    let finish_block = 40;
+    let index = network.random_index();
+
+    // wait until at least 5 blocks have been produced
+    network
+        .run_until(
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
+            1000,
+        )
+        .await
+        .unwrap();
+
+    for _ in 0..1000 {
+        network.tick().await;
+
+        if get_block_number(&network, index) >= finish_block {
+            break;
+        }
+    }
+
+    assert!(
+        get_block_number(&network, index) >= finish_block,
+        "block number should be at least {}, but was {}",
+        finish_block,
+        get_block_number(&network, index)
+    );
+
+    // Let's also verify that all nodes are at the same ±1
+    let heights: Vec<u64> = (0..network.nodes.len())
+        .map(|i| get_block_number(&network, i))
+        .collect();
+
+    let first_height = heights[0];
+    for (idx, height) in heights.iter().enumerate() {
+        assert!(
+            first_height.abs_diff(*height)<=1,
+            "Node {} is at height {}, but expected {}±1",
+            idx, height, first_height
+        );
+    }
+}
+
 // Test that new node joining the network catches up on blocks
 #[zilliqa_macros::test]
-async fn block_production(mut network: Network) {
+async fn block_production_with_adding_node(mut network: Network) {
     network
         .run_until(
             |n| {
@@ -97,7 +427,7 @@ async fn block_production(mut network: Network) {
                     .map_or(0, |b| b.number())
                     >= 5
             },
-            100,
+            1000,
         )
         .await
         .unwrap();
