@@ -44,8 +44,7 @@ async fn network_can_die_restart(mut network: Network) {
         .expect("Failed to progress to target block");
 }
 
-fn get_block_number(n: &mut Network) -> u64 {
-    let index = n.random_index();
+fn get_block_number(n: &Network, index: usize) -> u64 {
     n.get_node(index).get_finalized_height().unwrap()
 }
 
@@ -58,13 +57,12 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     let start_block = 5;
     let finish_block = 8;
 
+    let index = network.random_index();
+
     // wait until at least 5 blocks have been produced
     network
         .run_until(
-            |n| {
-                let index = n.random_index();
-                n.get_node(index).get_finalized_height().unwrap() >= start_block
-            },
+            |n| n.get_node(index).get_finalized_height().unwrap() >= start_block,
             100,
         )
         .await
@@ -73,16 +71,16 @@ async fn block_production_even_when_lossy_network(mut network: Network) {
     // now, wait until block 15 has been produced, but dropping 10% of the messages.
     for _ in 0..1000000 {
         network.randomly_drop_messages_then_tick(failure_rate).await;
-        if get_block_number(&mut network) >= finish_block {
+        if get_block_number(&network, index) >= finish_block {
             break;
         }
     }
 
     assert!(
-        get_block_number(&mut network) >= finish_block,
+        get_block_number(&network, index) >= finish_block,
         "block number should be at least {}, but was {}",
         finish_block,
-        get_block_number(&mut network)
+        get_block_number(&network, index)
     );
 }
 
@@ -333,4 +331,43 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
         zero_account_balance_before - total_rewards
             + (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap())
     );
+}
+
+// Test that new node joining a stalled network catches up on blocks
+// does not work consistently - due to timeouts
+#[zilliqa_macros::test]
+async fn sync_from_probe(mut network: Network) {
+    // pick a random node to sync against
+    let rnd_node = network.random_index();
+    network
+        .run_until(
+            |n| n.node_at(rnd_node).get_finalized_height().unwrap() >= 5,
+            100,
+        )
+        .await
+        .unwrap();
+
+    info!("Adding networked node.");
+    let new_node = network.add_node();
+
+    // disconnect everything except the chosen node to sync against
+    for i in 0..network.nodes.len() {
+        if i != new_node && i != rnd_node {
+            network.disconnect_node(i);
+            network.nodes[new_node]
+                .peers
+                .remove_peer(network.nodes[i].peer_id);
+        }
+    }
+
+    // force a sync-probe, since there are no more proposals
+    let peer_id = network.node_at(rnd_node).consensus.peer_id();
+    network.node_at(new_node).consensus.sync.probe_peer(peer_id);
+    network
+        .run_until(
+            |n| n.node_at(new_node).get_finalized_height().unwrap() >= 5,
+            500,
+        )
+        .await
+        .unwrap();
 }

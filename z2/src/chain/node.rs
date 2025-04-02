@@ -368,7 +368,6 @@ impl fmt::Display for ConsensusInfo {
 
 #[derive(Debug, Deserialize)]
 struct HighQc {
-    signature: String,
     cosigned: String,
     view: String,
     block_hash: String,
@@ -377,7 +376,6 @@ struct HighQc {
 impl Default for HighQc {
     fn default() -> Self {
         Self {
-            signature: "---".to_string(),
             cosigned: "---".to_string(),
             view: "---".to_string(),
             block_hash: "---".to_string(),
@@ -389,8 +387,8 @@ impl fmt::Display for HighQc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "view: {}\tblock_hash: {}\tcosigned: {}\nsign: {}",
-            self.view, self.block_hash, self.cosigned, self.signature
+            "view: {}\tblock_hash: {}\tcosigned: {}",
+            self.view, self.block_hash, self.cosigned
         )
     }
 }

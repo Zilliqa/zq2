@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BinaryHeap, VecDeque},
-    ops::Range,
+    collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
+    ops::RangeInclusive,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -63,6 +63,7 @@ pub struct Sync {
     message_sender: MessageSender,
     // internal peers
     peers: Arc<SyncPeers>,
+    initial_probed: bool, // sync by initial probe at startup
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
     p1_response: BTreeMap<PeerId, Option<Vec<SyncBlockHeader>>>,
@@ -78,8 +79,6 @@ pub struct Sync {
     state: SyncState,
     // fixed-size queue of the most recent proposals
     recent_proposals: VecDeque<Proposal>,
-    // for checkpoint
-    checkpoint_at: u64,
     // for statistics only
     inject_at: Option<(std::time::Instant, usize, u64)>,
     // record data for eth_syncing() RPC call.
@@ -91,6 +90,8 @@ pub struct Sync {
     headers_downloaded: usize,
     blocks_downloaded: usize,
     active_sync_count: usize,
+    // internal structure for syncing
+    segments: SyncSegments,
 }
 
 impl Sync {
@@ -110,19 +111,15 @@ impl Sync {
     ) -> Result<Self> {
         let peer_id = message_sender.our_peer_id;
         let max_batch_size = config
+            .sync
             .block_request_batch_size
             .clamp(100, Self::MAX_BATCH_SIZE);
         let max_blocks_in_flight = config
+            .sync
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
 
         // Start from reset, or continue sync
-        let state = if db.count_sync_segments()? == 0 {
-            SyncState::Phase0
-        } else {
-            SyncState::Retry1 // continue sync
-        };
-
         let latest_block_number = latest_block
             .as_ref()
             .map_or_else(|| u64::MIN, |b| b.number());
@@ -136,7 +133,7 @@ impl Sync {
             max_blocks_in_flight,
             in_flight: VecDeque::with_capacity(Self::MAX_CONCURRENT_PEERS),
             in_pipeline: usize::MIN,
-            state,
+            state: SyncState::Phase0,
             recent_proposals: VecDeque::with_capacity(max_batch_size),
             inject_at: None,
             started_at: latest_block_number,
@@ -148,31 +145,9 @@ impl Sync {
             blocks_downloaded: 0,
             active_sync_count: 0,
             p1_response: BTreeMap::new(),
-            checkpoint_at: u64::MIN,
+            segments: SyncSegments::default(),
+            initial_probed: false,
         })
-    }
-
-    /// Skip Failure
-    ///
-    /// We get a plain ACK in certain cases - treated as an empty response.
-    /// FIXME: Remove once all nodes upgraded to next version.
-    pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
-        self.empty_count = self.empty_count.saturating_add(1);
-        if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
-            tracing::warn!(from = %from,
-                "sync::Acknowledgement"
-            );
-            match &self.state {
-                SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, Some(vec![]))?;
-                }
-                SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(from, Some(vec![]))?;
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     /// P2P Failure
@@ -225,28 +200,51 @@ impl Sync {
         }
         self.highest_block_seen = self.highest_block_seen.max(proposal.number());
         self.recent_proposals.push_back(proposal);
-
         self.do_sync()
     }
 
-    // TODO: Passive-sync place-holder - https://github.com/Zilliqa/zq2/issues/2232
-    pub fn sync_to_genesis(&mut self) -> Result<()> {
+    /// Phase 0: Sync from a probe.
+    ///
+    /// This can be invoked from: a timeout; or manually.
+    /// At re/start, the initial timeout will trigger a sync shortly after re/start.
+    /// A resync flag is allowed to allow the rest of the code to redo this process.
+    pub fn sync_from_probe(&mut self, resync: bool) -> Result<()> {
+        if resync {
+            self.initial_probed = false;
+        }
+        // only do this upon start/restart
+        if !self.initial_probed {
+            // inevitably picks a bootstrap node
+            if let Some(peer_info) = self.peers.get_next_peer() {
+                let peer = peer_info.peer_id;
+                self.peers.append_peer(peer_info);
+                tracing::info!(%peer, "sync::SyncFromProbe : probing");
+                self.probe_peer(peer);
+            } else {
+                tracing::warn!("sync::SyncFromProbe: no more peers");
+            }
+        }
         Ok(())
     }
 
+    /// Drive the sync state-machine.
     fn do_sync(&mut self) -> Result<()> {
         if self.recent_proposals.is_empty() {
             // Do nothing if there's no recent proposals.
             tracing::debug!("sync::DoSync : missing recent proposals");
             return Ok(());
         }
-
+        if !self.in_flight.is_empty() {
+            // do not interrupt existing requests
+            tracing::debug!("sync::DoSync : waiting for in-flight requests");
+            return Ok(());
+        }
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
                 let meta = self.recent_proposals.back().unwrap().header;
                 let parent_hash = meta.qc.block_hash;
-                // No parent block, trigger sync
+                // No parent block, trigger active-sync
                 if !self.db.contains_canonical_block(&parent_hash)? {
                     self.active_sync_count = self.active_sync_count.saturating_add(1);
                     tracing::debug!(from_hash = %parent_hash, "sync::DoSync : syncing",);
@@ -254,7 +252,12 @@ impl Sync {
                     // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
                     self.update_started_at()?;
                     self.request_missing_metadata(Some(meta))?;
+                } else {
+                    // one-block away from the tip, which can happen during a restart
+                    self.state = SyncState::Phase3;
+                    self.inject_recent_blocks()?;
                 }
+                self.initial_probed = true;
             }
             // Continue phase 1, until we hit history/genesis.
             SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
@@ -269,7 +272,7 @@ impl Sync {
                 self.inject_recent_blocks()?;
             }
             // Retry to fix sync issues e.g. peers that are now offline
-            SyncState::Retry1 if self.in_pipeline == 0 && self.in_flight.is_empty() => {
+            SyncState::Retry1 if self.in_pipeline == 0 => {
                 self.update_started_at()?;
                 // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
@@ -278,7 +281,6 @@ impl Sync {
                 tracing::debug!("sync::DoSync : syncing {} blocks", self.in_pipeline);
             }
         }
-
         Ok(())
     }
 
@@ -327,12 +329,12 @@ impl Sync {
             let ancestor_hash = proposals.first().expect(">= 1 block").header.qc.block_hash;
             let range = proposals.first().as_ref().unwrap().number()
                 ..=proposals.last().as_ref().unwrap().number();
-            tracing::info!(?range, len=%proposals.len(), "sync::DoSync : finishing");
+            tracing::info!(?range, "sync::DoSync : finishing");
             if self.db.contains_canonical_block(&ancestor_hash)? {
                 self.inject_proposals(proposals)?;
             }
         }
-        self.db.empty_sync_metadata()?;
+        self.segments.empty_sync_metadata();
         self.state = SyncState::Phase0;
         Ok(())
     }
@@ -350,7 +352,6 @@ impl Sync {
             )?
             .expect("missing canonical block");
         self.started_at = highest_block.number();
-        self.checkpoint_at = highest_block.number();
         Ok(())
     }
 
@@ -381,7 +382,7 @@ impl Sync {
     /// If this function is called many times, it will eventually restart from Phase 0.
     fn retry_phase1(&mut self) -> Result<()> {
         self.retry_count = self.retry_count.saturating_add(1);
-        let segment_count = self.db.count_sync_segments()?;
+        let segment_count = self.segments.count_sync_segments();
         if segment_count == 0 {
             tracing::error!("sync::Retry1 : no metadata segments");
             self.state = SyncState::Phase0;
@@ -391,10 +392,16 @@ impl Sync {
         tracing::debug!("sync::Retry1 : retrying segment #{segment_count}");
 
         // remove the last segment from the chain metadata
-        let (meta, _) = self.db.last_sync_segment()?.unwrap();
-        self.db.pop_sync_segment()?;
+        let (meta, _) = self
+            .segments
+            .last_sync_segment()
+            .expect("segment_count > 0");
+        self.segments.pop_sync_segment();
         self.inject_at = None;
         self.state = SyncState::Phase1(meta);
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
+        }
         Ok(())
     }
 
@@ -428,7 +435,7 @@ impl Sync {
                 self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
-                return self.do_multiblock_response(from, response);
+                return self.do_multiblock_response(from, response); // successful 
             } else {
                 // Empty response, downgrade peer and retry phase 1.
                 tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
@@ -437,12 +444,15 @@ impl Sync {
             }
         } else {
             // Network failure, downgrade peer and retry phase 1.
-            tracing::warn!("sync::MultiBlockResponse : error blocks {from}",);
+            tracing::warn!(%from, "sync::MultiBlockResponse : error blocks",);
             self.peers
                 .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
         }
         // failure fall-thru
         self.state = SyncState::Retry1;
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
+        }
         Ok(())
     }
 
@@ -464,6 +474,9 @@ impl Sync {
                 "sync::MultiBlockResponse : unexpected checksum={check_sum} != {computed_sum} from {from}"
             );
             self.state = SyncState::Retry1;
+            if Self::DO_SPECULATIVE {
+                self.do_sync()?;
+            }
             return Ok(());
         }
 
@@ -474,19 +487,20 @@ impl Sync {
             .collect_vec();
 
         if self.inject_proposals(proposals)? {
-            self.db.pop_sync_segment()?;
+            self.segments.pop_sync_segment();
         } else {
             // sync is stuck, cancel sync and restart, should be fast for peers that are already near the tip.
             self.state = SyncState::Phase3;
             return Ok(());
         };
 
-        if self.db.count_sync_segments()? == 0 {
+        if self.segments.count_sync_segments() == 0 {
             self.state = SyncState::Phase3;
-        } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
-            self.request_missing_blocks()?;
         }
-
+        // perform next block transfers, where possible
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
+        }
         Ok(())
     }
 
@@ -544,11 +558,11 @@ impl Sync {
         // will be re-inserted below
         if let Some(peer) = self.peers.get_next_peer() {
             // reinsert peer, as we will use a faux peer below, to force the request to go to the original responder
-            self.peers.reinsert_peer(peer)?;
+            self.peers.reinsert_peer(peer);
 
             // If we have no chain_segments, we have nothing to do
-            if let Some((meta, peer_info)) = self.db.last_sync_segment()? {
-                let request_hashes = self.db.get_sync_segment(meta.qc.block_hash)?;
+            if let Some((meta, peer_info)) = self.segments.last_sync_segment() {
+                let request_hashes = self.segments.get_sync_segment(&meta);
 
                 // Checksum of the request hashes
                 let checksum = request_hashes
@@ -557,10 +571,14 @@ impl Sync {
                         sum.with(h.as_bytes())
                     })
                     .finalize();
-                let range = Range {
-                    start: self.db.last_sync_block_number()?,
-                    end: meta.number.saturating_sub(1),
-                };
+                let range = self
+                    .segments
+                    .sync_block_number(request_hashes.last().as_ref().unwrap())
+                    .unwrap()
+                    ..=self
+                        .segments
+                        .sync_block_number(request_hashes.first().as_ref().unwrap())
+                        .unwrap();
 
                 // Fire request, to the original peer that sent the segment metadata
                 tracing::info!(?range, from = %peer_info.peer_id,
@@ -593,34 +611,69 @@ impl Sync {
         Ok(())
     }
 
-    /// Phase 0/\1: Handle a V1 block response
+    /// Phase 0: Handle a probe response
     ///
-    /// Drop V1 peers from our set.
-    pub fn handle_block_response(&mut self, from: PeerId, response: BlockResponse) -> Result<()> {
-        // V2 response
-        if response.availability.is_none()
-            && response.proposals.is_empty()
-            && response.from_view == u64::MAX
-        {
-            if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
-                tracing::debug!("sync::BlockResponse : upgrade {from}",);
-                p.version = PeerVer::V2;
-            };
-        } else if let Some((p, _)) = self.in_flight.iter_mut().find(|(p, _)| p.peer_id == from) {
-            tracing::warn!("sync::BlockResponse : dropped {from}",);
-            p.score = u32::MAX;
-        };
-
-        match &self.state {
-            SyncState::Phase1(_) => {
-                self.handle_metadata_response(from, Some(vec![]))?;
+    /// Handle probe response:
+    /// - Starts the sync-from-probe process.
+    pub fn handle_block_response(
+        &mut self,
+        from: PeerId,
+        mut response: BlockResponse,
+    ) -> Result<()> {
+        match self.state {
+            // Start sync-from-probe
+            SyncState::Phase0
+                if response.availability.is_none() && !response.proposals.is_empty() =>
+            {
+                let proposal = response.proposals.pop().unwrap();
+                if proposal.number() > self.started_at {
+                    // inevitably from one of the bootstrap nodes
+                    tracing::info!(self = %self.started_at, block = %proposal.number(), %from,
+                        "sync::BlockResponse : probed, starting sync",
+                    );
+                    self.sync_from_proposal(proposal)?;
+                } else {
+                    tracing::info!(self = %self.started_at, block = %proposal.number(), %from,
+                        "sync::BlockResponse : probed, not syncing",
+                    );
+                    self.initial_probed = true;
+                }
+                Ok(())
             }
-            SyncState::Phase2(_) => {
-                self.handle_multiblock_response(from, Some(vec![]))?;
-            }
-            _ => {}
+            _ => Ok(()),
         }
-        Ok(())
+    }
+
+    /// Handle probe request
+    ///
+    /// This is the first step in the syncing algorithm, where we receive a probe request and respond with the highest block we have.
+    pub fn handle_block_request(
+        &mut self,
+        from: PeerId,
+        request: BlockRequest,
+    ) -> Result<ExternalMessage> {
+        // probe message is BlockRequest::default()
+        if request != BlockRequest::default() || from == self.peer_id {
+            return Ok(ExternalMessage::Acknowledgement);
+        }
+
+        // Must have at least 1 block, genesis/checkpoint
+        let block_vec = self.db.get_highest_block_hashes(1)?;
+        let block = self
+            .db
+            .get_block_by_hash(block_vec.first().unwrap())?
+            .unwrap();
+
+        tracing::info!(%from, number = %block.number(), "sync::BlockRequest : received probe");
+
+        // Construct the proposal
+        let prop = self.block_to_proposal(block);
+        let message = ExternalMessage::BlockResponse(BlockResponse {
+            proposals: vec![prop],
+            from_view: u64::MAX,
+            availability: None,
+        });
+        Ok(message)
     }
 
     /// Phase 1: Handle a response to a metadata request.
@@ -653,10 +706,8 @@ impl Sync {
                 // Only process a full response
                 if let Some(response) = response {
                     if !response.is_empty() {
-                        let range = Range {
-                            start: response.last().unwrap().header.number,
-                            end: response.first().unwrap().header.number,
-                        };
+                        let range = response.last().unwrap().header.number
+                            ..=response.first().unwrap().header.number;
                         tracing::info!(?range, from = %peer_id,
                             "sync::MetadataResponse : received",
                         );
@@ -730,7 +781,7 @@ impl Sync {
                 );
                 // Unless, it is the first segment, where it will restart the entire sync.
                 // https://github.com/Zilliqa/zq2/issues/2416
-                if self.db.count_sync_segments()? <= 1 {
+                if self.segments.count_sync_segments() <= 1 {
                     self.state = SyncState::Phase3; // flush, drop all segments, and restart
                 }
                 return Ok(());
@@ -755,17 +806,18 @@ impl Sync {
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
         // Record the constructed chain metadata
-        self.db.insert_sync_metadata(&segment)?;
+        self.segments.insert_sync_metadata(&segment);
 
         // Record landmark(s), including peer that has this set of blocks
-        self.db.push_sync_segment(&segment_peer, meta)?;
+        self.segments.push_sync_segment(&segment_peer, meta);
 
         // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
         let mut block_size: usize = 0;
         for SyncBlockHeader { header, .. } in response.iter().rev().filter(|&sb| {
-            // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
+            // The segment markers are computed in ascending order, so that the segment markers are always outside the segment.
             block_size = block_size.saturating_add(sb.size_estimate);
             tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
+            // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
             // Try to fill up >90% of RESPONSE_SIZE_MAXIMUM.
             if block_size > 9 * 1024 * 1024 {
                 block_size = 0;
@@ -773,8 +825,9 @@ impl Sync {
             } else {
                 false
             }
-        }) {
-            self.db.push_sync_segment(&segment_peer, header)?;
+        }).rev() {
+            // segment markers are inserted in descending order, which is the order in the stack.
+            self.segments.push_sync_segment(&segment_peer, header);
         }
 
         // Record the oldest block in the segment
@@ -787,15 +840,16 @@ impl Sync {
             .contains_canonical_block(&block_hash)
             .unwrap_or_default()
         {
-            self.state = SyncState::Phase2((Hash::ZERO, Range::default()));
+            self.state = SyncState::Phase2((Hash::ZERO, 0..=0));
             // drop all pending requests & responses
             self.p1_response.clear();
             for p in self.in_flight.drain(..) {
                 self.peers.done_with_peer(Some(p), DownGrade::None);
             }
-        } else if Self::DO_SPECULATIVE && self.in_flight.is_empty() {
-            self.p1_response.clear();
-            self.request_missing_metadata(None)?;
+        }
+        // perform next block transfers, where possible
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
         }
 
         Ok(())
@@ -811,10 +865,7 @@ impl Sync {
         from: PeerId,
         request: RequestBlocksByHeight,
     ) -> Result<ExternalMessage> {
-        let range = Range {
-            start: request.from_height,
-            end: request.to_height,
-        };
+        let range = request.from_height..=request.to_height;
         tracing::debug!(?range, %from,
             "sync::MetadataRequest : received",
         );
@@ -832,7 +883,7 @@ impl Sync {
         let mut metas = Vec::with_capacity(batch_size);
         let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
             tracing::warn!("sync::MetadataRequest : unknown block height");
-            return Ok(ExternalMessage::MetaDataResponse(vec![]));
+            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         };
 
         let mut hash = block.hash();
@@ -877,17 +928,26 @@ impl Sync {
             return Ok(());
         }
 
-        let good_set = if self.peers.count() > Self::MAX_CONCURRENT_PEERS {
-            Self::MAX_CONCURRENT_PEERS.min(self.peers.count_good_peers())
+        let good_count = self.peers.count_good_peers();
+        let peer_count = self.peers.count();
+        let peer_set = if good_count > Self::MAX_CONCURRENT_PEERS {
+            Self::MAX_CONCURRENT_PEERS // ideal case, more than enough good peers
+        } else if good_count > 1 {
+            good_count.saturating_sub(1) // leave one spare, for handling issues; eventually degenerates to 1-peer
+        } else if peer_count > Self::MAX_CONCURRENT_PEERS {
+            Self::MAX_CONCURRENT_PEERS // then, retry with non-good ones too; trying to bump up peers
+        } else if peer_count > 1 {
+            peer_count.saturating_sub(1) // leave one spare, for handling issues.
         } else {
-            self.peers.count_good_peers().saturating_sub(1) // leave one spare, for handling issues
+            peer_count // last ditch effort, with only 1-peer (or none)
         };
-        if good_set == 0 {
-            tracing::warn!("sync::RequestMissingMetadata : no good peers to handle request");
+
+        if peer_set == 0 {
+            tracing::warn!("sync::RequestMissingMetadata : no peers to handle request");
             return Ok(());
         }
 
-        self.do_missing_metadata(meta, good_set)
+        self.do_missing_metadata(meta, peer_set)
     }
 
     /// Phase 1: Request chain metadata from a peer.
@@ -912,48 +972,31 @@ impl Sync {
                         }),
                         PeerVer::V2,
                     ) => {
-                        let range = Range {
-                            start: block_number
-                                .saturating_sub(offset)
-                                .saturating_sub(self.max_batch_size as u64)
-                                .max(self.checkpoint_at),
-                            end: block_number.saturating_sub(offset).saturating_sub(1),
-                        };
+                        let range = block_number
+                            .saturating_sub(offset)
+                            .saturating_sub(self.max_batch_size as u64)
+                            ..=block_number.saturating_sub(offset).saturating_sub(1);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
-                            to_height: range.end,
-                            from_height: range.start,
+                            to_height: *range.end(),
+                            from_height: *range.start(),
                         });
-                        (message, range.start <= self.started_at, range)
+                        (message, *range.start() < self.started_at, range)
                     }
                     (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
                         let meta = meta.unwrap();
                         let block_number = meta.number;
-                        let range = Range {
-                            start: block_number
-                                .saturating_sub(offset)
-                                .saturating_sub(self.max_batch_size as u64)
-                                .max(self.checkpoint_at),
-                            end: block_number.saturating_sub(offset).saturating_sub(1),
-                        };
+                        let range = block_number
+                            .saturating_sub(offset)
+                            .saturating_sub(self.max_batch_size as u64)
+                            ..=block_number.saturating_sub(offset).saturating_sub(1);
                         self.state = SyncState::Phase1(meta);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
-                            to_height: range.end,
-                            from_height: range.start,
+                            to_height: *range.end(),
+                            from_height: *range.start(),
                         });
-                        (message, range.start <= self.started_at, range)
-                    }
-                    (SyncState::Phase0, PeerVer::V1) | (SyncState::Phase1(_), PeerVer::V1) => {
-                        // Fire a V1 query as a V2 negotiation/hello.
-                        if let Some(meta) = meta {
-                            self.state = SyncState::Phase1(meta);
-                        }
-                        let message = ExternalMessage::BlockRequest(BlockRequest {
-                            to_view: 0,
-                            from_view: 0,
-                        });
-                        (message, true, Range::default())
+                        (message, *range.start() < self.started_at, range)
                     }
                     _ => unimplemented!("sync::DoMissingMetadata"),
                 };
@@ -961,7 +1004,8 @@ impl Sync {
                 tracing::info!(?range, from = %peer_info.peer_id,
                     "sync::MissingMetadata : requesting ({num}/{num_peers})",
                 );
-                offset += self.max_batch_size as u64;
+                let count = range.count();
+                offset = offset.saturating_add(count as u64);
 
                 let request_id = self
                     .message_sender
@@ -1046,15 +1090,9 @@ impl Sync {
     pub fn mark_received_proposal(&mut self, number: u64) -> Result<()> {
         tracing::trace!(%number, "sync::MarkReceivedProposal : received");
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
-        // speed-up block transfers, w/o waiting for proposals
+        // perform next block transfers, where possible
         if Self::DO_SPECULATIVE {
-            match self.state {
-                SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
-                    self.request_missing_blocks()?
-                }
-                SyncState::Phase3 if self.in_pipeline == 0 => self.inject_recent_blocks()?,
-                _ => {}
-            }
+            self.do_sync()?;
         }
         Ok(())
     }
@@ -1063,7 +1101,7 @@ impl Sync {
     pub fn am_syncing(&self) -> Result<bool> {
         Ok(self.in_pipeline != 0
             || !matches!(self.state, SyncState::Phase0)
-            || self.db.count_sync_segments()? != 0)
+            || self.segments.count_sync_segments() != 0)
     }
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,
@@ -1099,15 +1137,20 @@ impl Sync {
     }
 
     /// Sets the checkpoint, if node was started from a checkpoint.
-    pub fn set_checkpoint(&mut self, checkpoint: &Block) {
-        let number = checkpoint.number();
-        tracing::debug!("sync::Checkpoint {}", number);
-        self.checkpoint_at = number;
+    pub fn set_checkpoint(&mut self, _checkpoint: &Block) {
+        tracing::debug!("sync::Checkpoint");
     }
 
     // Add an in-flight request
     fn add_in_flight(&mut self, peer_info: PeerInfo, request_id: RequestId) {
         self.in_flight.push_back((peer_info, request_id));
+    }
+
+    // Fired from both [Self::sync_from_probe(); and [Consensus::sync_from_probe()] test.
+    pub fn probe_peer(&mut self, peer: PeerId) {
+        self.message_sender
+            .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))
+            .ok(); // ignore errors, retry with subsequent peer(s).
     }
 }
 
@@ -1154,13 +1197,7 @@ impl SyncPeers {
         // Reinsert peers that are good
         if peer.score < u32::MAX {
             peer.score = peer.score.saturating_add(downgrade as u32);
-            let mut peers = self.peers.lock().unwrap();
-            if !peers.is_empty() {
-                // Ensure that the next peer is equal or better
-                peer.score = peer.score.max(peers.peek().unwrap().score);
-            }
-            peers.retain(|p| p.peer_id != peer.peer_id);
-            peers.push(peer);
+            self.append_peer(peer);
         }
     }
 
@@ -1179,7 +1216,7 @@ impl SyncPeers {
         // if the new peer is not synced, it will get downgraded to the back of heap.
         // but by placing them at the back of the 'best' pack, we get to try them out soon.
         let new_peer = PeerInfo {
-            version: PeerVer::V1, // default to V1
+            version: PeerVer::V2, // default to V2 since >= 0.7.0
             score: peers.iter().map(|p| p.score).min().unwrap_or_default(),
             peer_id: peer,
             last_used: Instant::now(),
@@ -1187,7 +1224,6 @@ impl SyncPeers {
         // ensure that it is unique
         peers.retain(|p| p.peer_id != peer);
         peers.push(new_peer);
-
         tracing::trace!("sync::AddPeer {peer}/{}", peers.len());
     }
 
@@ -1208,13 +1244,26 @@ impl SyncPeers {
         None
     }
 
-    /// Reinserts the peer such that it is at the front of the queue.
-    fn reinsert_peer(&self, peer: PeerInfo) -> Result<()> {
+    /// Reinserts the peer such that it is at the back of the good queue.
+    fn append_peer(&self, mut peer: PeerInfo) {
         if peer.score == u32::MAX {
-            return Ok(());
+            return;
         }
         let mut peers = self.peers.lock().unwrap();
-        let mut peer = peer;
+        if !peers.is_empty() {
+            // Ensure that the next peer is equal or better
+            peer.score = peer.score.max(peers.peek().unwrap().score);
+        }
+        peers.retain(|p| p.peer_id != peer.peer_id);
+        peers.push(peer);
+    }
+
+    /// Reinserts the peer such that it is at the front of the good queue.
+    fn reinsert_peer(&self, mut peer: PeerInfo) {
+        if peer.score == u32::MAX {
+            return;
+        }
+        let mut peers = self.peers.lock().unwrap();
         if !peers.is_empty() {
             // Ensure that it gets to the head of the line
             peer.last_used = peers
@@ -1227,7 +1276,6 @@ impl SyncPeers {
         // ensure that it is unique
         peers.retain(|p| p.peer_id != peer.peer_id);
         peers.push(peer);
-        Ok(())
     }
 }
 
@@ -1281,7 +1329,7 @@ impl PartialOrd for DownGrade {
 enum SyncState {
     Phase0,
     Phase1(BlockHeader),
-    Phase2((Hash, Range<u64>)),
+    Phase2((Hash, RangeInclusive<u64>)),
     Phase3,
     Retry1,
 }
@@ -1325,5 +1373,80 @@ impl FromSql for PeerVer {
 impl ToSql for PeerVer {
     fn to_sql(&self) -> Result<ToSqlOutput, rusqlite::Error> {
         Ok((self.clone() as u32).into())
+    }
+}
+
+#[derive(Debug, Default)]
+struct SyncSegments {
+    headers: HashMap<Hash, BlockHeader>,
+    segments: Vec<(Hash, PeerInfo)>,
+}
+
+impl SyncSegments {
+    /// Returns the lowest block number of stored sync segments
+    fn sync_block_number(&self, hash: &Hash) -> Option<u64> {
+        self.headers.get(hash).map(|h| h.number)
+    }
+
+    /// Returns the number of stored sync segments
+    fn count_sync_segments(&self) -> usize {
+        self.segments.len()
+    }
+
+    /// Retrieves bulk metadata information from the given block_hash (inclusive)
+    fn get_sync_segment(&self, block: &BlockHeader) -> Vec<Hash> {
+        let mut result = vec![];
+
+        let mut hash = block.qc.block_hash;
+        // This implementation skips the final segment in the chain.
+        // By design, the marker for the segment is always outside the segment.
+        // empty_sync_metadata() will remove the final marker.
+        while let Some(header) = self.headers.get(&hash) {
+            result.push(header.hash);
+            hash = header.qc.block_hash;
+        }
+
+        result
+    }
+
+    /// Peeks into the top of the segment stack.
+    fn last_sync_segment(&self) -> Option<(BlockHeader, PeerInfo)> {
+        let (hash, peer) = self.segments.last()?;
+        let header = self.headers.get(hash).cloned()?;
+        let peer = PeerInfo {
+            last_used: Instant::now(),
+            score: u32::MAX,
+            ..peer.clone()
+        };
+        Some((header, peer))
+    }
+
+    /// Pushes a particular segment into the stack.
+    fn push_sync_segment(&mut self, peer: &PeerInfo, meta: &BlockHeader) {
+        self.headers.insert(meta.hash, *meta);
+        self.segments.push((meta.hash, peer.clone()));
+    }
+
+    /// Bulk inserts a bunch of metadata.
+    fn insert_sync_metadata(&mut self, metas: &Vec<BlockHeader>) {
+        for meta in metas {
+            self.headers.insert(meta.hash, *meta);
+        }
+    }
+
+    /// Empty the metadata table.
+    fn empty_sync_metadata(&mut self) {
+        self.segments.clear();
+        self.headers.clear();
+    }
+
+    /// Pops a segment from the stack; and bulk removes all metadata associated with it.
+    fn pop_sync_segment(&mut self) {
+        let (hash, _) = self.segments.pop().expect("non-empty stack");
+        let header = self.headers.get(&hash).unwrap();
+        let mut hash = header.qc.block_hash;
+        while let Some(h) = self.headers.remove(&hash) {
+            hash = h.qc.block_hash;
+        }
     }
 }

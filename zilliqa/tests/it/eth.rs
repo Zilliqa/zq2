@@ -711,9 +711,9 @@ async fn get_storage_at(mut network: Network) {
 /// Helper method for send transaction tests.
 async fn send_transaction(
     network: &mut Network,
+    wallet: &Wallet,
     mut tx: TypedTransaction,
 ) -> (Transaction, TransactionReceipt) {
-    let wallet = network.genesis_wallet().await;
     wallet.fill_transaction(&mut tx, None).await.unwrap();
     let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
     let expected_hash = tx.hash(&sig);
@@ -744,7 +744,8 @@ async fn send_transaction(
 async fn send_legacy_transaction(mut network: Network) {
     let to = H160::random_using(network.rng.lock().unwrap().deref_mut());
     let tx = TransactionRequest::pay(to, 123).into();
-    let (tx, receipt) = send_transaction(&mut network, tx).await;
+    let wallet = network.genesis_wallet().await;
+    let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 0);
     assert_eq!(receipt.to.unwrap(), to);
@@ -766,7 +767,8 @@ async fn send_eip2930_transaction(mut network: Network) {
     };
     let tx = Eip2930TransactionRequest::new(TransactionRequest::pay(to, 123), access_list.clone())
         .into();
-    let (tx, receipt) = send_transaction(&mut network, tx).await;
+    let wallet = network.genesis_wallet().await;
+    let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 1);
     assert_eq!(tx.access_list.unwrap(), access_list);
@@ -795,7 +797,8 @@ async fn send_eip1559_transaction(mut network: Network) {
         .max_fee_per_gas(gas_price)
         .max_priority_fee_per_gas(gas_price)
         .into();
-    let (tx, receipt) = send_transaction(&mut network, tx).await;
+    let wallet = network.genesis_wallet().await;
+    let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 2);
     assert_eq!(tx.access_list.unwrap(), access_list);
@@ -920,7 +923,7 @@ async fn revert_transaction(mut network: Network) {
     let success_call = TransactionRequest::new()
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(true)]).unwrap());
-    let (_, receipt) = send_transaction(&mut network, success_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, success_call.into()).await;
     assert_eq!(receipt.status.unwrap().as_u32(), 1);
 
     // Ensure value was incremented
@@ -939,7 +942,7 @@ async fn revert_transaction(mut network: Network) {
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
         .gas(1_000_000); // Pass a gas limit, otherwise estimate_gas is called and fails due to the revert
-    let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, revert_call.into()).await;
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
 
     // Ensure value was NOT incremented a second time
@@ -976,7 +979,7 @@ async fn gas_charged_on_revert(mut network: Network) {
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
         .gas(large_gas_limit);
-    let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, revert_call.into()).await;
 
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
     assert!(receipt.gas_used.is_some());
@@ -999,7 +1002,7 @@ async fn gas_charged_on_revert(mut network: Network) {
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(true)]).unwrap())
         .gas(small_gas_limit);
-    let (_, receipt) = send_transaction(&mut network, fail_out_of_gas_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, fail_out_of_gas_call.into()).await;
 
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
     let balance_after_call = wallet.get_balance(wallet.address(), None).await.unwrap();
@@ -1359,8 +1362,7 @@ async fn get_accounts_with_extra_args(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn deploy_deterministic_deployment_proxy(mut network: Network) {
-    let wallet = network.random_wallet().await;
-    let provider = wallet.inner();
+    let wallet = network.genesis_wallet().await;
 
     let signer: H160 = "0x3fab184622dc19b6109349b94811493bf2a45362"
         .parse()
@@ -1371,7 +1373,7 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
 
     // Send the signer enough money to cover the deployment.
     let tx = TransactionRequest::pay(signer, gas_price * gas);
-    send_transaction(&mut network, tx.into()).await;
+    send_transaction(&mut network, &wallet, tx.into()).await;
 
     // Transaction from https://github.com/Arachnid/deterministic-deployment-proxy.
     let tx = TransactionRequest::new()
@@ -1387,11 +1389,7 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
         v: 27,
     };
     let raw_tx = tx.rlp_signed(&signature);
-    let hash = provider
-        .send_raw_transaction(raw_tx)
-        .await
-        .unwrap()
-        .tx_hash();
+    let hash = wallet.send_raw_transaction(raw_tx).await.unwrap().tx_hash();
 
     let receipt = network.run_until_receipt(&wallet, hash, 100).await;
 
@@ -1426,7 +1424,8 @@ async fn test_send_transaction_errors(mut network: Network) {
 
     // Give the signer some funds.
     let tx = TransactionRequest::pay(wallet.address(), 2 * gas_price * gas);
-    send_transaction(&mut network, tx.into()).await;
+    let genesis_wallet = network.genesis_wallet().await;
+    send_transaction(&mut network, &genesis_wallet, tx.into()).await;
 
     // Deliberately set too low a gas fee
     {
