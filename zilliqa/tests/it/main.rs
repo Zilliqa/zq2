@@ -826,9 +826,11 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
+                    node.inner.lock().unwrap().consensus.tick().unwrap();
                     node.inner.lock().unwrap().handle_timeout().unwrap();
                 });
             }
+            self.consensus_tick_countdown = 10;
             return;
         }
 
