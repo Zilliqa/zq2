@@ -150,6 +150,29 @@ impl Sync {
         })
     }
 
+    /// Skip Failure
+    ///
+    /// We get a plain ACK in certain cases - treated as an empty response.
+    /// FIXME: Remove once all nodes upgraded to next version.
+    pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
+        self.empty_count = self.empty_count.saturating_add(1);
+        if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
+            tracing::warn!(from = %from,
+                "sync::Acknowledgement"
+            );
+            match &self.state {
+                SyncState::Phase1(_) => {
+                    self.handle_metadata_response(from, Some(vec![]))?;
+                }
+                SyncState::Phase2(_) => {
+                    self.handle_multiblock_response(from, Some(vec![]))?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// P2P Failure
     ///
     /// This gets called for any libp2p request failure - treated as a network failure
