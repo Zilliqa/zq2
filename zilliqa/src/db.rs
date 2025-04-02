@@ -384,7 +384,7 @@ impl Db {
                 INSERT INTO new_receipts SELECT * FROM receipts;
                 DROP TABLE receipts;
                 ALTER TABLE new_receipts RENAME TO receipts;
-                CREATE INDEX idx_receipts_block_hash ON receipts (block_hash);
+                CREATE INDEX block_hash_index ON receipts (block_hash);
 
                 COMMIT;
             ",
