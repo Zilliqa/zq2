@@ -174,6 +174,7 @@ impl Chain {
                 "scilla_block_number_returns_current_block": false,
                 "scilla_maps_are_encoded_correctly": false,
                 "transfer_gas_fee_to_zero_account": false,
+                "apply_scilla_delta_when_evm_succeeded" : false,
             })),
             _ => None,
         }
