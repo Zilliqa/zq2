@@ -3214,6 +3214,11 @@ impl Consensus {
             }
         };
         self.set_view(view, false)?;
+
+        // Build a new view - We assume the network is stuck.
+        if !self.db.get_voted_in_view()? {
+            self.build_new_view()?;
+        }
         Ok(())
     }
 }
