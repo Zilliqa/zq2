@@ -63,7 +63,7 @@ resource "google_compute_instance" "this" {
 
   boot_disk {
     initialize_params {
-      size  = var.config.disk_size
+      size  = contains(["zq2-protomainnet-api-ase1-1-2cdc", "zq2-protomainnet-api-ase1-2-2cdc", "zq2-protomainnet-api-ase1-4-2cdc"], each.value.resource_name) ? var.config.disk_size : 256
       image = "ubuntu-os-cloud/ubuntu-2204-lts"
       type  = "pd-ssd"
     }
