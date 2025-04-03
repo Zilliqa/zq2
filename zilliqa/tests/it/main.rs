@@ -10,6 +10,7 @@ use serde_json::{Value, value::RawValue};
 use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
 mod admin;
 mod consensus;
+mod debug;
 mod eth;
 mod ots;
 mod persistence;
