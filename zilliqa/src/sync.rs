@@ -64,6 +64,8 @@ pub struct Sync {
     // internal peers
     peers: Arc<SyncPeers>,
     initial_probed: bool, // sync by initial probe at startup
+    last_probe: Instant,
+    cache_probe: Option<Proposal>, // cache the probe response
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
     p1_response: BTreeMap<PeerId, Option<Vec<SyncBlockHeader>>>,
@@ -147,6 +149,8 @@ impl Sync {
             p1_response: BTreeMap::new(),
             segments: SyncSegments::default(),
             initial_probed: false,
+            last_probe: Instant::now(),
+            cache_probe: None,
         })
     }
 
@@ -689,8 +693,20 @@ impl Sync {
 
         tracing::info!(%from, number = %block.number(), "sync::BlockRequest : received probe");
 
+        // send cached response
+        if let Some(prop) = self.cache_probe.as_ref() {
+            if prop.hash() == block.hash() {
+                return Ok(ExternalMessage::BlockResponse(BlockResponse {
+                    proposals: vec![prop.clone()],
+                    from_view: u64::MAX,
+                    availability: None,
+                }));
+            }
+        };
+
         // Construct the proposal
         let prop = self.block_to_proposal(block);
+        self.cache_probe = Some(prop.clone());
         let message = ExternalMessage::BlockResponse(BlockResponse {
             proposals: vec![prop],
             from_view: u64::MAX,
