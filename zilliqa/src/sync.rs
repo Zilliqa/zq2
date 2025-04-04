@@ -64,8 +64,8 @@ pub struct Sync {
     // internal peers
     peers: Arc<SyncPeers>,
     initial_probed: bool, // sync by initial probe at startup
-    last_probe: Instant,
-    cache_probe: Option<Proposal>, // cache the probe response
+    last_probe_at: Instant,
+    cache_probe_response: Option<Proposal>, // cache the probe response
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
     p1_response: BTreeMap<PeerId, Option<Vec<SyncBlockHeader>>>,
@@ -149,8 +149,8 @@ impl Sync {
             p1_response: BTreeMap::new(),
             segments: SyncSegments::default(),
             initial_probed: false,
-            last_probe: Instant::now(),
-            cache_probe: None,
+            last_probe_at: Instant::now(),
+            cache_probe_response: None,
         })
     }
 
@@ -238,12 +238,12 @@ impl Sync {
     pub fn sync_from_probe(&mut self, resync: bool) -> Result<()> {
         // only do this upon start/restart/manually
         if !self.initial_probed || resync {
-            let elapsed = self.last_probe.elapsed();
+            let elapsed = self.last_probe_at.elapsed();
             if elapsed < Duration::from_secs(60) {
                 tracing::trace!(?elapsed, "sync::SyncFromProbe : skipping");
                 return Ok(());
             } else {
-                self.last_probe = Instant::now();
+                self.last_probe_at = Instant::now();
             }
             // inevitably picks a bootstrap node
             if let Some(peer_info) = self.peers.get_next_peer() {
@@ -698,7 +698,7 @@ impl Sync {
         tracing::info!(%from, number = %block.number(), "sync::BlockRequest : received probe");
 
         // send cached response
-        if let Some(prop) = self.cache_probe.as_ref() {
+        if let Some(prop) = self.cache_probe_response.as_ref() {
             if prop.hash() == block.hash() {
                 return Ok(ExternalMessage::BlockResponse(BlockResponse {
                     proposals: vec![prop.clone()],
@@ -710,7 +710,7 @@ impl Sync {
 
         // Construct the proposal
         let prop = self.block_to_proposal(block);
-        self.cache_probe = Some(prop.clone());
+        self.cache_probe_response = Some(prop.clone());
         let message = ExternalMessage::BlockResponse(BlockResponse {
             proposals: vec![prop],
             from_view: u64::MAX,
