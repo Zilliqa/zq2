@@ -689,11 +689,7 @@ impl Sync {
         }
 
         // Must have at least 1 block, genesis/checkpoint
-        let block_vec = self.db.get_highest_block_hashes(1)?;
-        let block = self
-            .db
-            .get_block_by_hash(block_vec.first().unwrap())?
-            .unwrap();
+        let block = self.db.get_highest_canonical_block()?.unwrap();
 
         tracing::info!(%from, number = %block.number(), "sync::BlockRequest : received probe");
 
