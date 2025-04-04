@@ -391,6 +391,20 @@ impl Db {
             )?;
         }
 
+        if version < 3 {
+            connection.execute_batch(
+                "
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (3);
+
+                CREATE INDEX idx_receipts_tx_hash ON receipts (tx_hash);
+
+                COMMIT;
+            ",
+            )?;
+        }
+
         Ok(())
     }
 
