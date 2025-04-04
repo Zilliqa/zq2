@@ -236,7 +236,7 @@ start() {
     docker container prune -f
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 --memory=6g \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
     """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ ${1} --log-json
