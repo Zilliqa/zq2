@@ -16,7 +16,7 @@ use libp2p::{
     identify,
     kad::{self, store::MemoryStore},
     multiaddr::{Multiaddr, Protocol},
-    noise,
+    noise, ping,
     request_response::{self, OutboundFailure, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
@@ -51,6 +51,7 @@ struct Behaviour {
     autonat_server: autonat::v2::server::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
+    ping: ping::Behaviour,
 }
 
 /// Messages circulating over the p2p network.
@@ -110,6 +111,7 @@ impl P2pNode {
             .with_dns()?
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
+                    ping: ping::Behaviour::default(),
                     request_response: request_response::cbor::Behaviour::new(
                         iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
                         Default::default(),
@@ -237,6 +239,11 @@ impl P2pNode {
         for (peer, address) in &self.config.bootstrap_address.0 {
             if self.swarm.local_peer_id() != peer {
                 self.swarm.dial(address.clone())?; // peers get added during the SwarmEvent
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(peer, address.clone());
+                self.swarm.add_peer_address(*peer, address.clone());
             }
         }
 
@@ -248,14 +255,21 @@ impl P2pNode {
                     let event = event.expect("swarm stream should be infinite");
                     debug!(?event, "swarm event");
                     match event {
+                        SwarmEvent::Dialing{peer_id, ..} => {
+                            info!(?peer_id, "P2P Dialling");
+                        }
+                        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                            info!(%peer_id, "P2P connected");
+                        }
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
                         }
                         // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                            let is_kad = info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME);
                             for addr in info.listen_addrs {
                                 self.swarm.add_peer_address(peer_id, addr.clone());
-                                if info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
+                                if is_kad {
                                     self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                                 }
                             }
@@ -300,7 +314,6 @@ impl P2pNode {
                                 }
                             }
                         }
-
                         SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source, .. })) => {
                             match message {
                                 request_response::Message::Request { request, channel: _channel, request_id: _request_id, .. } => {
@@ -333,7 +346,6 @@ impl P2pNode {
                                 // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
                                 let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
                             }
-
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };

@@ -44,7 +44,7 @@ hyper = "1.6.0"
 itertools = "0.14.0"
 jsonrpsee = { version = "0.24.8", features = ["jsonrpsee-http-client", "server"] }
 k256 = {version = "0.13.4", features = ["serde", "pem"] }
-libp2p = { version = "0.55.0", features = ["cbor", "dns", "gossipsub", "macros", "tokio", "request-response", "kad", "identify", "serde", "autonat", "tcp", "noise", "yamux"] }
+libp2p = { version = "0.55.0", features = ["cbor", "dns", "gossipsub", "macros", "tokio", "request-response", "kad", "identify", "serde", "autonat", "tcp", "noise", "yamux", "ping"] }
 lz4 = "1.28"
 once_cell = "1.21.1"
 opentelemetry = { version = "0.28.0", features = ["metrics"] }
