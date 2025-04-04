@@ -236,11 +236,15 @@ impl Sync {
     /// At re/start, the initial timeout will trigger a sync shortly after re/start.
     /// A resync flag is allowed to allow the rest of the code to redo this process.
     pub fn sync_from_probe(&mut self, resync: bool) -> Result<()> {
-        if resync {
-            self.initial_probed = false;
-        }
-        // only do this upon start/restart
-        if !self.initial_probed {
+        // only do this upon start/restart/manually
+        if !self.initial_probed || resync {
+            let elapsed = self.last_probe.elapsed();
+            if elapsed < Duration::from_secs(60) {
+                tracing::trace!(?elapsed, "sync::SyncFromProbe : skipping");
+                return Ok(());
+            } else {
+                self.last_probe = Instant::now();
+            }
             // inevitably picks a bootstrap node
             if let Some(peer_info) = self.peers.get_next_peer() {
                 let peer = peer_info.peer_id;
