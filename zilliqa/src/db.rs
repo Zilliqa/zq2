@@ -175,6 +175,7 @@ enum BlockFilter {
     View(u64),
     Height(u64),
     MaxHeight,
+    MaxCanonicalByHeight,
 }
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -737,14 +738,8 @@ impl Db {
             .optional()?)
     }
 
-    pub fn get_highest_block_hashes(&self, how_many: usize) -> Result<Vec<Hash>> {
-        Ok(self
-            .db
-            .lock()
-           .unwrap()
-           .prepare_cached(
-               "select block_hash from blocks where is_canonical = true order by height desc limit ?1")?
-           .query_map([how_many], |row| row.get(0))?.collect::<Result<Vec<Hash>, _>>()?)
+    pub fn get_highest_canonical_block(&self) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::MaxCanonicalByHeight)
     }
 
     pub fn set_high_qc_with_db_tx(
@@ -965,6 +960,9 @@ impl Db {
             }
             BlockFilter::MaxHeight => {
                 query_block!("TRUE ORDER BY height DESC LIMIT 1")
+            }
+            BlockFilter::MaxCanonicalByHeight => {
+                query_block!("is_canonical = TRUE ORDER BY height DESC LIMIT 1")
             }
         })
     }
