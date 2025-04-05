@@ -502,7 +502,12 @@ start() {
     docker rm node-exporter-""" + VERSIONS.get('node_exporter') + """ &> /dev/null || echo 0
     docker run -td -p 9100:9100 --name node-exporter-""" + VERSIONS.get('node_exporter') + """ \
         --net=host --restart=unless-stopped --pull=always \
-        ${NODE_EXPORTER_IMAGE} &> /dev/null &
+        ${NODE_EXPORTER_IMAGE} \
+        --collector.disable-defaults \
+        --collector.cpu \
+        --collector.meminfo \
+        --collector.filesystem \
+        &> /dev/null &
 }
 
 stop() {
@@ -632,6 +637,10 @@ metrics:
             scrape_interval: 30s
             static_configs:
               - targets: ['localhost:9256']
+            metric_relabel_configs:
+              - source_labels: [__name__]
+                regex: 'namedprocess_namegroup_cpu_seconds_total'
+                action: keep
   service:
     log_level: info
     pipelines:
