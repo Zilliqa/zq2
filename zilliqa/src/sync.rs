@@ -236,11 +236,16 @@ impl Sync {
     /// At re/start, the initial timeout will trigger a sync shortly after re/start.
     /// A resync flag is allowed to allow the rest of the code to redo this process.
     pub fn sync_from_probe(&mut self, resync: bool) -> Result<()> {
+        if self.am_syncing()? {
+            // do not sync if we are already syncing
+            tracing::debug!("sync::SyncFromProbe : already syncing");
+            return Ok(());
+        }
         // only do this upon start/restart/manually
         if !self.initial_probed || resync {
             let elapsed = self.last_probe_at.elapsed();
             if elapsed < Duration::from_secs(60) {
-                tracing::trace!(?elapsed, "sync::SyncFromProbe : skipping");
+                tracing::debug!(?elapsed, "sync::SyncFromProbe : skipping");
                 return Ok(());
             } else {
                 self.last_probe_at = Instant::now();
