@@ -927,20 +927,28 @@ impl Sync {
 
         let mut hash = block.hash();
         while metas.len() <= batch_size {
-            // grab the parent
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            // grab the block
+            let Some((block, tx_size)) = self.db.get_block_and_tx_size_by_hash(&hash)? else {
                 break; // that's all we have!
             };
-            hash = block.parent_hash();
 
-            let proposal = self.block_to_proposal(block.clone());
-            let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal)?.len();
+            // lazily compute transmission size
+            let transmission_size = if tx_size != 0 {
+                tx_size
+            } else {
+                let proposal = self.block_to_proposal(block.clone());
+                let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal)?.len();
+                self.db.set_block_tx_size(&hash, encoded_size)?;
+                tracing::trace!(size = %encoded_size, number = %block.number(), "sync::MetadataRequest : size");
+                encoded_size
+            };
 
             // insert the sync size
             metas.push(SyncBlockHeader {
                 header: block.header,
-                size_estimate: encoded_size,
+                size_estimate: transmission_size,
             });
+            hash = block.parent_hash(); // follow the parent
         }
 
         let message = ExternalMessage::SyncBlockHeaders(metas);

@@ -406,6 +406,17 @@ impl Db {
             )?;
         }
 
+        if version < 4 {
+            connection.execute_batch(
+                "
+                BEGIN;
+                INSERT INTO schema_version VALUES (4);
+                ALTER TABLE blocks ADD COLUMN transmission_size INTEGER;
+                COMMIT;
+            ",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -912,6 +923,33 @@ impl Db {
 
     pub fn insert_block(&self, block: &Block) -> Result<()> {
         self.insert_block_with_db_tx(&self.db.lock().unwrap(), block)
+    }
+
+    pub fn get_block_and_tx_size_by_hash(
+        &self,
+        block_hash: &Hash,
+    ) -> Result<Option<(Block, usize)>> {
+        let block = self.get_block_by_hash(block_hash)?;
+        if let Some(b) = block {
+            let sz = self
+                .db
+                .lock()
+                .unwrap()
+                .prepare_cached("SELECT transmission_size FROM blocks WHERE block_hash = ?1")?
+                .query_row([b.header.hash], |row| row.get::<_, Option<usize>>(0))?
+                .unwrap_or_default();
+            return Ok(Some((b, sz)));
+        }
+        Ok(None)
+    }
+
+    pub fn set_block_tx_size(&self, block_hash: &Hash, tx_size: usize) -> Result<()> {
+        self.db
+            .lock()
+            .unwrap()
+            .prepare_cached("UPDATE blocks SET transmission_size = ?1 WHERE block_hash = ?2")?
+            .execute((tx_size, block_hash))?;
+        Ok(())
     }
 
     pub fn remove_block(&self, block: &Block) -> Result<()> {
