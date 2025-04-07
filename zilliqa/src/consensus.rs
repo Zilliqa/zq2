@@ -1735,7 +1735,7 @@ impl Consensus {
 
         if self.get_block(&new_view.qc.block_hash)?.is_none() {
             trace!("high_qc block does not exist for NewView. Attemping to fetch block via sync");
-            self.sync.sync_from_probe(true)?;
+            self.sync.sync_from_probe()?;
             return Ok(None);
         }
 
