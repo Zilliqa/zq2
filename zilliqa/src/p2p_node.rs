@@ -244,11 +244,14 @@ impl P2pNode {
                     .kademlia
                     .add_address(peer, address.clone());
                 self.swarm.add_peer_address(*peer, address.clone());
+            } else {
+                // if we are a bootstrap, set ourselves into SERVER mode; and add our external address.
+                self.swarm.add_external_address(address.clone());
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .set_mode(Some(kad::Mode::Server));
             }
-            self.swarm
-                .behaviour_mut()
-                .kademlia
-                .set_mode(Some(kad::Mode::Server));
         }
 
         let mut terminate = signal::unix::signal(SignalKind::terminate())?;
@@ -268,7 +271,7 @@ impl P2pNode {
                             bytes_sent,
                             result: Ok(()),
                         })) => {
-                            tracing::info!("Tested {tested_addr} with {server}. Sent {bytes_sent} bytes for verification. Everything Ok and verified.");
+                            tracing::error!("Tested {tested_addr} with {server}. Sent {bytes_sent} bytes for verification. Everything Ok and verified.");
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::AutonatClient(autonat::v2::client::Event {
                             server,
@@ -276,19 +279,17 @@ impl P2pNode {
                             bytes_sent,
                             result: Err(e),
                         })) => {
-                            tracing::info!("Tested {tested_addr} with {server}. Sent {bytes_sent} bytes for verification. Failed with {e:?}.");
+                            tracing::error!("Tested {tested_addr} with {server}. Sent {bytes_sent} bytes for verification. Failed with {e:?}.");
                         }
                         SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                             info!(%peer_id, "P2P connected");
                         }
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
-                            if let kad::Mode::Server = self.swarm.behaviour_mut().kademlia.mode() {
-                                self.swarm.add_external_address(address.clone());
-                            }
                         }
                         // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                            // will only be true if peer is publicly reachable i.e. SERVER mode.
                             let is_kad = info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME);
                             for addr in info.listen_addrs {
                                 self.swarm.add_peer_address(peer_id, addr.clone());
@@ -377,7 +378,7 @@ impl P2pNode {
                                 return Err(anyhow!("request without id failed"));
                             }
                         }
-                        e => tracing::warn!("Unhandled Swarm Event: {e:?}"),
+                        _ => {},
                     }
                 },
                 message = self.local_message_receiver.next() => {
