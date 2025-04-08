@@ -16,7 +16,7 @@ use libp2p::{
     identify,
     kad::{self, store::MemoryStore},
     multiaddr::{Multiaddr, Protocol},
-    noise, ping,
+    noise,
     request_response::{self, OutboundFailure, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux,
@@ -51,7 +51,6 @@ struct Behaviour {
     autonat_server: autonat::v2::server::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
-    ping: ping::Behaviour,
 }
 
 /// Messages circulating over the p2p network.
@@ -111,7 +110,6 @@ impl P2pNode {
             .with_dns()?
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
-                    ping: ping::Behaviour::default(),
                     request_response: request_response::cbor::Behaviour::new(
                         iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
                         Default::default(),
