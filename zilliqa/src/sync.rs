@@ -171,7 +171,9 @@ impl Sync {
                 SyncState::Phase2(_) => {
                     self.handle_multiblock_response(from, Some(vec![]))?;
                 }
-                _ => {}
+                state => {
+                    tracing::error!(%state, "sync::Acknowledgement : invalid");
+                }
             }
         }
         Ok(())
@@ -206,7 +208,9 @@ impl Sync {
                 SyncState::Phase2(_) => {
                     self.handle_multiblock_response(from, None)?;
                 }
-                _ => {}
+                state => {
+                    tracing::error!(%state, "sync::RequestFailure : invalid");
+                }
             }
         }
         Ok(())
@@ -825,7 +829,7 @@ impl Sync {
                     self.p1_response.clear();
                     for p in self.in_flight.drain(..) {
                         self.peers.done_with_peer(Some(p), DownGrade::None);
-                    }                    
+                    }
                 }
                 return Ok(());
             }
