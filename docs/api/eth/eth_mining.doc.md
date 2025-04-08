@@ -34,4 +34,4 @@ Returns if the node is mining. zq2 nodes always return `false`.
 | `id`      | string | Required | `"1"`           |
 | `jsonrpc` | string | Required | `"2.0"`         |
 | `method`  | string | Required | `"eth_mining"`  |
-| `params`  | array  | Requred  | can be anything |
+| `params`  | array  | Required | can be anything |
