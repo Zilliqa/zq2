@@ -233,22 +233,10 @@ impl P2pNode {
         if let Some(external_address) = &self.config.external_address {
             self.swarm.add_external_address(external_address.clone());
         }
-
         for (peer, address) in &self.config.bootstrap_address.0 {
-            if self.swarm.local_peer_id() != peer {
-                self.swarm.dial(address.clone())?;
-                self.swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .add_address(peer, address.clone());
-                self.swarm.add_peer_address(*peer, address.clone());
-            } else {
-                // if we are a bootstrap, set ourselves into SERVER mode; and add our external address.
+            if self.swarm.local_peer_id() == peer {
+                // if we are a bootstrap, add our external address.
                 self.swarm.add_external_address(address.clone());
-                self.swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .set_mode(Some(kad::Mode::Server));
             }
         }
 
@@ -263,27 +251,16 @@ impl P2pNode {
                         SwarmEvent::Dialing{peer_id, ..} => {
                             info!(?peer_id, "P2P Dialling");
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::AutonatClient(autonat::v2::client::Event {
-                            server,
-                            tested_addr,
-                            bytes_sent,
-                            result: Ok(()),
-                        })) => {
-                            tracing::error!("Tested {tested_addr} with {server}. Sent {bytes_sent} bytes for verification. Everything Ok and verified.");
-                        }
-                        SwarmEvent::Behaviour(BehaviourEvent::AutonatClient(autonat::v2::client::Event {
-                            server,
-                            tested_addr,
-                            bytes_sent,
-                            result: Err(e),
-                        })) => {
-                            tracing::error!("Tested {tested_addr} with {server}. Sent {bytes_sent} bytes for verification. Failed with {e:?}.");
-                        }
                         SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                             info!(%peer_id, "P2P connected");
                         }
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
+                            for (peer, address) in &self.config.bootstrap_address.0 {
+                                if self.swarm.local_peer_id() != peer {
+                                    self.swarm.dial(address.clone())?;
+                                }
+                            }
                         }
                         // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
