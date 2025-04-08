@@ -380,6 +380,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
+                new_view_broadcast_interval: Duration::default(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -540,6 +541,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
+                new_view_broadcast_interval: Duration::default(),
             },
             block_request_limit: block_request_limit_default(),
             sync: SyncConfig {
@@ -806,19 +808,6 @@ impl Network {
         // Advance time.
         zilliqa::time::advance(Duration::from_millis(1));
 
-        // Every 10ms send a consensus tick, since most of our tests are too short to otherwise
-        // be able to sync.
-        self.consensus_tick_countdown -= 1;
-        if self.consensus_tick_countdown == 0 {
-            for (index, node) in self.nodes.iter().enumerate() {
-                let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
-
-                span.in_scope(|| {
-                    node.inner.lock().unwrap().consensus.tick().unwrap();
-                });
-            }
-            self.consensus_tick_countdown = 10;
-        }
         // Take all the currently ready messages from the stream.
         let mut messages = self.collect_messages();
 
@@ -839,9 +828,11 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
+                    node.inner.lock().unwrap().consensus.tick().unwrap();
                     node.inner.lock().unwrap().handle_timeout().unwrap();
                 });
             }
+            self.consensus_tick_countdown = 10;
             return;
         }
 
@@ -900,6 +891,20 @@ impl Network {
             );
 
             self.handle_message((source, destination, message))
+        }
+
+        // Every 10ms send a consensus tick, since most of our tests are too short to otherwise
+        // be able to sync.
+        self.consensus_tick_countdown -= 1;
+        if self.consensus_tick_countdown == 0 {
+            for (index, node) in self.nodes.iter().enumerate() {
+                let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
+
+                span.in_scope(|| {
+                    node.inner.lock().unwrap().consensus.tick().unwrap();
+                });
+            }
+            self.consensus_tick_countdown = 10;
         }
     }
 
