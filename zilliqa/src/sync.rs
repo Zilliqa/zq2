@@ -822,6 +822,10 @@ impl Sync {
                 // https://github.com/Zilliqa/zq2/issues/2416
                 if self.segments.count_sync_segments() <= 1 {
                     self.state = SyncState::Phase3; // flush, drop all segments, and restart
+                    self.p1_response.clear();
+                    for p in self.in_flight.drain(..) {
+                        self.peers.done_with_peer(Some(p), DownGrade::None);
+                    }                    
                 }
                 return Ok(());
             }
