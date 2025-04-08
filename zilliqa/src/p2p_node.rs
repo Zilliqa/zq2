@@ -233,9 +233,10 @@ impl P2pNode {
         if let Some(external_address) = &self.config.external_address {
             self.swarm.add_external_address(external_address.clone());
         }
+
+        // if we are a bootstrap, add our external address, which allows us to switch to kademlia SERVER mode.
         for (peer, address) in &self.config.bootstrap_address.0 {
             if self.swarm.local_peer_id() == peer {
-                // if we are a bootstrap, add our external address.
                 self.swarm.add_external_address(address.clone());
             }
         }
@@ -248,10 +249,10 @@ impl P2pNode {
                     let event = event.expect("swarm stream should be infinite");
                     debug!(?event, "swarm event");
                     match event {
+                        // only dial after we have a listen address, to reuse port
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
                             for (peer, address) in &self.config.bootstrap_address.0 {
-                                // dial after we have a listen address, to reuse the port
                                 if self.swarm.local_peer_id() != peer {
                                     self.swarm.dial(address.clone())?;
                                 }
@@ -268,6 +269,7 @@ impl P2pNode {
                                 }
                             }
                         }
+                        // Add/Remove peers to/from the shard peer list used in syncing.
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.add_peer(peer_id);
