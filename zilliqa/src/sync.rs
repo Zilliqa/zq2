@@ -171,7 +171,9 @@ impl Sync {
                 SyncState::Phase2(_) => {
                     self.handle_multiblock_response(from, Some(vec![]))?;
                 }
-                _ => {}
+                state => {
+                    tracing::error!(%state, "sync::Acknowledgement : invalid");
+                }
             }
         }
         Ok(())
@@ -206,7 +208,9 @@ impl Sync {
                 SyncState::Phase2(_) => {
                     self.handle_multiblock_response(from, None)?;
                 }
-                _ => {}
+                state => {
+                    tracing::error!(%state, "sync::RequestFailure : invalid");
+                }
             }
         }
         Ok(())
@@ -822,6 +826,10 @@ impl Sync {
                 // https://github.com/Zilliqa/zq2/issues/2416
                 if self.segments.count_sync_segments() <= 1 {
                     self.state = SyncState::Phase3; // flush, drop all segments, and restart
+                    self.p1_response.clear();
+                    for p in self.in_flight.drain(..) {
+                        self.peers.done_with_peer(Some(p), DownGrade::None);
+                    }
                 }
                 return Ok(());
             }
