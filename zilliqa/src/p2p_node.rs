@@ -248,15 +248,10 @@ impl P2pNode {
                     let event = event.expect("swarm stream should be infinite");
                     debug!(?event, "swarm event");
                     match event {
-                        SwarmEvent::Dialing{peer_id, ..} => {
-                            info!(?peer_id, "P2P Dialling");
-                        }
-                        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                            info!(%peer_id, "P2P connected");
-                        }
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
                             for (peer, address) in &self.config.bootstrap_address.0 {
+                                // dial after we have a listen address, to reuse the port
                                 if self.swarm.local_peer_id() != peer {
                                     self.swarm.dial(address.clone())?;
                                 }
