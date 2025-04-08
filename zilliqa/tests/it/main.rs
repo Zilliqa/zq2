@@ -380,6 +380,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
+                new_view_broadcast_interval: Duration::default(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -540,6 +541,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
+                new_view_broadcast_interval: Duration::default(),
             },
             block_request_limit: block_request_limit_default(),
             sync: SyncConfig {

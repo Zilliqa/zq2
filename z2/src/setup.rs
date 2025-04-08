@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
+    time::Duration,
 };
 
 use alloy::{
@@ -545,6 +546,7 @@ impl Setup {
                     contract_upgrades: ContractUpgrades::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
+                    new_view_broadcast_interval: Duration::default(),
                 },
                 block_request_limit: block_request_limit_default(),
                 sync: SyncConfig {
