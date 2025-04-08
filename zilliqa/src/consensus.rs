@@ -504,8 +504,9 @@ impl Consensus {
             // Resend NewView message for this view if timeout period is a multiple of consensus_timeout
             if (milliseconds_since_last_view_change
                 > self.config.consensus.consensus_timeout.as_millis() as u64)
+                && !self.config.consensus.new_view_broadcast_interval.is_zero()
                 && (Duration::from_millis(milliseconds_since_last_view_change).as_secs()
-                    % self.config.consensus.consensus_timeout.as_secs())
+                    % self.config.consensus.new_view_broadcast_interval.as_secs())
                     == 0
             {
                 if let Some((_, ExternalMessage::NewView(new_view))) =
@@ -3222,6 +3223,11 @@ impl Consensus {
             }
         };
         self.set_view(view, false)?;
+
+        // Build a new view - We assume the network is stuck.
+        if !self.db.get_voted_in_view()? {
+            self.build_new_view()?;
+        }
         Ok(())
     }
 }
