@@ -955,10 +955,11 @@ impl Db {
                 query_block!("height = ?1 AND is_canonical = TRUE", height)
             }
             BlockFilter::MaxHeight => {
-                query_block!("TRUE ORDER BY height DESC LIMIT 1")
+                query_block!("height = (SELECT max(height) FROM blocks) LIMIT 1")
             }
+            
             BlockFilter::MaxCanonicalByHeight => {
-                query_block!("is_canonical = TRUE ORDER BY height DESC LIMIT 1")
+                query_block!("is_canonical = true AND height = (SELECT max(height) FROM blocks WHERE is_canonical = true)")
             }
         })
     }
