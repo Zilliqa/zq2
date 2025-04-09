@@ -406,6 +406,20 @@ impl Db {
             )?;
         }
 
+        if version < 4 {
+            connection.execute_batch(
+                "
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (4);
+
+                CREATE INDEX idx_blocks_canonical_height ON blocks(is_canonical, height DESC);
+
+                COMMIT;
+            ",
+            )?;
+        }
+
         Ok(())
     }
 
