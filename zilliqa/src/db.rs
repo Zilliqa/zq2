@@ -729,12 +729,8 @@ impl Db {
             .db
             .lock()
             .unwrap()
-            // Two queries here are deliberate to ensure the index on `height` column is used
-            .prepare_cached("SELECT height from (SELECT height, is_canonical FROM blocks ORDER BY height DESC) WHERE is_canonical = 1 LIMIT 1",)?
-            .query_row(
-                (),
-                |row| row.get(0),
-            )
+            .prepare_cached("SELECT max(height) from blocks WHERE is_canonical = 1")?
+            .query_row((), |row| row.get(0))
             .optional()?)
     }
 
