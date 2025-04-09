@@ -6,7 +6,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy::primitives::Address;
@@ -422,10 +422,18 @@ impl Db {
 
     /// Returns the lowest and highest block numbers of stored blocks
     pub fn available_range(&self) -> Result<RangeInclusive<u64>> {
+        let start = Instant::now();
+
         let db = self.db.lock().unwrap();
         let (min, max) = db
             .prepare_cached("SELECT MIN(height), MAX(height) FROM blocks")?
             .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let duration = start.elapsed();
+        debug!(
+            "QueryDuration: available_range executed in: {:?}",
+            duration.as_millis()
+        );
+
         Ok(min..=max)
     }
 
@@ -656,19 +664,33 @@ impl Db {
     }
 
     pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT block_hash FROM blocks WHERE view = ?1")?
             .query_row([view], |row| row.get(0))
-            .optional()?)
+            .optional()?;
+
+        debug!(
+            "QueryDuration: get_block_hash_by_view executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+
+        Ok(result)
     }
 
     pub fn set_finalized_view_with_db_tx(&self, sqlite_tx: &Connection, view: u64) -> Result<()> {
+        let start = Instant::now();
         sqlite_tx
             .prepare_cached("INSERT INTO tip_info (finalized_view) VALUES (?1) ON CONFLICT DO UPDATE SET finalized_view = ?1")?
             .execute([view])?;
+
+        debug!(
+            "QueryDuration: set_finalized_view_with_db_tx executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(())
     }
 
@@ -677,14 +699,20 @@ impl Db {
     }
 
     pub fn get_finalized_view(&self) -> Result<Option<u64>> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT finalized_view FROM tip_info")?
             .query_row((), |row| row.get(0))
             .optional()
-            .unwrap_or(None))
+            .unwrap_or(None);
+        debug!(
+            "QueryDuration: get_finalized_view executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     /// Write view to table if view is larger than current. Return true if write was successful
@@ -694,9 +722,15 @@ impl Db {
         view: u64,
         voted: bool,
     ) -> Result<bool> {
+        let start = Instant::now();
         let res = sqlite_tx
             .prepare_cached("INSERT INTO tip_info (view, voted_in_view) VALUES (?1, ?2) ON CONFLICT(_single_row) DO UPDATE SET view = ?1, voted_in_view = ?2 WHERE tip_info.view IS NULL OR tip_info.view < ?1",)?
             .execute((view, voted))?;
+
+        debug!(
+            "QueryDuration: set_view_with_db_tx executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(res != 0)
     }
 
@@ -705,27 +739,42 @@ impl Db {
     }
 
     pub fn get_view(&self) -> Result<Option<u64>> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT view FROM tip_info")?
             .query_row((), |row| row.get(0))
             .optional()
-            .unwrap_or(None))
+            .unwrap_or(None);
+        debug!(
+            "QueryDuration: get_view executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn get_voted_in_view(&self) -> Result<bool> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT voted_in_view FROM tip_info")?
-            .query_row((), |row| row.get(0))?)
+            .query_row((), |row| row.get(0))?;
+
+        debug!(
+            "QueryDuration: get_voted_in_view executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+
+        Ok(result)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
@@ -735,7 +784,12 @@ impl Db {
                 (),
                 |row| row.get(0),
             )
-            .optional()?)
+            .optional()?;
+        debug!(
+            "QueryDuration: get_highest_canonical_block_number executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn get_highest_canonical_block(&self) -> Result<Option<Block>> {
@@ -747,12 +801,17 @@ impl Db {
         sqlite_tx: &Connection,
         high_qc: QuorumCertificate,
     ) -> Result<()> {
+        let start = Instant::now();
         sqlite_tx.prepare_cached("INSERT INTO tip_info (high_qc, high_qc_updated_at) VALUES (:high_qc, :timestamp) ON CONFLICT DO UPDATE SET high_qc = :high_qc, high_qc_updated_at = :timestamp",)?
         .execute(
             named_params! {
                 ":high_qc": high_qc,
                 ":timestamp": SystemTimeSqlable(SystemTime::now())
             })?;
+        debug!(
+            "QueryDuration: set_high_qc_with_db_tx executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(())
     }
 
@@ -761,18 +820,25 @@ impl Db {
     }
 
     pub fn get_high_qc(&self) -> Result<Option<QuorumCertificate>> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT high_qc FROM tip_info")?
             .query_row((), |row| row.get(0))
             .optional()?
-            .flatten())
+            .flatten();
+        debug!(
+            "QueryDuration: get_high_qc executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn get_high_qc_updated_at(&self) -> Result<Option<SystemTime>> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
@@ -780,7 +846,12 @@ impl Db {
             .query_row((), |row| row.get::<_, SystemTimeSqlable>(0))
             .optional()
             .unwrap_or(None)
-            .map(Into::<SystemTime>::into))
+            .map(Into::<SystemTime>::into);
+        debug!(
+            "QueryDuration: get_high_qc_updated_at executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn add_touched_address_with_db_tx(
@@ -789,11 +860,16 @@ impl Db {
         address: Address,
         txn_hash: Hash,
     ) -> Result<()> {
+        let start = Instant::now();
         sqlite_tx
             .prepare_cached(
                 "INSERT OR IGNORE INTO touched_address_index (address, tx_hash) VALUES (?1, ?2)",
             )?
             .execute((AddressSqlable(address), txn_hash))?;
+        debug!(
+            "QueryDuration: add_touched_address_with_db_tx executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(())
     }
 
@@ -804,34 +880,52 @@ impl Db {
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
         // TODO: this is only ever used in one API, so keep an eye on performance - in case e.g.
         // the index table might need to be denormalised to simplify this lookup
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT tx_hash FROM touched_address_index JOIN receipts USING (tx_hash) JOIN blocks USING (block_hash) WHERE address = ?1 ORDER BY blocks.height, receipts.tx_index")?
             .query_map([AddressSqlable(address)], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?)
+            .collect::<Result<Vec<_>, _>>()?;
+        debug!(
+            "QueryDuration: get_touched_transactions executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<SignedTransaction>> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT data FROM transactions WHERE tx_hash = ?1")?
             .query_row([txn_hash], |row| row.get(0))
-            .optional()?)
+            .optional()?;
+        debug!(
+            "QueryDuration: get_transaction executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn contains_transaction(&self, hash: &Hash) -> Result<bool> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT 1 FROM transactions WHERE tx_hash = ?1")?
             .query_row([hash], |row| row.get::<_, i64>(0))
             .optional()?
-            .is_some())
+            .is_some();
+        debug!(
+            "QueryDuration: contains_transaction executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn insert_transaction_with_db_tx(
@@ -840,9 +934,15 @@ impl Db {
         hash: &Hash,
         tx: &SignedTransaction,
     ) -> Result<()> {
+        let start = Instant::now();
         sqlite_tx
             .prepare_cached("INSERT OR IGNORE INTO transactions (tx_hash, data) VALUES (?1, ?2)")?
             .execute((hash, tx))?;
+
+        debug!(
+            "QueryDuration: insert_transaction_with_db_tx executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(())
     }
 
@@ -853,13 +953,19 @@ impl Db {
     }
 
     pub fn get_block_hash_reverse_index(&self, tx_hash: &Hash) -> Result<Option<Hash>> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT r.block_hash FROM receipts r INNER JOIN blocks b ON r.block_hash = b.block_hash WHERE r.tx_hash = ?1 AND b.is_canonical = TRUE")?
             .query_row([tx_hash], |row| row.get(0))
-            .optional()?)
+            .optional()?;
+        debug!(
+            "QueryDuration: get_block_hash_reverse_index executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn insert_block_with_db_tx(&self, sqlite_tx: &Connection, block: &Block) -> Result<()> {
@@ -872,6 +978,7 @@ impl Db {
         hash: Hash,
         block: &Block,
     ) -> Result<()> {
+        let start = Instant::now();
         sqlite_tx.prepare_cached("INSERT INTO blocks
         (block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg, is_canonical)
     VALUES (:block_hash, :view, :height, :qc, :signature, :state_root_hash, :transactions_root_hash, :receipts_root_hash, :timestamp, :gas_used, :gas_limit, :agg, TRUE)",)?.execute(
@@ -889,24 +996,38 @@ impl Db {
                 ":gas_limit": block.header.gas_limit,
                 ":agg": block.agg,
             })?;
+        debug!(
+            "QueryDuration: insert_block_with_hash_with_db_tx executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(())
     }
 
     pub fn mark_block_as_canonical(&self, hash: Hash) -> Result<()> {
+        let start = Instant::now();
         self.db
             .lock()
             .unwrap()
             .prepare_cached("UPDATE blocks SET is_canonical = TRUE WHERE block_hash = ?1")?
             .execute([hash])?;
+        debug!(
+            "QueryDuration: mark_block_as_canonical executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(())
     }
 
     pub fn mark_block_as_non_canonical(&self, hash: Hash) -> Result<()> {
+        let start = Instant::now();
         self.db
             .lock()
             .unwrap()
             .prepare_cached("UPDATE blocks SET is_canonical = FALSE WHERE block_hash = ?1")?
             .execute([hash])?;
+        debug!(
+            "QueryDuration: mark_block_as_non_canonical executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(())
     }
 
@@ -915,15 +1036,21 @@ impl Db {
     }
 
     pub fn remove_block(&self, block: &Block) -> Result<()> {
+        let start = Instant::now();
         self.db
             .lock()
             .unwrap()
             .prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?
             .execute([block.header.hash])?;
+        debug!(
+            "QueryDuration: remove_block executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(())
     }
 
     fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
+        let start = Instant::now();
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
                 header: BlockHeader {
@@ -948,7 +1075,7 @@ impl Db {
                 self.db.lock().unwrap().prepare_cached(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond),)?.query_row([$($key),*], make_block).optional()?
             };
         }
-        Ok(match filter {
+        let result = match filter {
             BlockFilter::Hash(hash) => {
                 query_block!("block_hash = ?1", hash)
             }
@@ -964,13 +1091,19 @@ impl Db {
             BlockFilter::MaxCanonicalByHeight => {
                 query_block!("is_canonical = TRUE ORDER BY height DESC LIMIT 1")
             }
-        })
+        };
+        debug!(
+            "QueryDuration: get_transactionless_block executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     fn get_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         let Some(mut block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
+        let start = Instant::now();
         let transaction_hashes = self
             .db
             .lock()
@@ -981,6 +1114,10 @@ impl Db {
             .query_map([block.header.hash], |row| row.get(0))?
             .collect::<Result<Vec<Hash>, _>>()?;
         block.transactions = transaction_hashes;
+        debug!(
+            "QueryDuration: get_block executed in: {:?}",
+            start.elapsed().as_millis()
+        );
         Ok(Some(block))
     }
 
@@ -1001,25 +1138,38 @@ impl Db {
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT 1 FROM blocks WHERE block_hash = ?1")?
             .query_row([block_hash], |row| row.get::<_, i64>(0))
             .optional()?
-            .is_some())
+            .is_some();
+
+        debug!(
+            "QueryDuration: contains_block executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn contains_canonical_block(&self, block_hash: &Hash) -> Result<bool> {
-        Ok(self
+        let start = Instant::now();
+        let result = self
             .db
             .lock()
             .unwrap()
             .prepare_cached("SELECT 1 FROM blocks WHERE is_canonical = TRUE AND block_hash = ?1")?
             .query_row([block_hash], |row| row.get::<_, i64>(0))
             .optional()?
-            .is_some())
+            .is_some();
+        debug!(
+            "QueryDuration: contains_canonical_block executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     fn make_receipt(row: &Row) -> rusqlite::Result<TransactionReceipt> {
@@ -1044,6 +1194,7 @@ impl Db {
         sqlite_tx: &Connection,
         receipt: TransactionReceipt,
     ) -> Result<()> {
+        let start = Instant::now();
         sqlite_tx.prepare_cached("INSERT INTO receipts
                 (tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions)
             VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)",)?.execute(            
@@ -1061,6 +1212,10 @@ impl Db {
                 ":errors": MapScillaErrorSqlable(receipt.errors),
                 ":exceptions": VecScillaExceptionSqlable(receipt.exceptions),
             })?;
+        debug!(
+            "QueryDuration: insert_transaction_receipt_with_db_tx executed in: {:?}",
+            start.elapsed().as_millis()
+        );
 
         Ok(())
     }
@@ -1070,14 +1225,27 @@ impl Db {
     }
 
     pub fn get_transaction_receipt(&self, txn_hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        Ok(self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1",)?.query_row( [txn_hash], Self::make_receipt).optional()?)
+        let start = Instant::now();
+        let result = self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1",)?.query_row( [txn_hash], Self::make_receipt).optional()?;
+        debug!(
+            "QueryDuration: get_transaction_receipt executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: &Hash,
     ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+        let start = Instant::now();
+
+        let result = self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
+        debug!(
+            "QueryDuration: get_transaction_receipts_in_block executed in: {:?}",
+            start.elapsed().as_millis()
+        );
+        Ok(result)
     }
 
     pub fn get_total_transaction_count(&self) -> Result<usize> {
