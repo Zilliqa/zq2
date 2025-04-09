@@ -548,6 +548,7 @@ pub struct Fork {
     pub scilla_block_number_returns_current_block: bool,
     pub scilla_maps_are_encoded_correctly: bool,
     pub transfer_gas_fee_to_zero_account: bool,
+    pub apply_scilla_delta_when_evm_succeeded: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -607,6 +608,9 @@ pub struct ForkDelta {
     /// This keeps the total supply of the network constant. If false, we still transfer funds to the zero address,
     /// but with an incorrect gas price of 1 Wei per gas.
     pub transfer_gas_fee_to_zero_account: Option<bool>,
+    /// If true, when there are successful interop calls and in the end EVM transaction fails,
+    /// no state changes are applied for affected accounts by interop calls
+    pub apply_scilla_delta_when_evm_succeeded: Option<bool>,
 }
 
 impl Fork {
@@ -648,6 +652,9 @@ impl Fork {
             transfer_gas_fee_to_zero_account: delta
                 .transfer_gas_fee_to_zero_account
                 .unwrap_or(self.transfer_gas_fee_to_zero_account),
+            apply_scilla_delta_when_evm_succeeded: delta
+                .apply_scilla_delta_when_evm_succeeded
+                .unwrap_or(self.apply_scilla_delta_when_evm_succeeded),
         }
     }
 }
@@ -727,6 +734,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_block_number_returns_current_block: true,
         scilla_maps_are_encoded_correctly: true,
         transfer_gas_fee_to_zero_account: true,
+        apply_scilla_delta_when_evm_succeeded: true,
     }
 }
 
@@ -854,6 +862,7 @@ mod tests {
                 scilla_block_number_returns_current_block: None,
                 scilla_maps_are_encoded_correctly: None,
                 transfer_gas_fee_to_zero_account: None,
+                apply_scilla_delta_when_evm_succeeded: None,
             }],
             ..Default::default()
         };
@@ -888,6 +897,7 @@ mod tests {
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -902,6 +912,7 @@ mod tests {
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
                 },
             ],
             ..Default::default()
@@ -950,6 +961,7 @@ mod tests {
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -964,6 +976,7 @@ mod tests {
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
                 },
             ],
             ..Default::default()
@@ -1003,6 +1016,7 @@ mod tests {
                 scilla_block_number_returns_current_block: true,
                 scilla_maps_are_encoded_correctly: true,
                 transfer_gas_fee_to_zero_account: true,
+                apply_scilla_delta_when_evm_succeeded: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1030,6 +1044,7 @@ mod tests {
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1044,6 +1059,7 @@ mod tests {
                     scilla_block_number_returns_current_block: None,
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
                 },
             ],
             ..Default::default()
