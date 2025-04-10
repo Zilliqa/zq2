@@ -734,12 +734,18 @@ impl Db {
             .db
             .lock()
             .unwrap()
-            // Two queries here are deliberate to ensure the index on `height` column is used
-            .prepare_cached("SELECT height from (SELECT height, is_canonical FROM blocks ORDER BY height DESC) WHERE is_canonical = 1 LIMIT 1",)?
-            .query_row(
-                (),
-                |row| row.get(0),
-            )
+            .prepare_cached("SELECT MAX(height) FROM blocks WHERE is_canonical = 1")?
+            .query_row((), |row| {
+                row.get(0).map_err(|e| {
+                    // workaround where MAX(height) returns NULL if there are no blocks, instead of a NoRows error
+                    if let rusqlite::Error::InvalidColumnType(_, _, typ) = e {
+                        if typ == rusqlite::types::Type::Null {
+                            return rusqlite::Error::QueryReturnedNoRows;
+                        }
+                    }
+                    e
+                })
+            })
             .optional()?)
     }
 
@@ -963,11 +969,14 @@ impl Db {
             BlockFilter::Height(height) => {
                 query_block!("height = ?1 AND is_canonical = TRUE", height)
             }
-            BlockFilter::MaxHeight => {
-                query_block!("TRUE ORDER BY height DESC LIMIT 1")
-            }
+            // Compound SQL queries below, due to - https://github.com/Zilliqa/zq2/issues/2629
             BlockFilter::MaxCanonicalByHeight => {
-                query_block!("is_canonical = TRUE ORDER BY height DESC LIMIT 1")
+                query_block!(
+                    "is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
+                )
+            }
+            BlockFilter::MaxHeight => {
+                query_block!("height = (SELECT MAX(height) FROM blocks) LIMIT 1")
             }
         })
     }

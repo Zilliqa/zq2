@@ -391,15 +391,10 @@ impl Sync {
     ///
     /// Must be called before starting/re-starting Phase 1.
     fn update_started_at(&mut self) -> Result<()> {
-        let highest_block = self
+        self.started_at = self
             .db
-            .get_canonical_block_by_number(
-                self.db
-                    .get_highest_canonical_block_number()?
-                    .expect("no highest canonical block"),
-            )?
-            .expect("missing canonical block");
-        self.started_at = highest_block.number();
+            .get_highest_canonical_block_number()?
+            .expect("no highest canonical block");
         Ok(())
     }
 
