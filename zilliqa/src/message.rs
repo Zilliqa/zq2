@@ -9,7 +9,7 @@ use alloy::primitives::Address;
 use anyhow::{Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
-use libp2p::PeerId;
+use libp2p::{gossipsub::IdentTopic, PeerId};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
@@ -399,6 +399,8 @@ pub enum InternalMessage {
         TrieStorage,
         Box<Path>,
     ),
+    SubscribeToGossipSubTopic(IdentTopic),
+    UnsubscribeFromGossipSubTopic(IdentTopic),
 }
 
 /// Returns a terse, human-readable summary of a message.
@@ -410,6 +412,12 @@ impl Display for InternalMessage {
             InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
             InternalMessage::ExportBlockCheckpoint(block, ..) => {
                 write!(f, "ExportCheckpoint({})", block.number())
+            }
+            InternalMessage::SubscribeToGossipSubTopic(topic) => {
+                write!(f, "SubscribeToGossipSubTopic({topic})")
+            }
+            InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
+                write!(f, "UnsubscribeFromGossipSubTopic({topic})")
             }
         }
     }
