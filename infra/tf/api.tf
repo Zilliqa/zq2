@@ -127,7 +127,7 @@ resource "google_compute_url_map" "api" {
         allow_origins = ["*"]
         allow_methods = ["GET", "HEAD", "POST", "OPTIONS", "PUT"]
         allow_headers = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable"]
-        max_age = 3600
+        max_age       = 3600
       }
     }
   }
@@ -141,7 +141,7 @@ resource "google_compute_url_map" "api" {
         allow_origins = ["*"]
         allow_methods = ["GET", "HEAD", "POST", "OPTIONS", "PUT"]
         allow_headers = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable"]
-        max_age = 3600
+        max_age       = 3600
       }
     }
   }
