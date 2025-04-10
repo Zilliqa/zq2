@@ -1736,7 +1736,7 @@ impl Consensus {
 
         if self.get_block(&new_view.qc.block_hash)?.is_none() {
             trace!("high_qc block does not exist for NewView. Attemping to fetch block via sync");
-            self.sync.sync_from_probe(true)?;
+            self.sync.sync_from_probe()?;
             return Ok(None);
         }
 
@@ -3179,17 +3179,6 @@ impl Consensus {
     pub fn get_num_transactions(&self) -> Result<usize> {
         let count = self.db.get_total_transaction_count()?;
         Ok(count)
-    }
-
-    pub fn tick(&mut self) -> Result<()> {
-        trace!("consensus::tick()");
-        // Trigger a probe from a timeout, is safer than the other options.
-        if !self.sync.am_syncing()? {
-            self.sync.sync_from_probe(false)?;
-        } else {
-            trace!("not syncing ...");
-        }
-        Ok(())
     }
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {

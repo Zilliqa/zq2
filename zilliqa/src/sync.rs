@@ -63,7 +63,6 @@ pub struct Sync {
     message_sender: MessageSender,
     // internal peers
     peers: Arc<SyncPeers>,
-    initial_probed: bool, // sync by initial probe at startup
     last_probe_at: Instant,
     cache_probe_response: Option<Proposal>, // cache the probe response
     // peers handling in-flight requests
@@ -148,9 +147,8 @@ impl Sync {
             active_sync_count: 0,
             p1_response: BTreeMap::new(),
             segments: SyncSegments::default(),
-            initial_probed: false,
-            last_probe_at: Instant::now(),
             cache_probe_response: None,
+            last_probe_at: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(), // allow immediate sync at startup
         })
     }
 
@@ -232,28 +230,30 @@ impl Sync {
 
     /// Phase 0: Sync from a probe.
     ///
-    /// This can be invoked from: a timeout; or manually.
-    /// At re/start, the initial timeout will trigger a sync shortly after re/start.
-    /// A resync flag is allowed to allow the rest of the code to redo this process.
-    pub fn sync_from_probe(&mut self, resync: bool) -> Result<()> {
-        // only do this upon start/restart/manually
-        if !self.initial_probed || resync {
-            let elapsed = self.last_probe_at.elapsed();
-            if elapsed < Duration::from_secs(60) {
-                tracing::trace!(?elapsed, "sync::SyncFromProbe : skipping");
-                return Ok(());
-            } else {
-                self.last_probe_at = Instant::now();
-            }
-            // inevitably picks a bootstrap node
-            if let Some(peer_info) = self.peers.get_next_peer() {
-                let peer = peer_info.peer_id;
-                self.peers.append_peer(peer_info);
-                tracing::info!(%peer, "sync::SyncFromProbe : probing");
-                self.probe_peer(peer);
-            } else {
-                tracing::warn!("sync::SyncFromProbe: no more peers");
-            }
+    /// When invoked via NewView/manually, will trigger a probe to a peer to retrieve its latest block.
+    /// The result is checked in `handle_block_response()`, and decision made to start syncing or not.
+    pub fn sync_from_probe(&mut self) -> Result<()> {
+        if self.am_syncing()? {
+            // do not sync if we are already syncing
+            tracing::debug!("sync::SyncFromProbe : already syncing");
+            return Ok(());
+        }
+        // avoid spamming the network
+        let elapsed = self.last_probe_at.elapsed();
+        if elapsed < Duration::from_secs(60) {
+            tracing::debug!(?elapsed, "sync::SyncFromProbe : skipping");
+            return Ok(());
+        } else {
+            self.last_probe_at = Instant::now();
+        }
+        // inevitably picks a bootstrap node
+        if let Some(peer_info) = self.peers.get_next_peer() {
+            let peer = peer_info.peer_id;
+            self.peers.append_peer(peer_info);
+            tracing::info!(%peer, "sync::SyncFromProbe : probing");
+            self.probe_peer(peer);
+        } else {
+            tracing::warn!("sync::SyncFromProbe: no more peers");
         }
         Ok(())
     }
@@ -305,7 +305,6 @@ impl Sync {
                     self.state = SyncState::Phase3;
                     self.inject_recent_blocks()?;
                 }
-                self.initial_probed = true;
             }
             // Continue phase 1, until we hit history/genesis.
             SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
@@ -669,7 +668,6 @@ impl Sync {
                     tracing::info!(self = %self.started_at, block = %proposal.number(), %from,
                         "sync::BlockResponse : probed, not syncing",
                     );
-                    self.initial_probed = true;
                 }
                 Ok(())
             }
