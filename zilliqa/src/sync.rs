@@ -161,9 +161,7 @@ impl Sync {
     pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
         self.empty_count = self.empty_count.saturating_add(1);
         if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
-            tracing::warn!(from = %from,
-                "sync::Acknowledgement"
-            );
+            tracing::warn!(%from, "sync::Acknowledgement");
             match &self.state {
                 SyncState::Phase1(_) => {
                     self.handle_metadata_response(from, Some(vec![]))?;
@@ -184,32 +182,30 @@ impl Sync {
     /// This gets called for any libp2p request failure - treated as a network failure
     pub fn handle_request_failure(
         &mut self,
-        from: PeerId,
+        from: PeerId, // only to determine if self-triggered
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.error_count = self.error_count.saturating_add(1);
         if let Some((peer, _)) = self
             .in_flight
             .iter_mut()
-            .find(|(p, r)| p.peer_id == from && *r == failure.request_id)
+            .find(|(p, r)| p.peer_id == failure.peer && *r == failure.request_id)
         {
-            // drop the peer, in case of any fatal errors
+            tracing::warn!(peer = %failure.peer, err=%failure.error, "sync::RequestFailure : failed");
             if !matches!(failure.error, libp2p::autonat::OutboundFailure::Timeout) {
-                tracing::warn!("sync::RequestFailure : {} {from}", failure.error);
+                // drop the peer, in case of non-timeout errors
                 peer.score = u32::MAX;
-            } else {
-                tracing::warn!("sync::RequestFailure : timeout {from}",);
             }
 
             match &self.state {
                 SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, None)?;
+                    self.handle_metadata_response(failure.peer, None)?;
                 }
                 SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(from, None)?;
+                    self.handle_multiblock_response(failure.peer, None)?;
                 }
                 state => {
-                    tracing::error!(%state, "sync::RequestFailure : invalid");
+                    tracing::error!(%state, %from, "sync::RequestFailure : invalid");
                 }
             }
         }
@@ -269,11 +265,28 @@ impl Sync {
             tracing::debug!("sync::DoSync : missing recent proposals");
             return Ok(());
         }
+
+        // check in-flights; manually failing one stale request.
         if !self.in_flight.is_empty() {
-            // do not interrupt existing requests
-            tracing::debug!("sync::DoSync : waiting for in-flight requests");
+            let stale_flight = self
+                .in_flight
+                .iter()
+                .find(|(p, _)| p.last_used.elapsed().as_secs() > 30) // triple default libp2p timeouts
+                .cloned();
+            if let Some((PeerInfo { peer_id: peer, .. }, request_id)) = stale_flight {
+                tracing::warn!(%peer, ?request_id, "sync::DoSync : stale request");
+                self.handle_request_failure(
+                    self.peer_id, // self-triggered
+                    OutgoingMessageFailure {
+                        peer,
+                        request_id,
+                        error: libp2p::autonat::OutboundFailure::Timeout,
+                    },
+                )?;
+            }
             return Ok(());
         }
+
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
@@ -616,24 +629,14 @@ impl Sync {
                 );
                 self.state = SyncState::Phase2((checksum, range));
 
-                let (peer_info, message) = match peer_info.version {
-                    PeerVer::V2 => {
-                        (
-                            PeerInfo {
-                                version: PeerVer::V2,
-                                peer_id: peer_info.peer_id,
-                                last_used: std::time::Instant::now(),
-                                score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
-                            },
-                            ExternalMessage::MultiBlockRequest(request_hashes),
-                        )
-                    }
-                    _ => unimplemented!("Deprecated V1 in Phase 2"),
-                };
+                let message = ExternalMessage::MultiBlockRequest(request_hashes);
                 let request_id = self
                     .message_sender
                     .send_external_message(peer_info.peer_id, message)?;
                 self.add_in_flight(peer_info, request_id);
+            } else {
+                tracing::warn!("sync::MissingBlocks : no segments");
+                self.state = SyncState::Phase3;
             }
         } else {
             tracing::warn!("sync::MissingBlocks : insufficient peers to handle request");
@@ -847,12 +850,12 @@ impl Sync {
             .collect_vec();
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
+        // Record landmark(s), including peer that has this set of blocks
+        self.segments.push_sync_segment(&segment_peer, meta);
+
         let turnaround = if !segment.is_empty() {
             // Record the constructed chain metadata
             self.segments.insert_sync_metadata(&segment);
-
-            // Record landmark(s), including peer that has this set of blocks
-            self.segments.push_sync_segment(&segment_peer, meta);
 
             // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
             let mut block_size: usize = 0;
@@ -919,7 +922,7 @@ impl Sync {
         );
 
         // Do not respond to stale requests as the client has probably timed-out
-        if request.request_at.elapsed()? > Duration::from_secs(10) {
+        if request.request_at.elapsed()?.as_secs() > 20 {
             tracing::warn!("sync::MetadataRequest : stale request");
             return Ok(ExternalMessage::MetaDataResponse(vec![]));
         }
