@@ -169,7 +169,9 @@ impl Sync {
                 SyncState::Phase2(_) => {
                     self.handle_multiblock_response(from, Some(vec![]))?;
                 }
-                _ => {}
+                state => {
+                    tracing::error!(%state, "sync::Acknowledgement : invalid");
+                }
             }
         }
         Ok(())
@@ -204,7 +206,9 @@ impl Sync {
                 SyncState::Phase2(_) => {
                     self.handle_multiblock_response(from, None)?;
                 }
-                _ => {}
+                state => {
+                    tracing::error!(%state, "sync::RequestFailure : invalid");
+                }
             }
         }
         Ok(())
@@ -820,6 +824,10 @@ impl Sync {
                 // https://github.com/Zilliqa/zq2/issues/2416
                 if self.segments.count_sync_segments() <= 1 {
                     self.state = SyncState::Phase3; // flush, drop all segments, and restart
+                    self.p1_response.clear();
+                    for p in self.in_flight.drain(..) {
+                        self.peers.done_with_peer(Some(p), DownGrade::None);
+                    }
                 }
                 return Ok(());
             }
@@ -842,41 +850,46 @@ impl Sync {
             .collect_vec();
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
-        // Record the constructed chain metadata
-        self.segments.insert_sync_metadata(&segment);
+        let turnaround = if !segment.is_empty() {
+            // Record the constructed chain metadata
+            self.segments.insert_sync_metadata(&segment);
 
-        // Record landmark(s), including peer that has this set of blocks
-        self.segments.push_sync_segment(&segment_peer, meta);
+            // Record landmark(s), including peer that has this set of blocks
+            self.segments.push_sync_segment(&segment_peer, meta);
 
-        // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
-        let mut block_size: usize = 0;
-        for SyncBlockHeader { header, .. } in response.iter().rev().filter(|&sb| {
-            // The segment markers are computed in ascending order, so that the segment markers are always outside the segment.
-            block_size = block_size.saturating_add(sb.size_estimate);
-            tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
-            // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
-            // Try to fill up >90% of RESPONSE_SIZE_MAXIMUM.
-            if block_size > 9 * 1024 * 1024 {
-                block_size = 0;
-                true
-            } else {
-                false
+            // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
+            let mut block_size: usize = 0;
+            for SyncBlockHeader { header, .. } in response.iter().rev().filter(|&sb| {
+                // The segment markers are computed in ascending order, so that the segment markers are always outside the segment.
+                block_size = block_size.saturating_add(sb.size_estimate);
+                tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
+                // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
+                // Try to fill up >90% of RESPONSE_SIZE_MAXIMUM.
+                if block_size > 9 * 1024 * 1024 {
+                    block_size = 0;
+                    true
+                } else {
+                    false
+                }
+            }).rev() {
+                // segment markers are inserted in descending order, which is the order in the stack.
+                self.segments.push_sync_segment(&segment_peer, header);
             }
-        }).rev() {
-            // segment markers are inserted in descending order, which is the order in the stack.
-            self.segments.push_sync_segment(&segment_peer, header);
-        }
 
-        // Record the oldest block in the segment
-        self.state = SyncState::Phase1(segment.last().cloned().unwrap());
+            // Record the oldest block in the segment
+            self.state = SyncState::Phase1(segment.last().cloned().unwrap());
 
-        // If the segment hits our history, turnaround to Phase 2.
-        let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
-        if self
-            .db
-            .contains_canonical_block(&block_hash)
-            .unwrap_or_default()
-        {
+            // Check if the segment hits our history
+            let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
+            self.db
+                .contains_canonical_block(&block_hash)
+                .unwrap_or_default()
+        } else {
+            true
+        };
+
+        if turnaround {
+            // turnaround to Phase 2.
             self.state = SyncState::Phase2((Hash::ZERO, 0..=0));
             // drop all pending requests & responses
             self.p1_response.clear();
@@ -884,6 +897,7 @@ impl Sync {
                 self.peers.done_with_peer(Some(p), DownGrade::None);
             }
         }
+
         // perform next block transfers, where possible
         if Self::DO_SPECULATIVE {
             self.do_sync()?;
