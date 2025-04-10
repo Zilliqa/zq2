@@ -269,11 +269,28 @@ impl Sync {
             tracing::debug!("sync::DoSync : missing recent proposals");
             return Ok(());
         }
+
+        // check in-flights; manually failing oldest stale request.
         if !self.in_flight.is_empty() {
-            // do not interrupt existing requests
-            tracing::debug!("sync::DoSync : waiting for in-flight requests");
+            let stale_flight = self
+                .in_flight
+                .iter()
+                .find(|(p, _)| p.last_used.elapsed().as_secs() > 30) // triple default libp2p timeouts
+                .cloned();
+            if let Some((PeerInfo { peer_id: peer, .. }, request_id)) = stale_flight {
+                tracing::warn!(%peer, ?request_id, "sync::DoSync : stale request");
+                self.handle_request_failure(
+                    peer,
+                    OutgoingMessageFailure {
+                        peer,
+                        request_id,
+                        error: libp2p::autonat::OutboundFailure::Timeout,
+                    },
+                )?;
+            }
             return Ok(());
         }
+
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
@@ -749,7 +766,7 @@ impl Sync {
                 // Only process a full response
                 if let Some(response) = response {
                     if !response.is_empty() {
-                        let range = response.last().unwrap().header.number
+                        let range: RangeInclusive<u64> = response.last().unwrap().header.number
                             ..=response.first().unwrap().header.number;
                         tracing::info!(?range, from = %peer_id,
                             "sync::MetadataResponse : received",
@@ -924,7 +941,7 @@ impl Sync {
         );
 
         // Do not respond to stale requests as the client has probably timed-out
-        if request.request_at.elapsed()? > Duration::from_secs(10) {
+        if request.request_at.elapsed()?.as_secs() > 20 {
             tracing::warn!("sync::MetadataRequest : stale request");
             return Ok(ExternalMessage::MetaDataResponse(vec![]));
         }
