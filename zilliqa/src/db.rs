@@ -964,14 +964,14 @@ impl Db {
             BlockFilter::Height(height) => {
                 query_block!("height = ?1 AND is_canonical = TRUE", height)
             }
-            BlockFilter::MaxHeight => {
-                query_block!("height = (SELECT max(height) FROM blocks) LIMIT 1")
-            }
-
+            // Compound SQL queries below, due to - https://github.com/Zilliqa/zq2/issues/2629
             BlockFilter::MaxCanonicalByHeight => {
                 query_block!(
-                    "is_canonical = true AND height = (SELECT max(height) FROM blocks WHERE is_canonical = true)"
+                    "is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
                 )
+            }
+            BlockFilter::MaxHeight => {
+                query_block!("height = (SELECT MAX(height) FROM blocks) LIMIT 1")
             }
         })
     }
