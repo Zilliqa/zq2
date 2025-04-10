@@ -29,8 +29,8 @@ use crate::{
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
-        ExternalMessage, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal, QuorumCertificate,
-        Vote,
+        ExternalMessage, GossipSubTopic, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal,
+        QuorumCertificate, Vote,
     },
     node::{MessageSender, NetworkMessage},
     pool::{PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent},
@@ -172,6 +172,8 @@ pub struct Consensus {
     pub new_transaction_hashes: broadcast::Sender<Hash>,
     /// Used for testing and test network recovery
     force_view: Option<(u64, DateTime)>,
+    /// Mark if this node is in the committee at it's current head block height
+    in_committee: bool,
 }
 
 impl Consensus {
@@ -317,6 +319,7 @@ impl Consensus {
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
             force_view: None,
+            in_committee: false,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -755,12 +758,14 @@ impl Consensus {
             let stakers = self.state.get_stakers(next_block_header)?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
+                self.in_committee(false)?;
                 debug!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
                 return Ok(None);
             } else {
+                self.in_committee(true)?;
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
 
@@ -3181,6 +3186,26 @@ impl Consensus {
         // Build a new view - We assume the network is stuck.
         if !self.db.get_voted_in_view()? {
             self.build_new_view()?;
+        }
+        Ok(())
+    }
+
+    fn in_committee(&mut self, val: bool) -> Result<()> {
+        if val && !self.in_committee {
+            self.in_committee = true;
+            self.message_sender.send_message_to_coordinator(
+                InternalMessage::SubscribeToGossipSubTopic(GossipSubTopic::Validator(
+                    self.config.eth_chain_id,
+                )),
+            )?;
+        }
+        if !val && self.in_committee {
+            self.in_committee = false;
+            self.message_sender.send_message_to_coordinator(
+                InternalMessage::UnsubscribeFromGossipSubTopic(GossipSubTopic::Validator(
+                    self.config.eth_chain_id,
+                )),
+            )?;
         }
         Ok(())
     }
