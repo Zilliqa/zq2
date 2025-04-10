@@ -161,9 +161,7 @@ impl Sync {
     pub fn handle_acknowledgement(&mut self, from: PeerId) -> Result<()> {
         self.empty_count = self.empty_count.saturating_add(1);
         if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
-            tracing::warn!(from = %from,
-                "sync::Acknowledgement"
-            );
+            tracing::warn!(%from, "sync::Acknowledgement");
             match &self.state {
                 SyncState::Phase1(_) => {
                     self.handle_metadata_response(from, Some(vec![]))?;
@@ -184,32 +182,30 @@ impl Sync {
     /// This gets called for any libp2p request failure - treated as a network failure
     pub fn handle_request_failure(
         &mut self,
-        from: PeerId,
+        from: PeerId, // only to determine if self-triggered
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.error_count = self.error_count.saturating_add(1);
         if let Some((peer, _)) = self
             .in_flight
             .iter_mut()
-            .find(|(p, r)| p.peer_id == from && *r == failure.request_id)
+            .find(|(p, r)| p.peer_id == failure.peer && *r == failure.request_id)
         {
-            // drop the peer, in case of any fatal errors
+            tracing::warn!(peer = %failure.peer, err=%failure.error, "sync::RequestFailure : failed");
             if !matches!(failure.error, libp2p::autonat::OutboundFailure::Timeout) {
-                tracing::warn!("sync::RequestFailure : {} {from}", failure.error);
+                // drop the peer, in case of non-timeout errors
                 peer.score = u32::MAX;
-            } else {
-                tracing::warn!("sync::RequestFailure : timeout {from}",);
             }
 
             match &self.state {
                 SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, None)?;
+                    self.handle_metadata_response(failure.peer, None)?;
                 }
                 SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(from, None)?;
+                    self.handle_multiblock_response(failure.peer, None)?;
                 }
                 state => {
-                    tracing::error!(%state, "sync::RequestFailure : invalid");
+                    tracing::error!(%state, %from, "sync::RequestFailure : invalid");
                 }
             }
         }
@@ -270,7 +266,7 @@ impl Sync {
             return Ok(());
         }
 
-        // check in-flights; manually failing oldest stale request.
+        // check in-flights; manually failing one stale request.
         if !self.in_flight.is_empty() {
             let stale_flight = self
                 .in_flight
@@ -280,7 +276,7 @@ impl Sync {
             if let Some((PeerInfo { peer_id: peer, .. }, request_id)) = stale_flight {
                 tracing::warn!(%peer, ?request_id, "sync::DoSync : stale request");
                 self.handle_request_failure(
-                    peer,
+                    self.peer_id, // self-triggered
                     OutgoingMessageFailure {
                         peer,
                         request_id,
@@ -766,7 +762,7 @@ impl Sync {
                 // Only process a full response
                 if let Some(response) = response {
                     if !response.is_empty() {
-                        let range: RangeInclusive<u64> = response.last().unwrap().header.number
+                        let range = response.last().unwrap().header.number
                             ..=response.first().unwrap().header.number;
                         tracing::info!(?range, from = %peer_id,
                             "sync::MetadataResponse : received",
