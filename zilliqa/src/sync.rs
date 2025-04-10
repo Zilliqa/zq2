@@ -634,24 +634,14 @@ impl Sync {
                 );
                 self.state = SyncState::Phase2((checksum, range));
 
-                let (peer_info, message) = match peer_info.version {
-                    PeerVer::V2 => {
-                        (
-                            PeerInfo {
-                                version: PeerVer::V2,
-                                peer_id: peer_info.peer_id,
-                                last_used: std::time::Instant::now(),
-                                score: u32::MAX, // used to indicate faux peer, will not be added to the group of peers
-                            },
-                            ExternalMessage::MultiBlockRequest(request_hashes),
-                        )
-                    }
-                    _ => unimplemented!("Deprecated V1 in Phase 2"),
-                };
+                let message = ExternalMessage::MultiBlockRequest(request_hashes);
                 let request_id = self
                     .message_sender
                     .send_external_message(peer_info.peer_id, message)?;
                 self.add_in_flight(peer_info, request_id);
+            } else {
+                tracing::warn!("sync::MissingBlocks : no segments");
+                self.state = SyncState::Phase3;
             }
         } else {
             tracing::warn!("sync::MissingBlocks : insufficient peers to handle request");
@@ -865,12 +855,12 @@ impl Sync {
             .collect_vec();
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
+        // Record landmark(s), including peer that has this set of blocks
+        self.segments.push_sync_segment(&segment_peer, meta);
+
         let turnaround = if !segment.is_empty() {
             // Record the constructed chain metadata
             self.segments.insert_sync_metadata(&segment);
-
-            // Record landmark(s), including peer that has this set of blocks
-            self.segments.push_sync_segment(&segment_peer, meta);
 
             // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
             let mut block_size: usize = 0;
