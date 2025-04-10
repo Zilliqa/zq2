@@ -121,11 +121,29 @@ resource "google_compute_url_map" "api" {
   path_matcher {
     name            = "api"
     default_service = google_compute_backend_service.api.id
+
+    default_route_action {
+      cors_policy {
+        allow_origins = ["*"]
+        allow_methods = ["GET", "HEAD", "POST", "OPTIONS", "PUT"]
+        allow_headers = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable"]
+        max_age = 3600
+      }
+    }
   }
 
   path_matcher {
     name            = "health"
     default_service = google_compute_backend_service.health.id
+
+    default_route_action {
+      cors_policy {
+        allow_origins = ["*"]
+        allow_methods = ["GET", "HEAD", "POST", "OPTIONS", "PUT"]
+        allow_headers = ["Content-Type", "Access-Control-Allow-Origin", "x-goog-resumable"]
+        max_age = 3600
+      }
+    }
   }
 }
 
