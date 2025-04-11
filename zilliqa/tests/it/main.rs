@@ -13,6 +13,7 @@ use zilliqa::{
 };
 mod admin;
 mod consensus;
+mod debug;
 mod eth;
 mod ots;
 mod persistence;
