@@ -37,12 +37,6 @@ api_servers = {{ api_servers }}
 enable_ots_indices = true
 {%- endif %}
 
-{%- if checkpoint_file %}
-[nodes.load_checkpoint]
-file = "{{ checkpoint_file }}"
-hash = "{{ checkpoint_hash }}"
-{%- endif %}
-
 {%- if genesis_fork %}
 consensus.genesis_fork = {{ genesis_fork }}
 {%- endif %}
@@ -53,4 +47,10 @@ consensus.forks = [
     {{ fork }},
     {%- endfor %}
 ]
+{%- endif %}
+
+{%- if checkpoint_file %}
+[nodes.load_checkpoint]
+file = "{{ checkpoint_file }}"
+hash = "{{ checkpoint_hash }}"
 {%- endif %}

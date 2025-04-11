@@ -474,15 +474,11 @@ impl Consensus {
             // Check if enough time elapsed to propose block
             if milliseconds_remaining_of_block_time == 0 {
                 match self.propose_new_block() {
-                    Ok(Some((block, transactions))) => {
+                    Ok(network_message) => {
                         self.create_next_block_on_timeout = false;
-                        return Ok(Some((
-                            None,
-                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                        )));
+                        return Ok(network_message);
                     }
                     Err(e) => error!("Failed to finalise proposal: {e}"),
-                    _ => {}
                 };
             } else {
                 self.reset_timeout
@@ -728,15 +724,12 @@ impl Consensus {
                 let count = buffered_votes.len();
                 for (i, vote) in buffered_votes.into_iter().enumerate() {
                     trace!("applying buffered vote {} of {count}", i + 1);
-                    if let Some((block, transactions)) = self.vote(vote)? {
+                    if let Some(network_message) = self.vote(vote)? {
                         // If we reached the supermajority while processing this vote, send the next block proposal.
                         // Further votes are ignored (including our own).
                         // TODO(#720): We should prioritise our own vote.
                         trace!("supermajority reached, sending next proposal");
-                        return Ok(Some((
-                            None,
-                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                        )));
+                        return Ok(Some(network_message));
                     }
                     // A bit hacky: processing of our buffered votes may have resulted in an early_proposal be created and awaiting empty block timeout for broadcast. In this case we must return now
                     if self.create_next_block_on_timeout
@@ -980,7 +973,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    pub fn vote(&mut self, vote: Vote) -> Result<Option<NetworkMessage>> {
         let block_hash = vote.block_hash;
         let block_view = vote.view;
         let current_view = self.get_view()?;
@@ -1460,7 +1453,7 @@ impl Consensus {
 
     /// Called when consensus will accept our early_block.
     /// Either propose now or set timeout to allow for txs to come in.
-    fn ready_for_block_proposal(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn ready_for_block_proposal(&mut self) -> Result<Option<NetworkMessage>> {
         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
         let (milliseconds_since_last_view_change, milliseconds_remaining_of_block_time, _) =
             self.get_consensus_timeout_params()?;
@@ -1605,7 +1598,7 @@ impl Consensus {
 
     /// Produces the Proposal block.
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
-    fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
         // We expect early_proposal to exist already but try create incase it doesn't
         self.early_proposal_assemble_at(None)?;
         let (pending_block, applied_txs, _, _, cumulative_gas_fee) =
@@ -1638,7 +1631,10 @@ impl Consensus {
 
         info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
-        Ok(Some((final_block, broadcasted_transactions)))
+        Ok(Some((
+            None,
+            ExternalMessage::Proposal(Proposal::from_parts(final_block, broadcasted_transactions)),
+        )))
     }
 
     /// Insert transaction and add to early_proposal if possible.
@@ -1716,10 +1712,7 @@ impl Consensus {
         Ok(committee)
     }
 
-    pub fn new_view(
-        &mut self,
-        new_view: NewView,
-    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    pub fn new_view(&mut self, new_view: NewView) -> Result<Option<NetworkMessage>> {
         trace!("Received new view for view: {:?}", new_view.view);
 
         let mut current_view = self.get_view()?;
@@ -1736,7 +1729,7 @@ impl Consensus {
 
         if self.get_block(&new_view.qc.block_hash)?.is_none() {
             trace!("high_qc block does not exist for NewView. Attemping to fetch block via sync");
-            self.sync.sync_from_probe(true)?;
+            self.sync.sync_from_probe()?;
             return Ok(None);
         }
 
@@ -3179,17 +3172,6 @@ impl Consensus {
     pub fn get_num_transactions(&self) -> Result<usize> {
         let count = self.db.get_total_transaction_count()?;
         Ok(count)
-    }
-
-    pub fn tick(&mut self) -> Result<()> {
-        trace!("consensus::tick()");
-        // Trigger a probe from a timeout, is safer than the other options.
-        if !self.sync.am_syncing()? {
-            self.sync.sync_from_probe(false)?;
-        } else {
-            trace!("not syncing ...");
-        }
-        Ok(())
     }
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {

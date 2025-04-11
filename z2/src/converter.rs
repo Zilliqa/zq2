@@ -26,9 +26,7 @@ use zilliqa::{
     scilla::{CheckOutput, ParamValue, Transition, storage_key},
     state::{Account, Code, ContractInit, State},
     time::SystemTime,
-    transaction::{
-        EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
-    },
+    transaction::{EvmGas, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount},
 };
 
 use crate::{zq1, zq1::Transaction};
@@ -694,15 +692,7 @@ fn try_with_zil_transaction(
             .receipt
             .event_logs
             .iter()
-            .map(|log| {
-                let log = log.to_eth_log()?;
-
-                Ok(Log::Evm(EvmLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                }))
-            })
+            .map(|log| log.to_zq2_log())
             .collect::<Result<_>>()?,
         transitions: transaction
             .receipt
@@ -768,15 +758,7 @@ fn try_with_evm_transaction(
             .receipt
             .event_logs
             .iter()
-            .map(|log| {
-                let log = log.to_eth_log()?;
-
-                Ok(Log::Evm(EvmLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                }))
-            })
+            .map(|log| log.to_zq2_log())
             .collect::<Result<_>>()?,
         transitions: vec![],
         accepted: None,
