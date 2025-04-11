@@ -248,6 +248,14 @@ async fn txpool_inspect_with_queued(mut network: Network) {
         .find(|(addr, _)| addr.to_lowercase() == wallet_addr);
     assert!(queued_entry.is_some(), "Wallet address not found in queued");
 
+    // Send another transaction so we can mine
+    let tx_nonce_1 = TransactionRequest::pay(to_addr, 200).gas(21000).nonce(1);
+    wallet
+        .send_transaction(tx_nonce_1, None)
+        .await
+        .unwrap()
+        .tx_hash();
+
     // Mine the transactions
     network
         .run_until_async(
