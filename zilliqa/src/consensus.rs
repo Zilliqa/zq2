@@ -13,6 +13,7 @@ use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
+use rand::Rng;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -1630,6 +1631,11 @@ impl Consensus {
         };
 
         info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
+
+        if rand::thread_rng().r#gen::<f64>() < 1.0 / 3.0 {
+            info!("OOH AAH chaos monkey has taken the Proposal! Not broadcasting.");
+            return Ok(None);
+        }
 
         Ok(Some((
             None,
