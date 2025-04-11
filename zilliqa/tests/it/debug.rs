@@ -1,4 +1,7 @@
-use alloy::{primitives::B256, rpc::types::trace::geth::TraceResult};
+use alloy::{
+    primitives::{B256, Uint},
+    rpc::types::trace::geth::TraceResult,
+};
 use ethers::{
     providers::Middleware,
     types::{H160, TransactionRequest},
@@ -67,23 +70,26 @@ async fn debug_trace_transaction_basic(mut network: Network) {
     let to_addr = H160::random();
     let tx = TransactionRequest::new().to(to_addr).value(1000).gas(21000);
 
-    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let tx_hash_sent = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
 
     // Wait for transaction to be mined
-    network.run_until_receipt(&wallet, tx_hash, 100).await;
+    network.run_until_receipt(&wallet, tx_hash_sent, 100).await;
 
     // Get trace
     let response: TraceResult = wallet
         .provider()
-        .request("debug_traceTransaction", [tx_hash])
+        .request("debug_traceTransaction", [tx_hash_sent])
         .await
         .expect("Failed to call debug_traceTransaction API");
 
     match response {
-        TraceResult::Success {
-            result: _,
-            tx_hash: _,
-        } => (),
+        TraceResult::Success { result, tx_hash } => {
+            dbg!(&result);
+            let frame = result.try_into_default_frame().unwrap();
+            assert_eq!(tx_hash.unwrap(), tx_hash_sent.to_fixed_bytes());
+            assert!(!frame.failed);
+            assert!(frame.gas == 21000);
+        }
         _ => panic!("Expected success result"),
     }
 }
@@ -96,10 +102,10 @@ async fn debug_trace_transaction_with_call_tracer(mut network: Network) {
     let to_addr = H160::random();
     let tx = TransactionRequest::new().to(to_addr).value(1000).gas(21000);
 
-    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let tx_hash_sent = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
 
     // Wait for transaction to be mined
-    network.run_until_receipt(&wallet, tx_hash, 100).await;
+    network.run_until_receipt(&wallet, tx_hash_sent, 100).await;
 
     // Configure callTracer
     let tracer_options = serde_json::json!({
@@ -112,15 +118,19 @@ async fn debug_trace_transaction_with_call_tracer(mut network: Network) {
     // Get trace
     let response: TraceResult = wallet
         .provider()
-        .request("debug_traceTransaction", (tx_hash, tracer_options))
+        .request("debug_traceTransaction", (tx_hash_sent, tracer_options))
         .await
         .expect("Failed to call debug_traceTransaction API");
 
     match response {
-        TraceResult::Success {
-            result: _,
-            tx_hash: _,
-        } => (),
+        TraceResult::Success { result, tx_hash } => {
+            dbg!(&result);
+            let frame = result.try_into_call_frame().unwrap();
+            assert_eq!(tx_hash.unwrap(), tx_hash_sent.to_fixed_bytes());
+            assert!(Uint::from(21000) >= frame.gas_used);
+            assert!(Uint::from(0) < frame.gas_used);
+            assert!(frame.error.is_none())
+        }
         _ => panic!("Expected success result"),
     }
 }
