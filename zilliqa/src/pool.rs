@@ -440,7 +440,7 @@ mod tests {
     use crate::{
         cfg::NodeConfig,
         crypto::Hash,
-        db::Db,
+        db::{ArcDb, Db},
         state::State,
         transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
     };

@@ -40,7 +40,7 @@ struct ConsensusInfo {
 
 /// TODO: place-holder for now, feel free to change it.
 fn admin_block_range(_params: Params, node: &Arc<Mutex<Node>>) -> Result<RangeInclusive<u64>> {
-    node.lock().unwrap().db.available_range()
+    node.lock().unwrap().db.read()?.blocks()?.height_range()
 }
 
 fn consensus_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<ConsensusInfo> {
