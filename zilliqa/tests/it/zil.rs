@@ -1,8 +1,10 @@
+use tracing::info;
 use std::{ops::DerefMut, str::FromStr};
 
 use alloy::primitives::Address;
 use anyhow::Result;
 use bech32::{Bech32, Hrp};
+use bitvec::macros::internal::funty::{Integral};
 use ethabi::{ParamType, Token};
 use ethers::{
     providers::{Middleware, ProviderError},
@@ -402,6 +404,7 @@ pub async fn deploy_scilla_contract(
     sender_secret_key: &schnorr::SecretKey,
     code: &str,
     data: &str,
+    amount: u128
 ) -> H160 {
     let (contract_address, txn) = send_transaction(
         network,
@@ -409,7 +412,7 @@ pub async fn deploy_scilla_contract(
         sender_secret_key,
         1,
         ToAddr::Address(H160::zero()),
-        0,
+        amount,
         50_000,
         Some(code),
         Some(data),
@@ -917,7 +920,7 @@ async fn zil_with_insufficient_gas_should_fail(mut network: Network) {
         zilliqa_account_with_funds(&mut network, &wallet, amount_to_request).await;
     let data = scilla_test_contract_data(caller_address);
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &deployer_key, &code, &data).await;
+        deploy_scilla_contract(&mut network, &wallet, &deployer_key, &code, &data, u128::ZERO).await;
     let call = r#"{
         "_tag": "setHello",
         "params": [
@@ -975,7 +978,7 @@ async fn create_contract(mut network: Network) {
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, u128::ZERO).await;
 
     let api_code: Value = wallet
         .provider()
@@ -1863,7 +1866,7 @@ async fn get_smart_contract_init(mut network: Network) {
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, u128::ZERO).await;
 
     // Test the success case
     let response: Value = wallet
@@ -3104,7 +3107,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, u128::ZERO).await;
 
     let api_code: Value = wallet
         .provider()
@@ -3227,7 +3230,7 @@ async fn nested_maps_insert_removal(mut network: Network) {
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, u128::ZERO).await;
 
     // Set nested map to some value
     {
@@ -3512,6 +3515,13 @@ async fn return_map_and_parse(mut network: Network) {
             complex_map[a][b] := c
         end
 
+        transition Withdraw(recipient: ByStr20, amount: Uint128)
+            msg = {_recipient: recipient; _amount: amount};
+            msgs = one_msg msg;
+            send msgs
+        end
+
+
         transition GetFromMap(a: ByStr20)
             complex_map_o <- complex_map[a];
 
@@ -3538,8 +3548,14 @@ async fn return_map_and_parse(mut network: Network) {
         }
     ]"#;
 
+    let my_balance = wallet.get_balance(wallet.address(), None).await;
+    info!("My balance is: {:?}", my_balance.unwrap().as_u128());
+    let contract_balance = 1_000_000_000_000_u128;
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, code, data).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, code, data, contract_balance).await;
+
+    let queried_balance = wallet.get_balance(contract_address, None).await.unwrap();
+    assert_eq!(contract_balance, queried_balance.as_u128() / 10u128.pow(6));
 
     // Set nested map to some value
     let call = r#"{
