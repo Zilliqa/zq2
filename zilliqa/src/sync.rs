@@ -848,12 +848,12 @@ impl Sync {
             .collect_vec();
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
-        // Record landmark(s), including peer that has this set of blocks
-        self.segments.push_sync_segment(&segment_peer, meta);
-
         let turnaround = if !segment.is_empty() {
             // Record the constructed chain metadata
             self.segments.insert_sync_metadata(&segment);
+
+            // Record landmark(s), including peer that has this set of blocks
+            self.segments.push_sync_segment(&segment_peer, meta);
 
             // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
             let mut block_size: usize = 0;
