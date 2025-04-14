@@ -1,6 +1,6 @@
 use std::{
     fmt::Debug,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -31,6 +31,7 @@ use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
+    api::types::filters::Filters,
     cfg::NodeConfig,
     consensus::Consensus,
     crypto::{Hash, SecretKey},
@@ -165,6 +166,7 @@ pub struct Node {
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
+    pub filters: Arc<Mutex<Filters>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -224,6 +226,7 @@ impl Node {
                 peers,
             )?,
             peer_num,
+            filters: Arc::new(Mutex::new(Filters::new())),
         };
         Ok(node)
     }
