@@ -26,7 +26,7 @@ use zilliqa::{
     scilla::{CheckOutput, ParamValue, Transition, storage_key},
     state::{Account, Code, ContractInit, State},
     time::SystemTime,
-    transaction::{EvmGas, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount},
+    transaction::{ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount},
 };
 
 use crate::{zq1, zq1::Transaction};
