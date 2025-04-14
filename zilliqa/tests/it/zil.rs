@@ -1,10 +1,9 @@
-use tracing::info;
 use std::{ops::DerefMut, str::FromStr};
 
 use alloy::primitives::Address;
 use anyhow::Result;
 use bech32::{Bech32, Hrp};
-use bitvec::macros::internal::funty::{Integral};
+use bitvec::macros::internal::funty::Integral;
 use ethabi::{ParamType, Token};
 use ethers::{
     providers::{Middleware, ProviderError},
@@ -17,7 +16,7 @@ use prost::Message;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tracing::debug;
+use tracing::{debug, info};
 use zilliqa::{
     api::types::zil::GetTxResponse,
     schnorr,
@@ -404,7 +403,7 @@ pub async fn deploy_scilla_contract(
     sender_secret_key: &schnorr::SecretKey,
     code: &str,
     data: &str,
-    amount: u128
+    amount: u128,
 ) -> H160 {
     let (contract_address, txn) = send_transaction(
         network,
@@ -919,8 +918,15 @@ async fn zil_with_insufficient_gas_should_fail(mut network: Network) {
     let (caller_key, caller_address) =
         zilliqa_account_with_funds(&mut network, &wallet, amount_to_request).await;
     let data = scilla_test_contract_data(caller_address);
-    let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &deployer_key, &code, &data, u128::ZERO).await;
+    let contract_address = deploy_scilla_contract(
+        &mut network,
+        &wallet,
+        &deployer_key,
+        &code,
+        &data,
+        u128::ZERO,
+    )
+    .await;
     let call = r#"{
         "_tag": "setHello",
         "params": [
@@ -3506,6 +3512,13 @@ async fn return_map_and_parse(mut network: Network) {
     let code = r#"
         scilla_version 0
 
+        library ReturnMapLib
+
+        let one_msg =
+            fun (msg : Message) =>
+                let nil_msg = Nil {Message} in
+                Cons {Message} msg nil_msg
+
         contract ReturnMap
         ()
 
@@ -3516,7 +3529,7 @@ async fn return_map_and_parse(mut network: Network) {
         end
 
         transition Withdraw(recipient: ByStr20, amount: Uint128)
-            msg = {_recipient: recipient; _amount: amount};
+            msg = {_tag : "SomeMessage"; _recipient: recipient; _amount: amount};
             msgs = one_msg msg;
             send msgs
         end
@@ -3551,8 +3564,15 @@ async fn return_map_and_parse(mut network: Network) {
     let my_balance = wallet.get_balance(wallet.address(), None).await;
     info!("My balance is: {:?}", my_balance.unwrap().as_u128());
     let contract_balance = 1_000_000_000_000_u128;
-    let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, code, data, contract_balance).await;
+    let contract_address = deploy_scilla_contract(
+        &mut network,
+        &wallet,
+        &secret_key,
+        code,
+        data,
+        contract_balance,
+    )
+    .await;
 
     let queried_balance = wallet.get_balance(contract_address, None).await.unwrap();
     assert_eq!(contract_balance, queried_balance.as_u128() / 10u128.pow(6));
@@ -3625,4 +3645,116 @@ async fn return_map_and_parse(mut network: Network) {
             .clone(),
         vec![Value::from("1"), Value::from("100")]
     );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn withdraw_from_contract(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        library WithdrawLib
+
+        let one_msg =
+            fun (msg : Message) =>
+            let nil_msg = Nil {Message} in
+            Cons {Message} msg nil_msg
+
+        contract Withdraw
+        ()
+
+        transition Withdraw(recipient: ByStr20, amount: Uint128)
+            msg = {_tag : "SomeMessage"; _recipient: recipient; _amount: amount};
+            msgs = one_msg msg;
+            send msgs
+        end
+
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let deploy_contract_balance = 1_000_000_u128;
+    let contract_address = deploy_scilla_contract(
+        &mut network,
+        &wallet,
+        &secret_key,
+        code,
+        data,
+        deploy_contract_balance,
+    )
+    .await;
+
+    let queried_balance = wallet.get_balance(contract_address, None).await.unwrap();
+    assert_eq!(
+        deploy_contract_balance,
+        queried_balance.as_u128() / 10u128.pow(6)
+    );
+
+    let random_wallet_address = network.random_wallet().await.address();
+
+    assert_eq!(
+        0_u128,
+        wallet
+            .get_balance(random_wallet_address, None)
+            .await
+            .unwrap()
+            .as_u128()
+    );
+
+    // Simulate withdrawal from contract
+    let call = format!(
+        r#"{{
+        "_tag": "Withdraw",
+        "params": [
+            {{
+                "vname": "recipient",
+                "type": "ByStr20",
+                "value": "0x{random_wallet_address:x}"
+            }},
+            {{
+                "vname": "amount",
+                "value": "{deploy_contract_balance}",
+                "type": "Uint128"
+            }}
+        ]
+    }}"#
+    );
+
+    let (_, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        2,
+        ToAddr::Address(contract_address),
+        0,
+        50_000,
+        None,
+        Some(&call),
+    )
+    .await;
+
+    let random_wallet_balance = wallet
+        .get_balance(random_wallet_address, None)
+        .await
+        .unwrap()
+        .as_u128();
+    assert_eq!(
+        random_wallet_balance / 10u128.pow(6),
+        deploy_contract_balance
+    );
+
+    let contract_zero_balance = wallet
+        .get_balance(contract_address, None)
+        .await
+        .unwrap()
+        .as_u128();
+    assert_eq!(0_u128, contract_zero_balance);
 }

@@ -549,6 +549,7 @@ pub struct Fork {
     pub scilla_maps_are_encoded_correctly: bool,
     pub transfer_gas_fee_to_zero_account: bool,
     pub apply_state_changes_only_if_transaction_succeeds: bool,
+    pub scilla_deduct_funds_from_actual_sender: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -612,6 +613,8 @@ pub struct ForkDelta {
     /// If true, only apply state changes if the transaction succeeds. If false, apply state changes even if the
     /// transaction fails.
     pub apply_state_changes_only_if_transaction_succeeds: Option<bool>,
+    /// if true, funds are deducted from the sender of scilla message rather than the origin
+    pub scilla_deduct_funds_from_actual_sender: Option<bool>,
 }
 
 impl Fork {
@@ -656,6 +659,9 @@ impl Fork {
             apply_state_changes_only_if_transaction_succeeds: delta
                 .apply_state_changes_only_if_transaction_succeeds
                 .unwrap_or(self.apply_state_changes_only_if_transaction_succeeds),
+            scilla_deduct_funds_from_actual_sender: delta
+                .scilla_deduct_funds_from_actual_sender
+                .unwrap_or(self.scilla_deduct_funds_from_actual_sender),
         }
     }
 }
@@ -736,6 +742,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_maps_are_encoded_correctly: true,
         transfer_gas_fee_to_zero_account: true,
         apply_state_changes_only_if_transaction_succeeds: true,
+        scilla_deduct_funds_from_actual_sender: true,
     }
 }
 
@@ -864,6 +871,7 @@ mod tests {
                 scilla_maps_are_encoded_correctly: None,
                 transfer_gas_fee_to_zero_account: None,
                 apply_state_changes_only_if_transaction_succeeds: None,
+                scilla_deduct_funds_from_actual_sender: None,
             }],
             ..Default::default()
         };
@@ -899,6 +907,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -914,6 +923,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
             ],
             ..Default::default()
@@ -963,6 +973,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -978,6 +989,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
             ],
             ..Default::default()
@@ -1018,6 +1030,7 @@ mod tests {
                 scilla_maps_are_encoded_correctly: true,
                 transfer_gas_fee_to_zero_account: true,
                 apply_state_changes_only_if_transaction_succeeds: true,
+                scilla_deduct_funds_from_actual_sender: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1046,6 +1059,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1061,6 +1075,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
             ],
             ..Default::default()
