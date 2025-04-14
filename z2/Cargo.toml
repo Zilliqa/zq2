@@ -22,7 +22,7 @@ test = false
 
 [dependencies]
 alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "rlp", "serde", "signer-local"] }
-anyhow = "1.0.97"
+anyhow = "1.0.98"
 async-trait = "0.1.88"
 base64 = "0.22.0"
 bitvec = "1.0.1"
