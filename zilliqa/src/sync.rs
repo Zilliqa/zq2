@@ -27,21 +27,50 @@ use crate::{
 // Syncing Algorithm
 //
 // When a Proposal is received by Consensus, we check if the parent exists in our DB.
-// If not, then it triggers a syncing algorithm.
+// If not, then it triggers the active-syncing algorithm; else the passive-syncing algorithm.
+/*
+                                     +----------------------------+
+                                     | PHASE-0: IDLE              |
++------------------------------------>                            <----------------------------------+
+|                                    |                            |                                  |
+|                                    +-++-------------------------+                                  |
+|      Receives a normal proposal.     ||                                                            |
+|     +--------------------------------+| Start syncing e.g. missing parent, or due to probe.        |
+|     |                                 |                                                            |
+|  +--v-------------------------+    +--v-------------------------+                                  |
+|  | PHASE-4: PASSIVE HEADERS   |    | PHASE-1: ACTIVE HEADERS    |                                  |
+|  |                            |    |                            <----------------+                 |
+|  | Request 1-segment headers. |    | Request missing headers.   |                |                 |
+|  +--+-------------------------+    +--+-------------------------+                |                 |
+|     |                                 |                                          |                 |
+|     | Receive requested segment.      | Received headers hits our history.       |                 |
+|     |                                 |                                          |                 |
+|  +--v-------------------------+    +--v-------------------------+             +--+--------------+  |
+|  | PHASE-5: PASSIVE BLOCKS    |    | PHASE-2: ACTIVE BLOCKS     |             | RETRY-1: RETRY  |  |
+|  |                            |    |                            |  on errors  |                 |  |
+|  | Request 1-segment blocks.  |    | Request missing blocks.    +-------------> Retry 1-segment |  |
+|  +--+-------------------------+    +--+-------------------------+             +-----------------+  |
+|     |                                 |                                                            |
+|     | Receive requested blocks.       | Receive all requested blocks.                              |
++-----+                                 |                                                            |
+                                     +--v-------------------------+                                  |
+                                     | PHASE-3: FINISH            |                                  |
+                                     |                            +----------------------------------+
+                                     | Inject cached segment.     |
+                                     +----------------------------+
+ */
 //
-// PHASE 1: Request missing chain metadata.
-// The entire chain metadata is stored in-memory, and is used to construct a chain of metadata.
-// Each metadata basically contains the block_hash, block_number, parent_hash, and view_number.
-// 1. We start with the latest Proposal and request the chain of metadata from a peer.
-// 2. We construct the chain of metadata, based on the response received.
-// 3. If the last block does not exist in our history, we request for additional metadata.
-// 4. If the last block exists, we have hit our history, we move to Phase 2.
+// PHASE 1: Request missing chain headers.
+// The entire chain of headers is stored in-memory, and is used to construct a chain of headers.
+// 1. We start with the latest Proposal and request a segment of headers from a peer.
+// 2. We construct the chain of headers, based on the response received.
+// 3. If all headers are missing from our history, we request for more.
+// 4. If any headers exist, we have hit our history, we move to Phase 2.
 //
 // PHASE 2: Request missing blocks.
-// Once the chain metadata is constructed, we fill in the missing blocks to replay the history.
-// We do not make any judgements (other than sanity) on the block and leave that up to consensus.
-// 1. We construct a set of hashes, from the in-memory chain metadata.
-// 2. We request these blocks from the same Peer that sent the metadata.
+// Once the chain of headers is constructed, we fill in the missing blocks to replay the history.
+// 1. We construct a set of hashes, from the in-memory chain of headers.
+// 2. We request these blocks from the same Peer that sent the headers.
 // 3. We inject the received Proposals into the pipeline.
 // 4. If there are still missing blocks, we ask for more.
 // 5. If there are no more missing blocks, we move to Phase 3.
@@ -50,10 +79,23 @@ use crate::{
 // Phase 1&2 may run several times and bring up 99% of the chain, but it will never catch up.
 // This closes the final gap.
 // 1. We queue all recently received Proposals, while Phase 1 & 2 were in progress.
-// 2. We check the head of the queue, if its parent exists in our history.
-// 3. If it does not, our history is too far away, we run Phase 1 again.
+// 2. We extract a chain of Proposals from this queue.
+// 3. If it does not link up to our history, we run Phase 1 again.
 // 4. If it does, we inject the entire queue into the pipeline.
-// 5. We are fully synced.
+// 5. We are synced.
+//
+// PHASE4: Request archival headers.
+// This is analogous to Phase 1, but we only request 1-segment worth of block headers.
+// 1. We start with the lowest block in our chain, and request a segment of headers from a peer.
+// 2. We construct the chain of headers, based on the response received.
+// 3. We unconditionally move to Phase 5, to request the blocks.
+//
+// PHASE5: Request archival blocks.
+// This is analogous to Phase 2, but we only request 1-segment worth of blocks.
+// 1. We construct a set of hashes, from the in-memory chain of headers.
+// 2. We request these blocks from the same Peer that sent the headers.
+// 3. We store the blocks in the DB.
+// 4. We unconditionally move to Phase 0, to wait for the next Proposal.
 
 #[derive(Debug)]
 pub struct Sync {
@@ -848,12 +890,12 @@ impl Sync {
             .collect_vec();
         let segment = response.iter().map(|sb| sb.header).collect_vec();
 
-        // Record landmark(s), including peer that has this set of blocks
-        self.segments.push_sync_segment(&segment_peer, meta);
-
         let turnaround = if !segment.is_empty() {
             // Record the constructed chain metadata
             self.segments.insert_sync_metadata(&segment);
+
+            // Record landmark(s), including peer that has this set of blocks
+            self.segments.push_sync_segment(&segment_peer, meta);
 
             // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
             let mut block_size: usize = 0;

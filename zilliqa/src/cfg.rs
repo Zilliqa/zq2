@@ -459,7 +459,7 @@ pub struct ConsensusConfig {
     pub forks: Vec<ForkDelta>,
     /// Interval at which NewView messages are broadcast when node is in timeout
     /// Defaut of 0 means never broadcast
-    #[serde(default)]
+    #[serde(default = "new_view_broadcast_interval_default")]
     pub new_view_broadcast_interval: Duration,
 }
 
@@ -512,7 +512,7 @@ impl Default for ConsensusConfig {
             contract_upgrades: ContractUpgrades::default(),
             forks: vec![],
             genesis_fork: genesis_fork_default(),
-            new_view_broadcast_interval: Duration::default(),
+            new_view_broadcast_interval: new_view_broadcast_interval_default(),
         }
     }
 }
@@ -737,6 +737,10 @@ pub fn genesis_fork_default() -> Fork {
         transfer_gas_fee_to_zero_account: true,
         apply_state_changes_only_if_transaction_succeeds: true,
     }
+}
+
+pub fn new_view_broadcast_interval_default() -> Duration {
+    Duration::from_secs(300)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
