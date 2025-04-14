@@ -7,7 +7,10 @@ use ethers::{
 };
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
-use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
+use zilliqa::{
+    cfg::new_view_broadcast_interval_default, contracts, crypto::NodePublicKey,
+    state::contract_addr,
+};
 mod admin;
 mod consensus;
 mod eth;
@@ -379,7 +382,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
-                new_view_broadcast_interval: Duration::default(),
+                new_view_broadcast_interval: new_view_broadcast_interval_default(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -539,7 +542,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
-                new_view_broadcast_interval: Duration::default(),
+                new_view_broadcast_interval: new_view_broadcast_interval_default(),
             },
             block_request_limit: block_request_limit_default(),
             sync: SyncConfig {
