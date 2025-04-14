@@ -31,7 +31,7 @@ use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
-    cfg::NodeConfig,
+    cfg::{ForkName, NodeConfig},
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::Db,
@@ -202,10 +202,15 @@ impl Node {
             local_channel: local_sender_channel,
             request_id: RequestId::default(),
         };
+        let executable_blocks_height = config
+            .consensus
+            .get_forks()?
+            .find_height_fork_first_activated(ForkName::ExecutableBlocks);
         let db = Arc::new(Db::new(
             config.data_dir.as_ref(),
             config.eth_chain_id,
             config.state_cache_size,
+            executable_blocks_height,
         )?);
         let node = Node {
             config: config.clone(),
@@ -558,10 +563,14 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+
         let mut state = self
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
@@ -609,10 +618,14 @@ impl Node {
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
+
         let mut state = self
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
@@ -645,6 +658,9 @@ impl Node {
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         let mut traces: Vec<TraceResult> = Vec::new();
 
@@ -842,6 +858,9 @@ impl Node {
             .consensus
             .state()
             .at_root(block.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         state.call_contract(from_addr, to_addr, data, amount, block.header)
     }
@@ -855,13 +874,14 @@ impl Node {
         let parent = self
             .get_block(header.qc.block_hash)?
             .ok_or_else(|| anyhow!("missing parent: {}", header.qc.block_hash))?;
-        let proposer = self
-            .consensus
-            .leader_at_block(&parent, header.view)
-            .unwrap()
-            .public_key;
 
-        self.consensus.state().get_reward_address(proposer)
+        let Some(proposer) = self.consensus.leader_at_block(&parent, header.view) else {
+            return Ok(None);
+        };
+
+        self.consensus
+            .state()
+            .get_reward_address(proposer.public_key)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
@@ -887,6 +907,9 @@ impl Node {
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
         let state = self.get_state(&block)?;
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         state.estimate_gas(
             from_addr,
