@@ -8,7 +8,7 @@ web3, sha3, hash, cryptographic
 
 # Description
 
-Returns the sha3 hash of the given data.
+Returns the Keccak-256 hash of the given data.
 
 The input data must be a hex string prefixed with "0x". The output is returned as a hex string prefixed with "0x".
 
