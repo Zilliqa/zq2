@@ -663,7 +663,7 @@ impl Node {
         Ok(traces)
     }
 
-    fn debug_trace_transaction(
+    pub fn debug_trace_transaction(
         &self,
         state: &mut State,
         txn_hash: Hash,
