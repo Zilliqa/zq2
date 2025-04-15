@@ -7,7 +7,10 @@ use ethers::{
 };
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
-use zilliqa::{contracts, crypto::NodePublicKey, state::contract_addr};
+use zilliqa::{
+    cfg::new_view_broadcast_interval_default, contracts, crypto::NodePublicKey,
+    state::contract_addr,
+};
 mod admin;
 mod consensus;
 mod eth;
@@ -254,7 +257,6 @@ struct Network {
     scilla_stdlib_dir: String,
     do_checkpoints: bool,
     blocks_per_epoch: u64,
-    consensus_tick_countdown: u64,
     deposit_v3_upgrade_block_height: Option<u64>,
 }
 
@@ -380,7 +382,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
-                new_view_broadcast_interval: Duration::default(),
+                new_view_broadcast_interval: new_view_broadcast_interval_default(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -465,7 +467,6 @@ impl Network {
             do_checkpoints,
             blocks_per_epoch,
             scilla_stdlib_dir,
-            consensus_tick_countdown: 10,
             deposit_v3_upgrade_block_height,
         }
     }
@@ -541,7 +542,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
-                new_view_broadcast_interval: Duration::default(),
+                new_view_broadcast_interval: new_view_broadcast_interval_default(),
             },
             block_request_limit: block_request_limit_default(),
             sync: SyncConfig {
@@ -653,7 +654,6 @@ impl Network {
         loop {
             for node in &self.nodes {
                 // Trigger a tick so that block fetching can operate.
-                node.inner.lock().unwrap().consensus.tick().unwrap();
                 if node.inner.lock().unwrap().handle_timeout().unwrap() {
                     return;
                 }
@@ -828,11 +828,9 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
-                    node.inner.lock().unwrap().consensus.tick().unwrap();
                     node.inner.lock().unwrap().handle_timeout().unwrap();
                 });
             }
-            self.consensus_tick_countdown = 10;
             return;
         }
 
@@ -891,20 +889,6 @@ impl Network {
             );
 
             self.handle_message((source, destination, message))
-        }
-
-        // Every 10ms send a consensus tick, since most of our tests are too short to otherwise
-        // be able to sync.
-        self.consensus_tick_countdown -= 1;
-        if self.consensus_tick_countdown == 0 {
-            for (index, node) in self.nodes.iter().enumerate() {
-                let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
-
-                span.in_scope(|| {
-                    node.inner.lock().unwrap().consensus.tick().unwrap();
-                });
-            }
-            self.consensus_tick_countdown = 10;
         }
     }
 

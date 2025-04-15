@@ -639,7 +639,7 @@ metrics:
               - targets: ['localhost:9256']
             metric_relabel_configs:
               - source_labels: [__name__]
-                regex: 'namedprocess_namegroup_cpu_seconds_total'
+                regex: 'namedprocess_namegroup_cpu_seconds_total|namedprocess_namegroup_memory_bytes'
                 action: keep
   service:
     log_level: info
