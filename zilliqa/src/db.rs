@@ -940,8 +940,7 @@ impl Db {
             .lock()
             .unwrap()
             .prepare_cached("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1")?
-            .query_map([height], |row| 
-            Ok(Block {
+            .query_map([height], |row| Ok(Block {
                 header: BlockHeader {
                     hash: row.get(0)?,
                     view: row.get(1)?,

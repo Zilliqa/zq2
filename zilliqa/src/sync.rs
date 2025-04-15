@@ -415,17 +415,21 @@ impl Sync {
             .saturating_sub(self.max_blocks_in_flight as u64)
             .max(self.sync_base_height);
 
-        if *range.start() == self.sync_base_height {
-            // we're good nothing else to sync
-            self.sync_base_height = u64::MAX;
-            return Ok(());
-        } else if *range.start() < self.sync_base_height {
-            // prune below sync_base_height
-            let prune_till = range
-                .start()
-                .saturating_add(1000)
-                .min(self.sync_base_height);
-            return self.prune_range(*range.start()..prune_till);
+        match (*range.start()).cmp(&self.sync_base_height) {
+            Ordering::Less => {
+                // prune below sync-base-height
+                let prune_till = range
+                    .start()
+                    .saturating_add(1000)
+                    .min(self.sync_base_height);
+                return self.prune_range(*range.start()..prune_till);
+            }
+            Ordering::Equal => {
+                // done, turn off passive-sync
+                self.sync_base_height = u64::MAX;
+                return Ok(());
+            }
+            Ordering::Greater => {} // do nothing
         }
 
         self.passive_sync_count = self.passive_sync_count.saturating_add(1);
