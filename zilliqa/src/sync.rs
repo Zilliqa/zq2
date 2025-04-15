@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
-    ops::RangeInclusive,
+    ops::{Range, RangeInclusive},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -421,7 +421,11 @@ impl Sync {
             return Ok(());
         } else if *range.start() < self.sync_base_height {
             // prune below sync_base_height
-            return Ok(());
+            let prune_till = range
+                .start()
+                .saturating_add(1000)
+                .min(self.sync_base_height);
+            return self.prune_range(*range.start()..prune_till);
         }
 
         self.passive_sync_count = self.passive_sync_count.saturating_add(1);
@@ -434,6 +438,27 @@ impl Sync {
 
         self.state = SyncState::Phase4(lowest_block.header);
         self.request_missing_headers()?;
+        Ok(())
+    }
+
+    pub fn prune_range(&mut self, range: Range<u64>) -> Result<()> {
+        // keep at least 300
+        let tip = self
+            .db
+            .get_highest_canonical_block_number()?
+            .unwrap_or_default()
+            .saturating_sub(300);
+        // Prune canonical, and non-canonical blocks.
+        for n in range {
+            if n >= tip {
+                break;
+            }
+            let blocks = self.db.get_blocks_by_height(n)?;
+            for block in blocks.iter() {
+                tracing::trace!(number = %block.number(), hash=%block.hash(), "Prune block");
+                self.db.remove_block(block)?;
+            }
+        }
         Ok(())
     }
 

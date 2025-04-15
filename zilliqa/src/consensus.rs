@@ -3081,13 +3081,7 @@ impl Consensus {
             .saturating_sub(self.prune_interval.saturating_sub(1)) // off-by-one
             .min(range.start().saturating_add(1000)); // gradually prune 1000-blocks at a time
         if range.contains(&prune_at) {
-            for n in *range.start()..prune_at {
-                let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
-                if let Some(block) = block {
-                    tracing::trace!(number = %block.number(), hash=%block.hash(), "Prune block");
-                    self.db.remove_block(&block)?;
-                }
-            }
+            self.sync.prune_range(*range.start()..prune_at)?;
         }
         Ok(())
     }

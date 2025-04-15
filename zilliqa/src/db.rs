@@ -934,6 +934,34 @@ impl Db {
         Ok(())
     }
 
+    pub fn get_blocks_by_height(&self, height: u64) -> Result<Vec<Block>> {
+        let rows = self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1")?
+            .query_map([height], |row| 
+            Ok(Block {
+                header: BlockHeader {
+                    hash: row.get(0)?,
+                    view: row.get(1)?,
+                    number: row.get(2)?,
+                    qc: row.get(3)?,
+                    signature: row.get(4)?,
+                    state_root_hash: row.get(5)?,
+                    transactions_root_hash: row.get(6)?,
+                    receipts_root_hash: row.get(7)?,
+                    timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
+                    gas_used: row.get(9)?,
+                    gas_limit: row.get(10)?,
+                },
+                agg: row.get(11)?,
+                transactions: vec![],
+            })
+        )?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
