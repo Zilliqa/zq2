@@ -334,14 +334,14 @@ impl Sync {
             SyncState::Phase0 if self.in_pipeline == 0 => {
                 let meta = self.recent_proposals.back().unwrap().header;
                 let parent_hash = meta.qc.block_hash;
-                // No parent block, trigger active-sync
+                let child_hash = meta.hash;
+
                 if !self.db.contains_canonical_block(&parent_hash)? {
-                    self.active_sync_count = self.active_sync_count.saturating_add(1);
-                    tracing::debug!(from_hash = %parent_hash, "sync::DoSync : syncing",);
-                    // Ensure started_at_block_number is set before running this.
-                    // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
-                    self.update_started_at()?;
-                    self.request_missing_metadata(Some(meta))?;
+                    // We don't have the parent block, trigger active-sync
+                    self.start_active_sync(meta)?;
+                } else if self.db.contains_canonical_block(&child_hash)? {
+                    // We have the child block, trigger passive-sync
+                    self.start_passive_sync()?;
                 } else {
                     // one-block away from the tip, which can happen during a restart
                     self.state = SyncState::Phase3;
@@ -350,7 +350,7 @@ impl Sync {
             }
             // Continue phase 1, until we hit history/genesis.
             SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
-                self.request_missing_metadata(None)?;
+                self.request_missing_metadata()?;
             }
             // Continue phase 2, until we have all segments.
             SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
@@ -370,6 +370,50 @@ impl Sync {
                 tracing::debug!("sync::DoSync : syncing {} blocks", self.in_pipeline);
             }
         }
+        Ok(())
+    }
+
+    fn start_active_sync(&mut self, meta: BlockHeader) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase0) {
+            unimplemented!("sync::StartActiveSync : invalid state");
+        }
+        // No parent block, trigger active-sync
+        self.active_sync_count = self.active_sync_count.saturating_add(1);
+        tracing::debug!(from_hash = %meta.qc.block_hash, "sync::StartActiveSync : syncing",);
+        // Ensure started_at_block_number is set before running this.
+        // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
+        self.update_started_at()?;
+        self.state = SyncState::Phase1(meta);
+        self.request_missing_metadata()?;
+        Ok(())
+    }
+
+    fn start_passive_sync(&mut self) -> Result<()> {
+        if self.sync_base_height == u64::MAX {
+            // stop passive-sync
+            return Ok(());
+        }
+
+        if !matches!(self.state, SyncState::Phase0) {
+            unimplemented!("sync::StartPassiveSync : invalid state");
+        }
+
+        self.passive_sync_count = self.passive_sync_count.saturating_add(1);
+        let range = self.db.available_range()?;
+        tracing::debug!(?range, "sync::StartPassiveSync : syncing",);
+
+        // Safe to repurpose started_at. Active/Passive are mutually exclusive.
+        self.started_at = range
+            .start()
+            .saturating_sub(self.max_blocks_in_flight as u64)
+            .max(self.sync_base_height);
+
+        let lowest_block = self
+            .db
+            .get_canonical_block_by_number(*range.start())?
+            .expect("the block must exist");
+
+        self.state = SyncState::Phase4(lowest_block.header);
         Ok(())
     }
 
@@ -820,7 +864,7 @@ impl Sync {
                         .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
                 }
                 // failure fall-thru - fire one request
-                self.do_missing_metadata(None, 1)?;
+                self.do_missing_metadata(1)?;
                 if !self.in_flight.is_empty() {
                     self.in_flight.rotate_right(1); // adjust request order, do_missing_metadata() pushes peer to the back.
                 }
@@ -1004,8 +1048,8 @@ impl Sync {
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If Phase 1 is in progress, it continues requesting blocks from the last known Phase 1 block.
     /// Otherwise, it requests blocks from the given starting metadata.
-    pub fn request_missing_metadata(&mut self, meta: Option<BlockHeader>) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase1(_)) && !matches!(self.state, SyncState::Phase0) {
+    pub fn request_missing_metadata(&mut self) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase1(_)) {
             anyhow::bail!("sync::RequestMissingMetadata : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
@@ -1038,7 +1082,7 @@ impl Sync {
             return Ok(());
         }
 
-        self.do_missing_metadata(meta, peer_set)
+        self.do_missing_metadata(peer_set)
     }
 
     /// Phase 1: Request chain metadata from a peer.
@@ -1048,8 +1092,9 @@ impl Sync {
     /// - the number of good peers
     /// - hitting the starting point
     /// - encountering a V1 peer
-    fn do_missing_metadata(&mut self, meta: Option<BlockHeader>, num_peers: usize) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase1(_)) && !matches!(self.state, SyncState::Phase0) {
+    fn do_missing_metadata(&mut self, num_peers: usize) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase1(_))
+        {
             anyhow::bail!("sync::DoMissingMetadata : invalid state");
         }
         let mut offset = u64::MIN;
@@ -1067,21 +1112,6 @@ impl Sync {
                             .saturating_sub(offset)
                             .saturating_sub(self.max_batch_size as u64)
                             ..=block_number.saturating_sub(offset).saturating_sub(1);
-                        let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
-                            request_at: SystemTime::now(),
-                            to_height: *range.end(),
-                            from_height: *range.start(),
-                        });
-                        (message, *range.start() < self.started_at, range)
-                    }
-                    (SyncState::Phase0, PeerVer::V2) if meta.is_some() => {
-                        let meta = meta.unwrap();
-                        let block_number = meta.number;
-                        let range = block_number
-                            .saturating_sub(offset)
-                            .saturating_sub(self.max_batch_size as u64)
-                            ..=block_number.saturating_sub(offset).saturating_sub(1);
-                        self.state = SyncState::Phase1(meta);
                         let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
                             request_at: SystemTime::now(),
                             to_height: *range.end(),
