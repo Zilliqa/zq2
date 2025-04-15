@@ -715,7 +715,29 @@ impl State {
             let (result, state) =
                 self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 
-            self.apply_delta_scilla(&state, current_block.number)?;
+            let update_state_only_if_transaction_succeeds = self
+                .forks
+                .get(current_block.number)
+                .apply_state_changes_only_if_transaction_succeeds;
+
+            if !update_state_only_if_transaction_succeeds || result.success {
+                self.apply_delta_scilla(&state, current_block.number)?;
+            } else {
+                // If the transaction rejected, we must update the nonce and balance of the sender account.
+                let from_account = state
+                    .get(&from_addr)
+                    .ok_or(anyhow!("from account not found"))?;
+
+                let mut storage = self.get_account_trie(from_addr)?;
+                let account = Account {
+                    nonce: from_account.account.nonce,
+                    balance: from_account.account.balance,
+                    code: from_account.account.code.clone(),
+                    storage_root: storage.root_hash()?,
+                };
+
+                self.save_account(from_addr, account)?;
+            }
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {

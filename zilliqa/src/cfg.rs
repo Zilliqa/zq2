@@ -457,6 +457,10 @@ pub struct ConsensusConfig {
     /// difference applies.
     #[serde(default)]
     pub forks: Vec<ForkDelta>,
+    /// Interval at which NewView messages are broadcast when node is in timeout
+    /// Defaut of 0 means never broadcast
+    #[serde(default = "new_view_broadcast_interval_default")]
+    pub new_view_broadcast_interval: Duration,
 }
 
 impl ConsensusConfig {
@@ -508,6 +512,7 @@ impl Default for ConsensusConfig {
             contract_upgrades: ContractUpgrades::default(),
             forks: vec![],
             genesis_fork: genesis_fork_default(),
+            new_view_broadcast_interval: new_view_broadcast_interval_default(),
         }
     }
 }
@@ -544,6 +549,7 @@ pub struct Fork {
     pub scilla_maps_are_encoded_correctly: bool,
     pub transfer_gas_fee_to_zero_account: bool,
     pub apply_scilla_delta_when_evm_succeeded: bool,
+    pub apply_state_changes_only_if_transaction_succeeds: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -606,6 +612,9 @@ pub struct ForkDelta {
     /// If true, when there are successful interop calls and in the end EVM transaction fails,
     /// no state changes are applied for affected accounts by interop calls
     pub apply_scilla_delta_when_evm_succeeded: Option<bool>,
+    /// If true, only apply state changes if the transaction succeeds. If false, apply state changes even if the
+    /// transaction fails.
+    pub apply_state_changes_only_if_transaction_succeeds: Option<bool>,
 }
 
 impl Fork {
@@ -650,6 +659,9 @@ impl Fork {
             apply_scilla_delta_when_evm_succeeded: delta
                 .apply_scilla_delta_when_evm_succeeded
                 .unwrap_or(self.apply_scilla_delta_when_evm_succeeded),
+            apply_state_changes_only_if_transaction_succeeds: delta
+                .apply_state_changes_only_if_transaction_succeeds
+                .unwrap_or(self.apply_state_changes_only_if_transaction_succeeds),
         }
     }
 }
@@ -730,7 +742,12 @@ pub fn genesis_fork_default() -> Fork {
         scilla_maps_are_encoded_correctly: true,
         transfer_gas_fee_to_zero_account: true,
         apply_scilla_delta_when_evm_succeeded: true,
+        apply_state_changes_only_if_transaction_succeeds: true,
     }
+}
+
+pub fn new_view_broadcast_interval_default() -> Duration {
+    Duration::from_secs(300)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -858,6 +875,7 @@ mod tests {
                 scilla_maps_are_encoded_correctly: None,
                 transfer_gas_fee_to_zero_account: None,
                 apply_scilla_delta_when_evm_succeeded: None,
+                apply_state_changes_only_if_transaction_succeeds: None,
             }],
             ..Default::default()
         };
@@ -893,6 +911,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -908,6 +927,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
                 },
             ],
             ..Default::default()
@@ -957,6 +977,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -972,6 +993,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
                 },
             ],
             ..Default::default()
@@ -1012,6 +1034,7 @@ mod tests {
                 scilla_maps_are_encoded_correctly: true,
                 transfer_gas_fee_to_zero_account: true,
                 apply_scilla_delta_when_evm_succeeded: true,
+                apply_state_changes_only_if_transaction_succeeds: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1040,6 +1063,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1055,6 +1079,7 @@ mod tests {
                     scilla_maps_are_encoded_correctly: None,
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
                 },
             ],
             ..Default::default()

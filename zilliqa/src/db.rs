@@ -175,6 +175,7 @@ enum BlockFilter {
     View(u64),
     Height(u64),
     MaxHeight,
+    MaxCanonicalByHeight,
 }
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -271,10 +272,15 @@ impl Db {
 
         // Add tracing - logs all SQL statements
         connection.trace_v2(
-            rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
-            Some(|statement| {
-                if let rusqlite::trace::TraceEvent::Stmt(_, statement) = statement {
-                    tracing::trace!(statement, "sql executed");
+            rusqlite::trace::TraceEventCodes::SQLITE_TRACE_PROFILE,
+            Some(|profile_event| {
+                if let rusqlite::trace::TraceEvent::Profile(statement, duration) = profile_event {
+                    let statement_txt = statement.expanded_sql();
+                    let duration_secs = duration.as_secs();
+                    tracing::trace!(duration_secs, statement_txt, "sql executed");
+                    if duration_secs > 5 {
+                        tracing::warn!(duration_secs, statement_txt, "sql execution took > 5s");
+                    }
                 }
             }),
         );
@@ -384,7 +390,21 @@ impl Db {
                 INSERT INTO new_receipts SELECT * FROM receipts;
                 DROP TABLE receipts;
                 ALTER TABLE new_receipts RENAME TO receipts;
-                CREATE INDEX idx_receipts_block_hash ON receipts (block_hash);
+                CREATE INDEX block_hash_index ON receipts (block_hash);
+
+                COMMIT;
+            ",
+            )?;
+        }
+
+        if version < 3 {
+            connection.execute_batch(
+                "
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (3);
+
+                CREATE INDEX idx_receipts_tx_hash ON receipts (tx_hash);
 
                 COMMIT;
             ",
@@ -714,23 +734,23 @@ impl Db {
             .db
             .lock()
             .unwrap()
-            // Two queries here are deliberate to ensure the index on `height` column is used
-            .prepare_cached("SELECT height from (SELECT height, is_canonical FROM blocks ORDER BY height DESC) WHERE is_canonical = 1 LIMIT 1",)?
-            .query_row(
-                (),
-                |row| row.get(0),
-            )
+            .prepare_cached("SELECT MAX(height) FROM blocks WHERE is_canonical = 1")?
+            .query_row((), |row| {
+                row.get(0).map_err(|e| {
+                    // workaround where MAX(height) returns NULL if there are no blocks, instead of a NoRows error
+                    if let rusqlite::Error::InvalidColumnType(_, _, typ) = e {
+                        if typ == rusqlite::types::Type::Null {
+                            return rusqlite::Error::QueryReturnedNoRows;
+                        }
+                    }
+                    e
+                })
+            })
             .optional()?)
     }
 
-    pub fn get_highest_block_hashes(&self, how_many: usize) -> Result<Vec<Hash>> {
-        Ok(self
-            .db
-            .lock()
-           .unwrap()
-           .prepare_cached(
-               "select block_hash from blocks where is_canonical = true order by height desc limit ?1")?
-           .query_map([how_many], |row| row.get(0))?.collect::<Result<Vec<Hash>, _>>()?)
+    pub fn get_highest_canonical_block(&self) -> Result<Option<Block>> {
+        self.get_block(BlockFilter::MaxCanonicalByHeight)
     }
 
     pub fn set_high_qc_with_db_tx(
@@ -949,8 +969,14 @@ impl Db {
             BlockFilter::Height(height) => {
                 query_block!("height = ?1 AND is_canonical = TRUE", height)
             }
+            // Compound SQL queries below, due to - https://github.com/Zilliqa/zq2/issues/2629
+            BlockFilter::MaxCanonicalByHeight => {
+                query_block!(
+                    "is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
+                )
+            }
             BlockFilter::MaxHeight => {
-                query_block!("TRUE ORDER BY height DESC LIMIT 1")
+                query_block!("height = (SELECT MAX(height) FROM blocks) LIMIT 1")
             }
         })
     }

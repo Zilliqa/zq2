@@ -63,11 +63,54 @@ fn txpool_content_from(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> 
 }
 
 /// txpool_inspect
-fn txpool_inspect(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+fn txpool_inspect(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<types::txpool::TxPoolInspect> {
+    let node = node.lock().unwrap();
+    let content = node.txpool_content()?;
+
+    let mut result = types::txpool::TxPoolInspect {
+        pending: HashMap::new(),
+        queued: HashMap::new(),
+    };
+
+    for item in content.pending {
+        let txns = result.pending.entry(item.signer).or_default();
+        let txn = Transaction::new(item.clone(), None);
+        let summary = format!(
+            "{}: {} wei + {} × {} wei",
+            txn.to.unwrap_or_default(),
+            txn.value,
+            txn.gas,
+            txn.gas_price
+        );
+        txns.insert(item.tx.nonce().unwrap(), summary);
+    }
+
+    for item in content.queued {
+        let txns = result.queued.entry(item.signer).or_default();
+        let txn = Transaction::new(item.clone(), None);
+        let summary = format!(
+            "{}: {} wei + {} × {} wei",
+            txn.to.unwrap_or_default(),
+            txn.value,
+            txn.gas,
+            txn.gas_price
+        );
+        txns.insert(item.tx.nonce().unwrap(), summary);
+    }
+
+    Ok(result)
 }
 
 /// txpool_status
-fn txpool_status(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    todo!("Endpoint not implemented yet")
+fn txpool_status(_params: Params, node: &Arc<Mutex<Node>>) -> Result<types::txpool::TxPoolStatus> {
+    let node = node.lock().unwrap();
+    let content = node.txpool_content()?;
+
+    Ok(types::txpool::TxPoolStatus {
+        pending: content.pending.len() as u64,
+        queued: content.queued.len() as u64,
+    })
 }
