@@ -706,7 +706,7 @@ impl State {
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
-        info!(?hash, ?txn, "executing txn");
+        info!(?txn, "executing txn");
 
         let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
 
@@ -761,7 +761,18 @@ impl State {
                 )?;
 
             self.apply_delta_evm(&state, current_block.number)?;
-            self.apply_delta_scilla(&scilla_state, current_block.number)?;
+            let apply_scilla_delta_when_evm_succeeded = self
+                .forks
+                .get(current_block.number)
+                .apply_scilla_delta_when_evm_succeeded;
+
+            if apply_scilla_delta_when_evm_succeeded {
+                if let ExecutionResult::Success { .. } = result {
+                    self.apply_delta_scilla(&scilla_state, current_block.number)?;
+                }
+            } else {
+                self.apply_delta_scilla(&scilla_state, current_block.number)?;
+            }
 
             Ok(TransactionApplyResult::Evm(
                 ResultAndState { result, state },
