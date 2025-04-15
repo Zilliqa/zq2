@@ -461,7 +461,7 @@ impl Sync {
             .db
             .get_highest_canonical_block_number()?
             .unwrap_or_default()
-            .saturating_sub(300);
+            .saturating_sub(MIN_PRUNE_INTERVAL);
         // Prune canonical, and non-canonical blocks.
         for n in range {
             if n >= tip {
@@ -1743,3 +1743,9 @@ impl SyncSegments {
         }
     }
 }
+
+// For the purpose of testing, we need a smaller prune interval to ensure that the test cases run faster.
+#[cfg(debug_assertions)]
+pub const MIN_PRUNE_INTERVAL: u64 = 10;
+#[cfg(not(debug_assertions))]
+pub const MIN_PRUNE_INTERVAL: u64 = 300;

@@ -236,8 +236,11 @@ impl NodeConfig {
         }
 
         // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
-        if self.sync.prune_interval < 300 {
-            return Err(anyhow!("prune_interval must be at least 300",));
+        if self.sync.prune_interval < crate::sync::MIN_PRUNE_INTERVAL {
+            return Err(anyhow!(
+                "prune_interval must be at least {}",
+                crate::sync::MIN_PRUNE_INTERVAL
+            ));
         }
         // 100 is a reasonable minimum for a node to be useful.
         if self.sync.block_request_batch_size < 100 {

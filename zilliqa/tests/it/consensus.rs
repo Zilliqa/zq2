@@ -336,18 +336,18 @@ async fn gas_fees_should_be_transferred_to_zero_account(mut network: Network) {
 // Test a pruning node does not hold old blocks.
 #[zilliqa_macros::test]
 async fn prune_interval(mut network: Network) {
-    network.run_until_block_finalized(3, 100).await.unwrap();
+    network.run_until_block_finalized(5, 100).await.unwrap();
 
     info!("Adding pruned node.");
     let index = network.add_node_with_options(crate::NewNodeOptions {
-        prune_interval: Some(30),
+        prune_interval: Some(20),
         ..Default::default()
     });
     network.run_until_synced(index).await;
 
-    network.run_until_block_finalized(35, 1000).await.unwrap();
+    network.run_until_block_finalized(25, 1000).await.unwrap();
 
     let range = network.node_at(index).db.available_range().unwrap();
     info!("Pruned range: {range:?}");
-    assert_eq!(range.count(), 30);
+    assert_eq!(range.count(), 20);
 }
