@@ -133,8 +133,11 @@ pub struct Sync {
     headers_downloaded: usize,
     blocks_downloaded: usize,
     active_sync_count: usize,
+    passive_sync_count: usize,
     // internal structure for syncing
     segments: SyncSegments,
+    // passive sync
+    sync_base_height: u64,
 }
 
 impl Sync {
@@ -161,6 +164,7 @@ impl Sync {
             .sync
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
+        let sync_base_height = config.sync.sync_base_height;
 
         // Start from reset, or continue sync
         let latest_block_number = latest_block
@@ -187,10 +191,12 @@ impl Sync {
             headers_downloaded: 0,
             blocks_downloaded: 0,
             active_sync_count: 0,
+            passive_sync_count: 0,
             p1_response: BTreeMap::new(),
             segments: SyncSegments::default(),
             cache_probe_response: None,
             last_probe_at: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(), // allow immediate sync at startup
+            sync_base_height,
         })
     }
 

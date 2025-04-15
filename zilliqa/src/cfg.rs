@@ -229,6 +229,11 @@ impl NodeConfig {
                 }
             }
         }
+        if self.sync.sync_base_height != u64_max() && self.sync.prune_interval != u64_max() {
+            return Err(anyhow!(
+                "sync_base_height and prune_interval cannot be set at the same time"
+            ));
+        }
 
         // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
         if self.sync.prune_interval < 300 {
