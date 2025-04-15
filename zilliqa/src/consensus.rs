@@ -1495,16 +1495,8 @@ impl Consensus {
             .get_block(&early_qc.block_hash)?
             .context("missing parent block")?;
 
-        // Ensure sane state
-        let previous_state_root_hash = state.root_hash()?;
-        if previous_state_root_hash != block.state_root_hash() {
-            warn!(
-                "state root hash mismatch, expected: {:?}, actual: {:?}",
-                block.state_root_hash(),
-                previous_state_root_hash
-            );
-            state.set_to_root(block.state_root_hash().into());
-        }
+        // Set state to that of parent
+        state.set_to_root(block.state_root_hash().into());
 
         // Internal states
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
