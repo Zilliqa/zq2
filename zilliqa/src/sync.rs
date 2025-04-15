@@ -356,7 +356,7 @@ impl Sync {
             }
             // Continue phase 1, until we hit history/genesis.
             SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
-                self.request_missing_metadata()?;
+                self.request_missing_headers()?;
             }
             // Continue phase 2, until we have all segments.
             SyncState::Phase2(_) if self.in_pipeline < self.max_blocks_in_flight => {
@@ -390,18 +390,18 @@ impl Sync {
         // https://github.com/Zilliqa/zq2/issues/2252#issuecomment-2636036676
         self.update_started_at()?;
         self.state = SyncState::Phase1(meta);
-        self.request_missing_metadata()?;
+        self.request_missing_headers()?;
         Ok(())
     }
 
     fn start_passive_sync(&mut self) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase0) {
+            unimplemented!("sync::StartPassiveSync : invalid state");
+        }
+
         if self.sync_base_height == u64::MAX {
             // stop passive-sync
             return Ok(());
-        }
-
-        if !matches!(self.state, SyncState::Phase0) {
-            unimplemented!("sync::StartPassiveSync : invalid state");
         }
 
         self.passive_sync_count = self.passive_sync_count.saturating_add(1);
@@ -420,6 +420,7 @@ impl Sync {
             .expect("the block must exist");
 
         self.state = SyncState::Phase4(lowest_block.header);
+        self.request_missing_headers()?;
         Ok(())
     }
 
@@ -817,7 +818,9 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<SyncBlockHeader>>,
     ) -> Result<()> {
-        let SyncState::Phase1(_) = &self.state else {
+        if !matches!(self.state, SyncState::Phase1(_))
+            && !matches!(self.state, SyncState::Phase4(_))
+        {
             tracing::warn!("sync::MetadataResponse : dropped response {from}");
             return Ok(());
         };
@@ -886,13 +889,11 @@ impl Sync {
         segment_peer: PeerInfo,
         response: Vec<SyncBlockHeader>,
     ) -> Result<()> {
-        let SyncState::Phase1(meta) = &self.state else {
-            anyhow::bail!("sync::DoMetadataResponse : invalid state");
+        let meta = match &self.state {
+            SyncState::Phase1(meta) => meta,
+            SyncState::Phase4(meta) => meta,
+            _ => unimplemented!("sync::DoMetadataResponse : invalid state"),
         };
-
-        if response.is_empty() {
-            return Ok(());
-        }
 
         // Check the linkage of the returned chain
         let mut block_hash = meta.qc.block_hash;
@@ -966,21 +967,40 @@ impl Sync {
                 self.segments.push_sync_segment(&segment_peer, header);
             }
 
-            // Record the oldest block in the segment
-            self.state = SyncState::Phase1(segment.last().cloned().unwrap());
-
-            // Check if the segment hits our history
-            let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
-            self.db
-                .contains_canonical_block(&block_hash)
-                .unwrap_or_default()
+            match self.state {
+                SyncState::Phase1(_) => {
+                    // Record the oldest block in the segment
+                    self.state = SyncState::Phase1(segment.last().cloned().unwrap());
+                    // check if the segment hits our history
+                    let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
+                    self.db
+                        .contains_canonical_block(&block_hash)
+                        .unwrap_or_default()
+                }
+                SyncState::Phase4(_) => {
+                    // Record the oldest block in the segment
+                    self.state = SyncState::Phase4(segment.last().cloned().unwrap());
+                    // for turnaround
+                    let block_number = segment.last().as_ref().unwrap().number;
+                    block_number <= self.sync_base_height
+                }
+                _ => false,
+            }
         } else {
             true
         };
 
         if turnaround {
             // turnaround to Phase 2.
-            self.state = SyncState::Phase2((Hash::ZERO, 0..=0));
+            match self.state {
+                SyncState::Phase1(_) => {
+                    self.state = SyncState::Phase2((Hash::ZERO, 0..=0));
+                }
+                SyncState::Phase4(_) => {
+                    self.state = SyncState::Phase5((Hash::ZERO, 0..=0));
+                }
+                _ => {}
+            }
             // drop all pending requests & responses
             self.p1_response.clear();
             for p in self.in_flight.drain(..) {
@@ -1054,15 +1074,17 @@ impl Sync {
     /// This constructs a chain history by requesting blocks from a peer, going backwards from a given block.
     /// If Phase 1 is in progress, it continues requesting blocks from the last known Phase 1 block.
     /// Otherwise, it requests blocks from the given starting metadata.
-    pub fn request_missing_metadata(&mut self) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase1(_)) {
-            anyhow::bail!("sync::RequestMissingMetadata : invalid state");
+    pub fn request_missing_headers(&mut self) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase1(_))
+            && !matches!(self.state, SyncState::Phase4(_))
+        {
+            unimplemented!("sync::RequestMissingHeaders : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
         if !self.in_flight.is_empty() || self.in_pipeline > self.max_batch_size {
             // anything more than this and we cannot be sure whether the segment hits history
             tracing::debug!(
-                "sync::RequestMissingMetadata : syncing {}/{} blocks",
+                "sync::RequestMissingHeaders : syncing {}/{} blocks",
                 self.in_pipeline,
                 self.max_batch_size
             );
@@ -1084,7 +1106,7 @@ impl Sync {
         };
 
         if peer_set == 0 {
-            tracing::warn!("sync::RequestMissingMetadata : no peers to handle request");
+            tracing::warn!("sync::RequestMissingHeaders : no peers to handle request");
             return Ok(());
         }
 
@@ -1100,8 +1122,9 @@ impl Sync {
     /// - encountering a V1 peer
     fn do_missing_metadata(&mut self, num_peers: usize) -> Result<()> {
         if !matches!(self.state, SyncState::Phase1(_))
+            && !matches!(self.state, SyncState::Phase4(_))
         {
-            anyhow::bail!("sync::DoMissingMetadata : invalid state");
+            unimplemented!("sync::DoMissingMetadata : invalid state");
         }
         let mut offset = u64::MIN;
         for num in 1..=num_peers {
@@ -1125,11 +1148,30 @@ impl Sync {
                         });
                         (message, *range.start() < self.started_at, range)
                     }
+                    (
+                        SyncState::Phase4(BlockHeader {
+                            number: block_number,
+                            ..
+                        }),
+                        PeerVer::V2,
+                    ) => {
+                        let range = block_number
+                            .saturating_sub(offset)
+                            .saturating_sub(self.max_batch_size as u64)
+                            ..=block_number.saturating_sub(offset).saturating_sub(1);
+                        // TODO: Substitute message
+                        let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
+                            request_at: SystemTime::now(),
+                            to_height: *range.end(),
+                            from_height: *range.start(),
+                        });
+                        (message, *range.start() < self.started_at, range)
+                    }
                     _ => unimplemented!("sync::DoMissingMetadata"),
                 };
 
                 tracing::info!(?range, from = %peer_info.peer_id,
-                    "sync::MissingMetadata : requesting ({num}/{num_peers})",
+                    "sync::DoMissingMetadata : requesting ({num}/{num_peers})",
                 );
                 let count = range.count();
                 offset = offset.saturating_add(count as u64);
@@ -1459,6 +1501,8 @@ enum SyncState {
     Phase2((Hash, RangeInclusive<u64>)),
     Phase3,
     Retry1,
+    Phase4(BlockHeader),
+    Phase5((Hash, RangeInclusive<u64>)),
 }
 
 impl std::fmt::Display for SyncState {
@@ -1469,6 +1513,8 @@ impl std::fmt::Display for SyncState {
             SyncState::Phase2(_) => write!(f, "phase2"),
             SyncState::Phase3 => write!(f, "phase3"),
             SyncState::Retry1 => write!(f, "retry1"),
+            SyncState::Phase4(_) => write!(f, "phase4"),
+            SyncState::Phase5(_) => write!(f, "phase5"),
         }
     }
 }
