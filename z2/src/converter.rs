@@ -26,7 +26,7 @@ use zilliqa::{
     scilla::{CheckOutput, ParamValue, Transition, storage_key},
     state::{Account, Code, ContractInit, State},
     time::SystemTime,
-    transaction::{EvmGas, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount},
+    transaction::{ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount},
 };
 
 use crate::{zq1, zq1::Transaction};
@@ -751,8 +751,8 @@ fn try_with_evm_transaction(
         block_hash: Hash::ZERO,
         index: index as u64,
         success: transaction.receipt.success,
-        gas_used: EvmGas(transaction.receipt.cumulative_gas),
-        cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
+        gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
+        cumulative_gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
         contract_address,
         logs: transaction
             .receipt

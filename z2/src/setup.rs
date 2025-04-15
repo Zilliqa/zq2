@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
-    time::Duration,
 };
 
 use alloy::{
@@ -21,7 +20,7 @@ use zilliqa::{
     api,
     cfg::{
         ApiServer, SyncConfig, genesis_fork_default, max_rpc_response_size_default,
-        state_cache_size_default,
+        new_view_broadcast_interval_default, state_cache_size_default,
     },
     crypto::{SecretKey, TransactionPublicKey},
 };
@@ -546,7 +545,7 @@ impl Setup {
                     contract_upgrades: ContractUpgrades::default(),
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
-                    new_view_broadcast_interval: Duration::default(),
+                    new_view_broadcast_interval: new_view_broadcast_interval_default(),
                 },
                 block_request_limit: block_request_limit_default(),
                 sync: SyncConfig {
