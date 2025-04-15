@@ -16,7 +16,7 @@ use prost::Message;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tracing::{debug};
+use tracing::debug;
 use zilliqa::{
     api::types::zil::GetTxResponse,
     schnorr,
