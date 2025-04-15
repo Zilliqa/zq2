@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
-    ops::{Range, RangeInclusive},
+    ops::RangeInclusive,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -384,6 +384,9 @@ impl Sync {
         Ok(())
     }
 
+    /// Phase 0: Start Active Sync
+    ///
+    /// Given a block header, start the active sync process from that point going backwards.
     fn start_active_sync(&mut self, meta: BlockHeader) -> Result<()> {
         if !matches!(self.state, SyncState::Phase0) {
             unimplemented!("sync::StartActiveSync : invalid state");
@@ -399,6 +402,10 @@ impl Sync {
         Ok(())
     }
 
+    /// Phase 0: Start Passive Sync
+    ///
+    /// Starts passive sync from the lowest block in the DB, back to the sync-base-height.
+    /// It also prunes any blocks lower than sync-base-height.
     fn start_passive_sync(&mut self) -> Result<()> {
         if !matches!(self.state, SyncState::Phase0) {
             unimplemented!("sync::StartPassiveSync : invalid state");
@@ -416,36 +423,39 @@ impl Sync {
             .max(self.sync_base_height);
 
         match (*range.start()).cmp(&self.sync_base_height) {
+            // done, turn off passive-sync
+            Ordering::Equal => {
+                self.sync_base_height = u64::MAX;
+            }
+            // passive-sync above sync-base-height
+            Ordering::Greater => {
+                self.passive_sync_count = self.passive_sync_count.saturating_add(1);
+                tracing::debug!(?range, "sync::StartPassiveSync : syncing",);
+
+                let lowest_block = self
+                    .db
+                    .get_canonical_block_by_number(*range.start())?
+                    .expect("the block must exist");
+
+                self.state = SyncState::Phase4(lowest_block.header);
+                self.request_missing_headers()?;
+            }
+            // prune below sync-base-height
             Ordering::Less => {
-                // prune below sync-base-height
                 let prune_till = range
                     .start()
                     .saturating_add(1000)
                     .min(self.sync_base_height);
                 return self.prune_range(*range.start()..prune_till);
             }
-            Ordering::Equal => {
-                // done, turn off passive-sync
-                self.sync_base_height = u64::MAX;
-                return Ok(());
-            }
-            Ordering::Greater => {} // do nothing
         }
-
-        self.passive_sync_count = self.passive_sync_count.saturating_add(1);
-        tracing::debug!(?range, "sync::StartPassiveSync : syncing",);
-
-        let lowest_block = self
-            .db
-            .get_canonical_block_by_number(*range.start())?
-            .expect("the block must exist");
-
-        self.state = SyncState::Phase4(lowest_block.header);
-        self.request_missing_headers()?;
         Ok(())
     }
 
-    pub fn prune_range(&mut self, range: Range<u64>) -> Result<()> {
+    /// Utility: Prune blocks
+    ///
+    /// Deletes both canonical and non-canonical blocks from the DB, given a range.
+    pub fn prune_range(&mut self, range: std::ops::Range<u64>) -> Result<()> {
         // keep at least 300
         let tip = self
             .db
