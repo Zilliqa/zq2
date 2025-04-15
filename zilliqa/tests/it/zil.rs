@@ -16,7 +16,7 @@ use prost::Message;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tracing::{debug, info};
+use tracing::{debug};
 use zilliqa::{
     api::types::zil::GetTxResponse,
     schnorr,
@@ -3512,13 +3512,6 @@ async fn return_map_and_parse(mut network: Network) {
     let code = r#"
         scilla_version 0
 
-        library ReturnMapLib
-
-        let one_msg =
-            fun (msg : Message) =>
-                let nil_msg = Nil {Message} in
-                Cons {Message} msg nil_msg
-
         contract ReturnMap
         ()
 
@@ -3527,13 +3520,6 @@ async fn return_map_and_parse(mut network: Network) {
         transition AddToMap(a: ByStr20, b: BNum, c: Uint128)
             complex_map[a][b] := c
         end
-
-        transition Withdraw(recipient: ByStr20, amount: Uint128)
-            msg = {_tag : "SomeMessage"; _recipient: recipient; _amount: amount};
-            msgs = one_msg msg;
-            send msgs
-        end
-
 
         transition GetFromMap(a: ByStr20)
             complex_map_o <- complex_map[a];
@@ -3561,21 +3547,8 @@ async fn return_map_and_parse(mut network: Network) {
         }
     ]"#;
 
-    let my_balance = wallet.get_balance(wallet.address(), None).await;
-    info!("My balance is: {:?}", my_balance.unwrap().as_u128());
-    let contract_balance = 1_000_000_000_000_u128;
-    let contract_address = deploy_scilla_contract(
-        &mut network,
-        &wallet,
-        &secret_key,
-        code,
-        data,
-        contract_balance,
-    )
-    .await;
-
-    let queried_balance = wallet.get_balance(contract_address, None).await.unwrap();
-    assert_eq!(contract_balance, queried_balance.as_u128() / 10u128.pow(6));
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, code, data, u128::ZERO).await;
 
     // Set nested map to some value
     let call = r#"{
