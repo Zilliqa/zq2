@@ -3,7 +3,6 @@ use std::{ops::DerefMut, str::FromStr};
 use alloy::primitives::Address;
 use anyhow::Result;
 use bech32::{Bech32, Hrp};
-use bitvec::macros::internal::funty::Integral;
 use ethabi::{ParamType, Token};
 use ethers::{
     providers::{Middleware, ProviderError},
@@ -918,15 +917,8 @@ async fn zil_with_insufficient_gas_should_fail(mut network: Network) {
     let (caller_key, caller_address) =
         zilliqa_account_with_funds(&mut network, &wallet, amount_to_request).await;
     let data = scilla_test_contract_data(caller_address);
-    let contract_address = deploy_scilla_contract(
-        &mut network,
-        &wallet,
-        &deployer_key,
-        &code,
-        &data,
-        u128::ZERO,
-    )
-    .await;
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &deployer_key, &code, &data, 0_u128).await;
     let call = r#"{
         "_tag": "setHello",
         "params": [
@@ -984,7 +976,7 @@ async fn create_contract(mut network: Network) {
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, u128::ZERO).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
 
     let api_code: Value = wallet
         .provider()
@@ -2011,7 +2003,7 @@ async fn get_smart_contract_init(mut network: Network) {
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, u128::ZERO).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
 
     // Test the success case
     let response: Value = wallet
@@ -3252,7 +3244,7 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, u128::ZERO).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
 
     let api_code: Value = wallet
         .provider()
@@ -3375,7 +3367,7 @@ async fn nested_maps_insert_removal(mut network: Network) {
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, u128::ZERO).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
 
     // Set nested map to some value
     {
@@ -3687,7 +3679,7 @@ async fn return_map_and_parse(mut network: Network) {
     ]"#;
 
     let contract_address =
-        deploy_scilla_contract(&mut network, &wallet, &secret_key, code, data, u128::ZERO).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, code, data, 0_u128).await;
 
     // Set nested map to some value
     let call = r#"{
