@@ -1222,14 +1222,11 @@ impl Sync {
         let mut offset = u64::MIN;
         for num in 1..=num_peers {
             if let Some(peer_info) = self.peers.get_next_peer() {
-                let (message, done, range) = match (&self.state, &peer_info.version) {
-                    (
-                        SyncState::Phase1(BlockHeader {
-                            number: block_number,
-                            ..
-                        }),
-                        PeerVer::V2,
-                    ) => {
+                let (message, done, range) = match &self.state {
+                    SyncState::Phase1(BlockHeader {
+                        number: block_number,
+                        ..
+                    }) => {
                         let range = block_number
                             .saturating_sub(offset)
                             .saturating_sub(self.max_batch_size as u64)
@@ -1241,13 +1238,10 @@ impl Sync {
                         });
                         (message, *range.start() < self.started_at, range)
                     }
-                    (
-                        SyncState::Phase4(BlockHeader {
-                            number: block_number,
-                            ..
-                        }),
-                        PeerVer::V2,
-                    ) => {
+                    SyncState::Phase4(BlockHeader {
+                        number: block_number,
+                        ..
+                    }) => {
                         let range = block_number
                             .saturating_sub(offset)
                             .saturating_sub(self.max_batch_size as u64)
@@ -1744,6 +1738,7 @@ impl SyncSegments {
     }
 }
 
+// FIXME: Find a better way to do this, other than checking for debug/release build.
 // For the purpose of testing, we need a smaller prune interval to ensure that the test cases run faster.
 #[cfg(debug_assertions)]
 pub const MIN_PRUNE_INTERVAL: u64 = 10;
