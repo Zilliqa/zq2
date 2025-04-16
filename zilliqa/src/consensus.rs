@@ -474,9 +474,14 @@ impl Consensus {
             // Check if enough time elapsed to propose block
             if milliseconds_remaining_of_block_time == 0 {
                 match self.propose_new_block() {
-                    Ok(network_message) => {
+                    Ok(Some(network_message)) => {
                         self.create_next_block_on_timeout = false;
-                        return Ok(network_message);
+                        return Ok(Some(network_message));
+                    }
+                    Ok(None) => {
+                        error!("Failed to finalise block proposal.");
+                        self.create_next_block_on_timeout = false;
+                        self.early_proposal = None;
                     }
                     Err(e) => error!("Failed to finalise proposal: {e}"),
                 };
@@ -2714,7 +2719,7 @@ impl Consensus {
         let mut proposed_block = block.clone();
         let mut proposed_block_height = block.number();
         trace!(
-            "Dealing with fork: from block {} (height {}), back to block {} (height {})",
+            "Dealing with fork: between head block {} (height {}), and proposed block {} (height {})",
             head.hash(),
             head_height,
             proposed_block.hash(),
@@ -2740,6 +2745,12 @@ impl Consensus {
             head = self.get_block(&head.parent_hash())?.unwrap();
             proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
         }
+        trace!(
+            "common ancestor found: {}, view: {}, height: {}",
+            head.hash(),
+            head.view(),
+            head.number()
+        );
 
         // Now, we want to revert the blocks until the head block is the common ancestor
         while self.head_block().hash() != head.hash() {
@@ -2792,26 +2803,26 @@ impl Consensus {
             trace!("desired block hash: {}", block.parent_hash());
 
             let desired_block_height = self.head_block().number() + 1;
-            // Pointer to parent of head block
+            // Pointer to parent of proposed block
             let mut block_pointer = self
                 .get_block(&block.parent_hash())?
                 .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
 
-            if block_pointer.hash() == last_block {
-                return Err(anyhow!("entered loop while dealing with fork"));
-            }
-            last_block = block_pointer.hash();
-
-            // If the parent of the proposed
             if block_pointer.header.number < desired_block_height {
                 panic!("block height mismatch when advancing head block pointer");
             }
 
+            // Update pointer to be the next block in the proposed block's chain which the node's chain has not yet executed
             while block_pointer.header.number != desired_block_height {
                 block_pointer = self
                     .get_block(&block_pointer.parent_hash())?
                     .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
             }
+
+            if block_pointer.hash() == last_block {
+                return Err(anyhow!("entered loop while dealing with fork"));
+            }
+            last_block = block_pointer.hash();
 
             // We now have the block pointer at the desired height, we can apply it.
             trace!("Fork execution of block: {block_pointer:?}");
