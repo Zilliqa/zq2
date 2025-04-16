@@ -288,9 +288,19 @@ impl Node {
                     .handle_multiblock_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
+            ExternalMessage::PassiveHeaderRequest(request) => {
+                let message = self
+                    .consensus
+                    .sync
+                    .handle_metadata_request(from, request, true)?;
+                self.request_responses.send((response_channel, message))?;
+            }
             // RFC-161 sync algorithm, phase 1.
             ExternalMessage::MetaDataRequest(request) => {
-                let message = self.consensus.sync.handle_metadata_request(from, request)?;
+                let message = self
+                    .consensus
+                    .sync
+                    .handle_metadata_request(from, request, false)?;
                 self.request_responses.send((response_channel, message))?;
             }
             // Respond to block probe requests.

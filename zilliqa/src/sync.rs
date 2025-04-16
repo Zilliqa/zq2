@@ -118,6 +118,7 @@ pub struct Sync {
     in_pipeline: usize,
     // our peer id
     peer_id: PeerId,
+    is_validator: bool,
     // internal sync state
     state: SyncState,
     // fixed-size queue of the most recent proposals
@@ -197,7 +198,13 @@ impl Sync {
             cache_probe_response: None,
             last_probe_at: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(), // allow immediate sync at startup
             sync_base_height,
+            is_validator: true, // assume true on restart, until next epoch
         })
+    }
+
+    pub fn set_validator(&mut self, is_validator: bool) {
+        tracing::trace!(peer_id = %self.peer_id, %is_validator, "sync::SetValidator");
+        self.is_validator = is_validator;
     }
 
     /// Skip Failure
@@ -1118,25 +1125,30 @@ impl Sync {
         &mut self,
         from: PeerId,
         request: RequestBlocksByHeight,
+        validator_check: bool,
     ) -> Result<ExternalMessage> {
         let range = request.from_height..=request.to_height;
         tracing::debug!(?range, %from,
             "sync::MetadataRequest : received",
         );
 
+        // Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
+        if validator_check && self.is_validator {
+            tracing::warn!("sync::MetadataRequest : skip validator");
+            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
+        }
+
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()?.as_secs() > 20 {
             tracing::warn!("sync::MetadataRequest : stale request");
-            return Ok(ExternalMessage::MetaDataResponse(vec![]));
+            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         }
-
-        // TODO: Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
 
         let batch_size = Self::MAX_BATCH_SIZE
             .min(request.to_height.saturating_sub(request.from_height) as usize);
         let mut metas = Vec::with_capacity(batch_size);
         let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
-            tracing::warn!("sync::MetadataRequest : unknown block height");
+            tracing::warn!("sync::MetadataRequest : block not found");
             return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         };
 
@@ -1246,12 +1258,12 @@ impl Sync {
                             .saturating_sub(offset)
                             .saturating_sub(self.max_batch_size as u64)
                             ..=block_number.saturating_sub(offset).saturating_sub(1);
-                        // FIXME: Use a different message
-                        let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
-                            request_at: SystemTime::now(),
-                            to_height: *range.end(),
-                            from_height: *range.start(),
-                        });
+                        let message =
+                            ExternalMessage::PassiveHeaderRequest(RequestBlocksByHeight {
+                                request_at: SystemTime::now(),
+                                to_height: *range.end(),
+                                from_height: *range.start(),
+                            });
                         (message, *range.start() < self.started_at, range)
                     }
                     _ => unimplemented!("sync::DoMissingMetadata"),

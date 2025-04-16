@@ -283,6 +283,7 @@ pub enum ExternalMessage {
     MultiBlockResponse(Vec<Proposal>),
     /// 0.7.0
     SyncBlockHeaders(Vec<SyncBlockHeader>),
+    PassiveHeaderRequest(RequestBlocksByHeight),
 }
 
 impl ExternalMessage {
@@ -298,6 +299,9 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::PassiveHeaderRequest(r) => {
+                write!(f, "PassiveHeaderRequest({:?})", r.from_height..=r.to_height)
+            }
             ExternalMessage::SyncBlockHeaders(r) => {
                 write!(f, "SyncBlockHeaders({})", r.len())
             }
@@ -311,11 +315,7 @@ impl Display for ExternalMessage {
                 write!(f, "MetaDataResponse({})", r.len())
             }
             ExternalMessage::MetaDataRequest(r) => {
-                write!(
-                    f,
-                    "MetaDataRequest(from={}, to={})",
-                    r.from_height, r.to_height
-                )
+                write!(f, "MetaDataRequest({:?})", r.from_height..=r.to_height)
             }
             ExternalMessage::InjectedProposal(p) => {
                 write!(f, "InjectedProposal {}", p.block.number())
