@@ -216,10 +216,10 @@ impl Sync {
         if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
             tracing::warn!(%from, "sync::Acknowledgement");
             match &self.state {
-                SyncState::Phase1(_) => {
+                SyncState::Phase1(_) | SyncState::Phase4(_) => {
                     self.handle_metadata_response(from, Some(vec![]))?;
                 }
-                SyncState::Phase2(_) => {
+                SyncState::Phase2(_) | SyncState::Phase5(_) => {
                     self.handle_multiblock_response(from, Some(vec![]))?;
                 }
                 state => {
@@ -251,10 +251,10 @@ impl Sync {
             }
 
             match &self.state {
-                SyncState::Phase1(_) => {
+                SyncState::Phase1(_) | SyncState::Phase4(_) => {
                     self.handle_metadata_response(failure.peer, None)?;
                 }
-                SyncState::Phase2(_) => {
+                SyncState::Phase2(_) | SyncState::Phase5(_) => {
                     self.handle_multiblock_response(failure.peer, None)?;
                 }
                 state => {
