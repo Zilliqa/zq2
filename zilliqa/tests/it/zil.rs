@@ -1460,7 +1460,7 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
         &secret_key,
         1,
         ToAddr::Address(H160::zero()),
-        1_000_000,
+        1,
         50_000,
         Some(code),
         Some(data),
@@ -1496,6 +1496,8 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
         .get_transaction_count(wallet.address(), None)
         .await
         .unwrap();
+
+    // transaction sender pays for gas, but the funds are withdrawn from contract that sends a message
     let balance_before = wallet.get_balance(wallet.address(), None).await.unwrap();
 
     // Run the transaction.
@@ -1509,13 +1511,20 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
         .unwrap();
     let balance_after = wallet.get_balance(wallet.address(), None).await.unwrap();
 
+    // Sender of the txn pays for gas
     assert_eq!(tx_count_before + 1, tx_count_after);
     assert_eq!(
-        balance_before
-            - 1_000_000
-            - (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap()),
+        balance_before - (receipt.gas_used.unwrap() * receipt.effective_gas_price.unwrap()),
         balance_after
     );
+
+    // Contract doesn't hold any funds
+    let contract_final_balance = wallet
+        .get_balance(scilla_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(contract_final_balance.as_u128(), 0u128);
+
     assert_eq!(
         wallet
             .get_balance(H160(recipient.0.0), None)
