@@ -174,8 +174,9 @@ impl Chain {
                 "scilla_block_number_returns_current_block": false,
                 "scilla_maps_are_encoded_correctly": false,
                 "transfer_gas_fee_to_zero_account": false,
+                "apply_state_changes_only_if_transaction_succeeds": false,
                 "apply_scilla_delta_when_evm_succeeded" : false,
-                "apply_state_changes_only_if_transaction_succeeds": false
+                "scilla_deduct_funds_from_actual_sender": false
             })),
             _ => None,
         }
@@ -214,7 +215,7 @@ impl Chain {
                 // estimated: 2025-03-12T12:29:22Z
                 json!({ "at_height": 12931200, "scilla_maps_are_encoded_correctly": true }),
                 // estimated: 2025-04-25T16:22:00Z
-                json!({ "at_height": 14857110, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded" : true }),
+                json!({ "at_height": 14857110, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded" : true, "scilla_deduct_funds_from_actual_sender": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
                 json!({
@@ -247,7 +248,7 @@ impl Chain {
                 json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true }),
                 // estimated: 2025-03-17T13:16:37Z
                 json!({ "at_height": 9010800, "scilla_call_respects_evm_state_changes": true, "only_mutated_accounts_update_state": true, "scilla_block_number_returns_current_block": true, "scilla_maps_are_encoded_correctly": true }),
-                json!({ "at_height": 9907148, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded" : true }),
+                json!({ "at_height": 9907148, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded" : true, "scilla_deduct_funds_from_actual_sender": true }),
             ]),
             _ => None,
         }

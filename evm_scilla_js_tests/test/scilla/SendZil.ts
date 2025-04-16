@@ -5,6 +5,7 @@ import {parallelizer} from "../../helpers";
 import {BN, units, Zilliqa} from "@zilliqa-js/zilliqa";
 
 describe("Move Zil #parallel", function () {
+  const CONTRACT_DEPLOY_AMOUNT = units.toQa(0.3, units.Units.Zil);
   const ZIL_AMOUNT = units.toQa(0.1, units.Units.Zil);
   let contract: ScillaContract;
   let contract2: ScillaContract;
@@ -38,8 +39,8 @@ describe("Move Zil #parallel", function () {
   });
 
   it("Should have updated balance if accept is called @block-1", async function () {
-    const tx = await contract.acceptZil({amount: new BN(ZIL_AMOUNT)});
-    expect(tx).to.have.eventLogWithParams("currentBalance", {value: new BN(ZIL_AMOUNT).toString()});
+    const tx = await contract.acceptZil({amount: new BN(CONTRACT_DEPLOY_AMOUNT)});
+    expect(tx).to.have.eventLogWithParams("currentBalance", {value: new BN(CONTRACT_DEPLOY_AMOUNT).toString()});
   });
 
   it("Should have untouched balance if accept is NOT called", async function () {
