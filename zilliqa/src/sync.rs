@@ -378,14 +378,14 @@ impl Sync {
                 // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
             }
-            SyncState::Phase4(_) if self.in_pipeline < self.max_batch_size => {
+            SyncState::Phase4(_) => {
                 self.request_missing_headers()?;
             }
-            SyncState::Phase5(_) if self.in_pipeline < self.max_blocks_in_flight => {
+            SyncState::Phase5(_) => {
                 self.request_missing_blocks()?;
             }
             _ => {
-                tracing::debug!("sync::DoSync : syncing {} blocks", self.in_pipeline);
+                tracing::debug!(in_pipeline = %self.in_pipeline, "sync::DoSync : syncing");
             }
         }
         Ok(())
@@ -675,7 +675,9 @@ impl Sync {
             );
 
             match self.state {
+                // Retry with 1-segment
                 SyncState::Phase2(_) => self.state = SyncState::Retry1,
+                // Give up, retry from start
                 SyncState::Phase5(_) => {
                     self.segments.empty_sync_metadata();
                     self.state = SyncState::Phase0;
@@ -1427,6 +1429,7 @@ impl Sync {
                 block_downloads: self.blocks_downloaded,
                 buffered_blocks: self.in_pipeline,
                 active_sync_count: self.active_sync_count,
+                passive_sync_count: self.passive_sync_count,
             },
         }))
     }
