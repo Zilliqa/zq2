@@ -711,7 +711,6 @@ impl Sync {
             self.state = SyncState::Phase3;
             return Ok(());
         };
-
         if self.segments.count_sync_segments() == 0 {
             match self.state {
                 SyncState::Phase2(_) => {
@@ -723,6 +722,7 @@ impl Sync {
                 _ => unreachable!(),
             }
         }
+
         // perform next block transfers, where possible
         if Self::DO_SPECULATIVE {
             self.do_sync()?;
@@ -1084,7 +1084,7 @@ impl Sync {
                     self.state = SyncState::Phase4(segment.last().cloned().unwrap());
                     // for turnaround
                     let block_number = segment.last().as_ref().unwrap().number;
-                    block_number <= self.sync_base_height
+                    block_number <= self.started_at
                 }
                 _ => false,
             }
