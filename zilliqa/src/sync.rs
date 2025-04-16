@@ -590,7 +590,7 @@ impl Sync {
             .segments
             .last_sync_segment()
             .expect("segment_count > 0");
-        self.segments.pop_sync_segment();
+        self.segments.pop_last_sync_segment();
         self.inject_at = None;
         self.state = SyncState::Phase1(meta);
         if Self::DO_SPECULATIVE {
@@ -705,7 +705,7 @@ impl Sync {
         };
 
         if success {
-            self.segments.pop_sync_segment();
+            self.segments.pop_last_sync_segment();
         } else {
             // sync is stuck, cancel sync and restart, should be fast for peers that are already near the tip.
             self.state = SyncState::Phase3;
@@ -790,7 +790,7 @@ impl Sync {
 
             // If we have no chain_segments, we have nothing to do
             if let Some((meta, peer_info)) = self.segments.last_sync_segment() {
-                let request_hashes = self.segments.get_sync_segment(&meta);
+                let request_hashes = self.segments.get_last_sync_segment(&meta);
 
                 // Checksum of the request hashes
                 let checksum = request_hashes
@@ -1681,7 +1681,7 @@ impl ToSql for PeerVer {
 #[derive(Debug, Default)]
 struct SyncSegments {
     headers: HashMap<Hash, BlockHeader>,
-    segments: Vec<(Hash, PeerInfo)>,
+    segments: VecDeque<(Hash, PeerInfo)>,
 }
 
 impl SyncSegments {
@@ -1696,7 +1696,7 @@ impl SyncSegments {
     }
 
     /// Retrieves bulk metadata information from the given block_hash (inclusive)
-    fn get_sync_segment(&self, block: &BlockHeader) -> Vec<Hash> {
+    fn get_last_sync_segment(&self, block: &BlockHeader) -> Vec<Hash> {
         let mut result = vec![];
 
         let mut hash = block.qc.block_hash;
@@ -1713,7 +1713,7 @@ impl SyncSegments {
 
     /// Peeks into the top of the segment stack.
     fn last_sync_segment(&self) -> Option<(BlockHeader, PeerInfo)> {
-        let (hash, peer) = self.segments.last()?;
+        let (hash, peer) = self.segments.back()?;
         let header = self.headers.get(hash).cloned()?;
         let peer = PeerInfo {
             last_used: Instant::now(),
@@ -1726,7 +1726,7 @@ impl SyncSegments {
     /// Pushes a particular segment into the stack.
     fn push_sync_segment(&mut self, peer: &PeerInfo, meta: &BlockHeader) {
         self.headers.insert(meta.hash, *meta);
-        self.segments.push((meta.hash, peer.clone()));
+        self.segments.push_back((meta.hash, peer.clone()));
     }
 
     /// Bulk inserts a bunch of metadata.
@@ -1742,9 +1742,9 @@ impl SyncSegments {
         self.headers.clear();
     }
 
-    /// Pops a segment from the stack; and bulk removes all metadata associated with it.
-    fn pop_sync_segment(&mut self) {
-        let (hash, _) = self.segments.pop().expect("non-empty stack");
+    /// Pops last segment from the stack; and bulk removes all metadata associated with it.
+    fn pop_last_sync_segment(&mut self) {
+        let (hash, _) = self.segments.pop_back().expect("non-empty stack");
         let header = self.headers.get(&hash).unwrap();
         let mut hash = header.qc.block_hash;
         while let Some(h) = self.headers.remove(&hash) {
