@@ -172,6 +172,11 @@ impl Sync {
             .as_ref()
             .map_or_else(|| u64::MIN, |b| b.number());
 
+        // If set, sync_base_height must be sane
+        if sync_base_height != u64::MAX && latest_block_number < sync_base_height {
+            return Err(anyhow::anyhow!("sync_base_height > highest_block"));
+        }
+
         Ok(Self {
             db,
             message_sender,
@@ -414,12 +419,14 @@ impl Sync {
         if !matches!(self.state, SyncState::Phase0) {
             unimplemented!("sync::StartPassiveSync : invalid state");
         }
-        if self.sync_base_height == u64::MAX {
-            // passive-sync is OFF
+
+        let range = self.db.available_range()?;
+
+        if *range.end() <= self.sync_base_height {
+            // invalid sync range
             return Ok(());
         }
 
-        let range = self.db.available_range()?;
         // Safe to repurpose started_at. Active/Passive are mutually exclusive.
         self.started_at = range
             .start()
