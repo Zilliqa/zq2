@@ -1395,9 +1395,13 @@ impl Sync {
 
     /// Returns (am_syncing, current_highest_block)
     pub fn am_syncing(&self) -> Result<bool> {
-        Ok(self.in_pipeline != 0
-            || !matches!(self.state, SyncState::Phase0)
-            || self.segments.count_sync_segments() != 0)
+        let sync_phases = match self.state {
+            SyncState::Phase1(_) | SyncState::Phase2(_) | SyncState::Phase3 | SyncState::Retry1 => {
+                true
+            }
+            _ => false,
+        };
+        Ok(sync_phases || self.in_pipeline != 0)
     }
 
     // Returns (starting_block, current_block,  highest_block) if we're syncing,
