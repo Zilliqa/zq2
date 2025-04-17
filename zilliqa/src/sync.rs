@@ -789,9 +789,11 @@ impl Sync {
             self.peers.reinsert_peer(peer);
 
             // If we have no chain_segments, we have nothing to do
-            if let Some((request_hashes, peer_info, block, range)) =
-                self.segments.pop_last_sync_segment()
-            {
+            if let Some((request_hashes, peer_info, block, range)) = match self.state {
+                SyncState::Phase2(_) => self.segments.pop_last_sync_segment(),
+                SyncState::Phase5(_) => self.segments.pop_first_sync_segment(),
+                _ => unreachable!(),
+            } {
                 // Checksum of the request hashes
                 let checksum = request_hashes
                     .iter()
@@ -1685,25 +1687,59 @@ impl SyncSegments {
         self.markers.len()
     }
 
-    /// Retrieves list of block hashes from marker (inclusive)
+    /// Pop the stack, for active-sync from marker (inclusive)
     fn pop_last_sync_segment(
         &mut self,
     ) -> Option<(Vec<Hash>, PeerInfo, BlockHeader, RangeInclusive<u64>)> {
         let (mut hash, mut peer) = self.markers.pop_back()?;
-        let mut result = vec![];
-        let marker_block = self.headers.get(&hash)?.clone();
-        let mut end_at = 0;
+        let mut hashes = vec![];
+        let high_at = self.headers.get(&hash)?.number;
+        let mut low_at = 0;
         while let Some(header) = self.headers.remove(&hash) {
-            end_at = header.number;
-            result.push(header.hash);
+            low_at = header.number;
+            hashes.push(header.hash);
             hash = header.qc.block_hash;
         }
         peer.last_used = Instant::now();
         peer.score = u32::MAX;
-        Some((result, peer, marker_block, end_at..=marker_block.number))
+
+        let mut faux_marker = BlockHeader::genesis(Hash::ZERO);
+        faux_marker.number = high_at;
+
+        Some((hashes, peer, faux_marker, low_at..=high_at))
     }
 
-    /// Pushes a particular segment into the stack.
+    /// Pop the queue, for passive-sync from marker (inclusive)
+    fn pop_first_sync_segment(
+        &mut self,
+    ) -> Option<(Vec<Hash>, PeerInfo, BlockHeader, RangeInclusive<u64>)> {
+        let (mut hash, mut peer) = self.markers.pop_front()?;
+        let mut hashes = vec![];
+        let high_at = self.headers.get(&hash)?.number;
+        let mut low_at = 0;
+        let end_hash = self
+            .markers
+            .front()
+            .map_or_else(|| Hash::ZERO, |(h, _)| h.clone());
+        while let Some(header) = self.headers.remove(&hash) {
+            low_at = header.number;
+            hashes.push(header.hash);
+            hash = header.qc.block_hash;
+            if hash == end_hash {
+                break;
+            }
+        }
+        peer.last_used = Instant::now();
+        peer.score = u32::MAX;
+        Some((
+            hashes,
+            peer,
+            BlockHeader::genesis(Hash::ZERO), // faux block
+            low_at..=high_at,
+        ))
+    }
+
+    /// Pushes a particular segment into the stack/queue.
     fn push_sync_segment(&mut self, peer: &PeerInfo, hash: Hash) {
         // do not double-push
         let last = self.markers.back().map_or_else(|| Hash::ZERO, |(h, _)| *h);
