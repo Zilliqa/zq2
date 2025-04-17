@@ -18,6 +18,7 @@ mod eth;
 mod ots;
 mod persistence;
 mod staking;
+mod sync;
 mod trace;
 mod txpool;
 mod unreliable;
