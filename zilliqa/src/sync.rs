@@ -489,7 +489,7 @@ impl Sync {
     /// This injects the last 1% to finish it up.
     fn inject_recent_blocks(&mut self) -> Result<()> {
         if !matches!(self.state, SyncState::Phase3) {
-            anyhow::bail!("sync::RecentBlocks : invalid state");
+            unimplemented!("sync::RecentBlocks : invalid state");
         }
         // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
         let highest_block = self
@@ -528,9 +528,11 @@ impl Sync {
             let ancestor_hash = proposals.first().expect(">= 1 block").header.qc.block_hash;
             let range = proposals.first().as_ref().unwrap().number()
                 ..=proposals.last().as_ref().unwrap().number();
-            tracing::info!(?range, "sync::DoSync : finishing");
             if self.db.contains_canonical_block(&ancestor_hash)? {
+                tracing::info!(?range, "sync::InjectRecent : received");
                 self.inject_proposals(proposals)?;
+            } else {
+                tracing::debug!(?range, "sync::InjectRecent: skipped");
             }
         }
         self.segments.empty_sync_metadata();
