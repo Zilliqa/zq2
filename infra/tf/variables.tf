@@ -219,6 +219,7 @@ variable "private_api" {
     instance_type          = optional(string, "e2-standard-2")
     provisioning_model     = optional(string, "STANDARD")
     generate_external_ip   = optional(bool, false)
+    detach_load_balancer   = optional(bool, false)
     firewall_source_ranges = optional(list(string), [])
     dns_names              = optional(list(string), [])
     nodes = optional(list(object({

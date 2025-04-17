@@ -465,7 +465,7 @@ fn a_big_process_vote(big: &mut Consensus, vote: Vote, txns_per_block: usize) ->
     let proposal = big
         .vote(black_box(vote))
         .unwrap()
-        .map(|(b, t)| Proposal::from_parts(b, t));
+        .map(|(_, t)| t.into_proposal().unwrap());
     // The first vote should immediately result in a proposal. Subsequent views require a timeout before
     // the proposal is produced. Therefore, we trigger a timeout if there was not a proposal from the vote.
     let proposal = proposal.unwrap_or_else(|| {

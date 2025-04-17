@@ -635,6 +635,19 @@ fn get_smart_contract_state(params: Params, node: &Arc<Mutex<Node>>) -> Result<V
                 var.or_insert(convert_result?);
             }
         }
+
+        // Insert empty maps to the state. Empty maps are not returned by the trie iterator.
+        let field_defs = match &account.code {
+            Code::Scilla { types, .. } => types,
+            _ => unreachable!(),
+        };
+        for (var_name, (type_, _)) in field_defs.iter() {
+            if type_.starts_with("Map") {
+                result
+                    .entry(var_name)
+                    .or_insert(Value::Object(Default::default()));
+            }
+        }
     }
 
     Ok(result.into())
@@ -1418,7 +1431,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
     let mut seq = params.sequence();
     let address: ZilAddress = seq.next()?;
     let address: Address = address.into();
-    let var_name: &str = match seq.next()? {
+    let requested_var_name: &str = match seq.next()? {
         "" => return get_smart_contract_state(params, node),
         x => x,
     };
@@ -1458,7 +1471,7 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
             .iter()
             .map(|x| serde_json::to_vec(&x))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let prefix = storage_key(var_name, &indicies_encoded);
+        let prefix = storage_key(requested_var_name, &indicies_encoded);
         let mut n = 0;
         for (k, v) in trie.iter_by_prefix(&prefix)? {
             n += 1;
@@ -1497,6 +1510,22 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<Mutex<Node>>) -> Resu
                 }
             } else {
                 var.or_insert(convert_result?);
+            }
+        }
+
+        // If the requested indices are empty, the whole map is likely requested.
+        // So, we need to insert an empty map into the sub state because the trie iterator does not return empty maps.
+        if requested_indices.is_empty() {
+            let field_defs = match &account.code {
+                Code::Scilla { types, .. } => types,
+                _ => unreachable!(),
+            };
+            if let Some((var_name, _)) = field_defs.iter().find(|(var_name, (type_, _))| {
+                type_.starts_with("Map") && *var_name == requested_var_name
+            }) {
+                result
+                    .entry(var_name)
+                    .or_insert(Value::Object(Default::default()));
             }
         }
     }
