@@ -583,10 +583,12 @@ impl Sync {
         self.retry_count = self.retry_count.saturating_add(1);
         tracing::debug!(?range, "sync::Retry1 : retrying");
 
-        // Insert faux metadata - we only need the number
-        let mut meta = BlockHeader::genesis(Hash::ZERO);
-        meta.number = marker.number.saturating_add(1);
-        self.state = SyncState::Phase1(meta);
+        // Insert faux metadata - we only need the number, parent_hash
+        let mut faux_header = BlockHeader::genesis(Hash::ZERO);
+        faux_header.number = marker.number.saturating_add(1);
+        faux_header.qc.block_hash = marker.hash;
+
+        self.state = SyncState::Phase1(faux_header);
         self.inject_at = None;
 
         if Self::DO_SPECULATIVE {
@@ -1064,7 +1066,7 @@ impl Sync {
                     false
                 }
             }).rev() {
-                // segment markers are inserted in descending order
+                // additional segment markers are inserted in descending order
                 self.segments.push_sync_segment(&segment_peer, header.hash);
             }
 
@@ -1699,6 +1701,7 @@ impl SyncSegments {
         let (mut hash, mut peer) = self.markers.pop_back()?;
         let mut hashes = vec![];
         let high_at = self.headers.get(&hash)?.number;
+        let high_hash = self.headers.get(&hash)?.hash;
         let mut low_at = 0;
         while let Some(header) = self.headers.remove(&hash) {
             low_at = header.number;
@@ -1710,6 +1713,7 @@ impl SyncSegments {
 
         let mut faux_marker = BlockHeader::genesis(Hash::ZERO);
         faux_marker.number = high_at;
+        faux_marker.hash = high_hash;
 
         Some((hashes, peer, faux_marker, low_at..=high_at))
     }
@@ -1736,7 +1740,7 @@ impl SyncSegments {
         Some((
             hashes,
             peer,
-            BlockHeader::genesis(Hash::ZERO), // faux block
+            BlockHeader::genesis(Hash::ZERO), // faux block, no-retry
             low_at..=high_at,
         ))
     }
