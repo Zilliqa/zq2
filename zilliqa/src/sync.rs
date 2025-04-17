@@ -347,18 +347,15 @@ impl Sync {
         match self.state {
             // Check if we are out of sync
             SyncState::Phase0 if self.in_pipeline == 0 => {
-                let meta = self.recent_proposals.back().unwrap().header;
+                let meta = &self.recent_proposals.back().unwrap().header;
                 if self.db.contains_canonical_block(&meta.hash)? {
                     // We have the latest block, trigger passive-sync
                     self.start_passive_sync()?;
                 } else if !self.db.contains_canonical_block(&meta.qc.block_hash)? {
                     // We don't have the parent block, trigger active-sync
-                    self.start_active_sync(meta)?;
-                } else {
-                    // one-block away from the tip, finish up!
-                    self.state = SyncState::Phase3;
-                    self.inject_recent_blocks()?;
+                    self.start_active_sync(meta.clone())?;
                 }
+                // could be a fork, wait for another proposal
             }
             // Continue phase 1, until we hit history/genesis.
             SyncState::Phase1(_) if self.in_pipeline < self.max_batch_size => {
