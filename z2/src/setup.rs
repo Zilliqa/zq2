@@ -553,6 +553,7 @@ impl Setup {
                     block_request_batch_size: block_request_batch_size_default(),
                     prune_interval: cfg::u64_max(),
                     sync_base_height: cfg::u64_max(),
+                    prune_batch_size: block_request_batch_size_default(),
                 },
                 state_rpc_limit: state_rpc_limit_default(),
                 failed_request_sleep_duration: failed_request_sleep_duration_default(),

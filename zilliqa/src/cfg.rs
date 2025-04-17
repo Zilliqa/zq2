@@ -127,6 +127,9 @@ pub struct SyncConfig {
     /// Cannot be set if prune_interval is set.
     #[serde(default = "u64_max")]
     pub sync_base_height: u64,
+    /// How many blocks to prune at a time
+    #[serde(default = "block_request_batch_size_default")]
+    pub prune_batch_size: usize,
 }
 
 impl Default for SyncConfig {
@@ -136,6 +139,7 @@ impl Default for SyncConfig {
             block_request_batch_size: block_request_batch_size_default(),
             prune_interval: u64_max(),
             sync_base_height: u64_max(),
+            prune_batch_size: block_request_batch_size_default(),
         }
     }
 }
@@ -204,6 +208,7 @@ impl Default for NodeConfig {
                 block_request_batch_size: block_request_batch_size_default(),
                 sync_base_height: u64_max(),
                 prune_interval: u64_max(),
+                prune_batch_size: block_request_batch_size_default(),
             },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
@@ -241,6 +246,10 @@ impl NodeConfig {
                 "prune_interval must be at least {}",
                 crate::sync::MIN_PRUNE_INTERVAL
             ));
+        }
+        // 10 is a reasonable minimum for pruning
+        if self.sync.prune_batch_size < 10 {
+            return Err(anyhow!("block_request_batch_size must be at least 100"));
         }
         // 100 is a reasonable minimum for a node to be useful.
         if self.sync.block_request_batch_size < 100 {

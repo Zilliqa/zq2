@@ -172,6 +172,7 @@ pub struct Consensus {
     pub new_transaction_hashes: broadcast::Sender<Hash>,
     /// Pruning interval i.e. how many blocks to keep in the database.
     prune_interval: u64,
+    prune_batch_size: u64,
     /// Used for testing and test network recovery
     force_view: Option<(u64, DateTime)>,
 }
@@ -296,6 +297,7 @@ impl Consensus {
         )?;
 
         let prune_interval = config.sync.prune_interval;
+        let prune_batch_size = config.sync.prune_batch_size as u64;
 
         let mut consensus = Consensus {
             secret_key,
@@ -321,6 +323,7 @@ impl Consensus {
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
             prune_interval,
+            prune_batch_size,
             force_view: None,
         };
 
@@ -3090,7 +3093,7 @@ impl Consensus {
         let range = self.db.available_range()?;
         let prune_at = number
             .saturating_sub(self.prune_interval.saturating_sub(1)) // off-by-one
-            .min(range.start().saturating_add(1000)); // gradually prune 1000-blocks at a time
+            .min(range.start().saturating_add(self.prune_batch_size)); // gradually prune N-blocks at a time
         if range.contains(&prune_at) {
             self.sync.prune_range(*range.start()..prune_at)?;
         }

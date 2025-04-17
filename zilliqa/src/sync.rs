@@ -110,8 +110,9 @@ pub struct Sync {
     // peers handling in-flight requests
     in_flight: VecDeque<(PeerInfo, RequestId)>,
     p1_response: BTreeMap<PeerId, Option<Vec<SyncBlockHeader>>>,
-    // how many blocks to request at once
+    // how many blocks to request/prune at once
     max_batch_size: usize,
+    prune_batch_size: u64,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
     // count of proposals pending in the pipeline
@@ -166,7 +167,7 @@ impl Sync {
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
         let sync_base_height = config.sync.sync_base_height;
-
+        let prune_batch_size = config.sync.prune_batch_size as u64;
         // Start from reset, or continue sync
         let latest_block_number = latest_block
             .as_ref()
@@ -203,6 +204,7 @@ impl Sync {
             cache_probe_response: None,
             last_probe_at: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(), // allow immediate sync at startup
             sync_base_height,
+            prune_batch_size,
             is_validator: true, // assume true on restart, until next epoch
         })
     }
@@ -453,11 +455,11 @@ impl Sync {
             }
             // prune below sync-base-height
             Ordering::Less => {
-                let prune_till = range
+                let prune_at = range
                     .start()
-                    .saturating_add(1000)
+                    .saturating_add(self.prune_batch_size)
                     .min(self.sync_base_height);
-                return self.prune_range(*range.start()..prune_till);
+                return self.prune_range(*range.start()..prune_at);
             }
         }
         Ok(())
