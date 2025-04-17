@@ -428,9 +428,20 @@ impl Db {
     /// Returns the lowest and highest block numbers of stored blocks
     pub fn available_range(&self) -> Result<RangeInclusive<u64>> {
         let db = self.db.lock().unwrap();
-        let (min, max) = db
-            .prepare_cached("SELECT MIN(height), MAX(height) FROM blocks")?
-            .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        // Doing it together is slow
+        // sqlite> EXPLAIN QUERY PLAN SELECT MIN(height), MAX(height) FROM blocks;
+        // QUERY PLAN
+        // `--SCAN blocks USING COVERING INDEX idx_blocks_height
+        let min = db
+            .prepare_cached("SELECT MIN(height) FROM blocks")?
+            .query_row([], |row| row.get::<_, u64>(0))
+            .optional()?
+            .unwrap_or_default();
+        let max = db
+            .prepare_cached("SELECT MAX(height) FROM blocks")?
+            .query_row([], |row| row.get::<_, u64>(0))
+            .optional()?
+            .unwrap_or_default();
         Ok(min..=max)
     }
 
