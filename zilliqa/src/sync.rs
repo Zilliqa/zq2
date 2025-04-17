@@ -465,15 +465,23 @@ impl Sync {
             .db
             .get_highest_canonical_block_number()?
             .unwrap_or_default()
+            .saturating_add(1)
             .saturating_sub(MIN_PRUNE_INTERVAL);
         // Prune canonical, and non-canonical blocks.
         for n in range {
-            if n >= tip {
+            if n > tip {
                 break;
             }
+            // remove canonical block and transactions
+            if let Some(block) = self.db.get_canonical_block_by_number(n)? {
+                tracing::trace!(number = %block.number(), hash=%block.hash(), "sync::Prune");
+                self.db.remove_transactions_in_block(&block)?;
+                self.db.remove_block(&block)?;
+            }
+            // remove non-final blocks, whose txns might be linked to a different block
             let blocks = self.db.get_blocks_by_height(n)?;
             for block in blocks.iter() {
-                tracing::trace!(number = %block.number(), hash=%block.hash(), "Prune block");
+                tracing::trace!(number = %block.number(), hash=%block.hash(), "sync::Prune");
                 self.db.remove_block(block)?;
             }
         }

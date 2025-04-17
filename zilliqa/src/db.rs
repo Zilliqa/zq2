@@ -934,6 +934,15 @@ impl Db {
         Ok(())
     }
 
+    pub fn remove_transactions_in_block(&self, block: &Block) -> Result<()> {
+        self.db
+            .lock()
+            .unwrap()
+            .prepare_cached("DELETE FROM transactions WHERE tx_hash IN (SELECT tx_hash FROM receipts WHERE block_hash = ?1)")?
+            .execute([block.hash()])?;
+        Ok(())
+    }
+
     pub fn get_blocks_by_height(&self, height: u64) -> Result<Vec<Block>> {
         let rows = self
             .db
