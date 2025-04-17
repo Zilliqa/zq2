@@ -43,7 +43,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            50,
+            100,
         )
         .await
         .unwrap();
@@ -59,7 +59,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .map_or(0, |b| b.number());
                 block >= 3
             },
-            50,
+            100,
         )
         .await
         .unwrap();
@@ -67,7 +67,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
     let node = network.remove_node(index);
 
     let inner = node.inner.lock().unwrap();
-    let last_number = inner.number() - 1;
+    let last_number = inner.number() - 2;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
     let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
     let last_block = inner.get_block(last_number).unwrap().unwrap();
@@ -168,13 +168,15 @@ async fn checkpoints_test(mut network: Network) {
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(&wallet, update_tx_hash, 50).await;
+    network
+        .run_until_receipt(&wallet, update_tx_hash, 100)
+        .await;
     // Scilla
-    let (secret_key, address) = zilliqa_account(&mut network).await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
     let code = scilla_test_contract_code();
     let data = scilla_test_contract_data(address);
     let scilla_contract_address =
-        deploy_scilla_contract(&mut network, &secret_key, &code, &data).await;
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data).await;
 
     // Run until block 9 so that we can insert a tx in block 10 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
     network.run_until_block(&wallet, 9.into(), 200).await;

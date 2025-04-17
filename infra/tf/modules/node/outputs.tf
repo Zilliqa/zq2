@@ -10,6 +10,18 @@ output "instances" {
   }
 }
 
+output "instances_list" {
+  description = "The provisioned instances"
+  value = [
+    for instance in google_compute_instance.this : {
+      name        = instance.name,
+      external_ip = instance.network_interface[0].access_config[0].nat_ip,
+      zone        = instance.zone,
+      self_link   = instance.self_link,
+    }
+  ]
+}
+
 output "id" {
   description = "The provisioned instances IDs"
   value       = { for instance in google_compute_instance.this : instance.name => instance.id }
