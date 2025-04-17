@@ -353,7 +353,7 @@ impl Sync {
                     self.start_passive_sync()?;
                 } else if !self.db.contains_canonical_block(&meta.qc.block_hash)? {
                     // We don't have the parent block, trigger active-sync
-                    self.start_active_sync(meta.clone())?;
+                    self.start_active_sync(*meta)?;
                 }
                 // could be a fork, wait for another proposal
             }
@@ -1256,12 +1256,11 @@ impl Sync {
                             .saturating_sub(offset)
                             .saturating_sub(self.max_batch_size as u64)
                             ..=block_number.saturating_sub(offset).saturating_sub(1);
-                        let message =
-                            ExternalMessage::PassiveHeaderRequest(RequestBlocksByHeight {
-                                request_at: SystemTime::now(),
-                                to_height: *range.end(),
-                                from_height: *range.start(),
-                            });
+                        let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
+                            request_at: SystemTime::now(),
+                            to_height: *range.end(),
+                            from_height: *range.start(),
+                        });
                         (message, *range.start() < self.started_at, range)
                     }
                     _ => unimplemented!("sync::DoMissingMetadata"),
@@ -1392,12 +1391,10 @@ impl Sync {
 
     /// Returns (am_syncing, current_highest_block)
     pub fn am_syncing(&self) -> Result<bool> {
-        let sync_phases = match self.state {
-            SyncState::Phase1(_) | SyncState::Phase2(_) | SyncState::Phase3 | SyncState::Retry1 => {
-                true
-            }
-            _ => false,
-        };
+        let sync_phases = matches!(
+            self.state,
+            SyncState::Phase1(_) | SyncState::Phase2(_) | SyncState::Phase3 | SyncState::Retry1
+        );
         Ok(sync_phases || self.in_pipeline != 0)
     }
 
@@ -1720,10 +1717,7 @@ impl SyncSegments {
         let mut hashes = vec![];
         let high_at = self.headers.get(&hash)?.number;
         let mut low_at = 0;
-        let end_hash = self
-            .markers
-            .front()
-            .map_or_else(|| Hash::ZERO, |(h, _)| h.clone());
+        let end_hash = self.markers.front().map_or_else(|| Hash::ZERO, |(h, _)| *h);
         while let Some(header) = self.headers.remove(&hash) {
             low_at = header.number;
             hashes.push(header.hash);
