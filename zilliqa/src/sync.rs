@@ -606,9 +606,7 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<Proposal>>,
     ) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase2(_))
-            && !matches!(self.state, SyncState::Phase5(_))
-        {
+        if !matches!(self.state, SyncState::Phase2(_) | SyncState::Phase5(_)) {
             tracing::warn!("sync::MultiBlockResponse : dropped response {from}");
             return Ok(());
         };
@@ -769,9 +767,7 @@ impl Sync {
     /// This is phase 2 of the syncing algorithm.
     /// ** MAKE ONLY ONE REQUEST AT A TIME **
     fn request_missing_blocks(&mut self) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase2(_))
-            && !matches!(self.state, SyncState::Phase5(_))
-        {
+        if !matches!(self.state, SyncState::Phase2(_) | SyncState::Phase5(_)) {
             unimplemented!("sync::MissingBlocks : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
@@ -915,9 +911,7 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<SyncBlockHeader>>,
     ) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase1(_))
-            && !matches!(self.state, SyncState::Phase4(_))
-        {
+        if !matches!(self.state, SyncState::Phase1(_) | SyncState::Phase4(_)) {
             tracing::warn!("sync::MetadataResponse : dropped response {from}");
             return Ok(());
         };
@@ -1087,14 +1081,14 @@ impl Sync {
                     let block_number = segment.last().as_ref().unwrap().number;
                     block_number <= self.started_at
                 }
-                _ => false,
+                _ => unreachable!(),
             }
         } else {
             true
         };
 
+        // Turnaround to download blocks
         if turnaround {
-            // turnaround to Phase 2.
             match self.state {
                 SyncState::Phase1(_) => {
                     self.state =
@@ -1104,7 +1098,7 @@ impl Sync {
                     self.state =
                         SyncState::Phase5((Hash::ZERO, 0..=0, BlockHeader::genesis(Hash::ZERO)));
                 }
-                _ => {}
+                _ => unreachable!(),
             }
             // drop all pending requests & responses
             self.p1_response.clear();
@@ -1185,9 +1179,7 @@ impl Sync {
     /// If Phase 1 is in progress, it continues requesting blocks from the last known Phase 1 block.
     /// Otherwise, it requests blocks from the given starting metadata.
     pub fn request_missing_headers(&mut self) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase1(_))
-            && !matches!(self.state, SyncState::Phase4(_))
-        {
+        if !matches!(self.state, SyncState::Phase1(_) | SyncState::Phase4(_)) {
             unimplemented!("sync::RequestMissingHeaders : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
@@ -1231,9 +1223,7 @@ impl Sync {
     /// - hitting the starting point
     /// - encountering a V1 peer
     fn do_missing_metadata(&mut self, num_peers: usize) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase1(_))
-            && !matches!(self.state, SyncState::Phase4(_))
-        {
+        if !matches!(self.state, SyncState::Phase1(_) | SyncState::Phase4(_)) {
             unimplemented!("sync::DoMissingMetadata : invalid state");
         }
         let mut offset = u64::MIN;
@@ -1295,31 +1285,30 @@ impl Sync {
         Ok(())
     }
 
-    fn store_proposals(&mut self, proposals: Vec<Proposal>) -> Result<bool> {
-        if proposals.is_empty() {
-            return Ok(true);
+    /// Phase 5: Store Proposals
+    ///
+    /// These proposals need only be stored. THEY MUST BE STORED IN DESCENDING ORDER.
+    fn store_proposals(&mut self, mut proposals: Vec<Proposal>) -> Result<()> {
+        if !proposals.is_empty() {
+            proposals.reverse(); // Store it from high to low
+            for p in proposals {
+                tracing::trace!(
+                    number = %p.number(), hash = %p.hash(),
+                    "sync::StoreProposals : applying",
+                );
+                let (block, transactions) = p.into_parts();
+                self.db.with_sqlite_tx(|sqlite_tx| {
+                    self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
+                    for tx in transactions {
+                        let hash = tx.calculate_hash();
+                        self.db
+                            .insert_transaction_with_db_tx(sqlite_tx, &hash, &tx)?;
+                    }
+                    Ok(())
+                })?;
+            }
         }
-
-        // Store it from high to low
-        let proposals = proposals.into_iter().rev().collect_vec();
-        for p in proposals {
-            tracing::trace!(
-                number = %p.number(), hash = %p.hash(),
-                "sync::StoreProposals : applying",
-            );
-            let (block, transactions) = p.into_parts();
-            self.db.with_sqlite_tx(|sqlite_tx| {
-                self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
-                for tx in transactions {
-                    let hash = tx.calculate_hash();
-                    self.db
-                        .insert_transaction_with_db_tx(sqlite_tx, &hash, &tx)?;
-                }
-                Ok(())
-            })?;
-        }
-
-        Ok(true)
+        Ok(())
     }
 
     /// Phase 2 / 3: Inject the proposals into the chain.
