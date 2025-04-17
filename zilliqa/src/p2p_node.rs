@@ -34,11 +34,13 @@ use crate::{
     cfg::{Config, ConsensusConfig, NodeConfig},
     crypto::SecretKey,
     db,
-    message::{ExternalMessage, InternalMessage},
+    message::{ExternalMessage, GossipSubTopic, InternalMessage},
     node::{OutgoingMessageFailure, RequestId},
     node_launcher::{NodeInputChannels, NodeLauncher, ResponseChannel},
     sync::SyncPeers,
 };
+
+static VALIDATOR_TOPIC_SUFFIX: &str = "-validator";
 
 /// Messages are a tuple of the destination shard ID and the actual message.
 type DirectMessage = (u64, ExternalMessage);
@@ -62,8 +64,8 @@ pub type OutboundMessageTuple = (Option<(PeerId, RequestId)>, u64, ExternalMessa
 pub type LocalMessageTuple = (u64, u64, InternalMessage);
 
 pub struct P2pNode {
-    shard_peers: HashMap<TopicHash, Arc<SyncPeers>>,
-    shard_nodes: HashMap<TopicHash, NodeInputChannels>,
+    shard_peers: HashMap<u64, Arc<SyncPeers>>,
+    shard_nodes: HashMap<u64, NodeInputChannels>,
     shard_threads: JoinSet<Result<()>>,
     task_threads: JoinSet<Result<()>>,
     secret_key: SecretKey,
@@ -165,8 +167,32 @@ impl P2pNode {
         })
     }
 
-    pub fn shard_id_to_topic(shard_id: u64) -> IdentTopic {
-        IdentTopic::new(shard_id.to_string())
+    pub fn shard_id_to_topic(shard_id: u64, message: Option<&ExternalMessage>) -> IdentTopic {
+        match message {
+            Some(ExternalMessage::NewView(_)) => Self::validator_topic(shard_id),
+            _ => IdentTopic::new(shard_id.to_string()),
+        }
+    }
+
+    pub fn shard_id_from_topic_hash(topic_hash: &TopicHash) -> Result<u64> {
+        Ok(topic_hash
+            .clone()
+            .into_string()
+            .split("-")
+            .collect::<Vec<_>>()[0]
+            .parse::<u64>()?)
+    }
+
+    pub fn validator_topic(shard_id: u64) -> IdentTopic {
+        IdentTopic::new(shard_id.to_string() + VALIDATOR_TOPIC_SUFFIX)
+    }
+
+    // Temporary method for backwards compatibility
+    pub fn is_validator_topic_hash(topic_hash: &TopicHash) -> bool {
+        topic_hash
+            .clone()
+            .into_string()
+            .contains(VALIDATOR_TOPIC_SUFFIX)
     }
 
     /// Temporary method until light nodes are implemented, which will allow
@@ -189,8 +215,7 @@ impl P2pNode {
 
     pub async fn add_shard_node(&mut self, config: NodeConfig) -> Result<()> {
         let shard_id = config.eth_chain_id;
-        let topic = Self::shard_id_to_topic(shard_id);
-        if self.shard_nodes.contains_key(&topic.hash()) {
+        if self.shard_nodes.contains_key(&shard_id) {
             info!("LaunchShard message received for a shard we're already running. Ignoring...");
             return Ok(());
         }
@@ -203,11 +228,14 @@ impl P2pNode {
             self.peer_num.clone(),
         )
         .await?;
-        self.shard_peers.insert(topic.hash(), peers);
-        self.shard_nodes.insert(topic.hash(), input_channels);
+        self.shard_peers.insert(shard_id, peers);
+        self.shard_nodes.insert(shard_id, input_channels);
         self.shard_threads
             .spawn(async move { node.start_shard_node().await });
-        self.swarm.behaviour_mut().gossipsub.subscribe(&topic)?;
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&Self::shard_id_to_topic(shard_id, None))?;
         Ok(())
     }
 
@@ -216,7 +244,10 @@ impl P2pNode {
         topic_hash: &TopicHash,
         sender: impl FnOnce(&NodeInputChannels) -> Result<(), SendError<T>>,
     ) -> Result<()> {
-        let Some(channels) = self.shard_nodes.get(topic_hash) else {
+        let Some(channels) = self
+            .shard_nodes
+            .get(&Self::shard_id_from_topic_hash(topic_hash)?)
+        else {
             warn!(?topic_hash, "message received for unknown shard or topic");
             return Ok(());
         };
@@ -271,12 +302,12 @@ impl P2pNode {
                         }
                         // Add/Remove peers to/from the shard peer list used in syncing.
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
-                            if let Some(peers) = self.shard_peers.get(&topic) {
+                            if let Some(peers) = self.shard_peers.get(&Self::shard_id_from_topic_hash(&topic)?) {
                                 peers.add_peer(peer_id);
                             }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) => {
-                            if let Some(peers) = self.shard_peers.get(&topic) {
+                            if let Some(peers) = self.shard_peers.get(&Self::shard_id_from_topic_hash(&topic)?) {
                                 peers.remove_peer(peer_id);
                             }
                         }
@@ -298,13 +329,13 @@ impl P2pNode {
                                 }
                             };
                             let to = self.peer_id;
-                            debug!(%source, %to, %message, "broadcast recieved");
+                            debug!(%source, %to, %message, %topic_hash, "broadcast received");
 
-                            // Route broadcasts to speed-up Proposal processing, with faux request-id
                             match message {
+                                // Route broadcasts to speed-up Proposal processing, with faux request-id
                                 ExternalMessage::Proposal(_) => {
                                     self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
-                                }
+                                },
                                 _ => {
                                     self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
                                 }
@@ -316,7 +347,7 @@ impl P2pNode {
                                     let to = self.peer_id;
                                     let (shard_id, _external_message) = request;
                                     debug!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "message received");
-                                    let _topic = Self::shard_id_to_topic(shard_id);
+                                    let _topic = Self::shard_id_to_topic(shard_id, None);
                                     let _id = format!("{}", _request_id);
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
@@ -328,7 +359,7 @@ impl P2pNode {
                                 }
                                 request_response::Message::Response { request_id, response } => {
                                     if let Some((shard_id, _)) = self.pending_requests.remove(&request_id) {
-                                        self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.responses.send((_source, response)))?;
+                                        self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.responses.send((_source, response)))?;
                                     } else {
                                         return Err(anyhow!("response to request with no id"));
                                     }
@@ -345,7 +376,7 @@ impl P2pNode {
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
-                                self.send_to(&Self::shard_id_to_topic(shard_id).hash(), |c| c.request_failures.send((peer, error)))?;
+                                self.send_to(&Self::shard_id_to_topic(shard_id, None).hash(), |c| c.request_failures.send((peer, error)))?;
                             } else {
                                 return Err(anyhow!("request without id failed"));
                             }
@@ -366,10 +397,22 @@ impl P2pNode {
                             self.add_shard_node(shard_config.clone()).await?;
                         },
                         InternalMessage::LaunchLink(_) | InternalMessage::IntershardCall(_) => {
-                            self.send_to(&Self::shard_id_to_topic(destination).hash(), |c| c.local_messages.send((source, message)))?;
-                        },
+                            self.send_to(&Self::shard_id_to_topic(destination, None).hash(), |c| c.local_messages.send((source, message)))?;
+                        }
                         InternalMessage::ExportBlockCheckpoint(block, transactions, parent, trie_storage, path) => {
                             self.task_threads.spawn(async move { db::checkpoint_block_with_state(&block, &transactions, &parent, trie_storage, source, path) });
+                        }
+                        InternalMessage::SubscribeToGossipSubTopic(topic) => {
+                            debug!("subscribing to topic {:?}", topic);
+                            if let GossipSubTopic::Validator(shard_id) = topic {
+                                self.swarm.behaviour_mut().gossipsub.subscribe(&Self::validator_topic(shard_id))?;
+                            }
+                        }
+                        InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
+                            debug!("unsubscribing from topic {:?}", topic);
+                            if let GossipSubTopic::Validator(shard_id) = topic {
+                                self.swarm.behaviour_mut().gossipsub.unsubscribe(&Self::validator_topic(shard_id));
+                            }
                         }
                     }
                 },
@@ -390,7 +433,7 @@ impl P2pNode {
                     let data = cbor4ii::serde::to_vec(Vec::new(), &message).unwrap();
                     let from = self.peer_id;
 
-                    let topic = Self::shard_id_to_topic(shard_id);
+                    let topic = Self::shard_id_to_topic(shard_id, Some(&message));
 
                     match dest {
                         Some((dest, request_id)) => {
@@ -404,8 +447,8 @@ impl P2pNode {
                             }
                         },
                         None => {
-                            debug!(%from, %message, "broadcasting");
-                            match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data)  {
+                            debug!(%from, %message, %topic, "broadcasting");
+                            match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data.clone())  {
                                 // Also route broadcasts to ourselves, with a faux request-id.
                                 Ok(msg_id) => {
                                     match message {
@@ -431,6 +474,11 @@ impl P2pNode {
                                 Err(e) => {
                                     trace!(%e, "failed to publish message");
                                 }
+                            }
+
+                            // Send messages for Validator topic to shard-wide topic also for temporary backwards compatibility
+                            if Self::is_validator_topic_hash(&topic.hash()) {
+                                self.swarm.behaviour_mut().gossipsub.publish(Self::shard_id_to_topic(shard_id, None).hash(), data)?;
                             }
                         },
                     }

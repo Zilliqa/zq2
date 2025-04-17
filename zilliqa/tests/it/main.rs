@@ -1006,6 +1006,12 @@ impl Network {
                         )
                         .unwrap();
                     }
+                    InternalMessage::SubscribeToGossipSubTopic(topic) => {
+                        debug!("subscribing to topic {:?}", topic);
+                    }
+                    InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
+                        debug!("unsubscribing from topic {:?}", topic);
+                    }
                 }
             }
             AnyMessage::External(external_message) => {
