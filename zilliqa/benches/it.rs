@@ -83,6 +83,10 @@ fn process_empty(c: &mut Criterion) {
                         "0x0000000000000000000000000000000000000001",
                     ],
                 ]
+                txn_pool.maximum_global_size = 10000000000
+                txn_pool.maximum_txn_count_per_sender = 200000000
+                txn_pool.total_slots_for_all_senders = 50000000
+                txn_pool.remove_expired_txns_after_hrs = 24
             "#,
             secret_key.node_public_key()
         ))
@@ -188,6 +192,10 @@ fn consensus(
             consensus.minimum_stake = "1"
             consensus.eth_block_gas_limit = 84000000
             consensus.gas_price = "1"
+            txn_pool.maximum_global_size = 10000000000
+            txn_pool.maximum_txn_count_per_sender = 200000000
+            txn_pool.total_slots_for_all_senders = 50000000
+            txn_pool.remove_expired_txns_after_hrs = 24
         "#,
     )
     .unwrap();

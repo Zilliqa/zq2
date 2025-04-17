@@ -151,6 +151,8 @@ pub struct NodeConfig {
     pub eth_chain_id: u64,
     /// Consensus-specific data.
     pub consensus: ConsensusConfig,
+    /// Transaction pool config
+    pub txn_pool: TxnPoolConfig,
     /// The maximum duration between a recieved block's timestamp and the current time. Defaults to 10 seconds.
     #[serde(default = "allowed_timestamp_skew_default")]
     pub allowed_timestamp_skew: Duration,
@@ -193,6 +195,7 @@ impl Default for NodeConfig {
             api_servers: vec![],
             eth_chain_id: eth_chain_id_default(),
             consensus: ConsensusConfig::default(),
+            txn_pool: TxnPoolConfig::default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
             state_cache_size: state_cache_size_default(),
@@ -513,6 +516,46 @@ impl Default for ConsensusConfig {
             forks: vec![],
             genesis_fork: genesis_fork_default(),
             new_view_broadcast_interval: new_view_broadcast_interval_default(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct TxnPoolConfig {
+    /// Maximum number of transactions transaction pool can hold
+    pub maximum_global_size: u64,
+    /// Maximum number of transactions per single sender
+    pub maximum_txn_count_per_sender: u64,
+    /// Total slots for all senders
+    pub total_slots_for_all_senders: u64,
+    /// Remove pending txns after this many hours
+    pub remove_expired_txns_after_hrs: u64,
+}
+
+pub fn maximum_txn_pool_global_size() -> u64 {
+    10000
+}
+
+pub fn maximum_txn_pool_txn_count_per_user() -> u64 {
+    500
+}
+
+pub fn total_slots_for_all_senders() -> u64 {
+    1_000_000
+}
+
+pub fn remove_expired_txns_after_hours() -> u64 {
+    24
+}
+
+impl Default for TxnPoolConfig {
+    fn default() -> Self {
+        Self {
+            maximum_global_size: maximum_txn_pool_global_size(),
+            maximum_txn_count_per_sender: maximum_txn_pool_txn_count_per_user(),
+            total_slots_for_all_senders: total_slots_for_all_senders(),
+            remove_expired_txns_after_hrs: remove_expired_txns_after_hours(),
         }
     }
 }
