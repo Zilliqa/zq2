@@ -932,34 +932,39 @@ impl Sync {
             if self.p1_response.contains_key(&peer.peer_id) {
                 let peer_id = peer.peer_id;
                 let response = self.p1_response.remove(&peer_id).unwrap();
-                // Only process a full response
                 if let Some(response) = response {
-                    if !response.is_empty() {
-                        let range = response.last().unwrap().header.number
-                            ..=response.first().unwrap().header.number;
-                        tracing::info!(?range, from = %peer_id,
-                            "sync::MetadataResponse : received",
-                        );
-                        self.headers_downloaded =
-                            self.headers_downloaded.saturating_add(response.len());
-                        let peer = peer.clone();
-
-                        if response.len() == self.max_batch_size {
-                            self.peers
-                                .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
-                        } else {
-                            // downgrade peers that cannot fulfill request range
-                            self.peers
-                                .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
-                        }
-
-                        self.do_metadata_response(peer, response)?;
-                        continue;
-                    } else {
-                        // Empty response
+                    // Only process a full response
+                    if response.is_empty() {
                         tracing::warn!("sync::MetadataResponse : empty from {peer_id}");
                         self.peers
                             .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
+                    } else {
+                        self.headers_downloaded =
+                            self.headers_downloaded.saturating_add(response.len());
+
+                        let range = response.last().unwrap().header.number
+                            ..=response.first().unwrap().header.number;
+
+                        // full/last segment
+                        if response.len() == self.max_batch_size
+                            || *range.start() <= self.started_at
+                        {
+                            tracing::info!(?range, from = %peer_id,
+                                "sync::MetadataResponse : received",
+                            );
+                            let peer = peer.clone();
+
+                            self.peers
+                                .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
+
+                            self.do_metadata_response(peer, response)?;
+                            continue;
+                        } else {
+                            // retry partial
+                            tracing::warn!("sync::MetadataResponse : partial from {peer_id}");
+                            self.peers
+                                .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
+                        }
                     }
                 } else {
                     // Network failure, downgrade peer and retry.
@@ -967,7 +972,7 @@ impl Sync {
                     self.peers
                         .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
                 }
-                // failure fall-thru - fire one request
+                // failure fall-thru - fire one retry
                 self.do_missing_metadata(1)?;
                 if !self.in_flight.is_empty() {
                     self.in_flight.rotate_right(1); // adjust request order, do_missing_metadata() pushes peer to the back.
