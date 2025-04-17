@@ -13,5 +13,5 @@ versions:
   otterscan: develop
   spout: main
   stats_dashboard: v0.0.4
-  stats_agent: v0.0.2
+  stats_agent: v0.0.3
   zq2_metrics: v0.0.1
