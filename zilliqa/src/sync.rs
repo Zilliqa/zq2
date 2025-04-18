@@ -377,7 +377,7 @@ impl Sync {
                 self.inject_recent_blocks()?;
             }
             // Retry to fix sync issues e.g. peers that are now offline
-            SyncState::Retry1 if self.in_pipeline == 0 => {
+            SyncState::Retry1(_) if self.in_pipeline == 0 => {
                 self.update_started_at()?;
                 // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
@@ -589,10 +589,8 @@ impl Sync {
     /// This will rebuild history from the previous marker, with another peer.
     /// If this function is called many times, it will eventually restart from Phase 0.
     fn retry_phase1(&mut self) -> Result<()> {
-        let (_, range, marker) = match &self.state {
-            SyncState::Phase2(x) => x,
-            SyncState::Phase5(x) => x,
-            _ => unimplemented!("sync::RetryPhase1 : invalid state"),
+        let SyncState::Retry1((range, marker)) = &self.state else {
+            unimplemented!("sync::RetryPhase1 : invalid state");
         };
 
         self.retry_count = self.retry_count.saturating_add(1);
@@ -630,14 +628,15 @@ impl Sync {
             return Ok(());
         }
 
+        let (range, marker) = match &self.state {
+            SyncState::Phase2((_, range, marker)) => (range, marker),
+            SyncState::Phase5((_, range, marker)) => (range, marker),
+            _ => unreachable!(),
+        };
+
         // Only process a full response
         if let Some(response) = response {
             if !response.is_empty() {
-                let range = match &self.state {
-                    SyncState::Phase2((_, range, _)) => range,
-                    SyncState::Phase5((_, range, _)) => range,
-                    _ => unreachable!(),
-                };
                 tracing::info!(?range, %from,
                     "sync::MultiBlockResponse : received",
                 );
@@ -658,7 +657,7 @@ impl Sync {
                 .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
         }
         // failure fall-thru
-        self.state = SyncState::Retry1;
+        self.state = SyncState::Retry1((range.clone(), *marker));
         if Self::DO_SPECULATIVE {
             self.do_sync()?;
         }
@@ -666,9 +665,9 @@ impl Sync {
     }
 
     fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<()> {
-        let check_sum = match self.state {
-            SyncState::Phase2((c, _, _)) => c,
-            SyncState::Phase5((c, _, _)) => c,
+        let (check_sum, range, marker) = match &self.state {
+            SyncState::Phase2(x) => x,
+            SyncState::Phase5(x) => x,
             _ => unimplemented!("sync::MultiBlockResponse : invalid state"),
         };
 
@@ -680,14 +679,14 @@ impl Sync {
             })
             .finalize();
 
-        if check_sum != computed_sum {
+        if *check_sum != computed_sum {
             tracing::error!(
                 "sync::MultiBlockResponse : unexpected checksum={check_sum} != {computed_sum} from {from}"
             );
 
             match self.state {
                 // Retry with 1-segment
-                SyncState::Phase2(_) => self.state = SyncState::Retry1,
+                SyncState::Phase2(_) => self.state = SyncState::Retry1((range.clone(), *marker)),
                 // Give up, retry from start
                 SyncState::Phase5(_) => {
                     self.segments.empty_sync_metadata();
@@ -1404,7 +1403,7 @@ impl Sync {
     pub fn am_syncing(&self) -> Result<bool> {
         let sync_phases = matches!(
             self.state,
-            SyncState::Phase1(_) | SyncState::Phase2(_) | SyncState::Phase3 | SyncState::Retry1
+            SyncState::Phase1(_) | SyncState::Phase2(_) | SyncState::Phase3 | SyncState::Retry1(_)
         );
         Ok(sync_phases || self.in_pipeline != 0)
     }
@@ -1637,7 +1636,7 @@ enum SyncState {
     Phase1(BlockHeader),
     Phase2((Hash, RangeInclusive<u64>, BlockHeader)),
     Phase3,
-    Retry1,
+    Retry1((RangeInclusive<u64>, BlockHeader)),
     Phase4(BlockHeader),
     Phase5((Hash, RangeInclusive<u64>, BlockHeader)),
 }
@@ -1649,7 +1648,7 @@ impl std::fmt::Display for SyncState {
             SyncState::Phase1(_) => write!(f, "phase1"),
             SyncState::Phase2(_) => write!(f, "phase2"),
             SyncState::Phase3 => write!(f, "phase3"),
-            SyncState::Retry1 => write!(f, "retry1"),
+            SyncState::Retry1(_) => write!(f, "retry1"),
             SyncState::Phase4(_) => write!(f, "phase4"),
             SyncState::Phase5(_) => write!(f, "phase5"),
         }
