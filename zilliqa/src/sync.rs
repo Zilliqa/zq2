@@ -485,19 +485,9 @@ impl Sync {
     ///
     /// Deletes both canonical and non-canonical blocks from the DB, given a range.
     pub fn prune_range(&mut self, range: RangeInclusive<u64>) -> Result<()> {
-        // keep at least 300
-        let tip = self
-            .db
-            .get_highest_canonical_block_number()?
-            .unwrap_or_default()
-            .saturating_add(1)
-            .saturating_sub(MIN_PRUNE_INTERVAL);
         tracing::debug!(?range, "sync::Prune",);
         // Prune canonical, and non-canonical blocks.
         for n in range {
-            if n > tip {
-                break;
-            }
             // remove canonical block and transactions
             if let Some(block) = self.db.get_canonical_block_by_number(n)? {
                 tracing::trace!(number = %block.number(), hash=%block.hash(), "sync::Prune");
