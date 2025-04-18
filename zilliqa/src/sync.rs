@@ -484,14 +484,12 @@ impl Sync {
             // remove canonical block and transactions
             if let Some(block) = self.db.get_canonical_block_by_number(n)? {
                 tracing::trace!(number = %block.number(), hash=%block.hash(), "sync::Prune");
-                self.db.remove_transactions_in_block(&block)?;
-                self.db.remove_block(&block)?;
+                self.db.prune_block(&block, true)?;
             }
-            // remove non-final blocks, whose txns might be linked to a different block
-            let blocks = self.db.get_blocks_by_height(n)?;
-            for block in blocks.iter() {
+            // remove any other non-canonical blocks; typically none
+            for block in self.db.get_blocks_by_height(n)? {
                 tracing::trace!(number = %block.number(), hash=%block.hash(), "sync::Prune");
-                self.db.remove_block(block)?;
+                self.db.prune_block(&block, false)?;
             }
         }
         Ok(())

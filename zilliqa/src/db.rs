@@ -945,13 +945,38 @@ impl Db {
         Ok(())
     }
 
-    pub fn remove_transactions_in_block(&self, block: &Block) -> Result<()> {
-        self.db
-            .lock()
-            .unwrap()
-            .prepare_cached("DELETE FROM transactions WHERE tx_hash IN (SELECT tx_hash FROM receipts WHERE block_hash = ?1)")?
-            .execute([block.hash()])?;
-        Ok(())
+    /// Delete the block and its related transactions and receipts
+    pub fn prune_block(&self, block: &Block, is_canonical: bool) -> Result<()> {
+        let hash = block.hash();
+        self.with_sqlite_tx(|db| {
+            // get a list of transactions
+            let txns = db
+                .prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
+                .query_map([hash], |row| row.get(0))?
+                .collect::<Result<Vec<Hash>, _>>()?;
+
+            // Delete child row, before deleting parents
+            // https://github.com/Zilliqa/zq2/issues/2216#issuecomment-2812501876
+            db.prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
+                .execute([hash])?;
+
+            // Delete the block after all references are deleted
+            db.prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?
+                .execute([hash])?;
+
+            // Delete all other references to this list of txns
+            if is_canonical {
+                for tx in txns {
+                    // Deletes all other references to this txn; txn can only exist in one canonical block.
+                    db.prepare_cached("DELETE FROM receipts WHERE tx_hash = ?1")?
+                        .execute([tx])?;
+                    // Delete the txn itself after all references are deleted
+                    db.prepare_cached("DELETE FROM transactions WHERE tx_hash = ?1")?
+                        .execute([tx])?;
+                }
+            }
+            Ok(())
+        })
     }
 
     pub fn get_blocks_by_height(&self, height: u64) -> Result<Vec<Block>> {
