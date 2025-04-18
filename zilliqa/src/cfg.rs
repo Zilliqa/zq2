@@ -157,9 +157,9 @@ pub struct NodeConfig {
     /// The location of persistence data. If not set, uses a temporary path.
     #[serde(default)]
     pub data_dir: Option<String>,
-    /// Size of the in-memory state trie cache, in bytes. Defaults to 256 MiB.
-    #[serde(default = "state_cache_size_default")]
-    pub state_cache_size: usize,
+    /// Size of the in-memory database cache, in bytes. Defaults to 512 MiB.
+    #[serde(default = "cache_size_default")]
+    pub cache_size: usize,
     /// Persistence checkpoint to load.
     #[serde(default)]
     pub load_checkpoint: Option<Checkpoint>,
@@ -195,7 +195,7 @@ impl Default for NodeConfig {
             consensus: ConsensusConfig::default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            state_cache_size: state_cache_size_default(),
+            cache_size: cache_size_default(),
             load_checkpoint: None,
             do_checkpoints: false,
             block_request_limit: block_request_limit_default(),
@@ -285,8 +285,8 @@ pub fn allowed_timestamp_skew_default() -> Duration {
     Duration::from_secs(60)
 }
 
-pub fn state_cache_size_default() -> usize {
-    256 * 1024 * 1024 // 256 MiB
+pub fn cache_size_default() -> usize {
+    512 * 1024 * 1024 // 512 MiB
 }
 
 pub fn eth_chain_id_default() -> u64 {
