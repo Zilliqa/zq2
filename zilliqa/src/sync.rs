@@ -112,6 +112,7 @@ pub struct Sync {
     p1_response: BTreeMap<PeerId, Option<Vec<SyncBlockHeader>>>,
     // how many blocks to request/prune at once
     max_batch_size: usize,
+    prune_interval: u64,
     prune_batch_size: u64,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
@@ -168,6 +169,7 @@ impl Sync {
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
         let sync_base_height = config.sync.sync_base_height;
         let prune_batch_size = config.sync.prune_batch_size as u64;
+        let prune_interval = config.sync.prune_interval;
         // Start from reset, or continue sync
         let latest_block_number = latest_block
             .as_ref()
@@ -205,6 +207,7 @@ impl Sync {
             last_probe_at: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(), // allow immediate sync at startup
             sync_base_height,
             prune_batch_size,
+            prune_interval,
             is_validator: true, // assume true on restart, until next epoch
         })
     }
@@ -422,18 +425,11 @@ impl Sync {
             unimplemented!("sync::StartPassiveSync : invalid state");
         }
 
-        let range = self.db.available_range()?;
-
-        if *range.end() <= self.sync_base_height {
-            // invalid sync range
+        if self.sync_base_height == u64::MAX && self.prune_interval == u64::MAX {
             return Ok(());
         }
 
-        // Safe to repurpose started_at. Active/Passive are mutually exclusive.
-        self.started_at = range
-            .start()
-            .saturating_sub(self.max_blocks_in_flight as u64)
-            .max(self.sync_base_height);
+        let range = self.db.available_range()?;
 
         match (*range.start()).cmp(&self.sync_base_height) {
             // done, turn off passive-sync
@@ -445,6 +441,12 @@ impl Sync {
                 self.passive_sync_count = self.passive_sync_count.saturating_add(1);
                 tracing::debug!(?range, "sync::StartPassiveSync : syncing",);
 
+                // Safe to repurpose started_at. Active/Passive are mutually exclusive.
+                self.started_at = range
+                    .start()
+                    .saturating_sub(self.max_blocks_in_flight as u64)
+                    .max(self.sync_base_height);
+
                 let lowest_block = self
                     .db
                     .get_canonical_block_by_number(*range.start())?
@@ -454,13 +456,27 @@ impl Sync {
                 self.request_missing_headers()?;
             }
             // prune below sync-base-height
-            Ordering::Less => {
-                let prune_at = range
+            Ordering::Less if self.sync_base_height != u64::MAX => {
+                let prune_floor = range
+                    .end()
+                    .saturating_sub(MIN_PRUNE_INTERVAL)
+                    .min(self.sync_base_height.saturating_sub(1));
+                let prune_till = range
                     .start()
-                    .saturating_add(self.prune_batch_size)
-                    .min(self.sync_base_height);
-                return self.prune_range(*range.start()..prune_at);
+                    .saturating_add(self.prune_batch_size.saturating_sub(1))
+                    .min(prune_floor);
+                self.prune_range(*range.start()..=prune_till)?;
             }
+            // prune prune-interval
+            Ordering::Less if self.prune_interval != u64::MAX => {
+                let prune_floor = range.end().saturating_sub(self.prune_interval);
+                let prune_till = range
+                    .start()
+                    .saturating_add(self.prune_batch_size.saturating_sub(1))
+                    .min(prune_floor);
+                self.prune_range(*range.start()..=prune_till)?;
+            }
+            Ordering::Less => unreachable!(),
         }
         Ok(())
     }
@@ -468,7 +484,7 @@ impl Sync {
     /// Utility: Prune blocks
     ///
     /// Deletes both canonical and non-canonical blocks from the DB, given a range.
-    pub fn prune_range(&mut self, range: std::ops::Range<u64>) -> Result<()> {
+    pub fn prune_range(&mut self, range: RangeInclusive<u64>) -> Result<()> {
         // keep at least 300
         let tip = self
             .db
@@ -476,6 +492,7 @@ impl Sync {
             .unwrap_or_default()
             .saturating_add(1)
             .saturating_sub(MIN_PRUNE_INTERVAL);
+        tracing::debug!(?range, "sync::Prune",);
         // Prune canonical, and non-canonical blocks.
         for n in range {
             if n > tip {
