@@ -113,7 +113,7 @@ pub struct Sync {
     // how many blocks to request/prune at once
     max_batch_size: usize,
     prune_interval: u64,
-    prune_batch_size: u64,
+    prune_timeout_ms: u128,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
     // count of proposals pending in the pipeline
@@ -168,7 +168,6 @@ impl Sync {
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
         let sync_base_height = config.sync.sync_base_height;
-        let prune_batch_size = config.sync.prune_batch_size as u64;
         let prune_interval = config.sync.prune_interval;
         // Start from reset, or continue sync
         let latest_block_number = latest_block
@@ -206,9 +205,9 @@ impl Sync {
             cache_probe_response: None,
             last_probe_at: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(), // allow immediate sync at startup
             sync_base_height,
-            prune_batch_size,
             prune_interval,
             is_validator: true, // assume true on restart, until next epoch
+            prune_timeout_ms: 0,
         })
     }
 
@@ -291,6 +290,10 @@ impl Sync {
         self.highest_block_seen = self.highest_block_seen.max(proposal.number());
         self.recent_proposals.push_back(proposal);
         self.do_sync()
+    }
+
+    pub fn set_prune_timeout(&mut self, timeout_ms: u64) {
+        self.prune_timeout_ms = timeout_ms as u128;
     }
 
     /// Phase 0: Sync from a probe.
@@ -438,7 +441,6 @@ impl Sync {
             }
             // passive-sync above sync-base-height
             Ordering::Greater => {
-                self.passive_sync_count = self.passive_sync_count.saturating_add(1);
                 tracing::debug!(?range, "sync::StartPassiveSync : syncing",);
 
                 // Safe to repurpose started_at. Active/Passive are mutually exclusive.
@@ -455,28 +457,9 @@ impl Sync {
                 self.state = SyncState::Phase4(lowest_block.header);
                 self.request_missing_headers()?;
             }
-            // prune below sync-base-height
-            Ordering::Less if self.sync_base_height != u64::MAX => {
-                let prune_floor = range
-                    .end()
-                    .saturating_sub(MIN_PRUNE_INTERVAL)
-                    .min(self.sync_base_height.saturating_sub(1));
-                let prune_till = range
-                    .start()
-                    .saturating_add(self.prune_batch_size.saturating_sub(1))
-                    .min(prune_floor);
-                self.prune_range(*range.start()..=prune_till)?;
+            Ordering::Less => {
+                self.prune_range(range)?;
             }
-            // prune prune-interval
-            Ordering::Less if self.prune_interval != u64::MAX => {
-                let prune_floor = range.end().saturating_sub(self.prune_interval);
-                let prune_till = range
-                    .start()
-                    .saturating_add(self.prune_batch_size.saturating_sub(1))
-                    .min(prune_floor);
-                self.prune_range(*range.start()..=prune_till)?;
-            }
-            Ordering::Less => unreachable!(),
         }
         Ok(())
     }
@@ -485,16 +468,34 @@ impl Sync {
     ///
     /// Deletes both canonical and non-canonical blocks from the DB, given a range.
     pub fn prune_range(&mut self, range: RangeInclusive<u64>) -> Result<()> {
-        tracing::debug!(?range, "sync::Prune",);
+        let prune_ceil = if self.prune_interval != u64::MAX {
+            // prune prune-interval
+            range.end().saturating_sub(self.prune_interval)
+        } else if self.sync_base_height != u64::MAX {
+            // prune below sync-base-height
+            range
+                .end()
+                .saturating_sub(MIN_PRUNE_INTERVAL)
+                .min(self.sync_base_height.saturating_sub(1))
+        } else {
+            return Ok(());
+        };
+
         // Prune canonical, and non-canonical blocks.
-        for n in range {
+        tracing::debug!(?range, timeout = %self.prune_timeout_ms, "sync::Prune",);
+        let start_now = Instant::now();
+        for number in *range.start()..=prune_ceil {
+            // check if we have time to prune
+            if start_now.elapsed().as_millis() > self.prune_timeout_ms {
+                break;
+            }
             // remove canonical block and transactions
-            if let Some(block) = self.db.get_canonical_block_by_number(n)? {
+            if let Some(block) = self.db.get_canonical_block_by_number(number)? {
                 tracing::trace!(number = %block.number(), hash=%block.hash(), "sync::Prune");
                 self.db.prune_block(&block, true)?;
             }
             // remove any other non-canonical blocks; typically none
-            for block in self.db.get_blocks_by_height(n)? {
+            for block in self.db.get_blocks_by_height(number)? {
                 tracing::trace!(number = %block.number(), hash=%block.hash(), "sync::Prune");
                 self.db.prune_block(&block, false)?;
             }
