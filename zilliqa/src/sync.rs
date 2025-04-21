@@ -636,9 +636,9 @@ impl Sync {
             return Ok(());
         }
 
-        let (range, marker) = match &self.state {
-            SyncState::Phase2((_, range, marker)) => (range, marker),
-            SyncState::Phase5((_, range, marker)) => (range, marker),
+        let range = match &self.state {
+            SyncState::Phase2((_, range, _)) => range,
+            SyncState::Phase5((_, range, _)) => range,
             _ => unreachable!(),
         };
 
@@ -651,7 +651,9 @@ impl Sync {
                 self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
-                return self.do_multiblock_response(from, response); // successful 
+                if self.do_multiblock_response(from, response)? {
+                    return Ok(()); // successful 
+                };
             } else {
                 // Empty response, downgrade peer and retry phase 1.
                 tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
@@ -665,21 +667,32 @@ impl Sync {
                 .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
         }
         // failure fall-thru
-        self.state = SyncState::Retry1((range.clone(), *marker));
+        match &self.state {
+            // Retry with 1-segment
+            SyncState::Phase2((_, range, marker)) => {
+                self.state = SyncState::Retry1((range.clone(), *marker));
+            }
+            // Give up, retry from start
+            SyncState::Phase5(_) => {
+                self.segments.empty_sync_metadata();
+                self.state = SyncState::Phase0;
+            }
+            _ => unreachable!(),
+        }
         if Self::DO_SPECULATIVE {
             self.do_sync()?;
         }
         Ok(())
     }
 
-    fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<()> {
-        let (check_sum, range, marker) = match &self.state {
-            SyncState::Phase2(x) => x,
-            SyncState::Phase5(x) => x,
+    fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<bool> {
+        let check_sum = match &self.state {
+            SyncState::Phase2(x) => x.0,
+            SyncState::Phase5(x) => x.0,
             _ => unimplemented!("sync::MultiBlockResponse : invalid state"),
         };
 
-        // If the checksum does not match, retry.
+        // If the checksum does not match, fail.
         let computed_sum = response
             .iter()
             .fold(Hash::builder().with(Hash::ZERO.as_bytes()), |sum, p| {
@@ -687,26 +700,11 @@ impl Sync {
             })
             .finalize();
 
-        if *check_sum != computed_sum {
+        if check_sum != computed_sum {
             tracing::error!(
                 "sync::MultiBlockResponse : unexpected checksum={check_sum} != {computed_sum} from {from}"
             );
-
-            match self.state {
-                // Retry with 1-segment
-                SyncState::Phase2(_) => self.state = SyncState::Retry1((range.clone(), *marker)),
-                // Give up, retry from start
-                SyncState::Phase5(_) => {
-                    self.segments.empty_sync_metadata();
-                    self.state = SyncState::Phase0;
-                }
-                _ => unreachable!(),
-            }
-
-            if Self::DO_SPECULATIVE {
-                self.do_sync()?;
-            }
-            return Ok(());
+            return Ok(false);
         }
 
         // Response seems sane.
@@ -721,7 +719,7 @@ impl Sync {
                 if !self.inject_proposals(proposals)? {
                     // phase-2 is stuck, cancel sync and restart
                     self.state = SyncState::Phase3;
-                    return Ok(());
+                    return Ok(true);
                 };
             }
             SyncState::Phase5(_) => {
@@ -748,7 +746,7 @@ impl Sync {
         if Self::DO_SPECULATIVE {
             self.do_sync()?;
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Returns a list of Proposals
@@ -760,7 +758,7 @@ impl Sync {
         from: PeerId,
         request: Vec<Hash>,
     ) -> Result<ExternalMessage> {
-        tracing::debug!(%length = %request.len(), %from,
+        tracing::debug!(length = %request.len(), %from,
             "sync::MultiBlockRequest : received",
         );
 
