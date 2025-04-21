@@ -760,10 +760,8 @@ impl Sync {
         from: PeerId,
         request: Vec<Hash>,
     ) -> Result<ExternalMessage> {
-        tracing::debug!(
-            "sync::MultiBlockRequest : received a {} multiblock request from {}",
-            request.len(),
-            from
+        tracing::debug!(%length = %request.len(), %from,
+            "sync::MultiBlockRequest : received",
         );
 
         // TODO: Any additional checks
