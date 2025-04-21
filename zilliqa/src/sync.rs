@@ -9,6 +9,7 @@ use std::{
 use anyhow::Result;
 use itertools::Itertools;
 use libp2p::PeerId;
+use rand::Rng;
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 use crate::{
@@ -139,6 +140,7 @@ pub struct Sync {
     passive_sync_count: usize,
     // internal structure for syncing
     segments: SyncSegments,
+    size_cache: HashMap<Hash, usize>,
     // passive sync
     sync_base_height: u64,
 }
@@ -150,6 +152,8 @@ impl Sync {
     const MAX_CONCURRENT_PEERS: usize = 10;
     // Mitigate DoS
     const MAX_BATCH_SIZE: usize = 1000;
+    // Cache recent blocks
+    const MAX_CACHE_SIZE: usize = 10000;
 
     pub fn new(
         config: &NodeConfig,
@@ -208,6 +212,7 @@ impl Sync {
             prune_interval,
             is_validator: true, // assume true on restart, until next epoch
             prune_timeout_ms: 0,
+            size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
         })
     }
 
@@ -339,7 +344,7 @@ impl Sync {
             let stale_flight = self
                 .in_flight
                 .iter()
-                .find(|(p, _)| p.last_used.elapsed().as_secs() > 30) // triple default libp2p timeouts
+                .find(|(p, _)| p.last_used.elapsed().as_secs() > 90) // 9x libp2p timeout
                 .cloned();
             if let Some((PeerInfo { peer_id: peer, .. }, request_id)) = stale_flight {
                 tracing::warn!(%peer, ?request_id, "sync::DoSync : stale request");
@@ -1177,8 +1182,20 @@ impl Sync {
             };
             hash = block.parent_hash();
 
-            let proposal = self.block_to_proposal(block.clone());
-            let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal)?.len();
+            // Size cache is needed.
+            // Otherwise, a large block can cause a node to get stuck syncing since no node can respond to the request in time.
+            let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
+                // pseudo-LRU approximation
+                if self.size_cache.len() > Self::MAX_CACHE_SIZE {
+                    let mut rng = rand::thread_rng();
+                    self.size_cache.retain(|_, _| rng.gen_bool(0.9));
+                }
+
+                let proposal = self.block_to_proposal(block.clone());
+                let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal).unwrap().len();
+                self.size_cache.insert(hash, encoded_size);
+                encoded_size
+            });
 
             // insert the sync size
             metas.push(SyncBlockHeader {
@@ -1321,6 +1338,7 @@ impl Sync {
                         let hash = tx.calculate_hash();
                         self.db
                             .insert_transaction_with_db_tx(sqlite_tx, &hash, &tx)?;
+                        // FIXME: How to regenerate faux receipts?
                     }
                     Ok(())
                 })?;
