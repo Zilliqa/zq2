@@ -19,7 +19,8 @@ use crate::{
     db::Db,
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InjectedProposal,
-        Proposal, RequestBlocksByHeight, SyncBlockHeader,
+        PassiveHeaderRequest, PassiveHeaderResponse, Proposal, RequestBlocksByHeight,
+        SyncBlockHeader,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
@@ -445,19 +446,9 @@ impl Sync {
             Ordering::Greater => {
                 tracing::debug!(?range, "sync::StartPassiveSync : syncing",);
 
-                // Safe to repurpose started_at. Active/Passive are mutually exclusive.
-                self.started_at = range
-                    .start()
-                    .saturating_sub(self.max_blocks_in_flight as u64)
-                    .max(self.sync_base_height);
-
-                let lowest_block = self
-                    .db
-                    .get_canonical_block_by_number(*range.start())?
-                    .expect("the block must exist");
-
-                self.state = SyncState::Phase4(lowest_block.header);
-                self.request_missing_headers()?;
+                let last = range.start().saturating_sub(1);
+                self.state = SyncState::Phase4(last);
+                self.request_passive_sync()?;
             }
             Ordering::Less => {
                 self.prune_range(range)?;
@@ -616,6 +607,107 @@ impl Sync {
 
         if Self::DO_SPECULATIVE {
             self.do_sync()?;
+        }
+        Ok(())
+    }
+
+    pub fn handle_passive_request(
+        &mut self,
+        from: PeerId,
+        request: PassiveHeaderRequest,
+    ) -> Result<ExternalMessage> {
+        tracing::debug!(hash = %request.hash, %from,
+            "sync::PassiveRequest : received",
+        );
+
+        // Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
+        if self.is_validator {
+            tracing::warn!("sync::PassiveRequest : skip validator");
+            return Ok(ExternalMessage::PassiveHeaderResponse(vec![]));
+        }
+
+        // Do not respond to stale requests as the client has probably timed-out
+        if request.request_at.elapsed()?.as_secs() > 20 {
+            tracing::warn!("sync::PassiveRequest : stale request");
+            return Ok(ExternalMessage::PassiveHeaderResponse(vec![]));
+        }
+
+        if !self.db.contains_canonical_block(&request.hash)? {
+            tracing::warn!("sync::PassiveRequest : block not found");
+            return Ok(ExternalMessage::PassiveHeaderResponse(vec![]));
+        };
+
+        let started_at = Instant::now();
+        let mut metas = Vec::new();
+        let mut hash = request.hash;
+        let mut size = 0;
+        // return as much as possible within 1s
+        while started_at.elapsed().as_millis() < 1000 {
+            // grab the block
+            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+                break; // that's all we have!
+            };
+            // and the receipts
+            let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
+            hash = block.parent_hash();
+            // create the response
+            let response = PassiveHeaderResponse {
+                proposal: self.block_to_proposal(block),
+                receipts,
+            };
+            // compute the size
+            size += cbor4ii::serde::to_vec(Vec::new(), &response).unwrap().len();
+            if size > 9 * 1024 * 1024 {
+                break; // too big
+            }
+            // add to the response
+            metas.push(response);
+            if metas.len() >= request.count {
+                break; // we have enough
+            }
+        }
+
+        let message = ExternalMessage::PassiveHeaderResponse(metas);
+        Ok(message)
+    }
+
+    /// Phase 4: Handle Passive Header Response
+    ///
+    pub fn handle_passive_response(&mut self, response: PassiveHeaderResponse) -> Result<()> {
+        if !matches!(self.state, SyncState::Phase4(_)) {
+            unimplemented!("sync::PassiveResponse : invalid state");
+        }
+        Ok(())
+    }
+
+    /// Phase 4: Request Passive Sync
+    ///
+    /// Request for as much as possible, but will only receive partial response.
+    fn request_passive_sync(&mut self) -> Result<()> {
+        let SyncState::Phase4(last) = self.state else {
+            unimplemented!("sync::PassiveSync : invalid state");
+        };
+
+        // Early exit if there's a request in-flight; and if it has not expired.
+        if !self.in_flight.is_empty() {
+            tracing::debug!("sync::PassiveSync : syncing");
+            return Ok(());
+        }
+
+        if let Some(peer_info) = self.peers.get_next_peer() {
+            let range = self.sync_base_height..=last;
+            tracing::info!(?range, "sync::PassiveSync : requesting");
+            let message = ExternalMessage::PassiveHeaderRequest(RequestBlocksByHeight {
+                request_at: SystemTime::now(),
+                from_height: *range.start(),
+                to_height: *range.end(),
+            });
+            let request_id = self
+                .message_sender
+                .send_external_message(peer_info.peer_id, message)?;
+            self.add_in_flight(peer_info, request_id);
+        } else {
+            tracing::warn!("sync::PassiveSync : insufficient peers to handle request");
         }
         Ok(())
     }
@@ -1577,7 +1669,7 @@ enum SyncState {
     Phase2((Hash, RangeInclusive<u64>, BlockHeader)),
     Phase3,
     Retry1((RangeInclusive<u64>, BlockHeader)),
-    Phase4(BlockHeader),
+    Phase4(u64),
 }
 
 impl std::fmt::Display for SyncState {

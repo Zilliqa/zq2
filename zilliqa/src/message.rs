@@ -17,7 +17,7 @@ use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::TrieStorage,
     time::SystemTime,
-    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
+    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
@@ -283,7 +283,9 @@ pub enum ExternalMessage {
     MultiBlockResponse(Vec<Proposal>),
     /// 0.7.0
     SyncBlockHeaders(Vec<SyncBlockHeader>),
-    PassiveHeaderRequest(RequestBlocksByHeight),
+    /// 0.8.0
+    PassiveHeaderRequest(PassiveHeaderRequest),
+    PassiveHeaderResponse(Vec<PassiveHeaderResponse>),
 }
 
 impl ExternalMessage {
@@ -299,8 +301,11 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::PassiveHeaderResponse(r) => {
+                write!(f, "PassiveHeaderResponse({})", r.len())
+            }
             ExternalMessage::PassiveHeaderRequest(r) => {
-                write!(f, "PassiveHeaderRequest({:?})", r.from_height..=r.to_height)
+                write!(f, "PassiveHeaderRequest({})", r.hash)
             }
             ExternalMessage::SyncBlockHeaders(r) => {
                 write!(f, "SyncBlockHeaders({})", r.len())
@@ -540,7 +545,18 @@ pub struct SyncBlockHeader {
     pub header: BlockHeader,
     pub size_estimate: usize,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PassiveHeaderRequest {
+    pub hash: Hash,
+    pub count: usize,
+    pub request_at: SystemTime,
+}
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PassiveHeaderResponse {
+    pub proposal: Proposal,
+    pub receipts: Vec<TransactionReceipt>,
+}
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockHeader {
