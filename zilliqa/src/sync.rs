@@ -230,10 +230,11 @@ impl Sync {
         if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
             tracing::warn!(%from, "sync::Acknowledgement");
             match &self.state {
-                SyncState::Phase1(_) | SyncState::Phase4(_) => {
+                SyncState::Phase4(_) => todo!(),
+                SyncState::Phase1(_) => {
                     self.handle_metadata_response(from, Some(vec![]))?;
                 }
-                SyncState::Phase2(_) | SyncState::Phase5(_) => {
+                SyncState::Phase2(_) => {
                     self.handle_multiblock_response(from, Some(vec![]))?;
                 }
                 state => {
@@ -265,10 +266,11 @@ impl Sync {
             }
 
             match &self.state {
-                SyncState::Phase1(_) | SyncState::Phase4(_) => {
+                SyncState::Phase4(_) => todo!(),
+                SyncState::Phase1(_) => {
                     self.handle_metadata_response(failure.peer, None)?;
                 }
-                SyncState::Phase2(_) | SyncState::Phase5(_) => {
+                SyncState::Phase2(_) => {
                     self.handle_multiblock_response(failure.peer, None)?;
                 }
                 state => {
@@ -393,12 +395,7 @@ impl Sync {
                 // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
             }
-            SyncState::Phase4(_) => {
-                self.request_missing_headers()?;
-            }
-            SyncState::Phase5(_) => {
-                self.request_missing_blocks()?;
-            }
+            SyncState::Phase4(_) => todo!(),
             _ => {
                 tracing::debug!(in_pipeline = %self.in_pipeline, "sync::DoSync : syncing");
             }
@@ -632,7 +629,7 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<Proposal>>,
     ) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase2(_) | SyncState::Phase5(_)) {
+        if !matches!(self.state, SyncState::Phase2(_)) {
             tracing::warn!("sync::MultiBlockResponse : dropped response {from}");
             return Ok(());
         };
@@ -641,10 +638,8 @@ impl Sync {
             return Ok(());
         }
 
-        let range = match &self.state {
-            SyncState::Phase2((_, range, _)) => range,
-            SyncState::Phase5((_, range, _)) => range,
-            _ => unreachable!(),
+        let SyncState::Phase2((_, range, _)) = &self.state else {
+            unreachable!();
         };
 
         // Only process a full response
@@ -672,18 +667,9 @@ impl Sync {
                 .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
         }
         // failure fall-thru
-        match &self.state {
-            // Retry with 1-segment
-            SyncState::Phase2((_, range, marker)) => {
-                self.state = SyncState::Retry1((range.clone(), *marker));
-            }
-            // Give up, retry from start
-            SyncState::Phase5(_) => {
-                self.segments.empty_sync_metadata();
-                self.state = SyncState::Phase0;
-            }
-            _ => unreachable!(),
-        }
+        if let SyncState::Phase2((_, range, marker)) = &self.state {
+            self.state = SyncState::Retry1((range.clone(), *marker));
+        };
         if Self::DO_SPECULATIVE {
             self.do_sync()?;
         }
@@ -693,7 +679,6 @@ impl Sync {
     fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<bool> {
         let check_sum = match &self.state {
             SyncState::Phase2(x) => x.0,
-            SyncState::Phase5(x) => x.0,
             _ => unimplemented!("sync::MultiBlockResponse : invalid state"),
         };
 
@@ -719,32 +704,15 @@ impl Sync {
             .collect_vec();
 
         // Process the proposals
-        match self.state {
-            SyncState::Phase2(_) => {
-                if !self.inject_proposals(proposals)? {
-                    // phase-2 is stuck, cancel sync and restart
-                    self.state = SyncState::Phase3;
-                    return Ok(true);
-                };
-            }
-            SyncState::Phase5(_) => {
-                // just store proposals
-                self.store_proposals(proposals)?;
-            }
-            _ => unreachable!(),
-        }
+        if !self.inject_proposals(proposals)? {
+            // phase-2 is stuck, cancel sync and restart
+            self.state = SyncState::Phase3;
+            return Ok(true);
+        };
 
         // if we're done
         if self.segments.count_sync_segments() == 0 {
-            match self.state {
-                SyncState::Phase2(_) => {
-                    self.state = SyncState::Phase3;
-                }
-                SyncState::Phase5(_) => {
-                    self.state = SyncState::Phase0;
-                }
-                _ => unreachable!(),
-            }
+            self.state = SyncState::Phase3;
         }
 
         // perform next block transfers, where possible
@@ -790,7 +758,7 @@ impl Sync {
     /// This is phase 2 of the syncing algorithm.
     /// ** MAKE ONLY ONE REQUEST AT A TIME **
     fn request_missing_blocks(&mut self) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase2(_) | SyncState::Phase5(_)) {
+        if !matches!(self.state, SyncState::Phase2(_)) {
             unimplemented!("sync::MissingBlocks : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
@@ -809,11 +777,9 @@ impl Sync {
             self.peers.reinsert_peer(peer);
 
             // If we have no chain_segments, we have nothing to do
-            if let Some((request_hashes, peer_info, block, range)) = match self.state {
-                SyncState::Phase2(_) => self.segments.pop_last_sync_segment(),
-                SyncState::Phase5(_) => self.segments.pop_first_sync_segment(),
-                _ => unreachable!(),
-            } {
+            if let Some((request_hashes, peer_info, block, range)) =
+                self.segments.pop_last_sync_segment()
+            {
                 // Checksum of the request hashes
                 let checksum = request_hashes
                     .iter()
@@ -827,15 +793,7 @@ impl Sync {
                     "sync::MissingBlocks : requesting",
                 );
 
-                match self.state {
-                    SyncState::Phase2(_) => {
-                        self.state = SyncState::Phase2((checksum, range, block));
-                    }
-                    SyncState::Phase5(_) => {
-                        self.state = SyncState::Phase5((checksum, range, block));
-                    }
-                    _ => unreachable!(),
-                }
+                self.state = SyncState::Phase2((checksum, range, block));
 
                 let message = ExternalMessage::MultiBlockRequest(request_hashes);
                 let request_id = self
@@ -934,7 +892,7 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<SyncBlockHeader>>,
     ) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase1(_) | SyncState::Phase4(_)) {
+        if !matches!(self.state, SyncState::Phase1(_)) {
             tracing::warn!("sync::MetadataResponse : dropped response {from}");
             return Ok(());
         };
@@ -1000,6 +958,10 @@ impl Sync {
                 break;
             }
         }
+        // perform next block transfers, where possible
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
+        }
         Ok(())
     }
 
@@ -1010,7 +972,6 @@ impl Sync {
     ) -> Result<()> {
         let meta = match &self.state {
             SyncState::Phase1(meta) => meta,
-            SyncState::Phase4(meta) => meta,
             _ => unimplemented!("sync::DoMetadataResponse : invalid state"),
         };
 
@@ -1087,54 +1048,26 @@ impl Sync {
                 self.segments.push_sync_segment(&segment_peer, header.hash);
             }
 
-            match self.state {
-                SyncState::Phase1(_) => {
-                    // Record the oldest block in the segment
-                    self.state = SyncState::Phase1(segment.last().cloned().unwrap());
-                    // check if the segment hits our history
-                    let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
-                    self.db
-                        .contains_canonical_block(&block_hash)
-                        .unwrap_or_default()
-                }
-                SyncState::Phase4(_) => {
-                    // Record the oldest block in the segment
-                    self.state = SyncState::Phase4(segment.last().cloned().unwrap());
-                    // for turnaround
-                    let block_number = segment.last().as_ref().unwrap().number;
-                    block_number <= self.started_at
-                }
-                _ => unreachable!(),
-            }
+            // Record the oldest block in the segment
+            self.state = SyncState::Phase1(segment.last().cloned().unwrap());
+            // check if the segment hits our history
+            let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
+            self.db
+                .contains_canonical_block(&block_hash)
+                .unwrap_or_default()
         } else {
             true
         };
 
         // Turnaround to download blocks
         if turnaround {
-            match self.state {
-                SyncState::Phase1(_) => {
-                    self.state =
-                        SyncState::Phase2((Hash::ZERO, 0..=0, BlockHeader::genesis(Hash::ZERO)));
-                }
-                SyncState::Phase4(_) => {
-                    self.state =
-                        SyncState::Phase5((Hash::ZERO, 0..=0, BlockHeader::genesis(Hash::ZERO)));
-                }
-                _ => unreachable!(),
-            }
+            self.state = SyncState::Phase2((Hash::ZERO, 0..=0, BlockHeader::genesis(Hash::ZERO)));
             // drop all pending requests & responses
             self.p1_response.clear();
             for p in self.in_flight.drain(..) {
                 self.peers.done_with_peer(Some(p), DownGrade::None);
             }
         }
-
-        // perform next block transfers, where possible
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-
         Ok(())
     }
 
@@ -1214,7 +1147,7 @@ impl Sync {
     /// If Phase 1 is in progress, it continues requesting blocks from the last known Phase 1 block.
     /// Otherwise, it requests blocks from the given starting metadata.
     pub fn request_missing_headers(&mut self) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase1(_) | SyncState::Phase4(_)) {
+        if !matches!(self.state, SyncState::Phase1(_)) {
             unimplemented!("sync::RequestMissingHeaders : invalid state");
         }
         // Early exit if there's a request in-flight; and if it has not expired.
@@ -1258,7 +1191,7 @@ impl Sync {
     /// - hitting the starting point
     /// - encountering a V1 peer
     fn do_missing_metadata(&mut self, num_peers: usize) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase1(_) | SyncState::Phase4(_)) {
+        if !matches!(self.state, SyncState::Phase1(_)) {
             unimplemented!("sync::DoMissingMetadata : invalid state");
         }
         let mut offset = u64::MIN;
@@ -1280,22 +1213,7 @@ impl Sync {
                         });
                         (message, *range.start() < self.started_at, range)
                     }
-                    SyncState::Phase4(BlockHeader {
-                        number: block_number,
-                        ..
-                    }) => {
-                        let range = block_number
-                            .saturating_sub(offset)
-                            .saturating_sub(self.max_batch_size as u64)
-                            ..=block_number.saturating_sub(offset).saturating_sub(1);
-                        let message = ExternalMessage::MetaDataRequest(RequestBlocksByHeight {
-                            request_at: SystemTime::now(),
-                            to_height: *range.end(),
-                            from_height: *range.start(),
-                        });
-                        (message, *range.start() < self.started_at, range)
-                    }
-                    _ => unimplemented!("sync::DoMissingMetadata"),
+                    _ => unreachable!(),
                 };
 
                 tracing::info!(?range, from = %peer_info.peer_id,
@@ -1660,7 +1578,6 @@ enum SyncState {
     Phase3,
     Retry1((RangeInclusive<u64>, BlockHeader)),
     Phase4(BlockHeader),
-    Phase5((Hash, RangeInclusive<u64>, BlockHeader)),
 }
 
 impl std::fmt::Display for SyncState {
@@ -1672,7 +1589,6 @@ impl std::fmt::Display for SyncState {
             SyncState::Phase3 => write!(f, "phase3"),
             SyncState::Retry1(_) => write!(f, "retry1"),
             SyncState::Phase4(_) => write!(f, "phase4"),
-            SyncState::Phase5(_) => write!(f, "phase5"),
         }
     }
 }
