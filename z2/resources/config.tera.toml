@@ -53,7 +53,3 @@ consensus.forks = [
 file = "{{ checkpoint_file }}"
 hash = "{{ checkpoint_hash }}"
 {%- endif %}
-
-{%- if proto_network_persistence_block_height %}
-proto_network_persistence_block_height = {{ proto_network_persistence_block_height }}
-{%- endif %}

@@ -405,8 +405,6 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
-            prune_interval: u64_max(),
-            proto_network_persistence_block_height: None,
         };
 
         let (nodes, external_receivers, local_receivers, request_response_receivers): (
@@ -558,8 +556,6 @@ impl Network {
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
             max_rpc_response_size: max_rpc_response_size_default(),
-            prune_interval: options.prune_interval.unwrap_or(u64_max()),
-            proto_network_persistence_block_height: None,
         };
 
         let secret_key = options.secret_key_or_random(self.rng.clone());

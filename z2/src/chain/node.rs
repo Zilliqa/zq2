@@ -909,10 +909,6 @@ impl ChainNode {
                     .collect::<Result<Vec<_>>>()?,
             );
         }
-        ctx.insert(
-            "proto_network_persistence_block_height",
-            &self.chain()?.get_proto_network_persistence_block_height(),
-        );
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator {

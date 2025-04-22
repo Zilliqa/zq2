@@ -431,7 +431,7 @@ pub async fn run_persistence_converter(
         Some(zq2_dir),
         node_config.eth_chain_id,
         node_config.state_cache_size,
-        // This is None because this var is only required for networks initialised with an older persistence converter which did not set ZQ1 block's state root hash to zeros
+        // This is None because it makes no difference to the conversion: var is required for fetching ZQ1 blocks and setting their state root hash to zero
         None,
     )?;
     let zq1_db = zq1::Db::new(zq1_dir)?;

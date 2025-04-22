@@ -190,9 +190,9 @@ pub struct Db {
     db: Arc<Mutex<Connection>>,
     state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
-    /// The block height at which ZQ1 converted persistence ends. After this block ZQ2 blocks begin.
-    /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks. In future converted networks all ZQ1 blocks will be distinguishable by their zeroed state root hash.  
-    proto_network_persistence_block_height: Option<u64>,
+    /// The block height at which ZQ2 blocks begin.
+    /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
+    executable_blocks_height: Option<u64>,
 }
 
 impl Db {
@@ -200,7 +200,7 @@ impl Db {
         data_dir: Option<P>,
         shard_id: u64,
         state_cache_size: usize,
-        proto_network_persistence_block_height: Option<u64>,
+        executable_blocks_height: Option<u64>,
     ) -> Result<Self>
     where
         P: AsRef<Path>,
@@ -299,7 +299,7 @@ impl Db {
             db: Arc::new(Mutex::new(connection)),
             state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
             path,
-            proto_network_persistence_block_height,
+            executable_blocks_height,
         })
     }
 
@@ -994,8 +994,8 @@ impl Db {
         let Some(mut block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
-        if self.proto_network_persistence_block_height.is_some()
-            && block.header.number <= self.proto_network_persistence_block_height.unwrap()
+        if self.executable_blocks_height.is_some()
+            && block.header.number < self.executable_blocks_height.unwrap()
         {
             debug!("fetched ZQ1 block so setting state root hash to zeros");
             block.header.state_root_hash = Hash::ZERO;
