@@ -1384,10 +1384,10 @@ impl Sync {
                 let (block, transactions) = proposal.into_parts();
                 self.db.with_sqlite_tx(|sqlite_tx| {
                     // Insert transactions
-                    for t in transactions {
-                        let hash = t.calculate_hash();
+                    for st in transactions {
+                        let vt = st.verify()?;
                         self.db
-                            .insert_transaction_with_db_tx(sqlite_tx, &hash, &t)?;
+                            .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt.tx)?;
                     }
                     // Insert block
                     self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
