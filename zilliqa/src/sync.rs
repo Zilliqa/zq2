@@ -636,6 +636,7 @@ impl Sync {
         while started_at.elapsed().as_millis() < 1000 {
             // grab the block
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
+                tracing::warn!(%hash, "sync::PassiveRequest : not found");
                 break; // that's all we have!
             };
             // and the receipts
@@ -649,6 +650,7 @@ impl Sync {
             // compute the size
             size += cbor4ii::serde::to_vec(Vec::new(), &response).unwrap().len();
             if size > 9 * 1024 * 1024 {
+                tracing::warn!(%hash, %size, "sync::PassiveRequest : too big");
                 break; // too big
             }
             // add to the response
