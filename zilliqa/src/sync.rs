@@ -690,7 +690,6 @@ impl Sync {
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
                 // store the blocks in the DB
                 self.store_proposals(response)?;
-                return Ok(());
             } else {
                 tracing::warn!(%from, "sync::PassiveResponse : empty",);
                 self.peers
