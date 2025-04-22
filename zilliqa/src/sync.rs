@@ -1,5 +1,5 @@
 use std::{
-    cmp::Ordering,
+    cmp::{Ordering, Reverse},
     collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
     ops::RangeInclusive,
     sync::{Arc, Mutex},
@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
+use ethers::types::transaction::response;
 use itertools::Itertools;
 use libp2p::PeerId;
 use rand::Rng;
@@ -233,7 +234,7 @@ impl Sync {
             match &self.state {
                 SyncState::Phase4(_) => todo!(),
                 SyncState::Phase1(_) => {
-                    self.handle_metadata_response(from, Some(vec![]))?;
+                    self.handle_active_response(from, Some(vec![]))?;
                 }
                 SyncState::Phase2(_) => {
                     self.handle_multiblock_response(from, Some(vec![]))?;
@@ -269,7 +270,7 @@ impl Sync {
             match &self.state {
                 SyncState::Phase4(_) => todo!(),
                 SyncState::Phase1(_) => {
-                    self.handle_metadata_response(failure.peer, None)?;
+                    self.handle_active_response(failure.peer, None)?;
                 }
                 SyncState::Phase2(_) => {
                     self.handle_multiblock_response(failure.peer, None)?;
@@ -673,9 +674,47 @@ impl Sync {
 
     /// Phase 4: Handle Passive Header Response
     ///
-    pub fn handle_passive_response(&mut self, response: PassiveHeaderResponse) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase4(_)) {
-            unimplemented!("sync::PassiveResponse : invalid state");
+    pub fn handle_passive_response(
+        &mut self,
+        from: PeerId,
+        response: Option<Vec<PassiveHeaderResponse>>,
+    ) -> Result<()> {
+        let SyncState::Phase4(number) = self.state else {
+            tracing::warn!(%from, "sync::PassiveResponse : dropped");
+            return Ok(());
+        };
+        if self.in_flight.is_empty() || self.in_flight.front().unwrap().0.peer_id != from {
+            tracing::warn!(%from, "sync::PassiveResponse : spurious");
+            return Ok(());
+        }
+
+        if let Some(response) = response {
+            if !response.is_empty() {
+                let range = response.last().unwrap().proposal.number()
+                    ..=response.first().unwrap().proposal.number();
+                tracing::info!(?range, %from,
+                    "sync::PassiveResponse : received",
+                );
+                self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
+                self.peers
+                    .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
+                // store the blocks in the DB
+                self.store_proposals(proposals)?;
+                return Ok(());
+            } else {
+                tracing::warn!(%from, "sync::PassiveResponse : empty",);
+                self.peers
+                    .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
+            }
+        } else {
+            tracing::warn!(%from, "sync::PassiveResponse : error",);
+            self.peers
+                .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
+        }
+        // fall-thru in all cases
+        let state = SyncState::Phase0;
+        if Self::DO_SPECULATIVE {
+            self.do_sync()?;
         }
         Ok(())
     }
@@ -697,10 +736,10 @@ impl Sync {
         if let Some(peer_info) = self.peers.get_next_peer() {
             let range = self.sync_base_height..=last;
             tracing::info!(?range, "sync::PassiveSync : requesting");
-            let message = ExternalMessage::PassiveHeaderRequest(RequestBlocksByHeight {
+            let message = ExternalMessage::PassiveHeaderRequest(PassiveHeaderRequest {
                 request_at: SystemTime::now(),
-                from_height: *range.start(),
-                to_height: *range.end(),
+                count: range.count(),
+                hash: Hash::ZERO,
             });
             let request_id = self
                 .message_sender
@@ -721,18 +760,14 @@ impl Sync {
         from: PeerId,
         response: Option<Vec<Proposal>>,
     ) -> Result<()> {
-        if !matches!(self.state, SyncState::Phase2(_)) {
-            tracing::warn!("sync::MultiBlockResponse : dropped response {from}");
+        let SyncState::Phase2((_, range, _)) = &self.state else {
+            tracing::warn!(%from, "sync::MultiBlockResponse : dropped");
             return Ok(());
         };
         if self.in_flight.is_empty() || self.in_flight.front().unwrap().0.peer_id != from {
-            tracing::warn!("sync::MultiBlockResponse : spurious response {from}");
+            tracing::warn!(%from, "sync::MultiBlockResponse : spurious");
             return Ok(());
         }
-
-        let SyncState::Phase2((_, range, _)) = &self.state else {
-            unreachable!();
-        };
 
         // Only process a full response
         if let Some(response) = response {
@@ -748,13 +783,13 @@ impl Sync {
                 };
             } else {
                 // Empty response, downgrade peer and retry phase 1.
-                tracing::warn!("sync::MultiBlockResponse : empty blocks {from}",);
+                tracing::warn!(%from, "sync::MultiBlockResponse : empty",);
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
             }
         } else {
             // Network failure, downgrade peer and retry phase 1.
-            tracing::warn!(%from, "sync::MultiBlockResponse : error blocks",);
+            tracing::warn!(%from, "sync::MultiBlockResponse : error",);
             self.peers
                 .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
         }
@@ -979,17 +1014,17 @@ impl Sync {
     /// This is the first step in the syncing algorithm, where we receive a set of metadata and use it to
     /// construct a chain history. We check that the metadata does indeed constitute a segment of a chain.
     /// If it does, we record its segment marker and store the entire chain in-memory.
-    pub fn handle_metadata_response(
+    pub fn handle_active_response(
         &mut self,
         from: PeerId,
         response: Option<Vec<SyncBlockHeader>>,
     ) -> Result<()> {
         if !matches!(self.state, SyncState::Phase1(_)) {
-            tracing::warn!("sync::MetadataResponse : dropped response {from}");
+            tracing::warn!(%from, "sync::MetadataResponse : dropped");
             return Ok(());
         };
         if self.in_flight.is_empty() {
-            tracing::warn!("sync::MetadataResponse : spurious response {from}");
+            tracing::warn!(%from, "sync::MetadataResponse : spurious");
             return Ok(());
         }
 
@@ -1168,22 +1203,15 @@ impl Sync {
     /// This constructs a historical chain going backwards from a hash, by following the parent_hash.
     /// It collects N blocks and returns the metadata of that particular chain.
     /// This is mainly used in Phase 1 of the syncing algorithm, to construct a chain history.
-    pub fn handle_metadata_request(
+    pub fn handle_active_request(
         &mut self,
         from: PeerId,
         request: RequestBlocksByHeight,
-        validator_check: bool,
     ) -> Result<ExternalMessage> {
         let range = request.from_height..=request.to_height;
         tracing::debug!(?range, %from,
             "sync::MetadataRequest : received",
         );
-
-        // Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
-        if validator_check && self.is_validator {
-            tracing::warn!("sync::MetadataRequest : skip validator");
-            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
-        }
 
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()?.as_secs() > 20 {
@@ -1332,23 +1360,45 @@ impl Sync {
 
     /// Phase 5: Store Proposals
     ///
-    /// These proposals need only be stored. THEY MUST BE STORED IN DESCENDING ORDER.
-    fn store_proposals(&mut self, mut proposals: Vec<Proposal>) -> Result<()> {
-        if !proposals.is_empty() {
-            proposals.reverse(); // Store it from high to low
-            for p in proposals {
+    /// These need only be stored, not executed - IN DESCENDING ORDER.
+    fn store_proposals(&mut self, response: Vec<PassiveHeaderResponse>) -> Result<()> {
+        let response = response
+            .into_iter()
+            .sorted_by_key(|p| Reverse(p.proposal.number()))
+            .collect_vec();
+        if !response.is_empty() {
+            // Store it from high to low
+            for PassiveHeaderResponse { proposal, receipts } in response {
+                // Check for order
+                if high == proposal.number() {
+                    high = high.saturating_sub(1);
+                } else {
+                    tracing::error!(
+                        "sync::StoreProposals : unexpected proposal number={high} != {}",
+                        proposal.number()
+                    );
+                    return Ok(());
+                }
+
+                // All OK - Store it
                 tracing::trace!(
-                    number = %p.number(), hash = %p.hash(),
+                    number = %proposal.number(), hash = %proposal.hash(),
                     "sync::StoreProposals : applying",
                 );
-                let (block, transactions) = p.into_parts();
+                let (block, transactions) = proposal.into_parts();
                 self.db.with_sqlite_tx(|sqlite_tx| {
-                    self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
-                    for tx in transactions {
-                        let hash = tx.calculate_hash();
+                    // Insert transactions
+                    for t in transactions {
+                        let hash = t.calculate_hash();
                         self.db
-                            .insert_transaction_with_db_tx(sqlite_tx, &hash, &tx)?;
-                        // FIXME: How to regenerate faux receipts?
+                            .insert_transaction_with_db_tx(sqlite_tx, &hash, &t)?;
+                    }
+                    // Insert block
+                    self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
+                    // Insert receipts
+                    for r in receipts {
+                        self.db
+                            .insert_transaction_receipt_with_db_tx(sqlite_tx, r)?;
                     }
                     Ok(())
                 })?;
