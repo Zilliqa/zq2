@@ -287,7 +287,14 @@ impl Chain {
 
     pub fn get_log_level(&self) -> Result<&'static str> {
         let log_level = self.get_str("log_level");
-
         Ok(log_level.unwrap_or("zilliqa=trace"))
+    }
+
+    pub fn get_proto_network_persistence_block_height(&self) -> Option<u64> {
+        match self {
+            Chain::Zq2ProtoTestnet => Some(7507087),
+            Chain::Zq2ProtoMainnet => Some(4277187),
+            _ => None,
+        }
     }
 }

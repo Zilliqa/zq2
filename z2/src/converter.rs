@@ -534,7 +534,7 @@ pub async fn convert_persistence(
             zq1_block.block_num,
             qc,
             None,
-            state.root_hash()?,
+            Hash::ZERO,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             txn_hashes.iter().map(|h| Hash(h.0)).collect(),
