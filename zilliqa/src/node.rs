@@ -288,7 +288,7 @@ impl Node {
                     .handle_multiblock_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
-            ExternalMessage::PassiveHeaderRequest(request) => {
+            ExternalMessage::PassiveSyncRequest(request) => {
                 let message = self.consensus.sync.handle_passive_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
@@ -352,16 +352,16 @@ impl Node {
             ExternalMessage::SyncBlockHeaders(response) => self
                 .consensus
                 .sync
-                .handle_metadata_response(from, Some(response))?,
+                .handle_active_response(from, Some(response))?,
             // 0.8.0 probe response
             ExternalMessage::BlockResponse(response) => {
                 self.consensus.sync.handle_block_response(from, response)?
             }
             // 0.8.0 passive sync
-            ExternalMessage::PassiveHeaderResponse(response) => self
+            ExternalMessage::PassiveSyncResponse(response) => self
                 .consensus
                 .sync
-                .handle_passive_response(from, response)?,
+                .handle_passive_response(from, Some(response))?,
             // FIXME: 0.6.0 compatibility, to be removed after all nodes > 0.7.0
             ExternalMessage::MetaDataResponse(response) => {
                 let response = response
@@ -373,7 +373,7 @@ impl Node {
                     .collect_vec();
                 self.consensus
                     .sync
-                    .handle_metadata_response(from, Some(response))?
+                    .handle_active_response(from, Some(response))?
             }
             ExternalMessage::Acknowledgement => {
                 self.consensus.sync.handle_acknowledgement(from)?;

@@ -1006,6 +1006,18 @@ impl Db {
         Ok(rows)
     }
 
+    pub fn get_canonical_block_hash_by_number(&self, number: u64) -> Result<Option<Hash>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached(
+                "SELECT block_hash FROM blocks WHERE height = ?1 AND is_canonical = TRUE",
+            )?
+            .query_row([number], |row| row.get(0))
+            .optional()?)
+    }
+
     fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {

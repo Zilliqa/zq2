@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::Result;
-use ethers::types::transaction::response;
 use itertools::Itertools;
 use libp2p::PeerId;
 use rand::Rng;
@@ -20,8 +19,7 @@ use crate::{
     db::Db,
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InjectedProposal,
-        PassiveHeaderRequest, PassiveHeaderResponse, Proposal, RequestBlocksByHeight,
-        SyncBlockHeader,
+        PassiveSyncRequest, PassiveSyncResponse, Proposal, RequestBlocksByHeight, SyncBlockHeader,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
@@ -448,7 +446,12 @@ impl Sync {
                 tracing::debug!(?range, "sync::StartPassiveSync : syncing",);
 
                 let last = range.start().saturating_sub(1);
-                self.state = SyncState::Phase4(last);
+                let hash = self
+                    .db
+                    .get_canonical_block_hash_by_number(last)?
+                    .expect("exists");
+
+                self.state = SyncState::Phase4((last, hash));
                 self.request_passive_sync()?;
             }
             Ordering::Less => {
@@ -612,10 +615,11 @@ impl Sync {
         Ok(())
     }
 
+    /// Handle Passive Sync Request
     pub fn handle_passive_request(
         &mut self,
         from: PeerId,
-        request: PassiveHeaderRequest,
+        request: PassiveSyncRequest,
     ) -> Result<ExternalMessage> {
         tracing::debug!(hash = %request.hash, %from,
             "sync::PassiveRequest : received",
@@ -624,18 +628,18 @@ impl Sync {
         // Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
         if self.is_validator {
             tracing::warn!("sync::PassiveRequest : skip validator");
-            return Ok(ExternalMessage::PassiveHeaderResponse(vec![]));
+            return Ok(ExternalMessage::PassiveSyncResponse(vec![]));
         }
 
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()?.as_secs() > 20 {
             tracing::warn!("sync::PassiveRequest : stale request");
-            return Ok(ExternalMessage::PassiveHeaderResponse(vec![]));
+            return Ok(ExternalMessage::PassiveSyncResponse(vec![]));
         }
 
         if !self.db.contains_canonical_block(&request.hash)? {
             tracing::warn!("sync::PassiveRequest : block not found");
-            return Ok(ExternalMessage::PassiveHeaderResponse(vec![]));
+            return Ok(ExternalMessage::PassiveSyncResponse(vec![]));
         };
 
         let started_at = Instant::now();
@@ -652,7 +656,7 @@ impl Sync {
             let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
             hash = block.parent_hash();
             // create the response
-            let response = PassiveHeaderResponse {
+            let response = PassiveSyncResponse {
                 proposal: self.block_to_proposal(block),
                 receipts,
             };
@@ -668,7 +672,7 @@ impl Sync {
             }
         }
 
-        let message = ExternalMessage::PassiveHeaderResponse(metas);
+        let message = ExternalMessage::PassiveSyncResponse(metas);
         Ok(message)
     }
 
@@ -677,9 +681,9 @@ impl Sync {
     pub fn handle_passive_response(
         &mut self,
         from: PeerId,
-        response: Option<Vec<PassiveHeaderResponse>>,
+        response: Option<Vec<PassiveSyncResponse>>,
     ) -> Result<()> {
-        let SyncState::Phase4(number) = self.state else {
+        let SyncState::Phase4(_) = self.state else {
             tracing::warn!(%from, "sync::PassiveResponse : dropped");
             return Ok(());
         };
@@ -699,7 +703,7 @@ impl Sync {
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
                 // store the blocks in the DB
-                self.store_proposals(proposals)?;
+                self.store_proposals(response)?;
                 return Ok(());
             } else {
                 tracing::warn!(%from, "sync::PassiveResponse : empty",);
@@ -712,7 +716,7 @@ impl Sync {
                 .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
         }
         // fall-thru in all cases
-        let state = SyncState::Phase0;
+        self.state = SyncState::Phase0;
         if Self::DO_SPECULATIVE {
             self.do_sync()?;
         }
@@ -723,7 +727,7 @@ impl Sync {
     ///
     /// Request for as much as possible, but will only receive partial response.
     fn request_passive_sync(&mut self) -> Result<()> {
-        let SyncState::Phase4(last) = self.state else {
+        let SyncState::Phase4((last, hash)) = self.state else {
             unimplemented!("sync::PassiveSync : invalid state");
         };
 
@@ -736,10 +740,10 @@ impl Sync {
         if let Some(peer_info) = self.peers.get_next_peer() {
             let range = self.sync_base_height..=last;
             tracing::info!(?range, "sync::PassiveSync : requesting");
-            let message = ExternalMessage::PassiveHeaderRequest(PassiveHeaderRequest {
+            let message = ExternalMessage::PassiveSyncRequest(PassiveSyncRequest {
                 request_at: SystemTime::now(),
                 count: range.count(),
-                hash: Hash::ZERO,
+                hash,
             });
             let request_id = self
                 .message_sender
@@ -1361,21 +1365,26 @@ impl Sync {
     /// Phase 5: Store Proposals
     ///
     /// These need only be stored, not executed - IN DESCENDING ORDER.
-    fn store_proposals(&mut self, response: Vec<PassiveHeaderResponse>) -> Result<()> {
+    fn store_proposals(&mut self, response: Vec<PassiveSyncResponse>) -> Result<()> {
+        let SyncState::Phase4((mut number, mut hash)) = self.state else {
+            unimplemented!("sync::StoreProposals : invalid state");
+        };
         let response = response
             .into_iter()
             .sorted_by_key(|p| Reverse(p.proposal.number()))
             .collect_vec();
         if !response.is_empty() {
             // Store it from high to low
-            for PassiveHeaderResponse { proposal, receipts } in response {
-                // Check for order
-                if high == proposal.number() {
-                    high = high.saturating_sub(1);
+            for PassiveSyncResponse { proposal, receipts } in response {
+                // Check for correct order
+                if number == proposal.number() && hash == proposal.hash() {
+                    number = number.saturating_sub(1);
+                    hash = proposal.header.qc.block_hash;
                 } else {
                     tracing::error!(
-                        "sync::StoreProposals : unexpected proposal number={high} != {}",
-                        proposal.number()
+                        "sync::StoreProposals : unexpected proposal number={number} != {}; hash={hash} != {}",
+                        proposal.number(),
+                        proposal.hash(),
                     );
                     return Ok(());
                 }
@@ -1719,7 +1728,7 @@ enum SyncState {
     Phase2((Hash, RangeInclusive<u64>, BlockHeader)),
     Phase3,
     Retry1((RangeInclusive<u64>, BlockHeader)),
-    Phase4(u64),
+    Phase4((u64, Hash)),
 }
 
 impl std::fmt::Display for SyncState {
@@ -1799,33 +1808,6 @@ impl SyncSegments {
         faux_marker.hash = high_hash;
 
         Some((hashes, peer, faux_marker, low_at..=high_at))
-    }
-
-    /// Pop the queue, for passive-sync from marker (inclusive)
-    fn pop_first_sync_segment(
-        &mut self,
-    ) -> Option<(Vec<Hash>, PeerInfo, BlockHeader, RangeInclusive<u64>)> {
-        let (mut hash, mut peer) = self.markers.pop_front()?;
-        let mut hashes = vec![];
-        let high_at = self.headers.get(&hash)?.number;
-        let mut low_at = 0;
-        let end_hash = self.markers.front().map_or_else(|| Hash::ZERO, |(h, _)| *h);
-        while let Some(header) = self.headers.remove(&hash) {
-            low_at = header.number;
-            hashes.push(header.hash);
-            hash = header.qc.block_hash;
-            if hash == end_hash {
-                break;
-            }
-        }
-        peer.last_used = Instant::now();
-        peer.score = u32::MAX;
-        Some((
-            hashes,
-            peer,
-            BlockHeader::genesis(Hash::ZERO), // faux block, no-retry
-            low_at..=high_at,
-        ))
     }
 
     /// Pushes a particular segment into the stack/queue.
