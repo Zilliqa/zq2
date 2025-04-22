@@ -966,9 +966,6 @@ impl Node {
                 .send(self.config.consensus.consensus_timeout)?;
             self.handle_network_message_response(network_message)?;
         }
-
-        let (_, timeout_ms, _) = self.consensus.get_consensus_timeout_params()?;
-        self.consensus.sync.set_prune_timeout(timeout_ms);
         self.consensus.sync.sync_from_proposal(proposal)?;
         Ok(())
     }

@@ -114,7 +114,6 @@ pub struct Sync {
     // how many blocks to request/prune at once
     max_batch_size: usize,
     prune_interval: u64,
-    prune_timeout_ms: u128,
     // how many blocks to inject into the queue
     max_blocks_in_flight: usize,
     // count of proposals pending in the pipeline
@@ -211,7 +210,6 @@ impl Sync {
             sync_base_height,
             prune_interval,
             is_validator: true, // assume true on restart, until next epoch
-            prune_timeout_ms: 0,
             size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
         })
     }
@@ -287,10 +285,6 @@ impl Sync {
         self.do_sync()
     }
 
-    pub fn set_prune_timeout(&mut self, timeout_ms: u64) {
-        self.prune_timeout_ms = timeout_ms as u128;
-    }
-
     /// Phase 0: Sync from a probe.
     ///
     /// When invoked via NewView/manually, will trigger a probe to a peer to retrieve its latest block.
@@ -302,8 +296,8 @@ impl Sync {
             return Ok(());
         }
         // avoid spamming the network
-        let elapsed = self.last_probe_at.elapsed();
-        if elapsed < Duration::from_secs(60) {
+        let elapsed = self.last_probe_at.elapsed().as_secs();
+        if elapsed < 60 {
             tracing::debug!(?elapsed, "sync::SyncFromProbe : skipping");
             return Ok(());
         } else {
@@ -471,11 +465,11 @@ impl Sync {
         };
 
         // Prune canonical, and non-canonical blocks.
-        tracing::debug!(?range, timeout = %self.prune_timeout_ms, "sync::Prune",);
+        tracing::debug!(?range, "sync::Prune",);
         let start_now = Instant::now();
         for number in *range.start()..=prune_ceil {
             // check if we have time to prune
-            if start_now.elapsed().as_millis() > self.prune_timeout_ms {
+            if start_now.elapsed().as_millis() > 1000 {
                 break;
             }
             // remove canonical block and transactions
