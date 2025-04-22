@@ -1387,18 +1387,35 @@ impl Sync {
                     return Ok(());
                 }
 
-                // All OK - Store it
-                tracing::trace!(
-                    number = %block.number(), hash = %block.hash(),
-                    "sync::StoreProposals : applying",
-                );
+                // Verify block
+                if block.verify_hash().is_ok() {
+                    tracing::trace!(
+                        number = %block.number(), hash = %block.hash(),
+                        "sync::StoreProposals : applying",
+                    );
+                } else {
+                    tracing::error!(number = block.number(), hash = %block.hash(),
+                        "sync::StoreProposals : unverified",
+                    );
+                    return Ok(());
+                }
+
+                // Store it
                 self.db.with_sqlite_tx(|sqlite_tx| {
-                    // Insert block
+                    // Insert block                    
                     self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
                     // Insert transactions/receipts
                     for (st, rt) in transaction_receipts {
-                        self.db
-                            .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st)?;
+                        // Verify transaction
+                        if let Ok(vt) = st.clone().verify() {
+                            self.db
+                                .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt.tx)?;
+                        } else {
+                            // FIXME: Remove bypass
+                            tracing::error!(number = %block.number(), index = %rt.index, hash = %rt.tx_hash, "sync::StoreProposals : unverifiable");
+                            self.db
+                                .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st)?;
+                        }
                         self.db
                             .insert_transaction_receipt_with_db_tx(sqlite_tx, rt)?;
                     }
