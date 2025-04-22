@@ -1777,7 +1777,7 @@ impl ToSql for PeerVer {
 #[derive(Debug, Default)]
 struct SyncSegments {
     headers: HashMap<Hash, BlockHeader>,
-    markers: VecDeque<(Hash, PeerInfo)>,
+    markers: Vec<(Hash, PeerInfo)>,
 }
 
 impl SyncSegments {
@@ -1790,7 +1790,7 @@ impl SyncSegments {
     fn pop_last_sync_segment(
         &mut self,
     ) -> Option<(Vec<Hash>, PeerInfo, BlockHeader, RangeInclusive<u64>)> {
-        let (mut hash, mut peer) = self.markers.pop_back()?;
+        let (mut hash, mut peer) = self.markers.pop()?;
         let mut hashes = vec![];
         let high_at = self.headers.get(&hash)?.number;
         let high_hash = self.headers.get(&hash)?.hash;
@@ -1813,9 +1813,9 @@ impl SyncSegments {
     /// Pushes a particular segment into the stack/queue.
     fn push_sync_segment(&mut self, peer: &PeerInfo, hash: Hash) {
         // do not double-push
-        let last = self.markers.back().map_or_else(|| Hash::ZERO, |(h, _)| *h);
+        let last = self.markers.last().map_or_else(|| Hash::ZERO, |(h, _)| *h);
         if hash != last {
-            self.markers.push_back((hash, peer.clone()));
+            self.markers.push((hash, peer.clone()));
         }
     }
 
