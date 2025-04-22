@@ -1,11 +1,7 @@
 bootstrap_address = [
     [
-        "12D3KooWLA4xVjiGszqmYJmt8E1NTurVeCujDi17FoSzSDDDKUjT",
-        "/ip4/198.52.100.102/tcp/5643",
-    ],
-    [
         "12D3KooWPXw2dXBRH1bT4vcNos9f6W2KoFTiarqptBuTzxaXg7zu",
-        "/ip4/198.52.100.103/tcp/5643",
+        "/ip4/198.51.100.103/tcp/5643",
     ],
 ]
 p2p_port = 5643

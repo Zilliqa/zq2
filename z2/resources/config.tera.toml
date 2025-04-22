@@ -19,7 +19,6 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.new_view_broadcast_interval = { secs = 300, nanos = 0 }
 {%- if contract_upgrades %}
 consensus.contract_upgrades = {{ contract_upgrades }}
 {%- endif %}
@@ -37,12 +36,6 @@ api_servers = {{ api_servers }}
 enable_ots_indices = true
 {%- endif %}
 
-{%- if checkpoint_file %}
-[nodes.load_checkpoint]
-file = "{{ checkpoint_file }}"
-hash = "{{ checkpoint_hash }}"
-{%- endif %}
-
 {%- if genesis_fork %}
 consensus.genesis_fork = {{ genesis_fork }}
 {%- endif %}
@@ -53,4 +46,10 @@ consensus.forks = [
     {{ fork }},
     {%- endfor %}
 ]
+{%- endif %}
+
+{%- if checkpoint_file %}
+[nodes.load_checkpoint]
+file = "{{ checkpoint_file }}"
+hash = "{{ checkpoint_hash }}"
 {%- endif %}

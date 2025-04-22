@@ -93,8 +93,472 @@ async fn txpool_content(mut network: Network) {
 
 // txpool_content_from tests
 
+#[zilliqa_macros::test]
+async fn txpool_content_from(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Send a transaction but don't mine it yet
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    let tx = TransactionRequest::pay(to_addr, 100).gas(21000);
+    let _tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+
+    // Check the txpool for transactions from our wallet address
+    let response: Value = provider
+        .request("txpool_contentFrom", [wallet.address()])
+        .await
+        .expect("Failed to call txpool_contentFrom API");
+
+    let pending = response["pending"].as_object().unwrap();
+    assert!(
+        !pending.is_empty(),
+        "Expected non-empty pending transactions for our address"
+    );
+
+    // Convert wallet address to lowercase string for comparison
+    let wallet_addr = format!("{:?}", wallet.address()).to_lowercase();
+
+    // Check if our transaction is in the pending pool
+    let found = pending
+        .iter()
+        .any(|(addr, _)| addr.to_lowercase() == wallet_addr);
+    assert!(found, "Couldn't find our address in the pending pool");
+
+    // Try with a different address that should have no transactions
+    let random_addr = H160::random();
+    let empty_response: Value = provider
+        .request("txpool_contentFrom", [random_addr])
+        .await
+        .expect("Failed to call txpool_contentFrom API with random address");
+
+    let empty_pending = empty_response["pending"].as_object().unwrap();
+    let empty_queued = empty_response["queued"].as_object().unwrap();
+    assert!(
+        empty_pending.is_empty(),
+        "Expected empty pending transactions for random address"
+    );
+    assert!(
+        empty_queued.is_empty(),
+        "Expected empty queued transactions for random address"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn txpool_content_from_with_queued(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Send transactions with nonces out of order to create queued transactions
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    // First send a transaction with nonce 2 (should be queued)
+    let tx_queued = TransactionRequest::pay(to_addr, 300).gas(21000).nonce(2);
+    let _ = wallet
+        .send_transaction(tx_queued, None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Then send a transaction with nonce 0 (should be pending)
+    let tx_pending = TransactionRequest::pay(to_addr, 100).gas(21000).nonce(0);
+    let _ = wallet
+        .send_transaction(tx_pending, None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Check txpool_contentFrom for our wallet
+    let content: Value = provider
+        .request("txpool_contentFrom", [wallet.address()])
+        .await
+        .expect("Failed to call txpool_contentFrom API");
+
+    // Verify there's a transaction in the pending section
+    let pending = content["pending"].as_object().unwrap();
+    assert!(!pending.is_empty(), "Expected transactions in pending");
+
+    // Verify there's a transaction in the queued section
+    let queued = content["queued"].as_object().unwrap();
+    assert!(!queued.is_empty(), "Expected transactions in queued");
+
+    // Check for a random address - should be empty
+    let random_addr = H160::random();
+    let empty_content: Value = provider
+        .request("txpool_contentFrom", [random_addr])
+        .await
+        .expect("Failed to call txpool_contentFrom API with random address");
+
+    assert!(
+        empty_content["pending"].as_object().unwrap().is_empty(),
+        "Expected empty pending for random address"
+    );
+    assert!(
+        empty_content["queued"].as_object().unwrap().is_empty(),
+        "Expected empty queued for random address"
+    );
+}
+
 // txpool_inspect tests
+
+#[zilliqa_macros::test]
+async fn txpool_inspect(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // First check that the txpool is empty
+    let empty_response: Value = provider
+        .request("txpool_inspect", ())
+        .await
+        .expect("Failed to call txpool_inspect API");
+
+    let empty_pending = empty_response["pending"].as_object().unwrap();
+    let empty_queued = empty_response["queued"].as_object().unwrap();
+    assert!(
+        empty_pending.is_empty(),
+        "Expected empty pending transactions"
+    );
+    assert!(
+        empty_queued.is_empty(),
+        "Expected empty queued transactions"
+    );
+
+    // Send a transaction but don't mine it yet
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+    let value = 1234;
+    let gas = 21000;
+    let tx = TransactionRequest::pay(to_addr, value).gas(gas);
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+
+    // Now check the txpool inspect to see if our transaction is there
+    let response: Value = provider
+        .request("txpool_inspect", ())
+        .await
+        .expect("Failed to call txpool_inspect API");
+
+    // Check structure and content
+    let pending = response["pending"].as_object().unwrap();
+    assert!(
+        !pending.is_empty(),
+        "Expected non-empty pending transactions"
+    );
+
+    // Convert wallet address to lowercase string for comparison
+    let wallet_addr = format!("{:?}", wallet.address()).to_lowercase();
+
+    // Check if our transaction is in the pending pool
+    // The summary should contain the to address, value, and gas information
+    let found = pending.iter().any(|(addr, txs)| {
+        if addr.to_lowercase() == wallet_addr && txs.as_object().is_some() {
+            let txs_obj = txs.as_object().unwrap();
+            if !txs_obj.is_empty() {
+                // Check if any of the transaction summaries contain our transaction details
+                for (_, summary) in txs_obj {
+                    let summary_str = summary.as_str().unwrap().to_lowercase();
+                    let to_addr_string = format!("{:?}", to_addr);
+                    let value_string = value.to_string();
+                    if summary_str.contains(&to_addr_string) && summary_str.contains(&value_string)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    });
+    assert!(found, "Couldn't find our transaction in the pending pool");
+
+    // Mine the block with our transaction
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(tx_hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Check that the txpool is empty again
+    let final_response: Value = provider
+        .request("txpool_inspect", ())
+        .await
+        .expect("Failed to call txpool_inspect API");
+
+    let final_pending = final_response["pending"].as_object().unwrap();
+    let final_queued = final_response["queued"].as_object().unwrap();
+    assert!(
+        final_pending.is_empty(),
+        "Expected empty pending transactions after mining"
+    );
+    assert!(
+        final_queued.is_empty(),
+        "Expected empty queued transactions after mining"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn txpool_inspect_with_queued(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Send transactions with nonces out of order to create queued transactions
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    // First send a transaction with nonce 2 (should be queued)
+    let tx_queued = TransactionRequest::pay(to_addr, 300).gas(21000).nonce(2);
+    let tx_hash_queued = wallet
+        .send_transaction(tx_queued, None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Then send a transaction with nonce 0 (should be pending)
+    let tx_pending = TransactionRequest::pay(to_addr, 100).gas(21000).nonce(0);
+    let tx_hash_pending = wallet
+        .send_transaction(tx_pending, None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Check txpool_inspect to verify transaction locations
+    let inspect: Value = provider
+        .request("txpool_inspect", ())
+        .await
+        .expect("Failed to call txpool_inspect API");
+
+    let wallet_addr = format!("{:?}", wallet.address()).to_lowercase();
+
+    // Verify the pending section has our transaction
+    let pending = inspect["pending"].as_object().unwrap();
+    let pending_entry = pending
+        .iter()
+        .find(|(addr, _)| addr.to_lowercase() == wallet_addr);
+    assert!(
+        pending_entry.is_some(),
+        "Wallet address not found in pending"
+    );
+
+    // Verify the queued section has our transaction
+    let queued = inspect["queued"].as_object().unwrap();
+    let queued_entry = queued
+        .iter()
+        .find(|(addr, _)| addr.to_lowercase() == wallet_addr);
+    assert!(queued_entry.is_some(), "Wallet address not found in queued");
+
+    // Send another transaction so we can mine
+    let tx_nonce_1 = TransactionRequest::pay(to_addr, 200).gas(21000).nonce(1);
+    wallet
+        .send_transaction(tx_nonce_1, None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Mine the transactions
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(tx_hash_pending)
+                    .await
+                    .unwrap()
+                    .is_some()
+                    && provider
+                        .get_transaction_receipt(tx_hash_queued)
+                        .await
+                        .unwrap()
+                        .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Check that the txpool is empty again
+    let final_inspect: Value = provider
+        .request("txpool_inspect", ())
+        .await
+        .expect("Failed to call txpool_inspect API");
+
+    let final_pending = final_inspect["pending"].as_object().unwrap();
+    let final_queued = final_inspect["queued"].as_object().unwrap();
+    assert!(
+        final_pending.is_empty(),
+        "Expected empty pending transactions after mining"
+    );
+    assert!(
+        final_queued.is_empty(),
+        "Expected empty queued transactions after mining"
+    );
+}
 
 // txpool_status tests
 
-// txpool_* tests
+#[zilliqa_macros::test]
+async fn txpool_status(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // First check that the txpool is empty
+    let empty_response: Value = provider
+        .request("txpool_status", ())
+        .await
+        .expect("Failed to call txpool_status API");
+
+    assert_eq!(
+        empty_response["pending"].as_u64().unwrap(),
+        0,
+        "Expected 0 pending transactions"
+    );
+    assert_eq!(
+        empty_response["queued"].as_u64().unwrap(),
+        0,
+        "Expected 0 queued transactions"
+    );
+
+    // Send multiple transactions but don't mine them yet
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    // Send 3 transactions with different nonces
+    let tx1 = TransactionRequest::pay(to_addr, 100).gas(21000).nonce(0);
+    let tx_hash1 = wallet.send_transaction(tx1, None).await.unwrap().tx_hash();
+
+    let tx2 = TransactionRequest::pay(to_addr, 200).gas(21000).nonce(1);
+    let tx_hash2 = wallet.send_transaction(tx2, None).await.unwrap().tx_hash();
+
+    let tx3 = TransactionRequest::pay(to_addr, 300).gas(21000).nonce(2);
+    let tx_hash3 = wallet.send_transaction(tx3, None).await.unwrap().tx_hash();
+
+    // Now check the txpool status to see if our transactions are counted
+    let response: Value = provider
+        .request("txpool_status", ())
+        .await
+        .expect("Failed to call txpool_status API");
+
+    assert_eq!(
+        response["pending"].as_u64().unwrap(),
+        3,
+        "Expected 3 pending transactions"
+    );
+    assert_eq!(
+        response["queued"].as_u64().unwrap(),
+        0,
+        "Expected 0 queued transactions"
+    );
+
+    // Mine the block with our transactions
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(tx_hash1)
+                    .await
+                    .unwrap()
+                    .is_some()
+                    && provider
+                        .get_transaction_receipt(tx_hash2)
+                        .await
+                        .unwrap()
+                        .is_some()
+                    && provider
+                        .get_transaction_receipt(tx_hash3)
+                        .await
+                        .unwrap()
+                        .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Check that the txpool is empty again
+    let final_response: Value = provider
+        .request("txpool_status", ())
+        .await
+        .expect("Failed to call txpool_status API");
+
+    assert_eq!(
+        final_response["pending"].as_u64().unwrap(),
+        0,
+        "Expected 0 pending transactions after mining"
+    );
+    assert_eq!(
+        final_response["queued"].as_u64().unwrap(),
+        0,
+        "Expected 0 queued transactions after mining"
+    );
+}
+
+#[zilliqa_macros::test]
+async fn txpool_status_with_queued(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Send transactions with nonces out of order to create queued transactions
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    // First send a transaction with nonce 2 (should be queued)
+    let tx_queued = TransactionRequest::pay(to_addr, 300).gas(21000).nonce(2);
+    let _ = wallet
+        .send_transaction(tx_queued, None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Check txpool status - should show 0 pending, 1 queued
+    let response1: Value = provider
+        .request("txpool_status", ())
+        .await
+        .expect("Failed to call txpool_status API");
+
+    assert_eq!(
+        response1["pending"].as_u64().unwrap(),
+        0,
+        "Expected 0 pending transactions"
+    );
+    assert_eq!(
+        response1["queued"].as_u64().unwrap(),
+        1,
+        "Expected 1 queued transaction"
+    );
+
+    // Send transaction with nonce 0 (should be pending)
+    let tx_pending = TransactionRequest::pay(to_addr, 100).gas(21000).nonce(0);
+    let _ = wallet
+        .send_transaction(tx_pending, None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Check txpool status - should show 1 pending, 1 queued
+    let response2: Value = provider
+        .request("txpool_status", ())
+        .await
+        .expect("Failed to call txpool_status API");
+
+    assert_eq!(
+        response2["pending"].as_u64().unwrap(),
+        1,
+        "Expected 1 pending transaction"
+    );
+    assert_eq!(
+        response2["queued"].as_u64().unwrap(),
+        1,
+        "Expected 1 queued transaction"
+    );
+}

@@ -240,8 +240,8 @@ impl Node {
             }
             // Repeated `NewView`s might get broadcast.
             ExternalMessage::NewView(m) => {
-                if let Some((block, transactions)) = self.consensus.new_view(*m)? {
-                    self.broadcast_and_execute_proposal(Proposal::from_parts(block, transactions))?;
+                if let Some(network_message) = self.consensus.new_view(*m)? {
+                    self.handle_network_message_response(network_message)?;
                 }
             }
             // `Proposals` are re-routed to `handle_request()`
@@ -267,8 +267,8 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
 
-                if let Some((block, transactions)) = self.consensus.vote(*m)? {
-                    self.broadcast_and_execute_proposal(Proposal::from_parts(block, transactions))?;
+                if let Some(network_message) = self.consensus.vote(*m)? {
+                    self.handle_network_message_response(network_message)?;
                 }
             }
             ExternalMessage::NewView(m) => {
@@ -276,8 +276,8 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
 
-                if let Some((block, transactions)) = self.consensus.new_view(*m)? {
-                    self.broadcast_and_execute_proposal(Proposal::from_parts(block, transactions))?;
+                if let Some(network_message) = self.consensus.new_view(*m)? {
+                    self.handle_network_message_response(network_message)?;
                 }
             }
             // RFC-161 sync algorithm, phase 2.
@@ -663,7 +663,7 @@ impl Node {
         Ok(traces)
     }
 
-    fn debug_trace_transaction(
+    pub fn debug_trace_transaction(
         &self,
         state: &mut State,
         txn_hash: Hash,

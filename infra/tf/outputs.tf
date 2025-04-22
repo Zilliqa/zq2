@@ -35,11 +35,9 @@ output "persistence_external_ip" {
   value       = module.persistences.external_ip
 }
 
-output "private_api_dns_names" {
-  description = "The provisioned private API DNS names"
-  value = merge(flatten([
-    for name, private_api in module.private_apis : {
-      for idx, key in keys(private_api.external_ip) : format("%s.%s", var.private_api[name].dns_names[idx], var.chain_name) => private_api.external_ip[key]
-    }
+output "private_api_external_ip" {
+  description = "The provisioned private APIs external IPs"
+  value       = merge(flatten([
+    for private_api in module.private_apis : private_api.external_ip
   ])...)
 }

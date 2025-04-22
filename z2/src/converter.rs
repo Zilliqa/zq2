@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, trace, warn};
 use zilliqa::{
     cfg::{Amount, Config, NodeConfig, scilla_ext_libs_path_default},
+    consensus::annotate_receipt_with_log_indices,
     crypto::{Hash, SecretKey},
     db::Db,
     exec::store_external_libraries,
@@ -26,9 +27,7 @@ use zilliqa::{
     scilla::{CheckOutput, ParamValue, Transition, storage_key},
     state::{Account, Code, ContractInit, State},
     time::SystemTime,
-    transaction::{
-        EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
-    },
+    transaction::{ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount},
 };
 
 use crate::{zq1, zq1::Transaction};
@@ -494,6 +493,7 @@ pub async fn convert_persistence(
         // Since receipt also contains block hash it belongs too - at the time it's being built it uses a placeholder: Hash::ZERO. Once all transactions are processed,
         // block hash can be calculated and each receipt is updated with final block hash (by replacing Hash::ZERO placeholder).
 
+        let mut log_index: u64 = 0;
         for (index, txn_hash) in txn_hashes.iter().enumerate() {
             let Some(transaction) = zq1_db.get_tx_body(block_number, *txn_hash)? else {
                 warn!(?txn_hash, %block_number, "missing transaction");
@@ -507,9 +507,14 @@ pub async fn convert_persistence(
             let chain_id = (transaction.version >> 16) as u16;
             let version = (transaction.version & 0xffff) as u16;
 
-            let Ok((transaction, receipt)) =
-                process_txn(transaction, *txn_hash, chain_id, version, index)
-            else {
+            let Ok((transaction, receipt)) = process_txn(
+                transaction,
+                *txn_hash,
+                chain_id,
+                version,
+                index,
+                &mut log_index,
+            ) else {
                 return Err(anyhow!("Can't process transaction: {:?}", *txn_hash));
             };
 
@@ -647,14 +652,20 @@ fn process_txn(
     chain_id: u16,
     version: u16,
     index: usize,
+    log_index: &mut u64,
 ) -> Result<(SignedTransaction, TransactionReceipt)> {
-    if let Ok(evm_result) =
-        try_with_evm_transaction(transaction.clone(), txn_hash, chain_id, version, index)
-    {
+    if let Ok(evm_result) = try_with_evm_transaction(
+        transaction.clone(),
+        txn_hash,
+        chain_id,
+        version,
+        index,
+        log_index,
+    ) {
         return Ok(evm_result);
     }
 
-    try_with_zil_transaction(transaction, txn_hash, chain_id, index)
+    try_with_zil_transaction(transaction, txn_hash, chain_id, index, log_index)
 }
 
 fn try_with_zil_transaction(
@@ -662,6 +673,7 @@ fn try_with_zil_transaction(
     txn_hash: B256,
     chain_id: u16,
     index: usize,
+    log_index: &mut u64,
 ) -> Result<(SignedTransaction, TransactionReceipt)> {
     let from_addr = transaction.sender_pub_key.zil_addr();
 
@@ -688,7 +700,7 @@ fn try_with_zil_transaction(
             errors.entry(key).or_insert_with(Vec::new).extend(value);
         });
 
-    let receipt = TransactionReceipt {
+    let receipt_no_log_indicies = TransactionReceipt {
         tx_hash: Hash(txn_hash.0),
         block_hash: Hash::ZERO,
         index: index as u64,
@@ -700,16 +712,7 @@ fn try_with_zil_transaction(
             .receipt
             .event_logs
             .iter()
-            .map(|log| {
-                let log = log.to_eth_log()?;
-
-                Ok(Log::Evm(EvmLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                    log_index: None,
-                }))
-            })
+            .map(|log| log.to_zq2_log())
             .collect::<Result<_>>()?,
         transitions: transaction
             .receipt
@@ -721,6 +724,8 @@ fn try_with_zil_transaction(
         errors,
         exceptions: transaction.receipt.exceptions,
     };
+
+    let receipt = annotate_receipt_with_log_indices(receipt_no_log_indicies, log_index);
 
     let transaction = SignedTransaction::Zilliqa {
         tx: TxZilliqa {
@@ -754,6 +759,7 @@ fn try_with_evm_transaction(
     chain_id: u16,
     version: u16,
     index: usize,
+    log_index: &mut u64,
 ) -> Result<(SignedTransaction, TransactionReceipt)> {
     let from_addr = transaction.sender_pub_key.eth_addr();
 
@@ -762,35 +768,27 @@ fn try_with_evm_transaction(
         .is_zero()
         .then(|| from_addr.create(transaction.nonce - 1));
 
-    let receipt = TransactionReceipt {
+    let receipt_no_log_indicies = TransactionReceipt {
         tx_hash: Hash(txn_hash.0),
         // Block hash is not know at this point (we need to have all receipts to build receipt_root_hash which is needed for block_hash)
         block_hash: Hash::ZERO,
         index: index as u64,
         success: transaction.receipt.success,
-        gas_used: EvmGas(transaction.receipt.cumulative_gas),
-        cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
+        gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
+        cumulative_gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
         contract_address,
         logs: transaction
             .receipt
             .event_logs
             .iter()
-            .map(|log| {
-                let log = log.to_eth_log()?;
-
-                Ok(Log::Evm(EvmLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                    log_index: None,
-                }))
-            })
+            .map(|log| log.to_zq2_log())
             .collect::<Result<_>>()?,
         transitions: vec![],
         accepted: None,
         errors: BTreeMap::new(),
         exceptions: vec![],
     };
+    let receipt = annotate_receipt_with_log_indices(receipt_no_log_indicies, log_index);
 
     let transaction = infer_eth_signature(txn_hash, version, chain_id + 0x8000, transaction)
         .with_context(|| format!("failed to infer signature of transaction: {txn_hash:?}"))?;

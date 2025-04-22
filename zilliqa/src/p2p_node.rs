@@ -234,9 +234,10 @@ impl P2pNode {
             self.swarm.add_external_address(external_address.clone());
         }
 
+        // if we are a bootstrap, add our external address, which allows us to switch to kademlia SERVER mode.
         for (peer, address) in &self.config.bootstrap_address.0 {
-            if self.swarm.local_peer_id() != peer {
-                self.swarm.dial(address.clone())?; // peers get added during the SwarmEvent
+            if self.swarm.local_peer_id() == peer {
+                self.swarm.add_external_address(address.clone());
             }
         }
 
@@ -248,40 +249,33 @@ impl P2pNode {
                     let event = event.expect("swarm stream should be infinite");
                     debug!(?event, "swarm event");
                     match event {
+                        // only dial after we have a listen address, to reuse port
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
-                        }
-                        // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
-                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
-                            debug!(%peer_id, ?info, "identify event");
-                            if info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME) {
-                                for addr in info.listen_addrs {
-                                    // this will trigger the `NewExternalAddrOfPeer` event below
-                                    self.swarm.add_peer_address(peer_id, addr);
+                            for (peer, address) in &self.config.bootstrap_address.0 {
+                                if self.swarm.local_peer_id() != peer {
+                                    self.swarm.dial(address.clone())?;
                                 }
                             }
                         }
-                        SwarmEvent::ExternalAddrExpired{address} => {
-                            debug!(%address, "expired");
-                            self.swarm.remove_external_address(&address);
+                        // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
+                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                            // will only be true if peer is publicly reachable i.e. SERVER mode.
+                            let is_kad = info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME);
+                            for addr in info.listen_addrs {
+                                self.swarm.add_peer_address(peer_id, addr.clone());
+                                if is_kad {
+                                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                                }
+                            }
                         }
-                        SwarmEvent::NewExternalAddrOfPeer{peer_id, address} => {
-                            debug!(%peer_id, %address, "new peer");
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, address);
-                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                        }
-                        SwarmEvent::ExternalAddrConfirmed{address} => {
-                            debug!(%address, "confirmed");
-                            self.swarm.add_external_address(address);
-                        }
+                        // Add/Remove peers to/from the shard peer list used in syncing.
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
-                            debug!(%peer_id, %topic, "subscribed");
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.add_peer(peer_id);
                             }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Unsubscribed { peer_id, topic })) => {
-                            debug!(%peer_id, %topic, "unsubscribed");
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.remove_peer(peer_id);
                             }
@@ -316,7 +310,6 @@ impl P2pNode {
                                 }
                             }
                         }
-
                         SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source, .. })) => {
                             match message {
                                 request_response::Message::Request { request, channel: _channel, request_id: _request_id, .. } => {
@@ -349,7 +342,6 @@ impl P2pNode {
                                 // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
                                 let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
                             }
-
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
