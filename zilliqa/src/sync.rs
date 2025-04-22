@@ -641,11 +641,18 @@ impl Sync {
             };
             // and the receipts
             let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
+            let transaction_receipts = receipts
+                .into_iter()
+                .map(|r| {
+                    let txn = self.db.get_transaction(&r.tx_hash).unwrap().unwrap();
+                    (txn, r)
+                })
+                .collect_vec();
             hash = block.parent_hash();
             // create the response
             let response = PassiveSyncResponse {
-                proposal: self.block_to_proposal(block),
-                receipts,
+                block,
+                transaction_receipts,
             };
             // compute the size
             size += cbor4ii::serde::to_vec(Vec::new(), &response).unwrap().len();
@@ -682,8 +689,8 @@ impl Sync {
 
         if let Some(response) = response {
             if !response.is_empty() {
-                let range = response.last().unwrap().proposal.number()
-                    ..=response.first().unwrap().proposal.number();
+                let range = response.last().unwrap().block.number()
+                    ..=response.first().unwrap().block.number();
                 tracing::info!(?range, %from,
                     "sync::PassiveResponse : received",
                 );
@@ -1358,43 +1365,42 @@ impl Sync {
         };
         let response = response
             .into_iter()
-            .sorted_by_key(|p| Reverse(p.proposal.number()))
+            .sorted_by_key(|p| Reverse(p.block.number()))
             .collect_vec();
         if !response.is_empty() {
             // Store it from high to low
-            for PassiveSyncResponse { proposal, receipts } in response {
+            for PassiveSyncResponse {
+                block,
+                transaction_receipts,
+            } in response
+            {
                 // Check for correct order
-                if number == proposal.number() && hash == proposal.hash() {
+                if number == block.number() && hash == block.hash() {
                     number = number.saturating_sub(1);
-                    hash = proposal.header.qc.block_hash;
+                    hash = block.header.qc.block_hash;
                 } else {
                     tracing::error!(
                         "sync::StoreProposals : unexpected proposal number={number} != {}; hash={hash} != {}",
-                        proposal.number(),
-                        proposal.hash(),
+                        block.number(),
+                        block.hash(),
                     );
                     return Ok(());
                 }
 
                 // All OK - Store it
                 tracing::trace!(
-                    number = %proposal.number(), hash = %proposal.hash(),
+                    number = %block.number(), hash = %block.hash(),
                     "sync::StoreProposals : applying",
                 );
-                let (block, transactions) = proposal.into_parts();
                 self.db.with_sqlite_tx(|sqlite_tx| {
-                    // Insert transactions
-                    for st in transactions {
-                        let vt = st.verify()?;
-                        self.db
-                            .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt.tx)?;
-                    }
                     // Insert block
                     self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
-                    // Insert receipts
-                    for r in receipts {
+                    // Insert transactions/receipts
+                    for (st, rt) in transaction_receipts {
                         self.db
-                            .insert_transaction_receipt_with_db_tx(sqlite_tx, r)?;
+                            .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st)?;
+                        self.db
+                            .insert_transaction_receipt_with_db_tx(sqlite_tx, rt)?;
                     }
                     Ok(())
                 })?;

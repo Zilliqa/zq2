@@ -554,8 +554,8 @@ pub struct PassiveSyncRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PassiveSyncResponse {
-    pub proposal: Proposal,
-    pub receipts: Vec<TransactionReceipt>,
+    pub block: Block,
+    pub transaction_receipts: Vec<(SignedTransaction, TransactionReceipt)>,
 }
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
