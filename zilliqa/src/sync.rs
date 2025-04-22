@@ -230,16 +230,10 @@ impl Sync {
         if self.in_flight.iter().any(|(p, _)| p.peer_id == from) {
             tracing::warn!(%from, "sync::Acknowledgement");
             match &self.state {
-                SyncState::Phase4(_) => todo!(),
-                SyncState::Phase1(_) => {
-                    self.handle_active_response(from, Some(vec![]))?;
-                }
-                SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(from, Some(vec![]))?;
-                }
-                state => {
-                    tracing::error!(%state, "sync::Acknowledgement : invalid");
-                }
+                SyncState::Phase1(_) => self.handle_active_response(from, Some(vec![]))?,
+                SyncState::Phase2(_) => self.handle_multiblock_response(from, Some(vec![]))?,
+                SyncState::Phase4(_) => self.handle_passive_response(from, Some(vec![]))?,
+                state => tracing::error!(%state, "sync::Acknowledgement : invalid"),
             }
         }
         Ok(())
@@ -266,16 +260,10 @@ impl Sync {
             }
 
             match &self.state {
-                SyncState::Phase4(_) => todo!(),
-                SyncState::Phase1(_) => {
-                    self.handle_active_response(failure.peer, None)?;
-                }
-                SyncState::Phase2(_) => {
-                    self.handle_multiblock_response(failure.peer, None)?;
-                }
-                state => {
-                    tracing::error!(%state, %from, "sync::RequestFailure : invalid");
-                }
+                SyncState::Phase1(_) => self.handle_active_response(failure.peer, None)?,
+                SyncState::Phase2(_) => self.handle_multiblock_response(failure.peer, None)?,
+                SyncState::Phase4(_) => self.handle_passive_response(failure.peer, None)?,
+                state => tracing::error!(%state, %from, "sync::RequestFailure : invalid"),
             }
         }
         Ok(())
@@ -395,7 +383,7 @@ impl Sync {
                 // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
             }
-            SyncState::Phase4(_) => todo!(),
+            SyncState::Phase4(_) => self.request_passive_sync()?,
             _ => {
                 tracing::debug!(in_pipeline = %self.in_pipeline, "sync::DoSync : syncing");
             }
@@ -448,9 +436,13 @@ impl Sync {
                 let last = range.start().saturating_sub(1);
                 let hash = self
                     .db
-                    .get_canonical_block_hash_by_number(last)?
-                    .expect("exists");
+                    .get_canonical_block_by_number(*range.start())?
+                    .expect("must exist")
+                    .header
+                    .qc
+                    .block_hash;
 
+                self.passive_sync_count = self.passive_sync_count.saturating_add(1);
                 self.state = SyncState::Phase4((last, hash));
                 self.request_passive_sync()?;
             }
@@ -739,7 +731,7 @@ impl Sync {
 
         if let Some(peer_info) = self.peers.get_next_peer() {
             let range = self.sync_base_height..=last;
-            tracing::info!(?range, "sync::PassiveSync : requesting");
+            tracing::info!(?range, from = %peer_info.peer_id, "sync::PassiveSync : requesting");
             let message = ExternalMessage::PassiveSyncRequest(PassiveSyncRequest {
                 request_at: SystemTime::now(),
                 count: range.count(),
