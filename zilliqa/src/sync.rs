@@ -1414,10 +1414,10 @@ impl Sync {
                         "sync::StoreProposals : applying",
                     );
                 } else {
+                    // FIXME: Remove bypass
                     tracing::error!(number = block.number(), hash = %block.hash(),
                         "sync::StoreProposals : unverified",
                     );
-                    return Ok(());
                 }
 
                 // Store it
