@@ -302,7 +302,11 @@ fn stop_scilla_docker(child: &mut Child) -> Result<ExitStatus> {
         .or(Err(anyhow!("Unable to stop docker container!")))
 }
 
-fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Result<()> {
+fn deduct_funds_from_zero_account(
+    state: &mut State,
+    config: &NodeConfig,
+    zq2_zero_acc_nonce: u64,
+) -> Result<()> {
     let total_requested_amount = 0_u128
         .checked_add(
             config
@@ -322,6 +326,7 @@ fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Res
         .expect("Genesis accounts + genesis deposits sum to more than max value of u128");
     state.mutate_account(Address::ZERO, |acc| {
         acc.balance = acc.balance.checked_sub(total_requested_amount).expect("Sum of funds in genesis.deposit and genesis.accounts exceeds funds in ZeroAccount from zq1!");
+        acc.nonce = zq2_zero_acc_nonce;
         Ok(())
     })?;
 
@@ -382,6 +387,8 @@ pub async fn convert_persistence(
         .with_message("convert accounts")
         .with_finish(ProgressFinish::AndLeave);
 
+    let zq2_zero_acc_nonce = state.must_get_account(Address::ZERO).nonce;
+
     for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
         let zq1_account = zq1::Account::from_proto(zq1_account)?;
 
@@ -424,7 +431,7 @@ pub async fn convert_persistence(
 
     stop_scilla_docker(&mut scilla_docker)?;
 
-    deduct_funds_from_zero_account(&mut state, node_config)?;
+    deduct_funds_from_zero_account(&mut state, node_config, zq2_zero_acc_nonce)?;
 
     let max_block = zq1_db
         .get_tx_blocks_aux("MaxTxBlockNumber")?
