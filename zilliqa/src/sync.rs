@@ -143,6 +143,7 @@ pub struct Sync {
     size_cache: HashMap<Hash, usize>,
     // passive sync
     sync_base_height: u64,
+    zq1_ceil_height: u64,
 }
 
 impl Sync {
@@ -183,6 +184,13 @@ impl Sync {
             return Err(anyhow::anyhow!("sync_base_height > highest_block"));
         }
 
+        let zq1_ceil_height = config
+            .consensus
+            .forks
+            .first()
+            .map(|f| f.at_height)
+            .unwrap_or_default();
+
         Ok(Self {
             db,
             message_sender,
@@ -212,6 +220,7 @@ impl Sync {
             prune_interval,
             is_validator: true, // assume true on restart, until next epoch
             size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
+            zq1_ceil_height,
         })
     }
 
@@ -1407,18 +1416,17 @@ impl Sync {
                     return Ok(());
                 }
 
-                // Verify block
-                if block.verify_hash().is_ok() {
-                    tracing::trace!(
-                        number = %block.number(), hash = %block.hash(),
-                        "sync::StoreProposals : applying",
-                    );
-                } else {
-                    // FIXME: Remove bypass
-                    tracing::error!(number = block.number(), hash = %block.hash(),
-                        "sync::StoreProposals : unverified",
-                    );
+                // Verify ZQ2 blocks
+                if block.verify_hash().is_err() && block.number() >= self.zq1_ceil_height {
+                    return Err(anyhow::anyhow!(
+                        "sync::StoreProposals : unverified {}",
+                        block.number()
+                    ));
                 }
+                tracing::trace!(
+                    number = %block.number(), hash = %block.hash(),
+                    "sync::StoreProposals : applying",
+                );
 
                 // Store it
                 self.db.with_sqlite_tx(|sqlite_tx| {
@@ -1430,7 +1438,7 @@ impl Sync {
                         if let Ok(vt) = st.clone().verify() {
                             self.db
                                 .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt.tx)?;
-                        } else {
+                        } else if block.number() < self.zq1_ceil_height {
                             // FIXME: Remove bypass
                             tracing::error!(number = %block.number(), index = %rt.index, hash = %rt.tx_hash, "sync::StoreProposals : unverifiable");
                             self.db
