@@ -1091,7 +1091,7 @@ impl Consensus {
             );
             // if we are already in the round in which the vote counts and have reached supermajority
             if supermajority_reached {
-                // We propose new block immediately if there's something in mempool or it's the first view
+                // We propose new block immediately if it is the first view
                 // Otherwise the block will be proposed on timeout
                 if current_view == 1 {
                     return self.propose_new_block();
@@ -1099,7 +1099,12 @@ impl Consensus {
 
                 self.early_proposal_assemble_at(None)?;
 
-                return self.ready_for_block_proposal();
+                // It is possible that we have collected votes for a forked block. Do not propose in that case.
+                if let Some(early_proposal) = &self.early_proposal {
+                    if early_proposal.0.parent_hash() == block_hash {
+                        return self.ready_for_block_proposal();
+                    }
+                }
             }
         } else {
             self.votes.insert(
