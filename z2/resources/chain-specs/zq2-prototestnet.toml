@@ -39,5 +39,5 @@ consensus.forks = [
     { at_height = 12693600, scilla_call_respects_evm_state_changes = true },
     { at_height = 12884400, only_mutated_accounts_update_state = true, scilla_block_number_returns_current_block = true },
     { at_height = 12931200, scilla_maps_are_encoded_correctly = true },
-    { at_height = 14857110, apply_state_changes_only_if_transaction_succeeds = true, apply_scilla_delta_when_evm_succeeded = true, scilla_deduct_funds_from_actual_sender = true },
+    { at_height = 14767200, transfer_gas_fee_to_zero_account = true, apply_state_changes_only_if_transaction_succeeds = true, apply_scilla_delta_when_evm_succeeded = true, scilla_deduct_funds_from_actual_sender = true },
 ]
