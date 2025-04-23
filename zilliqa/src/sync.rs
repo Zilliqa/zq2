@@ -1,6 +1,7 @@
 use std::{
     cmp::{Ordering, Reverse},
     collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
+    io::{Cursor, Read, Write},
     ops::RangeInclusive,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -654,14 +655,23 @@ impl Sync {
                 block,
                 transaction_receipts,
             };
+
+            // compress the response
+            let mut encoder = lz4::EncoderBuilder::new().build(Vec::new())?;
+            let raw = cbor4ii::serde::to_vec(Vec::new(), &response)?;
+            encoder.write_all(&raw)?;
+            let (encoded, result) = encoder.finish();
+            result?;
+
             // compute the size
-            size += cbor4ii::serde::to_vec(Vec::new(), &response).unwrap().len();
+            size += encoded.len();
             if size > 9 * 1024 * 1024 {
                 tracing::warn!(%hash, %size, "sync::PassiveRequest : too big");
                 break; // too big
             }
+
             // add to the response
-            metas.push(response);
+            metas.push(encoded);
             if metas.len() >= request.count {
                 break; // we have enough
             }
@@ -676,7 +686,7 @@ impl Sync {
     pub fn handle_passive_response(
         &mut self,
         from: PeerId,
-        response: Option<Vec<PassiveSyncResponse>>,
+        response: Option<Vec<Vec<u8>>>,
     ) -> Result<()> {
         let SyncState::Phase4(_) = self.state else {
             tracing::warn!(%from, "sync::PassiveResponse : dropped");
@@ -689,14 +699,24 @@ impl Sync {
 
         if let Some(response) = response {
             if !response.is_empty() {
-                let range = response.last().unwrap().block.number()
-                    ..=response.first().unwrap().block.number();
-                tracing::info!(?range, %from,
+                tracing::info!(length = response.len(), %from,
                     "sync::PassiveResponse : received",
                 );
-                self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
+                // self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
+
+                // decompress the blocks
+                let response = response
+                    .into_iter()
+                    .map(|v| {
+                        let mut decoder = lz4::Decoder::new(Cursor::new(v)).unwrap();
+                        let mut buf = Vec::new();
+                        decoder.read_to_end(&mut buf).unwrap();
+                        cbor4ii::serde::from_slice::<PassiveSyncResponse>(&buf).unwrap()
+                    })
+                    .collect_vec();
+
                 // store the blocks in the DB
                 self.store_proposals(response)?;
             } else {

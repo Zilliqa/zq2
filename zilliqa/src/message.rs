@@ -285,7 +285,7 @@ pub enum ExternalMessage {
     SyncBlockHeaders(Vec<SyncBlockHeader>),
     /// 0.8.0
     PassiveSyncRequest(PassiveSyncRequest),
-    PassiveSyncResponse(Vec<PassiveSyncResponse>),
+    PassiveSyncResponse(Vec<Vec<u8>>),
 }
 
 impl ExternalMessage {
