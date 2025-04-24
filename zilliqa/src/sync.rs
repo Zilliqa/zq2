@@ -465,7 +465,9 @@ impl Sync {
     pub fn prune_range(&mut self, range: RangeInclusive<u64>) -> Result<()> {
         let prune_ceil = if self.prune_interval != u64::MAX {
             // prune prune-interval
-            range.end().saturating_sub(self.prune_interval)
+            range
+                .end()
+                .saturating_sub(self.prune_interval.max(MIN_PRUNE_INTERVAL))
         } else if self.sync_base_height != u64::MAX {
             // prune below sync-base-height
             range
@@ -1258,7 +1260,6 @@ impl Sync {
 
         let mut hash = block.hash();
         while metas.len() <= batch_size {
-            // grab the parent
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
