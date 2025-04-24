@@ -144,6 +144,8 @@ impl Sync {
     const MAX_CONCURRENT_PEERS: usize = 10;
     // Mitigate DoS
     const MAX_BATCH_SIZE: usize = 1000;
+    // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
+    const RESPONSE_SIZE_THRESHOLD: usize = 9 * 1024 * 1024;
 
     pub fn new(
         config: &NodeConfig,
@@ -878,7 +880,7 @@ impl Sync {
 
         // Chain segment is sane, drop redundant blocks already in the DB.
         let mut drop = false;
-        let response = response
+        let segment = response
             .into_iter()
             .filter(|b| {
                 drop |= self
@@ -888,47 +890,40 @@ impl Sync {
                 !drop
             })
             .collect_vec();
-        let segment = response.iter().map(|sb| sb.header).collect_vec();
 
-        let turnaround = if !segment.is_empty() {
-            // Record the constructed chain metadata
-            self.segments.insert_sync_metadata(&segment);
-
-            // Record landmark(s), including peer that has this set of blocks
+        // Record non-empty segment
+        if !segment.is_empty() {
+            // Record segment landmark/marker
             self.segments.push_sync_segment(&segment_peer, meta);
+            let segment_last = segment.last().cloned().unwrap().header;
 
             // Dynamic sub-segments - https://github.com/Zilliqa/zq2/issues/2312
             let mut block_size: usize = 0;
-            for SyncBlockHeader { header, .. } in response.iter().rev().filter(|&sb| {
-                // The segment markers are computed in ascending order, so that the segment markers are always outside the segment.
-                block_size = block_size.saturating_add(sb.size_estimate);
-                tracing::trace!(total=%block_size, "sync::MetadataResponse : response size estimate");
-                // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
-                // Try to fill up >90% of RESPONSE_SIZE_MAXIMUM.
-                if block_size > 9 * 1024 * 1024 {
-                    block_size = 0;
-                    true
-                } else {
-                    false
-                }
-            }).rev() {
+            let mut sub_segments = segment
+                .into_iter()
+                .rev() // Computed in ascending order, so that landmarks always top the segment.
+                .filter(|&sb| {
+                    self.segments.insert_sync_metadata(&sb.header); // record all metadata
+                    block_size = block_size.saturating_add(sb.size_estimate);
+                    tracing::trace!(total=%block_size, "sync::MetadataResponse : response size");
+                    if block_size > Self::RESPONSE_SIZE_THRESHOLD {
+                        block_size = 0;
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .collect_vec();
+            while let Some(SyncBlockHeader { header, .. }) = sub_segments.pop() {
                 // segment markers are inserted in descending order, which is the order in the stack.
-                self.segments.push_sync_segment(&segment_peer, header);
+                self.segments.push_sync_segment(&segment_peer, &header);
             }
 
             // Record the oldest block in the segment
-            self.state = SyncState::Phase1(segment.last().cloned().unwrap());
+            self.state = SyncState::Phase1(segment_last);
+        }
 
-            // Check if the segment hits our history
-            let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
-            self.db
-                .contains_canonical_block(&block_hash)
-                .unwrap_or_default()
-        } else {
-            true
-        };
-
-        if turnaround {
+        if drop {
             // turnaround to Phase 2.
             self.state = SyncState::Phase2((Hash::ZERO, 0..=0));
             // drop all pending requests & responses
@@ -1518,11 +1513,9 @@ impl SyncSegments {
         self.segments.push((meta.hash, peer.clone()));
     }
 
-    /// Bulk inserts a bunch of metadata.
-    fn insert_sync_metadata(&mut self, metas: &Vec<BlockHeader>) {
-        for meta in metas {
-            self.headers.insert(meta.hash, *meta);
-        }
+    /// Insert a single metadata.
+    fn insert_sync_metadata(&mut self, meta: &BlockHeader) {
+        self.headers.insert(meta.hash, *meta);
     }
 
     /// Empty the metadata table.
