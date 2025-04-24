@@ -153,8 +153,10 @@ impl Sync {
     const MAX_CONCURRENT_PEERS: usize = 10;
     // Mitigate DoS
     const MAX_BATCH_SIZE: usize = 1000;
-    // Cache recent blocks
+    // Cache recent block sizes
     const MAX_CACHE_SIZE: usize = 10000;
+    // Timeout(ms) for passive-sync/prune
+    const MAX_PRUNE_TIMEOUT_MS: u128 = 1000;
 
     pub fn new(
         config: &NodeConfig,
@@ -479,7 +481,7 @@ impl Sync {
         let start_now = Instant::now();
         for number in *range.start()..=prune_ceil {
             // check if we have time to prune
-            if start_now.elapsed().as_millis() > 1000 {
+            if start_now.elapsed().as_millis() > Self::MAX_PRUNE_TIMEOUT_MS {
                 break;
             }
             // remove canonical block and transactions
@@ -642,8 +644,8 @@ impl Sync {
         let mut metas = Vec::new();
         let mut hash = request.hash;
         let mut size = 0;
-        // return as much as possible within 1s
-        while started_at.elapsed().as_millis() < 1000 {
+        // return as much as possible
+        while started_at.elapsed().as_millis() < Self::MAX_PRUNE_TIMEOUT_MS {
             // grab the block
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 tracing::warn!(%hash, "sync::PassiveRequest : not found");
