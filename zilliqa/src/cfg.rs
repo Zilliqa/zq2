@@ -558,6 +558,7 @@ pub struct Fork {
     pub transfer_gas_fee_to_zero_account: bool,
     pub apply_scilla_delta_when_evm_succeeded: bool,
     pub apply_state_changes_only_if_transaction_succeeds: bool,
+    pub scilla_deduct_funds_from_actual_sender: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -623,6 +624,8 @@ pub struct ForkDelta {
     /// If true, only apply state changes if the transaction succeeds. If false, apply state changes even if the
     /// transaction fails.
     pub apply_state_changes_only_if_transaction_succeeds: Option<bool>,
+    /// if true, funds are deducted from the sender of scilla message rather than the origin
+    pub scilla_deduct_funds_from_actual_sender: Option<bool>,
 }
 
 impl Fork {
@@ -670,6 +673,9 @@ impl Fork {
             apply_state_changes_only_if_transaction_succeeds: delta
                 .apply_state_changes_only_if_transaction_succeeds
                 .unwrap_or(self.apply_state_changes_only_if_transaction_succeeds),
+            scilla_deduct_funds_from_actual_sender: delta
+                .scilla_deduct_funds_from_actual_sender
+                .unwrap_or(self.scilla_deduct_funds_from_actual_sender),
         }
     }
 }
@@ -751,6 +757,7 @@ pub fn genesis_fork_default() -> Fork {
         transfer_gas_fee_to_zero_account: true,
         apply_scilla_delta_when_evm_succeeded: true,
         apply_state_changes_only_if_transaction_succeeds: true,
+        scilla_deduct_funds_from_actual_sender: true,
     }
 }
 
@@ -884,6 +891,7 @@ mod tests {
                 transfer_gas_fee_to_zero_account: None,
                 apply_scilla_delta_when_evm_succeeded: None,
                 apply_state_changes_only_if_transaction_succeeds: None,
+                scilla_deduct_funds_from_actual_sender: None,
             }],
             ..Default::default()
         };
@@ -920,6 +928,7 @@ mod tests {
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -936,6 +945,7 @@ mod tests {
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
             ],
             ..Default::default()
@@ -986,6 +996,7 @@ mod tests {
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1002,6 +1013,7 @@ mod tests {
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
             ],
             ..Default::default()
@@ -1043,6 +1055,7 @@ mod tests {
                 transfer_gas_fee_to_zero_account: true,
                 apply_scilla_delta_when_evm_succeeded: true,
                 apply_state_changes_only_if_transaction_succeeds: true,
+                scilla_deduct_funds_from_actual_sender: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1072,6 +1085,7 @@ mod tests {
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1088,6 +1102,7 @@ mod tests {
                     transfer_gas_fee_to_zero_account: None,
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
             ],
             ..Default::default()

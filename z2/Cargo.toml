@@ -27,11 +27,11 @@ async-trait = "0.1.88"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
-clap = {version = "4.5.32", features = ["derive"]}
+clap = {version = "4.5.37", features = ["derive"]}
 clap-verbosity-flag = "3.0.2"
-cliclack = "0.3.5"
+cliclack = "0.3.6"
 colored = "3.0.0"
-env_logger = "0.11.7"
+env_logger = "0.11.8"
 eth_trie = {version = "0.1.0", path = "../eth-trie.rs"}
 ethabi = "18.0.0"
 ethers = {version="2.0.14", features = ["ws"]}
@@ -61,10 +61,10 @@ sha2 = "0.10.8"
 sha3 = "0.10.8"
 strum = { version = "0.27", features = ["derive"] }
 strum_macros = "0.27"
-tempfile = "3.19.0"
+tempfile = "3.19.1"
 tera = "1.19.1"
 thiserror = "2.0.12"
-tokio = {version = "1.44.1", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
+tokio = {version = "1.44.2", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
 tokio-stream = "0.1.17"
 toml = { version = "0.8.20", features = ["preserve_order"] }
 tracing = "0.1.41"

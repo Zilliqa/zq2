@@ -806,6 +806,7 @@ impl ChainNode {
             json!({
                 "port": 4201,
                 "enabled_apis": [
+                    "debug",
                     "erigon",
                     "eth",
                     "net",

@@ -2101,7 +2101,14 @@ pub fn scilla_call(
             };
             gas = g;
 
-            if let Some(result) = current_state.deduct_from_account(from_addr, amount, EvmGas(0))? {
+            let deduct_funds_from = match fork.scilla_deduct_funds_from_actual_sender {
+                true => sender,
+                false => from_addr,
+            };
+
+            if let Some(result) =
+                current_state.deduct_from_account(deduct_funds_from, amount, EvmGas(0))?
+            {
                 return Ok((result, current_state));
             }
 
