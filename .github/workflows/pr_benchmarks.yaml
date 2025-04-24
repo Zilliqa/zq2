@@ -15,8 +15,6 @@ jobs:
       pull-requests: write
     runs-on: self-hosted
     steps:
-      - name: Install dependencies
-        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -25,6 +23,8 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Install default toolchain
         run: rustup toolchain install
+      - name: Install dependencies
+        run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
       - name: Track PR Benchmarks
         run: |
           bencher run \
