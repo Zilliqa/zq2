@@ -163,6 +163,7 @@ impl Chain {
         match self {
             Chain::Zq2ProtoTestnet | Chain::Zq2ProtoMainnet => Some(json!({
                 "at_height": 0,
+                "executable_blocks": false,
                 "call_mode_1_sets_caller_to_parent_caller": false,
                 "failed_scilla_call_from_gas_exempt_caller_causes_revert": false,
                 "scilla_messages_can_call_evm_contracts": false,
@@ -185,6 +186,7 @@ impl Chain {
     pub fn get_forks(&self) -> Option<Vec<Value>> {
         match self {
             Chain::Zq2ProtoTestnet => Some(vec![
+                json!({ "at_height": 7507088, "executable_blocks": true }),
                 json!({
                     "at_height": 7855000,
                     "scilla_call_gas_exempt_addrs": [
@@ -218,6 +220,7 @@ impl Chain {
                 json!({ "at_height": 14767200, "transfer_gas_fee_to_zero_account": true, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded": true, "scilla_deduct_funds_from_actual_sender": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
+                json!({ "at_height": 4277188, "executable_blocks": true }),
                 json!({
                     "at_height": 4683779,
                     "scilla_call_gas_exempt_addrs": [
