@@ -2688,8 +2688,13 @@ impl Consensus {
             number: block.header.number + 1,
             ..Default::default()
         };
-        let public_key = state_at.leader(view, executed_block).unwrap();
-        let peer_id = state_at.get_peer_id(public_key).unwrap().unwrap();
+        let Ok(public_key) = state_at.leader(view, executed_block) else {
+            return None;
+        };
+
+        let Ok(Some(peer_id)) = state_at.get_peer_id(public_key) else {
+            return None;
+        };
 
         Some(Validator {
             public_key,
