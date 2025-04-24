@@ -1416,7 +1416,7 @@ impl Sync {
                     return Ok(());
                 }
 
-                // Verify ZQ2 blocks
+                // Verify ZQ2 blocks only - ZQ1 blocks have faux block hashes, to maintain history.
                 if block.verify_hash().is_err() && block.number() >= self.zq1_ceil_height {
                     return Err(anyhow::anyhow!(
                         "sync::StoreProposals : unverified {}",
@@ -1439,11 +1439,11 @@ impl Sync {
                             self.db
                                 .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt.tx)?;
                         } else if block.number() < self.zq1_ceil_height {
-                            // FIXME: Remove bypass
+                            // FIXME: ZQ1 bypass
                             tracing::error!(number = %block.number(), index = %rt.index, hash = %rt.tx_hash, "sync::StoreProposals : unverifiable");
                             self.db
                                 .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st)?;
-                        }
+                        } // receipts will fail, on unverified ZQ2 blocks
                         self.db
                             .insert_transaction_receipt_with_db_tx(sqlite_tx, rt)?;
                     }
