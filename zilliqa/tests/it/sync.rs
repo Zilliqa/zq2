@@ -26,7 +26,7 @@ async fn prune_interval(mut network: Network) {
 }
 
 #[zilliqa_macros::test(do_checkpoints)]
-async fn sync_base_height(mut network: Network) {
+async fn base_height(mut network: Network) {
     // Populate network with transactions
     let wallet = network.genesis_wallet().await;
     // Run until block 9 so that we can insert a tx in block 10 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
@@ -76,7 +76,7 @@ async fn sync_base_height(mut network: Network) {
             file: checkpoint_path,
             hash: Hash(checkpoint_hash.0),
         }),
-        sync_base_height: Some(3),
+        base_height: Some(3),
         ..Default::default()
     });
 

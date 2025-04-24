@@ -126,7 +126,7 @@ pub struct SyncConfig {
     /// Lowest block to sync from, during passive-sync.
     /// Cannot be set if prune_interval is set.
     #[serde(default = "u64_max")]
-    pub sync_base_height: u64,
+    pub base_height: u64,
 }
 
 impl Default for SyncConfig {
@@ -135,7 +135,7 @@ impl Default for SyncConfig {
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
             prune_interval: u64_max(),
-            sync_base_height: u64_max(),
+            base_height: u64_max(),
         }
     }
 }
@@ -202,7 +202,7 @@ impl Default for NodeConfig {
             sync: SyncConfig {
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
-                sync_base_height: u64_max(),
+                base_height: u64_max(),
                 prune_interval: u64_max(),
             },
             state_rpc_limit: state_rpc_limit_default(),
@@ -229,9 +229,9 @@ impl NodeConfig {
                 }
             }
         }
-        if self.sync.sync_base_height != u64_max() && self.sync.prune_interval != u64_max() {
+        if self.sync.base_height != u64_max() && self.sync.prune_interval != u64_max() {
             return Err(anyhow!(
-                "sync_base_height and prune_interval cannot be set at the same time"
+                "base_height and prune_interval cannot be set at the same time"
             ));
         }
 

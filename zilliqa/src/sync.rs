@@ -176,7 +176,7 @@ impl Sync {
             .sync
             .max_blocks_in_flight
             .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
-        let sync_base_height = config.sync.sync_base_height;
+        let sync_base_height = config.sync.base_height;
         let prune_interval = config.sync.prune_interval;
         // Start from reset, or continue sync
         let latest_block_number = latest_block
