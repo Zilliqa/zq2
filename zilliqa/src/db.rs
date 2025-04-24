@@ -190,10 +190,18 @@ pub struct Db {
     db: Arc<Mutex<Connection>>,
     state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
+    /// The block height at which ZQ2 blocks begin.
+    /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
+    executable_blocks_height: Option<u64>,
 }
 
 impl Db {
-    pub fn new<P>(data_dir: Option<P>, shard_id: u64, state_cache_size: usize) -> Result<Self>
+    pub fn new<P>(
+        data_dir: Option<P>,
+        shard_id: u64,
+        state_cache_size: usize,
+        executable_blocks_height: Option<u64>,
+    ) -> Result<Self>
     where
         P: AsRef<Path>,
     {
@@ -291,6 +299,7 @@ impl Db {
             db: Arc::new(Mutex::new(connection)),
             state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
             path,
+            executable_blocks_height,
         })
     }
 
@@ -1057,6 +1066,12 @@ impl Db {
         let Some(mut block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
+        if self.executable_blocks_height.is_some()
+            && block.header.number < self.executable_blocks_height.unwrap()
+        {
+            debug!("fetched ZQ1 block so setting state root hash to zeros");
+            block.header.state_root_hash = Hash::ZERO;
+        }
         let transaction_hashes = self
             .db
             .lock()
@@ -1408,7 +1423,7 @@ mod tests {
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024).unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None).unwrap();
 
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);
