@@ -1262,7 +1262,6 @@ impl Sync {
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
-            hash = block.parent_hash();
 
             let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
                 // pseudo-LRU approximation
@@ -1282,6 +1281,7 @@ impl Sync {
                 header: block.header,
                 size_estimate: encoded_size,
             });
+            hash = block.parent_hash();
         }
 
         let message = ExternalMessage::SyncBlockHeaders(metas);
