@@ -1049,11 +1049,11 @@ impl Sync {
         response: Option<Vec<SyncBlockHeader>>,
     ) -> Result<()> {
         if !matches!(self.state, SyncState::Phase1(_)) {
-            tracing::warn!(%from, "sync::MetadataResponse : dropped");
+            tracing::warn!(%from, "sync::ActiveResponse : dropped");
             return Ok(());
         };
         if self.in_flight.is_empty() {
-            tracing::warn!(%from, "sync::MetadataResponse : spurious");
+            tracing::warn!(%from, "sync::ActiveResponse : spurious");
             return Ok(());
         }
 
@@ -1068,7 +1068,7 @@ impl Sync {
                 if let Some(response) = response {
                     // Only process a full response
                     if response.is_empty() {
-                        tracing::warn!("sync::MetadataResponse : empty from {peer_id}");
+                        tracing::warn!("sync::ActiveResponse : empty from {peer_id}");
                         self.peers
                             .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
                     } else {
@@ -1083,7 +1083,7 @@ impl Sync {
                             || *range.start() <= self.started_at
                         {
                             tracing::info!(?range, from = %peer_id,
-                                "sync::MetadataResponse : received",
+                                "sync::ActiveResponse : received",
                             );
                             let peer = peer.clone();
 
@@ -1094,14 +1094,14 @@ impl Sync {
                             continue;
                         } else {
                             // retry partial
-                            tracing::warn!("sync::MetadataResponse : partial from {peer_id}");
+                            tracing::warn!("sync::ActiveResponse : partial from {peer_id}");
                             self.peers
                                 .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
                         }
                     }
                 } else {
                     // Network failure, downgrade peer and retry.
-                    tracing::warn!("sync::MetadataResponse : error from {peer_id}");
+                    tracing::warn!("sync::ActiveResponse : error from {peer_id}");
                     self.peers
                         .done_with_peer(self.in_flight.pop_front(), DownGrade::Error);
                 }
@@ -1264,15 +1264,13 @@ impl Sync {
             };
             hash = block.parent_hash();
 
-            // Size cache is needed.
-            // Otherwise, a large block can cause a node to get stuck syncing since no node can respond to the request in time.
             let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
                 // pseudo-LRU approximation
                 if self.size_cache.len() > Self::MAX_CACHE_SIZE {
                     let mut rng = rand::thread_rng();
                     self.size_cache.retain(|_, _| rng.gen_bool(0.9));
                 }
-
+                // A large block can cause a node to get stuck syncing since no node can respond to the request in time.
                 let proposal = self.block_to_proposal(block.clone());
                 let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal).unwrap().len();
                 self.size_cache.insert(hash, encoded_size);
