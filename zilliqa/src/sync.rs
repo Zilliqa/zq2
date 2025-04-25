@@ -1,7 +1,6 @@
 use std::{
     cmp::{Ordering, Reverse},
     collections::{BTreeMap, BinaryHeap, HashMap, VecDeque},
-    io::{Cursor, Read, Write},
     ops::RangeInclusive,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -672,24 +671,15 @@ impl Sync {
                 block,
                 transaction_receipts,
             };
-            // compress the response
-            let raw = cbor4ii::serde::to_vec(Vec::new(), &response)?;
-            let raw_size = raw.len();
-            let mut encoder = lz4::EncoderBuilder::new().build(Vec::new())?;
-            encoder.write_all(&raw)?;
-            let (encoded, result) = encoder.finish();
-            result.expect("sync::PassiveRequest : lz4");
-            // compute the size
-            let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &encoded)?.len();
+            let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &response)?.len();
             size += encoded_size;
             if size > Self::RESPONSE_SIZE_THRESHOLD {
-                tracing::warn!(%number, %size, "sync::PassiveRequest : exceeded");
+                tracing::warn!(%number, size=%encoded_size, total=%size, "sync::PassiveRequest : exceeded");
                 break; // too big
             }
 
-            tracing::trace!(%number, %raw_size, %encoded_size, "sync::PassiveRequest : added");
             // add to the response
-            metas.push(encoded);
+            metas.push(response);
             if metas.len() >= request.count {
                 break; // we have enough
             }
@@ -704,7 +694,7 @@ impl Sync {
     pub fn handle_passive_response(
         &mut self,
         from: PeerId,
-        response: Option<Vec<Vec<u8>>>,
+        response: Option<Vec<PassiveSyncResponse>>,
     ) -> Result<()> {
         let SyncState::Phase4(_) = self.state else {
             tracing::warn!(%from, "sync::PassiveResponse : dropped");
@@ -723,17 +713,6 @@ impl Sync {
                 // self.blocks_downloaded = self.blocks_downloaded.saturating_add(response.len());
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
-
-                // decompress the blocks
-                let response = response
-                    .into_iter()
-                    .map(|v| {
-                        let mut decoder = lz4::Decoder::new(Cursor::new(v)).unwrap();
-                        let mut buf = Vec::new();
-                        decoder.read_to_end(&mut buf).unwrap();
-                        cbor4ii::serde::from_slice::<PassiveSyncResponse>(&buf).unwrap()
-                    })
-                    .collect_vec();
 
                 // store the blocks in the DB
                 self.store_proposals(response)?;
