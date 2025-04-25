@@ -90,7 +90,7 @@ contract Deposit is UUPSUpgradeable {
         uint256 atFutureBlock
     );
 
-    uint64 public constant VERSION = 5;
+    uint64 public constant VERSION = 6;
 
     /// @custom:storage-location erc7201:zilliqa.storage.DepositStorage
     struct DepositStorage {
