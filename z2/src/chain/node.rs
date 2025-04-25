@@ -17,7 +17,7 @@ use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::instance::ChainInstance;
-use crate::{address::EthereumAddress, chain::Chain, secret::Secret};
+use crate::{address::EthereumAddress, chain::Chain};
 
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
@@ -241,6 +241,42 @@ impl Machine {
             .output()?)
     }
 
+    pub fn get_private_key(&self) -> Result<String> {
+        let cmd = format!(
+            "gcloud secrets versions access latest --project=\"{}\" --secret=\"{}-pk\"",
+            self.project_id, self.name
+        );
+
+        let output = self.run(&cmd, false)?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Error retrieving {} private key: {}",
+                self.name,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+    }
+
+    pub fn get_genesis_address(&self, chain_name: &str) -> Result<String> {
+        let cmd = format!(
+            "gcloud secrets versions access latest --project=\"{}\" --secret=\"{}-genesis-address\"",
+            self.project_id, chain_name
+        );
+
+        let output = self.run(&cmd, false)?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Error retrieving {} genesis address: {}",
+                self.name,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+    }
+
     pub async fn get_local_block_number(&self) -> Result<u64> {
         let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
         let output = self.run(inner_command, true)?;
@@ -428,7 +464,7 @@ impl ChainNode {
         let message = format!("Installing {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());
 
-        self.tag_machine().await?;
+        self.tag_machine()?;
         self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
@@ -440,7 +476,7 @@ impl ChainNode {
         let message = format!("Upgrading {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());
 
-        self.tag_machine().await?;
+        self.tag_machine()?;
         self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
@@ -536,7 +572,7 @@ impl ChainNode {
         }
     }
 
-    pub async fn get_private_key(&self) -> Result<String> {
+    pub fn get_private_key(&self) -> Result<String> {
         if self.role == NodeRole::Apps {
             return Err(anyhow!(
                 "Node {} has role 'apps' and does not own a private key",
@@ -544,42 +580,19 @@ impl ChainNode {
             ));
         }
 
-        let private_keys = retrieve_secret_by_node_name(
-            &self.chain.name(),
-            &self.machine.project_id,
-            &self.machine.name,
-        )?;
-        let private_key = if let Some(private_key) = private_keys.first() {
-            private_key
-        } else {
-            return Err(anyhow!(
-                "No private key for the instance {}",
-                &self.machine.name
-            ));
-        };
-
-        Ok(private_key.value()?)
+        self.machine.get_private_key()
     }
 
-    async fn tag_machine(&self) -> Result<()> {
+    pub fn get_genesis_address(&self) -> Result<String> {
+        self.machine.get_genesis_address(&self.chain.name())
+    }
+
+    fn tag_machine(&self) -> Result<()> {
         if self.role == NodeRole::Apps {
             return Ok(());
         }
 
-        let private_keys = retrieve_secret_by_node_name(
-            &self.chain.name(),
-            &self.machine.project_id,
-            &self.machine.name,
-        )?;
-        let private_key = if let Some(private_key) = private_keys.first() {
-            private_key.value()?
-        } else {
-            return Err(anyhow!(
-                "No private key for the instance {}",
-                &self.machine.name
-            ));
-        };
-
+        let private_key = self.get_private_key()?;
         let ethereum_address = EthereumAddress::from_private_key(&private_key)?;
 
         let mut labels = BTreeMap::<String, String>::new();
@@ -776,7 +789,7 @@ impl ChainNode {
 
         let mut bootstrap_addresses = Vec::new();
         for (idx, n) in bootstrap_nodes.into_iter().enumerate() {
-            let private_key = n.get_private_key().await?;
+            let private_key = n.get_private_key()?;
             let eth_address = EthereumAddress::from_private_key(&private_key)?;
             let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/tcp/3333");
             bootstrap_addresses.push((endpoint, eth_address));
@@ -789,14 +802,12 @@ impl ChainNode {
         } else {
             let validator_nodes = self.chain.nodes_by_role(NodeRole::Validator).await?;
             for n in validator_nodes.into_iter() {
-                let private_key = n.get_private_key().await?;
+                let private_key = n.get_private_key()?;
                 let eth_address = EthereumAddress::from_private_key(&private_key)?;
                 validator_addresses.push(eth_address);
             }
         }
 
-        let genesis_account =
-            EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
         let contract_upgrades = self.chain()?.get_contract_upgrades_block_heights();
@@ -862,6 +873,9 @@ impl ChainNode {
             ))?
         };
 
+        let genesis_account_address = self.chain.genesis_address().await?;
+        let validator_control_address = &genesis_account_address;
+
         let genesis_deposits_amount = &self.chain()?.get_genesis_deposits_amount()?;
         let genesis_deposits = serde_json::to_value(
             validator_addresses
@@ -872,7 +886,7 @@ impl ChainNode {
                         v.peer_id,
                         &genesis_deposits_amount,
                         "0x0000000000000000000000000000000000000000",
-                        &genesis_account.address,
+                        &validator_control_address,
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -886,7 +900,7 @@ impl ChainNode {
             "genesis_deposits",
             &serde_json::to_string_pretty(&genesis_deposits)?,
         );
-        ctx.insert("genesis_address", &genesis_account.address);
+        ctx.insert("genesis_address", &genesis_account_address);
         ctx.insert("genesis_amount", &self.chain()?.get_genesis_amount()?);
         ctx.insert(
             "contract_upgrades",
@@ -1404,34 +1418,4 @@ impl ChainNode {
 
         Ok(())
     }
-}
-
-pub fn retrieve_secret_by_role(
-    chain_name: &str,
-    project_id: &str,
-    role_name: &str,
-) -> Result<Vec<Secret>> {
-    Secret::get_secrets(
-        project_id,
-        format!(
-            "labels.zq2-network={} AND labels.role={}",
-            chain_name, role_name
-        )
-        .as_str(),
-    )
-}
-
-fn retrieve_secret_by_node_name(
-    chain_name: &str,
-    project_id: &str,
-    node_name: &str,
-) -> Result<Vec<Secret>> {
-    Secret::get_secrets(
-        project_id,
-        format!(
-            "labels.zq2-network={} AND labels.node-name={} AND labels.is-private-key=true",
-            chain_name, node_name
-        )
-        .as_str(),
-    )
 }

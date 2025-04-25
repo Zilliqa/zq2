@@ -14,7 +14,8 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub fn add_version(&self, value: &str) -> Result<()> {
+    pub fn add_version(&self, value: Option<String>) -> Result<()> {
+        let value = value.unwrap_or(Self::generate_random_secret());
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
             self.name
@@ -83,6 +84,36 @@ impl Secret {
         })
     }
 
+    fn generate_random_secret() -> String {
+        let mut data = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut data);
+        hex::encode(data)
+    }
+
+    pub fn delete(&self) -> Result<()> {
+        let project_id = &self.project_id.clone().context(format!(
+            "Error retrieving the project ID of the secret {}",
+            self.name
+        ))?;
+
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "secrets",
+                "delete",
+                &self.name,
+                "--quiet",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!("listing secrets failed"));
+        }
+
+        Ok(())
+    }
+
     pub fn value(&self) -> Result<String> {
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
@@ -144,33 +175,18 @@ impl Secret {
         Ok(secrets)
     }
 
-    pub fn generate_random_secret() -> String {
-        let mut data = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut data);
-        hex::encode(data)
-    }
-
-    pub fn delete(&self) -> Result<()> {
-        let project_id = &self.project_id.clone().context(format!(
-            "Error retrieving the project ID of the secret {}",
-            self.name
-        ))?;
-
-        let output = Command::new("gcloud")
-            .args([
-                "--project",
-                project_id,
-                "secrets",
-                "delete",
-                &self.name,
-                "--quiet",
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            return Err(anyhow!("listing secrets failed"));
-        }
-
-        Ok(())
+    pub fn get_secrets_by_role(
+        chain_name: &str,
+        project_id: &str,
+        role_name: &str,
+    ) -> Result<Vec<Secret>> {
+        Self::get_secrets(
+            project_id,
+            format!(
+                "labels.zq2-network={} AND labels.role={}",
+                chain_name, role_name
+            )
+            .as_str(),
+        )
     }
 }
