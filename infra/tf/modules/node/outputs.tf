@@ -50,6 +50,11 @@ output "zones" {
 }
 
 output "service_account" {
-  description = "The GCP service account associated to the instances"
-  value       = google_service_account.this
+  description = "The GCP service accounts associated to the instances"
+  value = {
+    for service_account in google_service_account.this : service_account.name => {
+      account_id = service_account.account_id,
+      email = service_account.email,
+    }
+  }
 }
