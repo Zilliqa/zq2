@@ -30,8 +30,9 @@ use zilliqa::{
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, block_time_default, consensus_timeout_default,
         eth_chain_id_default, failed_request_sleep_duration_default, local_address_default,
-        max_blocks_in_flight_default, scilla_address_default, scilla_ext_libs_path_default,
-        scilla_stdlib_dir_default, state_rpc_limit_default, total_native_token_supply_default,
+        max_blocks_in_flight_default, max_txn_execution_time_default, scilla_address_default,
+        scilla_ext_libs_path_default, scilla_stdlib_dir_default, state_rpc_limit_default,
+        total_native_token_supply_default,
     },
     transaction::EvmGas,
 };
@@ -546,6 +547,7 @@ impl Setup {
                     forks: vec![],
                     genesis_fork: genesis_fork_default(),
                     new_view_broadcast_interval: new_view_broadcast_interval_default(),
+                    max_txn_execution_time: max_txn_execution_time_default(),
                 },
                 block_request_limit: block_request_limit_default(),
                 sync: SyncConfig {

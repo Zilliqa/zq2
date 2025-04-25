@@ -91,3 +91,5 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
+# Txn parameters
+consensus.max_txn_execution_time = { secs = 1, nanos = 0 }

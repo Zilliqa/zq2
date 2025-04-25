@@ -38,7 +38,7 @@ use tracing::trace;
 use crate::{
     cfg::{Fork, ScillaExtLibsPathInScilla},
     crypto::Hash,
-    exec::{PendingState, StorageValue},
+    exec::{PendingState, StorageValue, TxnExecutionTime},
     scilla_proto::{self, ProtoScillaQuery, ProtoScillaVal, ValType},
     serde_util::{bool_as_str, num_as_str},
     state::{Code, ContractInit},
@@ -358,6 +358,7 @@ impl Scilla {
         ext_libs_dir: &ScillaExtLibsPathInScilla,
         fork: &Fork,
         current_block: u64,
+        txn_execution_time: TxnExecutionTime,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .ipc_address(self.state_server_addr())
@@ -376,6 +377,7 @@ impl Scilla {
             current_block,
             fork.scilla_block_number_returns_current_block,
             fork.scilla_maps_are_encoded_correctly,
+            txn_execution_time,
             || {
                 self.request_tx.send(request)?;
                 Ok(self.response_rx.lock().unwrap().recv()?)
@@ -425,6 +427,7 @@ impl Scilla {
         ext_libs_dir: &ScillaExtLibsPathInScilla,
         fork: &Fork,
         current_block: u64,
+        txn_exec_time: TxnExecutionTime,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .init(init.to_string())
@@ -444,6 +447,7 @@ impl Scilla {
             current_block,
             fork.scilla_block_number_returns_current_block,
             fork.scilla_maps_are_encoded_correctly,
+            txn_exec_time,
             || {
                 self.request_tx.send(request)?;
                 Ok(self.response_rx.lock().unwrap().recv()?)
@@ -756,6 +760,7 @@ impl StateServer {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn active_call<R>(
         &mut self,
         sender: Address, // TODO: rename
@@ -763,6 +768,7 @@ impl StateServer {
         current_block: u64,
         scilla_block_number_returns_current_block: bool,
         scilla_maps_are_encoded_correctly: bool,
+        txn_execution_time: TxnExecutionTime,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<(R, PendingState)> {
         {
@@ -773,6 +779,7 @@ impl StateServer {
                 current_block,
                 scilla_block_number_returns_current_block,
                 scilla_maps_are_encoded_correctly,
+                txn_execution_time,
             });
         }
 
@@ -819,6 +826,7 @@ struct ActiveCall {
     current_block: u64,
     scilla_block_number_returns_current_block: bool,
     scilla_maps_are_encoded_correctly: bool,
+    txn_execution_time: TxnExecutionTime,
 }
 
 impl ActiveCall {
@@ -901,6 +909,10 @@ impl ActiveCall {
         indices: Vec<Vec<u8>>,
     ) -> Result<Option<ProtoScillaVal>> {
         trace!(sender = %self.sender, name, indices_len = indices.len(), "fetch state value");
+
+        if self.txn_execution_time.exceeds_limit() {
+            return Err(anyhow!("txn execution time exceeded"));
+        }
         let result = self
             .fetch_value_inner(self.sender, name, indices)?
             .map(|(v, _)| v);
@@ -915,6 +927,11 @@ impl ActiveCall {
         indices: Vec<Vec<u8>>,
     ) -> Result<Option<(ProtoScillaVal, String)>> {
         trace!(sender = %self.sender, %addr, name, indices_len = indices.len(), "fetch external state value");
+
+        if self.txn_execution_time.exceeds_limit() {
+            return Err(anyhow!("txn execution time exceeded"));
+        }
+
         fn scilla_val(b: Vec<u8>) -> ProtoScillaVal {
             ProtoScillaVal {
                 val_type: Some(ValType::Bval(b)),
@@ -966,6 +983,11 @@ impl ActiveCall {
         value: ProtoScillaVal,
     ) -> Result<()> {
         trace!(sender = %self.sender, name, indices_len = indices.len(), ignore_value, "update state value");
+
+        if self.txn_execution_time.exceeds_limit() {
+            return Err(anyhow!("txn execution time exceeded"));
+        }
+
         let (_, depth) = self.state.load_var_info(self.sender, &name)?;
         let depth = depth as usize;
 
@@ -1029,6 +1051,11 @@ impl ActiveCall {
 
     fn fetch_blockchain_info(&self, name: String, args: String) -> Result<(bool, String)> {
         trace!(sender = %self.sender, name, args, "fetch blockchain value");
+
+        if self.txn_execution_time.exceeds_limit() {
+            return Err(anyhow!("txn execution time exceeded"));
+        }
+
         let (exists, value) = match name.as_str() {
             "CHAINID" => Ok((true, self.state.zil_chain_id().to_string())),
             "BLOCKNUMBER" => {

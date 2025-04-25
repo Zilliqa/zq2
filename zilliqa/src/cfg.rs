@@ -461,6 +461,9 @@ pub struct ConsensusConfig {
     /// Defaut of 0 means never broadcast
     #[serde(default = "new_view_broadcast_interval_default")]
     pub new_view_broadcast_interval: Duration,
+    /// Maximum time transaction can take to execute otherwise it's marked as failed
+    #[serde(default = "max_txn_execution_time_default")]
+    pub max_txn_execution_time: Duration,
 }
 
 impl ConsensusConfig {
@@ -513,6 +516,7 @@ impl Default for ConsensusConfig {
             forks: vec![],
             genesis_fork: genesis_fork_default(),
             new_view_broadcast_interval: new_view_broadcast_interval_default(),
+            max_txn_execution_time: max_txn_execution_time_default(),
         }
     }
 }
@@ -720,6 +724,10 @@ pub fn epochs_per_checkpoint_default() -> u64 {
 
 fn default_true() -> bool {
     true
+}
+
+pub fn max_txn_execution_time_default() -> Duration {
+    Duration::from_millis(1000)
 }
 
 pub fn total_native_token_supply_default() -> Amount {

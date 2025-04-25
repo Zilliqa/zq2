@@ -8,6 +8,7 @@ use std::{
     num::NonZeroU128,
     path::Path,
     sync::{Arc, MutexGuard},
+    time::Duration,
 };
 
 use alloy::primitives::{Address, Bytes, U256, address, hex};
@@ -429,6 +430,8 @@ pub struct ExternalContext<'a, I> {
     /// The caller of each call in the call-stack. This is needed because the `scilla_call` precompile needs to peek
     /// into the call-stack. This will always be non-empty and the first entry will be the transaction signer.
     pub callers: Vec<Address>,
+    /// Keeps the time when transaction started executing
+    pub txn_execution_time: TxnExecutionTime,
 }
 
 impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
@@ -444,6 +447,25 @@ pub enum BaseFeeCheck {
     Validate,
     /// Transaction gas price will not be validated.
     Ignore,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TxnExecutionTime {
+    start_time: SystemTime,
+    max_duration: Duration,
+}
+
+impl TxnExecutionTime {
+    pub fn new(max_duration: Duration) -> TxnExecutionTime {
+        Self {
+            start_time: SystemTime::now(),
+            max_duration,
+        }
+    }
+
+    pub fn exceeds_limit(&self) -> bool {
+        self.start_time.elapsed().unwrap_or(Duration::MAX) > self.max_duration
+    }
 }
 
 impl State {
@@ -518,6 +540,7 @@ impl State {
             fork: self.forks.get(current_block.number),
             enforce_transaction_failure: false,
             callers: vec![from_addr],
+            txn_execution_time: TxnExecutionTime::new(self.max_txn_execution_time),
         };
         let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
@@ -644,6 +667,8 @@ impl State {
             return Ok((result, state.finalize()));
         }
 
+        let txn_exec_time = TxnExecutionTime::new(self.max_txn_execution_time);
+
         let (result, mut new_state) = if txn.to_addr.is_zero() {
             scilla_create(
                 state,
@@ -654,6 +679,7 @@ impl State {
                 inspector,
                 &self.scilla_ext_libs_path,
                 self.forks.get(current_block.number),
+                txn_exec_time,
             )
         } else {
             scilla_call(
@@ -669,6 +695,7 @@ impl State {
                 &self.scilla_ext_libs_path,
                 self.forks.get(current_block.number),
                 current_block.number,
+                txn_exec_time,
             )
         }?;
 
@@ -1681,6 +1708,7 @@ fn scilla_create(
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
     fork: &Fork,
+    txn_exec_time: TxnExecutionTime,
 ) -> Result<(ScillaResult, PendingState)> {
     if txn.data.is_empty() {
         return Err(anyhow!("contract creation without init data"));
@@ -1830,6 +1858,7 @@ fn scilla_create(
         &ext_libs_dir_in_scilla,
         fork,
         current_block.number,
+        txn_exec_time,
     )?;
     let create_output = match create_output {
         Ok(o) => o,
@@ -1889,6 +1918,7 @@ pub fn scilla_call(
     scilla_ext_libs_path: &ScillaExtLibsPath,
     fork: &Fork,
     current_block: u64,
+    txn_exec_time: TxnExecutionTime,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = gas_limit;
 
@@ -1911,6 +1941,24 @@ pub fn scilla_call(
 
     while let Some((depth, sender, to_addr, amount, message)) = call_stack.pop() {
         let mut current_state = state.take().expect("missing state");
+
+        if txn_exec_time.exceeds_limit() {
+            return Ok((
+                ScillaResult {
+                    success: false,
+                    contract_address: None,
+                    logs: vec![],
+                    gas_used: gas_limit.into(),
+                    transitions: vec![],
+                    accepted: Some(false),
+                    errors: [(0, vec![ScillaError::ExecuteCmdTimeout])]
+                        .into_iter()
+                        .collect(),
+                    exceptions: vec![],
+                },
+                current_state,
+            ));
+        }
 
         let contract = current_state.load_account(to_addr)?;
         let code_and_data = match &contract.account.code {
@@ -1996,6 +2044,7 @@ pub fn scilla_call(
                 &ext_libs_dir_in_scilla,
                 fork,
                 current_block,
+                txn_exec_time,
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 
