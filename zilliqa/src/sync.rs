@@ -655,6 +655,7 @@ impl Sync {
                 tracing::warn!(%hash, "sync::PassiveRequest : not found");
                 break; // that's all we have!
             };
+            let number = block.number();
             // and the receipts
             let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
             let transaction_receipts = receipts
@@ -665,26 +666,28 @@ impl Sync {
                 })
                 .collect_vec();
             hash = block.parent_hash();
+
             // create the response
             let response = PassiveSyncResponse {
                 block,
                 transaction_receipts,
             };
-
             // compress the response
-            let mut encoder = lz4::EncoderBuilder::new().build(Vec::new())?;
             let raw = cbor4ii::serde::to_vec(Vec::new(), &response)?;
+            let raw_size = raw.len();
+            let mut encoder = lz4::EncoderBuilder::new().build(Vec::new())?;
             encoder.write_all(&raw)?;
             let (encoded, result) = encoder.finish();
-            result?;
-
+            result.expect("sync::PassiveRequest : lz4");
             // compute the size
-            size += encoded.len();
-            if size > 9 * 1024 * 1024 {
-                tracing::warn!(%hash, %size, "sync::PassiveRequest : too big");
+            let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &encoded)?.len();
+            size += encoded_size;
+            if size > Self::RESPONSE_SIZE_THRESHOLD {
+                tracing::warn!(%number, %size, "sync::PassiveRequest : exceeded");
                 break; // too big
             }
 
+            tracing::trace!(%number, %raw_size, %encoded_size, "sync::PassiveRequest : added");
             // add to the response
             metas.push(encoded);
             if metas.len() >= request.count {
