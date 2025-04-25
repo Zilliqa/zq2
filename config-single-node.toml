@@ -25,4 +25,4 @@ consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
 consensus.local_address = "host.docker.internal"
 # Txn parameters
-consensus.max_txn_execution_time = { secs = 1, nanos = 0 }
+consensus.max_txn_execution_time = { secs = 5, nanos = 0 }
