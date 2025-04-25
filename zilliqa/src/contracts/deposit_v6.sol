@@ -2,7 +2,7 @@
 
 // WARNING
 //
-// Version 6 contains backwards-incompatible changes from verison 5. 
+// Version 6 contains backwards-incompatible changes from verison 5.
 // It is intended to be used as the Version 1 deposit contract for the Agate release network reset.
 
 pragma solidity 0.8.28;
