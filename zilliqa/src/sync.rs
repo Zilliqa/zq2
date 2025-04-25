@@ -19,8 +19,9 @@ use crate::{
     crypto::Hash,
     db::Db,
     message::{
-        Block, BlockHeader, BlockRequest, BlockResponse, ExternalMessage, InjectedProposal,
-        PassiveSyncRequest, PassiveSyncResponse, Proposal, RequestBlocksByHeight, SyncBlockHeader,
+        Block, BlockHeader, BlockRequest, BlockResponse, BlockTransactionsReceipts,
+        ExternalMessage, InjectedProposal, Proposal, RequestBlocksByHash, RequestBlocksByHeight,
+        SyncBlockHeader,
     },
     node::{MessageSender, OutgoingMessageFailure, RequestId},
     time::SystemTime,
@@ -621,9 +622,9 @@ impl Sync {
     pub fn handle_passive_request(
         &mut self,
         from: PeerId,
-        request: PassiveSyncRequest,
+        request: RequestBlocksByHash,
     ) -> Result<ExternalMessage> {
-        tracing::debug!(hash = %request.hash, %from,
+        tracing::debug!(hash = %request.hash, count = %request.count, %from,
             "sync::PassiveRequest : received",
         );
 
@@ -668,7 +669,7 @@ impl Sync {
             hash = block.parent_hash();
 
             // create the response
-            let response = PassiveSyncResponse {
+            let response = BlockTransactionsReceipts {
                 block,
                 transaction_receipts,
             };
@@ -731,7 +732,7 @@ impl Sync {
                         let mut decoder = lz4::Decoder::new(std::io::Cursor::new(v)).unwrap();
                         let mut buf = Vec::new();
                         decoder.read_to_end(&mut buf).unwrap();
-                        cbor4ii::serde::from_slice::<PassiveSyncResponse>(&buf).unwrap()
+                        cbor4ii::serde::from_slice::<BlockTransactionsReceipts>(&buf).unwrap()
                     })
                     .collect_vec();
 
@@ -772,7 +773,7 @@ impl Sync {
         if let Some(peer_info) = self.peers.get_next_peer() {
             let range = self.sync_base_height..=last;
             tracing::info!(?range, from = %peer_info.peer_id, "sync::PassiveSync : requesting");
-            let message = ExternalMessage::PassiveSyncRequest(PassiveSyncRequest {
+            let message = ExternalMessage::PassiveSyncRequest(RequestBlocksByHash {
                 request_at: SystemTime::now(),
                 count: range.count(),
                 hash,
@@ -1388,7 +1389,7 @@ impl Sync {
     /// Phase 5: Store Proposals
     ///
     /// These need only be stored, not executed - IN DESCENDING ORDER.
-    fn store_proposals(&mut self, response: Vec<PassiveSyncResponse>) -> Result<()> {
+    fn store_proposals(&mut self, response: Vec<BlockTransactionsReceipts>) -> Result<()> {
         let SyncState::Phase4((mut number, mut hash)) = self.state else {
             unimplemented!("sync::StoreProposals : invalid state");
         };
@@ -1398,7 +1399,7 @@ impl Sync {
             .collect_vec();
         if !response.is_empty() {
             // Store it from high to low
-            for PassiveSyncResponse {
+            for BlockTransactionsReceipts {
                 block,
                 transaction_receipts,
             } in response

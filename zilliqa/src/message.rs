@@ -284,7 +284,7 @@ pub enum ExternalMessage {
     /// 0.7.0
     SyncBlockHeaders(Vec<SyncBlockHeader>),
     /// 0.8.0
-    PassiveSyncRequest(PassiveSyncRequest),
+    PassiveSyncRequest(RequestBlocksByHash),
     PassiveSyncResponse(Vec<Vec<u8>>),
 }
 
@@ -302,10 +302,10 @@ impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             ExternalMessage::PassiveSyncResponse(r) => {
-                write!(f, "PassiveSyncResponse({})", r.len())
+                write!(f, "BlockTransactionsReceipts({})", r.len())
             }
             ExternalMessage::PassiveSyncRequest(r) => {
-                write!(f, "PassiveSyncRequest({})", r.hash)
+                write!(f, "RequestBlocksByHash({})", r.hash)
             }
             ExternalMessage::SyncBlockHeaders(r) => {
                 write!(f, "SyncBlockHeaders({})", r.len())
@@ -546,14 +546,14 @@ pub struct SyncBlockHeader {
     pub size_estimate: usize,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PassiveSyncRequest {
+pub struct RequestBlocksByHash {
     pub hash: Hash,
     pub count: usize,
     pub request_at: SystemTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PassiveSyncResponse {
+pub struct BlockTransactionsReceipts {
     pub block: Block,
     pub transaction_receipts: Vec<(SignedTransaction, TransactionReceipt)>,
 }
