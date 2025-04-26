@@ -40,21 +40,21 @@ use crate::{
 |     +--------------------------------+| Start syncing e.g. missing parent, or due to probe.        |
 |     |                                 |                                                            |
 |  +--v-------------------------+    +--v-------------------------+                                  |
-|  | PHASE-4: PASSIVE HEADERS   |    | PHASE-1: ACTIVE HEADERS    |                                  |
+|  | PHASE-4: PASSIVE BLOCKS    |    | PHASE-1: ACTIVE HEADERS    |                                  |
 |  |                            |    |                            <----------------+                 |
-|  | Request 1-segment headers. |    | Request missing headers.   |                |                 |
-|  +--+-------------------------+    +--+-------------------------+                |                 |
-|     |                                 |                                          |                 |
-|     | Receive requested segment.      | Received headers hits our history.       |                 |
-|     |                                 |                                          |                 |
-|  +--v-------------------------+    +--v-------------------------+             +--+--------------+  |
-|  | PHASE-5: PASSIVE BLOCKS    |    | PHASE-2: ACTIVE BLOCKS     |             | RETRY-1: RETRY  |  |
-|  |                            |    |                            |  on errors  |                 |  |
-|  | Request 1-segment blocks.  |    | Request missing blocks.    +-------------> Retry 1-segment |  |
-|  +--+-------------------------+    +--+-------------------------+             +-----------------+  |
-|     |                                 |                                                            |
-|     | Receive requested blocks.       | Receive all requested blocks.                              |
-+-----+                                 |                                                            |
+|  | Request missing blocks.    |    | Request missing headers.   |                |                 |
+|  +-+--------------------------+    +--+-------------------------+                |                 |
+|    |                                  |                                          |                 |
+|    | Receive & store blocks.          | Received headers hits our history.       |                 |
+|    |                                  |                                          |                 |
++----+                               +--v-------------------------+             +--+--------------+  |
+                                     | PHASE-2: ACTIVE BLOCKS     |             | RETRY-1: RETRY  |  |
+                                     |                            |  on errors  |                 |  |
+                                     | Request missing blocks.    +-------------> Retry 1-segment |  |
+                                     +--+-------------------------+             +-----------------+  |
+                                        |                                                            |
+                                        | Receive all requested blocks.                              |
+                                        |                                                            |
                                      +--v-------------------------+                                  |
                                      | PHASE-3: FINISH            |                                  |
                                      |                            +----------------------------------+
@@ -86,18 +86,11 @@ use crate::{
 // 4. If it does, we inject the entire queue into the pipeline.
 // 5. We are synced.
 //
-// PHASE4: Request archival headers.
-// This is analogous to Phase 1, but we only request 1-segment worth of block headers.
-// 1. We start with the lowest block in our chain, and request a segment of headers from a peer.
-// 2. We construct the chain of headers, based on the response received.
-// 3. We unconditionally move to Phase 5, to request the blocks.
-//
-// PHASE5: Request archival blocks.
-// This is analogous to Phase 2, but we only request 1-segment worth of blocks.
-// 1. We construct a set of hashes, from the in-memory chain of headers.
-// 2. We request these blocks from the same Peer that sent the headers.
-// 3. We store the blocks in the DB.
-// 4. We unconditionally move to Phase 0, to wait for the next Proposal.
+// PHASE4: Request blocks
+// Request as many archival blocks as possible.
+// 1. We start with the lowest block in our chain, and request blocks from down to `base_height`
+// 2. We store the blocks from the received response.
+// 3. We unconditionally move to Phase 0, to wait for the next Proposal.
 
 #[derive(Debug)]
 pub struct Sync {
