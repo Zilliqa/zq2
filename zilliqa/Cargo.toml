@@ -22,12 +22,12 @@ fake_response_channel = []
 fake_time = []
 
 [build-dependencies]
-anyhow = { version = "1.0.97", features = ["backtrace"] }
+anyhow = { version = "1.0.98", features = ["backtrace"] }
 vergen = { version = "8.3.2", features = ["git", "git2"] }
 
 [dependencies]
 alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
-anyhow = { version = "1.0.97", features = ["backtrace"] }
+anyhow = { version = "1.0.98", features = ["backtrace"] }
 async-trait = "0.1.88"
 base64 = "0.22.1"
 bincode = "1.3.3"
@@ -82,7 +82,7 @@ thiserror = "2.0.12"
 lru-mem = "0.3.0"
 opentelemetry-semantic-conventions = { version = "0.28.0", features = ["semconv_experimental"] }
 semver = "1.0.23"
-foundry-compilers = { version = "0.13.5", features = ["svm-solc"] }
+foundry-compilers = { version = "0.14.1", features = ["svm-solc"] }
 
 [dev-dependencies]
 alloy = { version = "0.12.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
