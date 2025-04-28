@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use alloy::{
     consensus::TxEip1559,
-    eips::BlockNumberOrTag,
     primitives::{Address, B256, U64, U128, U256},
     rpc::types::TransactionInput,
 };
@@ -47,25 +46,6 @@ impl QuorumCertificate {
             block_hash: qc.block_hash.into(),
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Default, Serialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct GetLogsParams {
-    pub from_block: Option<BlockNumberOrTag>,
-    pub to_block: Option<BlockNumberOrTag>,
-    pub address: Option<OneOrMany<Address>>,
-
-    /// elements represent an alternative that matches any of the contained topics.
-    ///
-    /// Examples (from Erigon):
-    /// * `[]`                          matches any topic list
-    /// * `[[A]]`                       matches topic A in first position
-    /// * `[[], [B]]` or `[None, [B]]`  matches any topic in first position AND B in second position
-    /// * `[[A], [B]]`                  matches topic A in first position AND B in second position
-    /// * `[[A, B], [C, D]]`            matches topic (A OR B) in first position AND (C OR D) in second position
-    pub topics: Vec<OneOrMany<B256>>,
-    pub block_hash: Option<B256>,
 }
 
 #[derive(Clone)]

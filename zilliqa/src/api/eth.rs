@@ -29,10 +29,7 @@ use tracing::*;
 use super::{
     to_hex::ToHex,
     types::{
-        eth::{
-            self, CallParams, ErrorCode, GetLogsParams, HashOrTransaction, SyncingResult,
-            TransactionReceipt,
-        },
+        eth::{self, CallParams, ErrorCode, HashOrTransaction, SyncingResult, TransactionReceipt},
         filters::{BlockFilter, FilterKind, LogFilter, PendingTxFilter},
     },
 };
@@ -583,21 +580,31 @@ fn get_block_transaction_count_by_number(
 
 fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
     let mut seq = params.sequence();
-    let params: GetLogsParams = seq.next()?;
+    let params: alloy::rpc::types::Filter = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
     let node = node.lock().unwrap();
-    get_logs_inner(params, &node)
+    get_logs_inner(&params, &node)
 }
 
-fn get_logs_inner(params: GetLogsParams, node: &MutexGuard<Node>) -> Result<Vec<eth::Log>> {
+fn get_logs_inner(
+    params: &alloy::rpc::types::Filter,
+    node: &MutexGuard<Node>,
+) -> Result<Vec<eth::Log>> {
+    let filter_params = FilteredParams::new(Some(params.clone()));
+
     // Find the range of blocks we care about. This is an iterator of blocks.
-    let blocks = match (params.block_hash, params.from_block, params.to_block) {
-        (Some(block_hash), None, None) => Either::Left(std::iter::once(Ok(node
-            .get_block(block_hash)?
-            .ok_or_else(|| anyhow!("block not found"))?))),
-        (None, from, to) => {
+    let blocks = match params.block_option {
+        alloy::rpc::types::FilterBlockOption::AtBlockHash(block_hash) => {
+            Either::Left(std::iter::once(Ok(node
+                .get_block(block_hash)?
+                .ok_or_else(|| anyhow!("block not found"))?)))
+        }
+        alloy::rpc::types::FilterBlockOption::Range {
+            from_block,
+            to_block,
+        } => {
             let Some(from) = node
-                .resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?
+                .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
                 .map(Block::number)
             else {
@@ -605,7 +612,7 @@ fn get_logs_inner(params: GetLogsParams, node: &MutexGuard<Node>) -> Result<Vec<
             };
 
             let to = match node
-                .resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?
+                .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
             {
                 Some(block) => block.number(),
@@ -623,11 +630,6 @@ fn get_logs_inner(params: GetLogsParams, node: &MutexGuard<Node>) -> Result<Vec<
                 node.get_block(number)?
                     .ok_or_else(|| anyhow!("missing block: {number}"))
             }))
-        }
-        _ => {
-            return Err(anyhow!(
-                "only one of `blockHash` or (`fromBlock` and/or `toBlock`) are allowed"
-            ));
         }
     };
 
@@ -647,23 +649,11 @@ fn get_logs_inner(params: GetLogsParams, node: &MutexGuard<Node>) -> Result<Vec<
                     Log::Scilla(l) => l.into_evm(),
                 };
 
-                if !params
-                    .address
-                    .as_ref()
-                    .map(|a| a.contains(&log.address))
-                    .unwrap_or(true)
-                {
+                if !filter_params.filter_address(&log.address) {
                     continue;
                 }
 
-                if !params
-                    .topics
-                    .iter()
-                    .zip(log.topics.iter())
-                    .all(|(filter_topic, log_topic)| {
-                        filter_topic.is_empty() || filter_topic.contains(log_topic)
-                    })
-                {
+                if !filter_params.filter_topics(&log.topics) {
                     continue;
                 }
 
@@ -1045,8 +1035,7 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
         }
 
         FilterKind::Log(log_filter) => {
-            let params = log_filter.criteria.clone();
-            let all_logs = get_logs_inner(params, &node)?;
+            let all_logs = get_logs_inner(&log_filter.criteria, &node)?;
             let result: Vec<eth::Log> = all_logs
                 .iter()
                 .filter(
@@ -1085,8 +1074,7 @@ fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json
             FilterKind::Block(_) => Err(anyhow!("pending tx filter not supported")),
             FilterKind::PendingTx(_) => Err(anyhow!("pending tx filter not supported")),
             FilterKind::Log(log_filter) => {
-                let params = log_filter.criteria.clone();
-                let result = get_logs_inner(params, &node)?;
+                let result = get_logs_inner(&log_filter.criteria, &node)?;
                 Ok(json!(result))
             }
         }
@@ -1133,12 +1121,12 @@ fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
 /// eth_newFilter
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
 fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
-    let criteria: GetLogsParams = params.one()?;
+    let criteria: alloy::rpc::types::Filter = params.one()?;
     let node = node.lock().unwrap();
     let mut filters = node.filters.lock().unwrap();
 
     let id = filters.add_filter(FilterKind::Log(LogFilter {
-        criteria,
+        criteria: Box::new(criteria),
         last_block_number: None,
         last_log_index: None,
     }));

@@ -1,9 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use anyhow::anyhow;
-use serde::{Deserialize, Serialize};
 
-use super::eth::GetLogsParams;
 use crate::{message::BlockHeader, time::SystemTime, transaction::VerifiedTransaction};
 
 #[derive(Debug)]
@@ -96,9 +94,9 @@ impl PendingTxFilter {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct LogFilter {
-    pub criteria: GetLogsParams,
+    pub criteria: Box<alloy::rpc::types::Filter>,
     pub last_block_number: Option<u64>,
     pub last_log_index: Option<u64>,
 }
