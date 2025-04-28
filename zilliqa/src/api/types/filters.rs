@@ -1,13 +1,10 @@
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 
 use super::eth::GetLogsParams;
-use crate::{crypto::Hash, message::BlockHeader, time::SystemTime};
+use crate::{message::BlockHeader, time::SystemTime, transaction::VerifiedTransaction};
 
 #[derive(Debug)]
 pub struct Filter {
@@ -29,7 +26,7 @@ pub struct BlockFilter {
 }
 
 impl BlockFilter {
-    pub fn consume_headers(&mut self) -> anyhow::Result<Vec<BlockHeader>> {
+    pub fn poll(&mut self) -> anyhow::Result<Vec<BlockHeader>> {
         let mut headers = Vec::new();
 
         // Try to receive all currently available messages
@@ -46,7 +43,7 @@ impl BlockFilter {
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
                     // We've lagged behind, some messages were missed
                     return Err(anyhow!(
-                        "Filter was not polled in time, {} BlockHeaders missed",
+                        "Filter was not polled in time, {} blocks missed",
                         skipped
                     ));
                 }
@@ -61,9 +58,42 @@ impl BlockFilter {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct PendingTxFilter {
-    pub seen_txs: HashSet<Hash>,
+    pub pending_txn_receiver: tokio::sync::broadcast::Receiver<VerifiedTransaction>,
+}
+
+impl PendingTxFilter {
+    pub fn poll(&mut self) -> anyhow::Result<Vec<VerifiedTransaction>> {
+        let mut txns = Vec::new();
+
+        // Try to receive all currently available messages
+        loop {
+            match self.pending_txn_receiver.try_recv() {
+                Ok(txn) => {
+                    // Successfully got a header, add it to our vec
+                    txns.push(txn);
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+                    // No more messages available, we're done
+                    break;
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                    // We've lagged behind, some messages were missed
+                    return Err(anyhow!(
+                        "Filter was not polled in time, {} transactions missed",
+                        skipped
+                    ));
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                    // Channel is closed
+                    return Err(anyhow!("Filter has been deleted"));
+                }
+            }
+        }
+
+        Ok(txns)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

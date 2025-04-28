@@ -1025,7 +1025,7 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
 
     match &mut filter.kind {
         FilterKind::Block(block_filter) => {
-            let headers = block_filter.consume_headers()?;
+            let headers = block_filter.poll()?;
 
             let results: Vec<_> = headers
                 .into_iter()
@@ -1036,13 +1036,11 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
         }
 
         FilterKind::PendingTx(pending_tx_filter) => {
-            let pending_txns = node.consensus.txpool_content()?.pending;
+            let pending_txns = pending_tx_filter.poll()?;
             let result: Vec<_> = pending_txns
-                .iter()
-                .filter(|txn| !pending_tx_filter.seen_txs.contains(&txn.hash))
+                .into_iter()
                 .map(|txn| B256::from(txn.hash).to_hex())
                 .collect();
-            pending_tx_filter.seen_txs = pending_txns.into_iter().map(|txn| txn.hash).collect();
             Ok(json!(result))
         }
 
@@ -1155,7 +1153,7 @@ fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Re
     let mut filters = node.filters.lock().unwrap();
 
     let filter = PendingTxFilter {
-        seen_txs: std::collections::HashSet::new(),
+        pending_txn_receiver: node.subscribe_to_new_transactions(),
     };
     let id = filters.add_filter(FilterKind::PendingTx(filter));
     Ok(id)

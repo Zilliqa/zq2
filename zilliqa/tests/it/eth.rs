@@ -1648,52 +1648,6 @@ async fn test_pending_transaction_filter(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
-async fn test_pending_transaction_filter_after_mining(mut network: Network) {
-    let wallet = network.genesis_wallet().await;
-    let provider = wallet.provider();
-
-    // Create a new pending transaction filter
-    println!("Creating new pending transaction filter");
-    let filter_id: u128 = provider
-        .request("eth_newPendingTransactionFilter", ())
-        .await
-        .unwrap();
-    println!("Created filter with ID: {}", filter_id);
-
-    // Send a transaction.
-    let hash = wallet
-        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
-        .await
-        .unwrap()
-        .tx_hash();
-
-    // Wait for the transaction to be mined.
-    network
-        .run_until_async(
-            || async {
-                provider
-                    .get_transaction_receipt(hash)
-                    .await
-                    .unwrap()
-                    .is_some()
-            },
-            50,
-        )
-        .await
-        .unwrap();
-
-    // Calling get_filter_changes again should return empty because transaction is no longer pending
-    println!("Getting filter changes second time");
-    let changes_result: serde_json::Value = provider
-        .request("eth_getFilterChanges", [filter_id])
-        .await
-        .unwrap();
-    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
-    println!("Got {} changes on mined call", changes.len());
-    assert!(changes.is_empty());
-}
-
-#[zilliqa_macros::test]
 async fn test_log_filter(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let provider = wallet.provider();
