@@ -35,7 +35,8 @@ pub struct PendingTxFilter {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct LogFilter {
     pub criteria: GetLogsParams,
-    pub seen_logs: HashSet<super::eth::Log>,
+    pub last_block_number: Option<u64>,
+    pub last_log_index: Option<u64>,
 }
 
 impl Filter {
