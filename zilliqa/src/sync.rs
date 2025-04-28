@@ -130,7 +130,6 @@ pub struct Sync {
     headers_downloaded: usize,
     blocks_downloaded: usize,
     active_sync_count: usize,
-    passive_sync_count: usize,
     // internal structure for syncing
     segments: SyncSegments,
     size_cache: HashMap<Hash, usize>,
@@ -208,7 +207,6 @@ impl Sync {
             headers_downloaded: 0,
             blocks_downloaded: 0,
             active_sync_count: 0,
-            passive_sync_count: 0,
             p1_response: BTreeMap::new(),
             segments: SyncSegments::default(),
             cache_probe_response: None,
@@ -443,7 +441,6 @@ impl Sync {
                     .qc
                     .block_hash;
 
-                self.passive_sync_count = self.passive_sync_count.saturating_add(1);
                 self.state = SyncState::Phase4((last, hash));
                 self.request_passive_sync()?;
             }
@@ -1551,7 +1548,6 @@ impl Sync {
                 block_downloads: self.blocks_downloaded,
                 buffered_blocks: self.in_pipeline,
                 active_sync_count: self.active_sync_count,
-                passive_sync_count: self.passive_sync_count,
             },
         }))
     }
