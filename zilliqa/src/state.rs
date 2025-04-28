@@ -17,12 +17,12 @@ use sha3::{Digest, Keccak256};
 use tracing::{debug, info};
 
 use crate::{
-    cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ScillaExtLibsPath},
+    cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ReinitialiseParams, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
     db::{Db, TrieStorage},
     error::ensure_success,
-    message::{Block, BlockHeader, MAX_COMMITTEE_SIZE},
+    message::{BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
     scilla::{ParamValue, Scilla, Transition},
     serde_util::vec_param_value,
@@ -39,7 +39,7 @@ use crate::{
 /// the storage root is used to index into the state
 /// all the keys are hashed and stored in the same sled tree
 pub struct State {
-    sql: Arc<Db>,
+    pub sql: Arc<Db>,
     db: Arc<TrieStorage>,
     accounts: PatriciaTrie<TrieStorage>,
     /// The Scilla interpreter interface. Note that it is lazily initialized - This is a bit of a hack to ensure that
@@ -172,15 +172,15 @@ impl State {
         config: &ConsensusConfig,
         block_header: BlockHeader,
     ) -> Result<()> {
-        if let Some(deposit_v3_deploy_height) = config.contract_upgrade_block_heights.deposit_v3 {
-            if deposit_v3_deploy_height == block_header.number {
+        if let Some(deposit_v3_deploy_config) = &config.contract_upgrades.deposit_v3 {
+            if deposit_v3_deploy_config.height == block_header.number {
                 let deposit_v3_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v3::CONTRACT);
                 self.upgrade_deposit_contract(block_header, deposit_v3_contract, None)?;
             }
         }
-        if let Some(deposit_v4_deploy_height) = config.contract_upgrade_block_heights.deposit_v4 {
-            if deposit_v4_deploy_height == block_header.number {
+        if let Some(deposit_v4_deploy_config) = &config.contract_upgrades.deposit_v4 {
+            if deposit_v4_deploy_config.height == block_header.number {
                 // The below account mutation fixes the Zero account's nonce in prototestnet and protomainnet.
                 // Issue #2254 explains how the nonce was incorrect due to a bug in the ZQ1 persistence converter.
                 // This code should run once for these networks in order for the deposit_v4 contract to be deployed, then this code can be removed.
@@ -196,12 +196,16 @@ impl State {
                 self.upgrade_deposit_contract(block_header, deposit_v4_contract, None)?;
             }
         }
-        if let Some(deposit_v5_deploy_height) = config.contract_upgrade_block_heights.deposit_v5 {
-            if deposit_v5_deploy_height == block_header.number {
+        if let Some(deposit_v5_deploy_config) = &config.contract_upgrades.deposit_v5 {
+            if deposit_v5_deploy_config.height == block_header.number {
                 let deposit_v5_contract =
                     Lazy::<contracts::Contract>::force(&contracts::deposit_v5::CONTRACT);
+                let reinitialise_params = deposit_v5_deploy_config
+                    .reinitialise_params
+                    .clone()
+                    .unwrap_or(ReinitialiseParams::default());
                 let deposit_v5_reinitialise_data = contracts::deposit_v5::REINITIALIZE
-                    .encode_input(&[Token::Uint(config.staker_withdrawal_period.into())])?;
+                    .encode_input(&[Token::Uint(reinitialise_params.withdrawal_period.into())])?;
                 self.upgrade_deposit_contract(
                     block_header,
                     deposit_v5_contract,
@@ -424,14 +428,6 @@ impl State {
             &bincode::serialize(&account)?,
         )?)
     }
-
-    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.sql.get_canonical_block_by_number(number)
-    }
-
-    pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
-        self.sql.get_highest_canonical_block_number()
-    }
 }
 
 pub mod contract_addr {
@@ -630,7 +626,12 @@ mod tests {
     use revm::primitives::FixedBytes;
 
     use super::*;
-    use crate::{api::to_hex::ToHex, cfg::NodeConfig, db::Db, message::BlockHeader};
+    use crate::{
+        api::to_hex::ToHex,
+        cfg::NodeConfig,
+        db::{ArcDb, Db},
+        message::BlockHeader,
+    };
 
     #[test]
     fn deposit_contract_updateability() {

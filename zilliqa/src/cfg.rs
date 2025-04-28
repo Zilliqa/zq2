@@ -113,6 +113,35 @@ pub struct ApiServer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SyncConfig {
+    /// The maximum number of blocks to have outstanding requests for at a time when syncing.
+    #[serde(default = "max_blocks_in_flight_default")]
+    pub max_blocks_in_flight: usize,
+    /// The maximum number of blocks to request in a single message when syncing.
+    #[serde(default = "block_request_batch_size_default")]
+    pub block_request_batch_size: usize,
+    /// The N number of historical blocks to be kept in the DB during pruning. N >= 300.
+    #[serde(default = "u64_max")]
+    pub prune_interval: u64,
+    /// Lowest block to sync from, during passive-sync.
+    /// Cannot be set if prune_interval is set.
+    #[serde(default = "u64_max")]
+    pub sync_base_height: u64,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        SyncConfig {
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
+            prune_interval: u64_max(),
+            sync_base_height: u64_max(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeConfig {
     /// RPC API endpoints to expose.
     #[serde(default)]
@@ -128,9 +157,9 @@ pub struct NodeConfig {
     /// The location of persistence data. If not set, uses a temporary path.
     #[serde(default)]
     pub data_dir: Option<String>,
-    /// Size of the in-memory state trie cache, in bytes. Defaults to 256 MiB.
-    #[serde(default = "state_cache_size_default")]
-    pub state_cache_size: usize,
+    /// Size of the in-memory database cache, in bytes. Defaults to 512 MiB.
+    #[serde(default = "cache_size_default")]
+    pub cache_size: usize,
     /// Persistence checkpoint to load.
     #[serde(default)]
     pub load_checkpoint: Option<Checkpoint>,
@@ -140,12 +169,6 @@ pub struct NodeConfig {
     /// The maximum number of blocks we will send to another node in a single message.
     #[serde(default = "block_request_limit_default")]
     pub block_request_limit: usize,
-    /// The maximum number of blocks to have outstanding requests for at a time when syncing.
-    #[serde(default = "max_blocks_in_flight_default")]
-    pub max_blocks_in_flight: usize,
-    /// The maximum number of blocks to request in a single message when syncing.
-    #[serde(default = "block_request_batch_size_default")]
-    pub block_request_batch_size: usize,
     /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC. Defaults to no limit.
     #[serde(default = "state_rpc_limit_default")]
     pub state_rpc_limit: usize,
@@ -159,6 +182,9 @@ pub struct NodeConfig {
     /// Maximum allowed RPC response size
     #[serde(default = "max_rpc_response_size_default")]
     pub max_rpc_response_size: u32,
+    /// Sync configuration
+    #[serde(default)]
+    pub sync: SyncConfig,
 }
 
 impl Default for NodeConfig {
@@ -169,12 +195,16 @@ impl Default for NodeConfig {
             consensus: ConsensusConfig::default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            state_cache_size: state_cache_size_default(),
+            cache_size: cache_size_default(),
             load_checkpoint: None,
             do_checkpoints: false,
             block_request_limit: block_request_limit_default(),
-            max_blocks_in_flight: max_blocks_in_flight_default(),
-            block_request_batch_size: block_request_batch_size_default(),
+            sync: SyncConfig {
+                max_blocks_in_flight: max_blocks_in_flight_default(),
+                block_request_batch_size: block_request_batch_size_default(),
+                sync_base_height: u64_max(),
+                prune_interval: u64_max(),
+            },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: false,
@@ -186,7 +216,7 @@ impl Default for NodeConfig {
 impl NodeConfig {
     pub fn validate(&self) -> Result<()> {
         if let serde_json::Value::Object(map) =
-            serde_json::to_value(self.consensus.contract_upgrade_block_heights.clone())?
+            serde_json::to_value(self.consensus.contract_upgrades.clone())?
         {
             for (contract, block_height) in map {
                 if block_height.as_u64().unwrap_or(0) % self.consensus.blocks_per_epoch != 0 {
@@ -198,6 +228,19 @@ impl NodeConfig {
                     ));
                 }
             }
+        }
+
+        // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
+        if self.sync.prune_interval < 300 {
+            return Err(anyhow!("prune_interval must be at least 300",));
+        }
+        // 100 is a reasonable minimum for a node to be useful.
+        if self.sync.block_request_batch_size < 100 {
+            return Err(anyhow!("block_request_batch_size must be at least 100"));
+        }
+        // 1000 would saturate a typical node.
+        if self.sync.max_blocks_in_flight > 1000 {
+            return Err(anyhow!("max_blocks_in_flight must be at most 1000"));
         }
         Ok(())
     }
@@ -234,12 +277,16 @@ where
     })
 }
 
+pub fn u64_max() -> u64 {
+    u64::MAX
+}
+
 pub fn allowed_timestamp_skew_default() -> Duration {
     Duration::from_secs(60)
 }
 
-pub fn state_cache_size_default() -> usize {
-    256 * 1024 * 1024 // 256 MiB
+pub fn cache_size_default() -> usize {
+    512 * 1024 * 1024 // 512 MiB
 }
 
 pub fn eth_chain_id_default() -> u64 {
@@ -353,10 +400,6 @@ pub struct ConsensusConfig {
     /// The maximum time to wait for consensus to proceed as normal, before proposing a new view.
     #[serde(default = "consensus_timeout_default")]
     pub consensus_timeout: Duration,
-    /// The minimum number of blocks a staker must wait before being able to withdraw unstaked funds
-    /// Note that this is the withdrawal period that the deposit_v5 contract is initialised with. Previous versions of the deposit contract will not use this value.
-    #[serde(default = "staker_withdrawal_period_default")]
-    pub staker_withdrawal_period: u64,
     /// The initially staked deposits in the deposit contract at genesis, composed of
     /// (public key, peerId, amount, reward address) tuples.
     #[serde(default)]
@@ -367,7 +410,7 @@ pub struct ConsensusConfig {
     /// The expected time between blocks when no views are missed.
     #[serde(default = "block_time_default")]
     pub block_time: Duration,
-    /// Address of the Scilla server. Defaults to "http://localhost:3000".
+    /// Address of the Scilla server. Defaults to "http://localhost:62831".
     #[serde(default = "scilla_address_default")]
     pub scilla_address: String,
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
@@ -405,7 +448,7 @@ pub struct ConsensusConfig {
     /// The block heights at which we perform EIP-1967 contract upgrades
     /// Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
     #[serde(default)]
-    pub contract_upgrade_block_heights: ContractUpgradesBlockHeights,
+    pub contract_upgrades: ContractUpgrades,
     /// The initial fork configuration at genesis block. This provides a complete description of the execution behavior
     /// at the genesis block.
     #[serde(default = "genesis_fork_default")]
@@ -414,6 +457,10 @@ pub struct ConsensusConfig {
     /// difference applies.
     #[serde(default)]
     pub forks: Vec<ForkDelta>,
+    /// Interval at which NewView messages are broadcast when node is in timeout
+    /// Defaut of 0 means never broadcast
+    #[serde(default = "new_view_broadcast_interval_default")]
+    pub new_view_broadcast_interval: Duration,
 }
 
 impl ConsensusConfig {
@@ -447,7 +494,6 @@ impl Default for ConsensusConfig {
             is_main: default_true(),
             main_shard_id: None,
             consensus_timeout: consensus_timeout_default(),
-            staker_withdrawal_period: staker_withdrawal_period_default(),
             genesis_deposits: vec![],
             genesis_accounts: vec![],
             block_time: block_time_default(),
@@ -463,9 +509,10 @@ impl Default for ConsensusConfig {
             epochs_per_checkpoint: epochs_per_checkpoint_default(),
             gas_price: 4_761_904_800_000u128.into(),
             total_native_token_supply: total_native_token_supply_default(),
-            contract_upgrade_block_heights: ContractUpgradesBlockHeights::default(),
+            contract_upgrades: ContractUpgrades::default(),
             forks: vec![],
             genesis_fork: genesis_fork_default(),
+            new_view_broadcast_interval: new_view_broadcast_interval_default(),
         }
     }
 }
@@ -490,6 +537,7 @@ impl Forks {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Fork {
     pub at_height: u64,
+    pub executable_blocks: bool,
     pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
     pub call_mode_1_sets_caller_to_parent_caller: bool,
     pub scilla_messages_can_call_evm_contracts: bool,
@@ -498,11 +546,20 @@ pub struct Fork {
     pub scilla_call_respects_evm_state_changes: bool,
     pub only_mutated_accounts_update_state: bool,
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    pub scilla_block_number_returns_current_block: bool,
+    pub scilla_maps_are_encoded_correctly: bool,
+    pub transfer_gas_fee_to_zero_account: bool,
+    pub apply_scilla_delta_when_evm_succeeded: bool,
+    pub apply_state_changes_only_if_transaction_succeeds: bool,
+    pub scilla_deduct_funds_from_actual_sender: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ForkDelta {
     pub at_height: u64,
+    /// If true then transactions can be executed against blocks.
+    /// Currently used to mark the height at which ZQ1 blocks end and ZQ2 blocks begin in converted persistence networks. This is required because their state root hashes are set to Hash::ZERO.
+    pub executable_blocks: Option<bool>,
     /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`
     /// precompile and the inner Scilla call fails, the entire transaction will revert. If false, the normal EVM
     /// semantics apply where the caller can decide how to act based on the success of the inner call.
@@ -547,12 +604,31 @@ pub struct ForkDelta {
     /// exempt addresses.
     #[serde(default)]
     pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    /// If true, querying the `BLOCKNUMBER` from Scilla will correctly return the current block number (i.e. the one
+    /// the transaction is about to be included in). If false, it will return the previous block number.
+    pub scilla_block_number_returns_current_block: Option<bool>,
+    /// If true, nested Scilla maps are returned to the Scilla intepreter in the correct format and keys are encoded
+    /// properly. If false, Scilla transactions will work but they will be incorrect in undetermined ways.
+    pub scilla_maps_are_encoded_correctly: Option<bool>,
+    /// If true, the total gas paid by all transactions in a block is transferred to the zero address.
+    /// This keeps the total supply of the network constant. If false, we still transfer funds to the zero address,
+    /// but with an incorrect gas price of 1 Wei per gas.
+    pub transfer_gas_fee_to_zero_account: Option<bool>,
+    /// If true, when there are successful interop calls and in the end EVM transaction fails,
+    /// no state changes are applied for affected accounts by interop calls
+    pub apply_scilla_delta_when_evm_succeeded: Option<bool>,
+    /// If true, only apply state changes if the transaction succeeds. If false, apply state changes even if the
+    /// transaction fails.
+    pub apply_state_changes_only_if_transaction_succeeds: Option<bool>,
+    /// if true, funds are deducted from the sender of scilla message rather than the origin
+    pub scilla_deduct_funds_from_actual_sender: Option<bool>,
 }
 
 impl Fork {
     pub fn apply_delta_fork(&self, delta: &ForkDelta) -> Fork {
         Fork {
             at_height: delta.at_height,
+            executable_blocks: delta.executable_blocks.unwrap_or(self.executable_blocks),
             failed_scilla_call_from_gas_exempt_caller_causes_revert: delta
                 .failed_scilla_call_from_gas_exempt_caller_causes_revert
                 .unwrap_or(self.failed_scilla_call_from_gas_exempt_caller_causes_revert),
@@ -579,6 +655,24 @@ impl Fork {
                 addrs.extend_from_slice(&delta.scilla_call_gas_exempt_addrs);
                 addrs
             },
+            scilla_block_number_returns_current_block: delta
+                .scilla_block_number_returns_current_block
+                .unwrap_or(self.scilla_block_number_returns_current_block),
+            scilla_maps_are_encoded_correctly: delta
+                .scilla_maps_are_encoded_correctly
+                .unwrap_or(self.scilla_maps_are_encoded_correctly),
+            transfer_gas_fee_to_zero_account: delta
+                .transfer_gas_fee_to_zero_account
+                .unwrap_or(self.transfer_gas_fee_to_zero_account),
+            apply_scilla_delta_when_evm_succeeded: delta
+                .apply_scilla_delta_when_evm_succeeded
+                .unwrap_or(self.apply_scilla_delta_when_evm_succeeded),
+            apply_state_changes_only_if_transaction_succeeds: delta
+                .apply_state_changes_only_if_transaction_succeeds
+                .unwrap_or(self.apply_state_changes_only_if_transaction_succeeds),
+            scilla_deduct_funds_from_actual_sender: delta
+                .scilla_deduct_funds_from_actual_sender
+                .unwrap_or(self.scilla_deduct_funds_from_actual_sender),
         }
     }
 }
@@ -602,7 +696,7 @@ pub fn block_time_default() -> Duration {
 }
 
 pub fn scilla_address_default() -> String {
-    String::from("http://localhost:3000")
+    String::from("http://localhost:62831")
 }
 
 // This path is as viewed from Scilla, not zq2.
@@ -637,7 +731,7 @@ pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
 }
 
-pub fn staker_withdrawal_period_default() -> u64 {
+pub fn withdrawal_period_default() -> u64 {
     // 2 weeks worth of blocks with 1 second block time
     2 * 7 * 24 * 60 * 60
 }
@@ -647,6 +741,7 @@ pub fn staker_withdrawal_period_default() -> u64 {
 pub fn genesis_fork_default() -> Fork {
     Fork {
         at_height: 0,
+        executable_blocks: true,
         failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
         call_mode_1_sets_caller_to_parent_caller: true,
         scilla_messages_can_call_evm_contracts: true,
@@ -655,54 +750,105 @@ pub fn genesis_fork_default() -> Fork {
         scilla_call_respects_evm_state_changes: true,
         only_mutated_accounts_update_state: true,
         scilla_call_gas_exempt_addrs: vec![],
+        scilla_block_number_returns_current_block: true,
+        scilla_maps_are_encoded_correctly: true,
+        transfer_gas_fee_to_zero_account: true,
+        apply_scilla_delta_when_evm_succeeded: true,
+        apply_state_changes_only_if_transaction_succeeds: true,
+        scilla_deduct_funds_from_actual_sender: true,
+    }
+}
+
+pub fn new_view_broadcast_interval_default() -> Duration {
+    Duration::from_secs(300)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReinitialiseParams {
+    /// The minimum number of blocks a staker must wait before being able to withdraw unstaked funds
+    pub withdrawal_period: u64,
+}
+
+impl Default for ReinitialiseParams {
+    fn default() -> Self {
+        Self {
+            withdrawal_period: withdrawal_period_default(),
+        }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContractUpgradesBlockHeights {
-    pub deposit_v3: Option<u64>,
-    pub deposit_v4: Option<u64>,
-    pub deposit_v5: Option<u64>,
+pub struct ContractUpgradeConfig {
+    pub height: u64,
+    pub reinitialise_params: Option<ReinitialiseParams>,
 }
 
-impl ContractUpgradesBlockHeights {
+impl ContractUpgradeConfig {
+    pub fn from_height(height: u64) -> Self {
+        Self {
+            height,
+            reinitialise_params: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractUpgrades {
+    pub deposit_v3: Option<ContractUpgradeConfig>,
+    pub deposit_v4: Option<ContractUpgradeConfig>,
+    pub deposit_v5: Option<ContractUpgradeConfig>,
+}
+
+impl ContractUpgrades {
     pub fn new(
-        deposit_v3: Option<u64>,
-        deposit_v4: Option<u64>,
-        deposit_v5: Option<u64>,
-    ) -> ContractUpgradesBlockHeights {
+        deposit_v3: Option<ContractUpgradeConfig>,
+        deposit_v4: Option<ContractUpgradeConfig>,
+        deposit_v5: Option<ContractUpgradeConfig>,
+    ) -> ContractUpgrades {
         Self {
             deposit_v3,
             deposit_v4,
             deposit_v5,
         }
     }
-    // toml doesn't like Option types. Map items in struct and remove keys for None values
     pub fn to_toml(&self) -> toml::Value {
-        toml::Value::Table(
-            json!(self)
-                .as_object()
-                .unwrap()
-                .clone()
-                .into_iter()
-                .filter_map(|(k, v)| {
-                    if v.is_null() {
-                        None // Skip null values
-                    } else {
-                        Some((k, toml::Value::Integer(v.as_u64().unwrap() as i64)))
-                    }
-                })
-                .collect(),
-        )
+        // toml doesn't like Option types. We need to manually map items in struct removing keys for None values as we go
+        // ContractUpgrades's values are only either u64, None or a json object
+        fn serde_value_to_toml_value(input: serde_json::Value) -> toml::Value {
+            toml::Value::Table(
+                input
+                    .as_object()
+                    .unwrap()
+                    .clone()
+                    .into_iter()
+                    .filter_map(|(k, v)| {
+                        if v.is_null() {
+                            // Ignore None values
+                            None
+                        } else if v.is_u64() {
+                            // Parse ints
+                            Some((k, toml::Value::Integer(v.as_u64().unwrap() as i64)))
+                        } else {
+                            // Recursively parse objects
+                            Some((k, serde_value_to_toml_value(v)))
+                        }
+                    })
+                    .collect(),
+            )
+        }
+        serde_value_to_toml_value(json!(self))
     }
 }
 
-impl Default for ContractUpgradesBlockHeights {
+impl Default for ContractUpgrades {
     fn default() -> Self {
         Self {
             deposit_v3: None,
             deposit_v4: None,
-            deposit_v5: Some(0),
+            deposit_v5: Some(ContractUpgradeConfig {
+                height: 0,
+                reinitialise_params: Some(ReinitialiseParams::default()),
+            }),
         }
     }
 }
@@ -730,6 +876,7 @@ mod tests {
             genesis_fork: genesis_fork_default(),
             forks: vec![ForkDelta {
                 at_height: 10,
+                executable_blocks: None,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                 call_mode_1_sets_caller_to_parent_caller: Some(false),
                 scilla_messages_can_call_evm_contracts: None,
@@ -738,6 +885,12 @@ mod tests {
                 scilla_call_respects_evm_state_changes: None,
                 only_mutated_accounts_update_state: None,
                 scilla_call_gas_exempt_addrs: vec![],
+                scilla_block_number_returns_current_block: None,
+                scilla_maps_are_encoded_correctly: None,
+                transfer_gas_fee_to_zero_account: None,
+                apply_scilla_delta_when_evm_succeeded: None,
+                apply_state_changes_only_if_transaction_succeeds: None,
+                scilla_deduct_funds_from_actual_sender: None,
             }],
             ..Default::default()
         };
@@ -761,6 +914,7 @@ mod tests {
             forks: vec![
                 ForkDelta {
                     at_height: 10,
+                    executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: Some(true),
@@ -769,9 +923,16 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
                 ForkDelta {
                     at_height: 20,
+                    executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
                     call_mode_1_sets_caller_to_parent_caller: Some(true),
                     scilla_messages_can_call_evm_contracts: Some(false),
@@ -780,6 +941,12 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
             ],
             ..Default::default()
@@ -817,6 +984,7 @@ mod tests {
             forks: vec![
                 ForkDelta {
                     at_height: 20,
+                    executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
@@ -825,9 +993,16 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
                 ForkDelta {
                     at_height: 10,
+                    executable_blocks: Some(true),
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
@@ -836,6 +1011,12 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
             ],
             ..Default::default()
@@ -864,6 +1045,7 @@ mod tests {
         let config = ConsensusConfig {
             genesis_fork: Fork {
                 at_height: 1,
+                executable_blocks: true,
                 failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
                 call_mode_1_sets_caller_to_parent_caller: true,
                 scilla_messages_can_call_evm_contracts: true,
@@ -872,6 +1054,12 @@ mod tests {
                 scilla_call_respects_evm_state_changes: true,
                 only_mutated_accounts_update_state: true,
                 scilla_call_gas_exempt_addrs: vec![],
+                scilla_block_number_returns_current_block: true,
+                scilla_maps_are_encoded_correctly: true,
+                transfer_gas_fee_to_zero_account: true,
+                apply_scilla_delta_when_evm_succeeded: true,
+                apply_state_changes_only_if_transaction_succeeds: true,
+                scilla_deduct_funds_from_actual_sender: true,
             },
             forks: vec![],
             ..Default::default()
@@ -888,6 +1076,7 @@ mod tests {
             forks: vec![
                 ForkDelta {
                     at_height: 10,
+                    executable_blocks: None,
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
@@ -896,9 +1085,16 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
                 ForkDelta {
                     at_height: 20,
+                    executable_blocks: None,
                     failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
                     call_mode_1_sets_caller_to_parent_caller: None,
                     scilla_messages_can_call_evm_contracts: None,
@@ -907,6 +1103,12 @@ mod tests {
                     scilla_call_respects_evm_state_changes: None,
                     only_mutated_accounts_update_state: None,
                     scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
                 },
             ],
             ..Default::default()

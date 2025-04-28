@@ -1,8 +1,11 @@
 //! An administrative API
 
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::RangeInclusive,
+    sync::{Arc, Mutex},
+};
 
-use alloy::eips::BlockId;
+use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
 use serde::{Deserialize, Serialize};
@@ -20,6 +23,8 @@ pub fn rpc_module(
         [
             ("admin_consensusInfo", consensus_info),
             ("admin_generateCheckpoint", checkpoint),
+            ("admin_blockRange", admin_block_range),
+            ("admin_forceView", force_view),
         ]
     )
 }
@@ -31,6 +36,11 @@ struct ConsensusInfo {
     high_qc: QuorumCertificate,
     milliseconds_since_last_view_change: u64,
     milliseconds_until_next_view_change: u64,
+}
+
+/// TODO: place-holder for now, feel free to change it.
+fn admin_block_range(_params: Params, node: &Arc<Mutex<Node>>) -> Result<RangeInclusive<u64>> {
+    node.lock().unwrap().db.read()?.blocks()?.height_range()
 }
 
 fn consensus_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<ConsensusInfo> {
@@ -75,4 +85,13 @@ fn checkpoint(params: Params, node: &Arc<Mutex<Node>>) -> Result<CheckpointRespo
         hash,
         block: block.number().to_hex(),
     })
+}
+
+fn force_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+    let mut params = params.sequence();
+    let view: U64 = params.next()?;
+    let timeout_at: String = params.next()?;
+    let mut node = node.lock().unwrap();
+    node.consensus.force_view(view.to::<u64>(), timeout_at)?;
+    Ok(true)
 }

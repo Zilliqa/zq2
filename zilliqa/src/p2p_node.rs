@@ -121,7 +121,7 @@ impl P2pNode {
                             .max_transmit_size(1024 * 1024)
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
-                            .duplicate_cache_time(Duration::from_secs(300))
+                            .duplicate_cache_time(Duration::from_secs(3600))
                             .build()
                             .map_err(|e| anyhow!(e))?,
                     )
@@ -129,13 +129,10 @@ impl P2pNode {
                     autonat_client: autonat::v2::client::Behaviour::default(),
                     autonat_server: autonat::v2::server::Behaviour::default(),
                     kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
-                    // FIXME: This is a hack.
-                    // By exposing the listen addresses, the nodes are able to get the correct remote ip/port to connect to.
-                    // Otherwise, when running locally in docker, the nodes connect to each other via the gateway acting as a NAT router.
-                    // So, the nodes are unable to see each other directly and remain isolated, defeating kademlia and autonat.
                     identify: identify::Behaviour::new(
                         identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
-                            .with_hide_listen_addrs(true),
+                            .with_hide_listen_addrs(true)
+                            .with_push_listen_addr_updates(true),
                     ),
                 })
             })?
@@ -237,10 +234,10 @@ impl P2pNode {
             self.swarm.add_external_address(external_address.clone());
         }
 
+        // if we are a bootstrap, add our external address, which allows us to switch to kademlia SERVER mode.
         for (peer, address) in &self.config.bootstrap_address.0 {
-            if self.swarm.local_peer_id() != peer {
-                self.swarm.dial(address.clone())?;
-                self.swarm.add_peer_address(*peer, address.clone());
+            if self.swarm.local_peer_id() == peer {
+                self.swarm.add_external_address(address.clone());
             }
         }
 
@@ -252,9 +249,27 @@ impl P2pNode {
                     let event = event.expect("swarm stream should be infinite");
                     debug!(?event, "swarm event");
                     match event {
+                        // only dial after we have a listen address, to reuse port
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(%address, "P2P swarm listening on");
+                            for (peer, address) in &self.config.bootstrap_address.0 {
+                                if self.swarm.local_peer_id() != peer {
+                                    self.swarm.dial(address.clone())?;
+                                }
+                            }
                         }
+                        // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
+                        SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                            // will only be true if peer is publicly reachable i.e. SERVER mode.
+                            let is_kad = info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME);
+                            for addr in info.listen_addrs {
+                                self.swarm.add_peer_address(peer_id, addr.clone());
+                                if is_kad {
+                                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                                }
+                            }
+                        }
+                        // Add/Remove peers to/from the shard peer list used in syncing.
                         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed { peer_id, topic })) => {
                             if let Some(peers) = self.shard_peers.get(&topic) {
                                 peers.add_peer(peer_id);
@@ -295,8 +310,7 @@ impl P2pNode {
                                 }
                             }
                         }
-
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::Message { message, peer: _source, .. })) => {
                             match message {
                                 request_response::Message::Request { request, channel: _channel, request_id: _request_id, .. } => {
                                     let to = self.peer_id;
@@ -321,14 +335,13 @@ impl P2pNode {
                                 }
                             }
                         }
-                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error })) => {
+                        SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error, .. })) => {
                             if let OutboundFailure::DialFailure = error {
                                 // We failed to send a message to a peer. The likely reason is that we don't know their
                                 // address. Someone else in the network must know it, because we learnt their peer ID.
                                 // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
                                 let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
                             }
-
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
                                 let error = OutgoingMessageFailure { peer, request_id, error };
@@ -384,15 +397,7 @@ impl P2pNode {
                             debug!(%from, %dest, %message, ?request_id, "sending direct message");
                             let id = format!("{:?}", request_id);
                             if from == dest {
-                                match message {
-                                    // Route sync messages as broadcast, to allow other requests to be prioritized.
-                                    ExternalMessage::InjectedProposal(_) => {
-                                        self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
-                                    },
-                                    _ => {
-                                        self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
-                                    }
-                                };
+                                self.send_to(&topic.hash(), |c| c.requests.send((from, id, message, ResponseChannel::Local)))?;
                             } else {
                                 let libp2p_request_id = self.swarm.behaviour_mut().request_response.send_request(&dest, (shard_id, message));
                                 self.pending_requests.insert(libp2p_request_id, (shard_id, request_id));

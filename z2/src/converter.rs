@@ -18,17 +18,16 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, trace, warn};
 use zilliqa::{
     cfg::{Amount, Config, NodeConfig, scilla_ext_libs_path_default},
+    consensus::annotate_receipt_with_log_indices,
     crypto::{Hash, SecretKey},
-    db::Db,
+    db::{ArcDb, Db},
     exec::store_external_libraries,
     message::{Block, MAX_COMMITTEE_SIZE, QuorumCertificate, Vote},
     schnorr,
     scilla::{CheckOutput, ParamValue, Transition, storage_key},
     state::{Account, Code, ContractInit, State},
     time::SystemTime,
-    transaction::{
-        EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
-    },
+    transaction::{ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount},
 };
 
 use crate::{zq1, zq1::Transaction};
@@ -73,7 +72,7 @@ fn invoke_checker(state: &State, code: &str, init_data: &[ParamValue]) -> Result
 #[allow(clippy::type_complexity)]
 fn convert_scilla_state(
     zq1_db: &zq1::Db,
-    zq2_db: &Db,
+    zq2_db: &Arc<Db>,
     state: &State,
     code: &str,
     init_data: &[ParamValue],
@@ -181,7 +180,7 @@ fn convert_scilla_state(
     Ok((storage_root, field_types, transitions))
 }
 
-fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Db, address: Address) -> Result<B256> {
+fn convert_evm_state(zq1_db: &zq1::Db, zq2_db: &Arc<Db>, address: Address) -> Result<B256> {
     let prefix = create_acc_query_prefix(address);
 
     let storage_entries_iter = zq1_db.get_contract_state_data_with_prefix(&prefix);
@@ -304,7 +303,11 @@ fn stop_scilla_docker(child: &mut Child) -> Result<ExitStatus> {
         .or(Err(anyhow!("Unable to stop docker container!")))
 }
 
-fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Result<()> {
+fn deduct_funds_from_zero_account(
+    state: &mut State,
+    config: &NodeConfig,
+    zq2_zero_acc_nonce: u64,
+) -> Result<()> {
     let total_requested_amount = 0_u128
         .checked_add(
             config
@@ -324,6 +327,7 @@ fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Res
         .expect("Genesis accounts + genesis deposits sum to more than max value of u128");
     state.mutate_account(Address::ZERO, |acc| {
         acc.balance = acc.balance.checked_sub(total_requested_amount).expect("Sum of funds in genesis.deposit and genesis.accounts exceeds funds in ZeroAccount from zq1!");
+        acc.nonce = zq2_zero_acc_nonce;
         Ok(())
     })?;
 
@@ -384,6 +388,8 @@ pub async fn convert_persistence(
         .with_message("convert accounts")
         .with_finish(ProgressFinish::AndLeave);
 
+    let zq2_zero_acc_nonce = state.must_get_account(Address::ZERO).nonce;
+
     for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
         let zq1_account = zq1::Account::from_proto(zq1_account)?;
 
@@ -426,13 +432,13 @@ pub async fn convert_persistence(
 
     stop_scilla_docker(&mut scilla_docker)?;
 
-    deduct_funds_from_zero_account(&mut state, node_config)?;
+    deduct_funds_from_zero_account(&mut state, node_config, zq2_zero_acc_nonce)?;
 
     let max_block = zq1_db
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();
 
-    let current_block = zq2_db.get_finalized_view()?.unwrap_or(1);
+    let current_block = zq2_db.read()?.finalized_view()?.get()?.unwrap_or(1);
 
     let progress = ProgressBar::new(max_block)
         .with_style(style.clone())
@@ -494,6 +500,7 @@ pub async fn convert_persistence(
         // Since receipt also contains block hash it belongs too - at the time it's being built it uses a placeholder: Hash::ZERO. Once all transactions are processed,
         // block hash can be calculated and each receipt is updated with final block hash (by replacing Hash::ZERO placeholder).
 
+        let mut log_index: u64 = 0;
         for (index, txn_hash) in txn_hashes.iter().enumerate() {
             let Some(transaction) = zq1_db.get_tx_body(block_number, *txn_hash)? else {
                 warn!(?txn_hash, %block_number, "missing transaction");
@@ -507,9 +514,14 @@ pub async fn convert_persistence(
             let chain_id = (transaction.version >> 16) as u16;
             let version = (transaction.version & 0xffff) as u16;
 
-            let Ok((transaction, receipt)) =
-                process_txn(transaction, *txn_hash, chain_id, version, index)
-            else {
+            let Ok((transaction, receipt)) = process_txn(
+                transaction,
+                *txn_hash,
+                chain_id,
+                version,
+                index,
+                &mut log_index,
+            ) else {
                 return Err(anyhow!("Can't process transaction: {:?}", *txn_hash));
             };
 
@@ -530,13 +542,13 @@ pub async fn convert_persistence(
             parent_hash,
             zq1_block.block_num - 1,
         );
-        let block = Block::from_qc(
+        let mut block = Block::from_qc(
             secret_key,
             zq1_block.block_num,
             zq1_block.block_num,
             qc,
             None,
-            state.root_hash()?,
+            Hash::ZERO,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             txn_hashes.iter().map(|h| Hash(h.0)).collect(),
@@ -544,67 +556,67 @@ pub async fn convert_persistence(
             ScillaGas(zq1_block.gas_used).into(),
             ScillaGas(zq1_block.gas_limit).into(),
         );
+        block.header.hash = zq1_block.block_hash.into();
 
         // For each receipt update block hash. This can be done once all receipts build receipt_root_hash which is used for calculating block hash
         for receipt in &mut receipts {
             receipt.block_hash = zq1_block.block_hash.into();
         }
 
+        let mut log_index = 0;
+        let receipts: Vec<_> = receipts
+            .into_iter()
+            .map(|x| zilliqa::consensus::annotate_receipt_with_log_indices(x, &mut log_index))
+            .collect();
+
         parent_hash = zq1_block.block_hash.into();
 
-        zq2_db.with_sqlite_tx(|sqlite_tx| {
-            zq2_db.insert_block_with_hash_with_db_tx(
-                sqlite_tx,
-                zq1_block.block_hash.into(),
-                &block,
-            )?;
-            zq2_db.set_high_qc_with_db_tx(sqlite_tx, block.header.qc)?;
-            zq2_db.set_finalized_view_with_db_tx(sqlite_tx, block.view())?;
-            trace!("{} block inserted", block.number());
+        let write = zq2_db.write()?;
 
-            for (hash, transaction) in &transactions {
-                if let Err(err) = zq2_db.insert_transaction_with_db_tx(sqlite_tx, hash, transaction)
-                {
-                    warn!(
-                        "Unable to insert transaction with id: {:?} to db, err: {:?}",
-                        *hash, err
-                    );
-                }
+        write.blocks()?.insert(&block)?;
+        write.high_qc()?.set(&block.header.qc)?;
+        write.finalized_view()?.set(block.view())?;
+        trace!("{} block inserted", block.number());
+        {
+            let mut transactions_table = write.transactions()?;
+            for (hash, txn) in &transactions {
+                transactions_table.insert(*hash, txn)?;
             }
+            let mut receipts_table = write.receipts()?;
             for receipt in &receipts {
-                if let Err(err) =
-                    zq2_db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt.to_owned())
-                {
-                    warn!(
-                        "Unable to insert receipt with id: {:?} into db, err: {:?}",
-                        receipt.tx_hash, err
-                    );
-                }
+                receipts_table.insert(receipt)?;
             }
-            Ok(())
-        })?;
+        }
+        write.commit()?;
     }
 
     // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
-    let highest_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
-    let highest_block = zq2_db.get_block_by_view(highest_block)?.unwrap();
+    let highest_block = zq2_db.read()?.blocks()?.max_canonical_by_view()?.unwrap();
 
-    zq2_db.with_sqlite_tx(|sqlite_tx| {
-        let empty_high_qc_block = create_empty_block_from_parent(&highest_block, secret_key);
-        zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
-        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.header.qc)?;
-        Ok(())
-    })?;
+    let write = zq2_db.write()?;
+    let empty_high_qc_block =
+        create_empty_block_from_parent(&highest_block, secret_key, state.root_hash()?);
+    write.blocks()?.insert(&empty_high_qc_block)?;
+    write.high_qc()?.set(&empty_high_qc_block.header.qc)?;
 
     println!(
         "Persistence conversion done up to block {}",
-        zq2_db.get_highest_canonical_block_number()?.unwrap_or(0)
+        zq2_db
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .map(|b| b.number())
+            .unwrap_or(0)
     );
 
     Ok(())
 }
 
-fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -> Block {
+fn create_empty_block_from_parent(
+    parent_block: &Block,
+    secret_key: SecretKey,
+    state_root_hash: Hash,
+) -> Block {
     let vote = Vote::new(
         secret_key,
         parent_block.hash(),
@@ -625,7 +637,7 @@ fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -
         parent_block.header.number + 1,
         qc,
         None,
-        parent_block.header.state_root_hash,
+        state_root_hash,
         parent_block.transactions_root_hash(),
         parent_block.header.receipts_root_hash,
         vec![],
@@ -641,14 +653,20 @@ fn process_txn(
     chain_id: u16,
     version: u16,
     index: usize,
+    log_index: &mut u64,
 ) -> Result<(SignedTransaction, TransactionReceipt)> {
-    if let Ok(evm_result) =
-        try_with_evm_transaction(transaction.clone(), txn_hash, chain_id, version, index)
-    {
+    if let Ok(evm_result) = try_with_evm_transaction(
+        transaction.clone(),
+        txn_hash,
+        chain_id,
+        version,
+        index,
+        log_index,
+    ) {
         return Ok(evm_result);
     }
 
-    try_with_zil_transaction(transaction, txn_hash, chain_id, index)
+    try_with_zil_transaction(transaction, txn_hash, chain_id, index, log_index)
 }
 
 fn try_with_zil_transaction(
@@ -656,6 +674,7 @@ fn try_with_zil_transaction(
     txn_hash: B256,
     chain_id: u16,
     index: usize,
+    log_index: &mut u64,
 ) -> Result<(SignedTransaction, TransactionReceipt)> {
     let from_addr = transaction.sender_pub_key.zil_addr();
 
@@ -682,7 +701,7 @@ fn try_with_zil_transaction(
             errors.entry(key).or_insert_with(Vec::new).extend(value);
         });
 
-    let receipt = TransactionReceipt {
+    let receipt_no_log_indicies = TransactionReceipt {
         tx_hash: Hash(txn_hash.0),
         block_hash: Hash::ZERO,
         index: index as u64,
@@ -694,15 +713,7 @@ fn try_with_zil_transaction(
             .receipt
             .event_logs
             .iter()
-            .map(|log| {
-                let log = log.to_eth_log()?;
-
-                Ok(Log::Evm(EvmLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                }))
-            })
+            .map(|log| log.to_zq2_log())
             .collect::<Result<_>>()?,
         transitions: transaction
             .receipt
@@ -714,6 +725,8 @@ fn try_with_zil_transaction(
         errors,
         exceptions: transaction.receipt.exceptions,
     };
+
+    let receipt = annotate_receipt_with_log_indices(receipt_no_log_indicies, log_index);
 
     let transaction = SignedTransaction::Zilliqa {
         tx: TxZilliqa {
@@ -747,6 +760,7 @@ fn try_with_evm_transaction(
     chain_id: u16,
     version: u16,
     index: usize,
+    log_index: &mut u64,
 ) -> Result<(SignedTransaction, TransactionReceipt)> {
     let from_addr = transaction.sender_pub_key.eth_addr();
 
@@ -755,34 +769,27 @@ fn try_with_evm_transaction(
         .is_zero()
         .then(|| from_addr.create(transaction.nonce - 1));
 
-    let receipt = TransactionReceipt {
+    let receipt_no_log_indicies = TransactionReceipt {
         tx_hash: Hash(txn_hash.0),
         // Block hash is not know at this point (we need to have all receipts to build receipt_root_hash which is needed for block_hash)
         block_hash: Hash::ZERO,
         index: index as u64,
         success: transaction.receipt.success,
-        gas_used: EvmGas(transaction.receipt.cumulative_gas),
-        cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
+        gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
+        cumulative_gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
         contract_address,
         logs: transaction
             .receipt
             .event_logs
             .iter()
-            .map(|log| {
-                let log = log.to_eth_log()?;
-
-                Ok(Log::Evm(EvmLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                }))
-            })
+            .map(|log| log.to_zq2_log())
             .collect::<Result<_>>()?,
         transitions: vec![],
         accepted: None,
         errors: BTreeMap::new(),
         exceptions: vec![],
     };
+    let receipt = annotate_receipt_with_log_indices(receipt_no_log_indicies, log_index);
 
     let transaction = infer_eth_signature(txn_hash, version, chain_id + 0x8000, transaction)
         .with_context(|| format!("failed to infer signature of transaction: {txn_hash:?}"))?;

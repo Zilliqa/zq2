@@ -135,6 +135,7 @@ impl TransactionApplyResult {
                             address: l.address,
                             topics,
                             data: data.to_vec(),
+                            log_index: None,
                         })
                     })
                     .collect(),
@@ -414,7 +415,10 @@ impl DatabaseRef for &State {
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         Ok(self
-            .get_canonical_block_by_number(number)?
+            .sql
+            .read()?
+            .blocks()?
+            .canonical_by_height(number)?
             .map(|block| B256::new(block.hash().0))
             .unwrap_or_default())
     }
@@ -436,9 +440,6 @@ impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<
         &mut self.inspector
     }
 }
-
-// As per EIP-150
-pub const MAX_EVM_GAS_LIMIT: EvmGas = EvmGas(5_500_000);
 
 const SPEC_ID: SpecId = SpecId::SHANGHAI;
 
@@ -630,7 +631,7 @@ impl State {
         current_block: BlockHeader,
         inspector: impl ScillaInspector,
     ) -> Result<ScillaResultAndState> {
-        let mut state = PendingState::new(self.try_clone()?);
+        let mut state = PendingState::new(self.clone());
 
         // Issue 1509 - for Scilla transitions, follow the legacy ZQ1 behaviour of deducting a small amount
         // of gas for the invocation and the rest of the gas once the txn has run.
@@ -671,6 +672,7 @@ impl State {
                 inspector,
                 &self.scilla_ext_libs_path,
                 self.forks.get(current_block.number),
+                current_block.number,
             )
         }?;
 
@@ -685,7 +687,7 @@ impl State {
                 new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
             {
                 trace!("scilla_txn: cannot deduct remaining gas - txn failed");
-                let mut failed_state = PendingState::new(self.try_clone()?);
+                let mut failed_state = PendingState::new(self.clone());
                 return Ok((result, failed_state.finalize()));
             }
         }
@@ -706,9 +708,15 @@ impl State {
         inspector: I,
         enable_inspector: bool,
     ) -> Result<TransactionApplyResult> {
+        if !self.forks.get(current_block.number).executable_blocks {
+            return Err(anyhow!(
+                "transactions at this block height are not executable"
+            ));
+        }
+
         let hash = txn.hash;
         let from_addr = txn.signer;
-        info!(?hash, ?txn, "executing txn");
+        info!(?txn, "executing txn");
 
         let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
 
@@ -717,7 +725,29 @@ impl State {
             let (result, state) =
                 self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
 
-            self.apply_delta_scilla(&state, current_block.number)?;
+            let update_state_only_if_transaction_succeeds = self
+                .forks
+                .get(current_block.number)
+                .apply_state_changes_only_if_transaction_succeeds;
+
+            if !update_state_only_if_transaction_succeeds || result.success {
+                self.apply_delta_scilla(&state, current_block.number)?;
+            } else {
+                // If the transaction rejected, we must update the nonce and balance of the sender account.
+                let from_account = state
+                    .get(&from_addr)
+                    .ok_or(anyhow!("from account not found"))?;
+
+                let mut storage = self.get_account_trie(from_addr)?;
+                let account = Account {
+                    nonce: from_account.account.nonce,
+                    balance: from_account.account.balance,
+                    code: from_account.account.code.clone(),
+                    storage_root: storage.root_hash()?,
+                };
+
+                self.save_account(from_addr, account)?;
+            }
 
             Ok(TransactionApplyResult::Scilla((result, state)))
         } else {
@@ -741,7 +771,18 @@ impl State {
                 )?;
 
             self.apply_delta_evm(&state, current_block.number)?;
-            self.apply_delta_scilla(&scilla_state, current_block.number)?;
+            let apply_scilla_delta_when_evm_succeeded = self
+                .forks
+                .get(current_block.number)
+                .apply_scilla_delta_when_evm_succeeded;
+
+            if apply_scilla_delta_when_evm_succeeded {
+                if let ExecutionResult::Success { .. } = result {
+                    self.apply_delta_scilla(&scilla_state, current_block.number)?;
+                }
+            } else {
+                self.apply_delta_scilla(&scilla_state, current_block.number)?;
+            }
 
             Ok(TransactionApplyResult::Evm(
                 ResultAndState { result, state },
@@ -1028,6 +1069,39 @@ impl State {
         Ok(Some(PeerId::from_bytes(&data)?))
     }
 
+    /// Returns the maximum gas a caller could pay for a given transaction. This is clamped the minimum of:
+    /// 1. The block gas limit.
+    /// 2. The gas limit specified by the caller.
+    /// 3. The caller's balance after paying for any funds sent by the transaction.
+    ///
+    /// Returns an error if the caller does not have funds to pay for the transaction.
+    fn max_gas_for_caller(
+        &self,
+        caller: Address,
+        tx_value: u128,
+        gas_price: u128,
+        requested_gas_limit: Option<EvmGas>,
+    ) -> Result<EvmGas> {
+        let mut gas = self.block_gas_limit;
+
+        if let Some(requested_gas_limit) = requested_gas_limit {
+            gas = gas.min(requested_gas_limit);
+        }
+
+        if gas_price != 0 {
+            let balance = self.get_account(caller)?.balance;
+            // Calculate how much the caller has left to pay for gas after the transaction value is subtracted.
+            let balance = balance.checked_sub(tx_value).ok_or_else(|| {
+                anyhow!("caller has insufficient funds - has: {balance}, needs: {tx_value}")
+            })?;
+            // Calculate the gas the caller could pay for at this gas price.
+            let max_gas = EvmGas((balance / gas_price) as u64);
+            gas = gas.min(max_gas);
+        }
+
+        Ok(gas)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
         &self,
@@ -1039,9 +1113,16 @@ impl State {
         gas_price: Option<u128>,
         value: u128,
     ) -> Result<u64> {
+        if !self.forks.get(current_block.number).executable_blocks {
+            return Err(anyhow!(
+                "transactions at this block height are not executable"
+            ));
+        }
+
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
-        let mut max = gas.unwrap_or(MAX_EVM_GAS_LIMIT).0;
+        let mut max = self.max_gas_for_caller(from_addr, value, gas_price, gas)?.0;
+
         let upper_bound = max;
 
         // Check if estimation succeeds with the highest possible gas
@@ -1133,6 +1214,12 @@ impl State {
         amount: u128,
         current_block: BlockHeader,
     ) -> Result<ExecutionResult> {
+        if !self.forks.get(current_block.number).executable_blocks {
+            return Err(anyhow!(
+                "transactions at this block height are not executable"
+            ));
+        }
+
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1258,11 +1345,21 @@ impl PendingState {
     }
 
     pub fn get_canonical_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
-        self.pre_state.get_canonical_block_by_number(block_number)
+        self.pre_state
+            .sql
+            .read()?
+            .blocks()?
+            .canonical_by_height(block_number)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
-        self.pre_state.get_highest_canonical_block_number()
+        Ok(self
+            .pre_state
+            .sql
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .map(|b| b.number()))
     }
 
     pub fn touch(&mut self, address: Address) {
@@ -1763,6 +1860,8 @@ fn scilla_create(
         txn.amount,
         &contract_init,
         &ext_libs_dir_in_scilla,
+        fork,
+        current_block.number,
     )?;
     let create_output = match create_output {
         Ok(o) => o,
@@ -1821,6 +1920,7 @@ pub fn scilla_call(
     mut inspector: impl ScillaInspector,
     scilla_ext_libs_path: &ScillaExtLibsPath,
     fork: &Fork,
+    current_block: u64,
 ) -> Result<(ScillaResult, PendingState)> {
     let mut gas = gas_limit;
 
@@ -1927,6 +2027,7 @@ pub fn scilla_call(
                     .ok_or_else(|| anyhow!("call to a Scilla contract without a message"))?,
                 &ext_libs_dir_in_scilla,
                 fork,
+                current_block,
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 
@@ -2005,6 +2106,7 @@ pub fn scilla_call(
                     address: to_addr,
                     event_name: event.event_name,
                     params: event.params,
+                    log_index: None,
                 };
                 logs.push(log);
             }
@@ -2032,7 +2134,14 @@ pub fn scilla_call(
             };
             gas = g;
 
-            if let Some(result) = current_state.deduct_from_account(from_addr, amount, EvmGas(0))? {
+            let deduct_funds_from = match fork.scilla_deduct_funds_from_actual_sender {
+                true => sender,
+                false => from_addr,
+            };
+
+            if let Some(result) =
+                current_state.deduct_from_account(deduct_funds_from, amount, EvmGas(0))?
+            {
                 return Ok((result, current_state));
             }
 

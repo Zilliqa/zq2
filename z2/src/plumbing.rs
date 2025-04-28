@@ -430,7 +430,7 @@ pub async fn run_persistence_converter(
     let zq2_db = zilliqa::db::Db::new(
         Some(zq2_dir),
         node_config.eth_chain_id,
-        node_config.state_cache_size,
+        node_config.cache_size,
     )?;
     let zq1_db = zq1::Db::new(zq1_dir)?;
     converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_key).await?;

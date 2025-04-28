@@ -1,18 +1,25 @@
 use alloy::primitives::Address;
+use ethabi::Token;
 use ethers::{
     abi::Tokenize,
     providers::{Middleware, PubsubClient},
     types::TransactionRequest,
 };
-use primitive_types::U256;
+use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
+use zilliqa::{
+    cfg::new_view_broadcast_interval_default, contracts, crypto::NodePublicKey,
+    state::contract_addr,
+};
 mod admin;
 mod consensus;
+mod debug;
 mod eth;
 mod ots;
 mod persistence;
 mod staking;
 mod trace;
+mod txpool;
 mod unreliable;
 mod web3;
 mod zil;
@@ -66,13 +73,12 @@ use tracing::*;
 use zilliqa::{
     api,
     cfg::{
-        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradesBlockHeights, Fork,
-        GenesisDeposit, NodeConfig, allowed_timestamp_skew_default,
+        Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
+        Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
-        max_rpc_response_size_default, scilla_address_default, scilla_ext_libs_path_default,
-        scilla_stdlib_dir_default, staker_withdrawal_period_default, state_cache_size_default,
-        state_rpc_limit_default, total_native_token_supply_default,
+        max_rpc_response_size_default, scilla_ext_libs_path_default, state_rpc_limit_default,
+        total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -89,6 +95,8 @@ pub struct NewNodeOptions {
     secret_key: Option<SecretKey>,
     onchain_key: Option<SigningKey>,
     checkpoint: Option<Checkpoint>,
+    prune_interval: Option<u64>,
+    sync_base_height: Option<u64>,
 }
 
 impl NewNodeOptions {
@@ -250,7 +258,6 @@ struct Network {
     scilla_stdlib_dir: String,
     do_checkpoints: bool,
     blocks_per_epoch: u64,
-    consensus_tick_countdown: u64,
     deposit_v3_upgrade_block_height: Option<u64>,
 }
 
@@ -329,13 +336,23 @@ impl Network {
             })
             .collect();
 
-        let contract_upgrade_block_heights =
-            ContractUpgradesBlockHeights::new(deposit_v3_upgrade_block_height, None, None);
+        let contract_upgrades = {
+            if let Some(deposit_v3_upgrade_block_height_value) = deposit_v3_upgrade_block_height {
+                ContractUpgrades::new(
+                    Some(ContractUpgradeConfig::from_height(
+                        deposit_v3_upgrade_block_height_value,
+                    )),
+                    None,
+                    None,
+                )
+            } else {
+                ContractUpgrades::new(None, None, None)
+            }
+        };
 
         let config = NodeConfig {
             eth_chain_id: shard_id,
             consensus: ConsensusConfig {
-                staker_withdrawal_period: staker_withdrawal_period_default(),
                 genesis_deposits: genesis_deposits.clone(),
                 is_main: send_to_parent.is_none(),
                 consensus_timeout: Duration::from_secs(5),
@@ -355,7 +372,7 @@ impl Network {
                 blocks_per_epoch,
                 epochs_per_checkpoint: 1,
                 total_native_token_supply: total_native_token_supply_default(),
-                contract_upgrade_block_heights,
+                contract_upgrades,
                 forks: vec![],
                 genesis_fork: Fork {
                     scilla_call_gas_exempt_addrs: vec![
@@ -366,6 +383,7 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
+                new_view_broadcast_interval: new_view_broadcast_interval_default(),
             },
             api_servers: vec![ApiServer {
                 port: 4201,
@@ -373,12 +391,16 @@ impl Network {
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            state_cache_size: state_cache_size_default(),
+            cache_size: 1024 * 1024,
             load_checkpoint: None,
             do_checkpoints,
             block_request_limit: block_request_limit_default(),
-            max_blocks_in_flight: max_blocks_in_flight_default(),
-            block_request_batch_size: block_request_batch_size_default(),
+            sync: SyncConfig {
+                max_blocks_in_flight: max_blocks_in_flight_default(),
+                block_request_batch_size: block_request_batch_size_default(),
+                prune_interval: u64_max(),
+                sync_base_height: u64_max(),
+            },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
@@ -446,7 +468,6 @@ impl Network {
             do_checkpoints,
             blocks_per_epoch,
             scilla_stdlib_dir,
-            consensus_tick_countdown: 10,
             deposit_v3_upgrade_block_height,
         }
     }
@@ -470,8 +491,17 @@ impl Network {
     }
 
     pub fn add_node_with_options(&mut self, options: NewNodeOptions) -> usize {
-        let contract_upgrade_block_heights =
-            ContractUpgradesBlockHeights::new(self.deposit_v3_upgrade_block_height, None, None);
+        let contract_upgrades = if self.deposit_v3_upgrade_block_height.is_some() {
+            ContractUpgrades::new(
+                Some(ContractUpgradeConfig::from_height(
+                    self.deposit_v3_upgrade_block_height.unwrap(),
+                )),
+                None,
+                None,
+            )
+        } else {
+            ContractUpgrades::new(None, None, None)
+        };
         let config = NodeConfig {
             eth_chain_id: self.shard_id,
             api_servers: vec![ApiServer {
@@ -480,11 +510,10 @@ impl Network {
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            state_cache_size: state_cache_size_default(),
+            cache_size: 1024 * 1024,
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
             consensus: ConsensusConfig {
-                staker_withdrawal_period: staker_withdrawal_period_default(),
                 genesis_deposits: self.genesis_deposits.clone(),
                 is_main: self.is_main(),
                 consensus_timeout: Duration::from_secs(5),
@@ -497,13 +526,13 @@ impl Network {
                 eth_block_gas_limit: EvmGas(84000000),
                 gas_price: 4_761_904_800_000u128.into(),
                 main_shard_id: None,
-                scilla_address: scilla_address_default(),
+                scilla_address: self.scilla_address.clone(),
                 blocks_per_epoch: self.blocks_per_epoch,
                 epochs_per_checkpoint: 1,
-                scilla_stdlib_dir: scilla_stdlib_dir_default(),
+                scilla_stdlib_dir: self.scilla_stdlib_dir.clone(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
                 total_native_token_supply: total_native_token_supply_default(),
-                contract_upgrade_block_heights,
+                contract_upgrades,
                 forks: vec![],
                 genesis_fork: Fork {
                     scilla_call_gas_exempt_addrs: vec![
@@ -514,10 +543,15 @@ impl Network {
                     ],
                     ..genesis_fork_default()
                 },
+                new_view_broadcast_interval: new_view_broadcast_interval_default(),
             },
             block_request_limit: block_request_limit_default(),
-            max_blocks_in_flight: max_blocks_in_flight_default(),
-            block_request_batch_size: block_request_batch_size_default(),
+            sync: SyncConfig {
+                max_blocks_in_flight: max_blocks_in_flight_default(),
+                block_request_batch_size: block_request_batch_size_default(),
+                prune_interval: options.prune_interval.unwrap_or(u64_max()),
+                sync_base_height: options.sync_base_height.unwrap_or(u64_max()),
+            },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
             enable_ots_indices: true,
@@ -621,7 +655,6 @@ impl Network {
         loop {
             for node in &self.nodes {
                 // Trigger a tick so that block fetching can operate.
-                node.inner.lock().unwrap().consensus.tick().unwrap();
                 if node.inner.lock().unwrap().handle_timeout().unwrap() {
                     return;
                 }
@@ -776,19 +809,6 @@ impl Network {
         // Advance time.
         zilliqa::time::advance(Duration::from_millis(1));
 
-        // Every 10ms send a consensus tick, since most of our tests are too short to otherwise
-        // be able to sync.
-        self.consensus_tick_countdown -= 1;
-        if self.consensus_tick_countdown == 0 {
-            for (index, node) in self.nodes.iter().enumerate() {
-                let span = tracing::span!(tracing::Level::INFO, "consensus_tick", index);
-
-                span.in_scope(|| {
-                    node.inner.lock().unwrap().consensus.tick().unwrap();
-                });
-            }
-            self.consensus_tick_countdown = 10;
-        }
         // Take all the currently ready messages from the stream.
         let mut messages = self.collect_messages();
 
@@ -1012,20 +1032,14 @@ impl Network {
                                     self.pending_responses
                                         .insert(response_channel.clone(), source);
 
-                                    match external_message {
-                                        // Re-route Injections from Requests to Broadcasts
-                                        ExternalMessage::InjectedProposal(_) => inner
-                                            .handle_broadcast(source, external_message.clone())
-                                            .unwrap(),
-                                        _ => inner
-                                            .handle_request(
-                                                source,
-                                                "(synthetic_id)",
-                                                external_message.clone(),
-                                                response_channel,
-                                            )
-                                            .unwrap(),
-                                    }
+                                    inner
+                                        .handle_request(
+                                            source,
+                                            "(synthetic_id)",
+                                            external_message.clone(),
+                                            response_channel,
+                                        )
+                                        .unwrap();
                                 }
                             });
                         }
@@ -1090,7 +1104,7 @@ impl Network {
     async fn run_until_synced(&mut self, index: usize) {
         let check = loop {
             let i = self.random_index();
-            if i != index {
+            if i != index && !self.disconnected.contains(&i) {
                 break i;
             }
         };
@@ -1185,8 +1199,8 @@ impl Network {
         let initial_timeout = timeout;
         let db = self.get_node(0).db.clone();
         loop {
-            if let Some(view) = db.get_finalized_view()? {
-                if let Some(block) = db.get_block_by_view(view)? {
+            if let Some(view) = db.read()?.finalized_view()?.get()? {
+                if let Some(block) = db.read()?.blocks()?.by_view(view)? {
                     if block.number() >= target_block {
                         return Ok(());
                     }
@@ -1429,7 +1443,47 @@ async fn fund_wallet(network: &mut Network, from_wallet: &Wallet, to_wallet: &Wa
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(from_wallet, hash, 100).await;
+    network.run_until_receipt(to_wallet, hash, 100).await;
+}
+
+async fn get_reward_address(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+    staker: &NodePublicKey,
+) -> H160 {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(
+            contracts::deposit::GET_REWARD_ADDRESS
+                .encode_input(&[Token::Bytes(staker.as_bytes())])
+                .unwrap(),
+        );
+    let return_value = wallet.call(&tx.into(), None).await.unwrap();
+    contracts::deposit::GET_REWARD_ADDRESS
+        .decode_output(&return_value)
+        .unwrap()[0]
+        .clone()
+        .into_address()
+        .unwrap()
+}
+
+async fn get_stakers(
+    wallet: &SignerMiddleware<Provider<LocalRpcClient>, LocalWallet>,
+) -> Vec<NodePublicKey> {
+    let tx = TransactionRequest::new()
+        .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
+        .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
+    let stakers = wallet.call(&tx.into(), None).await.unwrap();
+    let stakers = contracts::deposit::GET_STAKERS
+        .decode_output(&stakers)
+        .unwrap()[0]
+        .clone()
+        .into_array()
+        .unwrap();
+
+    stakers
+        .into_iter()
+        .map(|k| NodePublicKey::from_bytes(&k.into_bytes().unwrap()).unwrap())
+        .collect()
 }
 
 /// An implementation of [JsonRpcClient] which sends requests directly to an [RpcModule], without making any network

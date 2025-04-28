@@ -224,6 +224,8 @@ RestartSec=10
 WantedBy=multi-user.target
 """
 
+SCILLA_SERVER_PORT="62831"
+
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
@@ -234,10 +236,10 @@ start() {
     docker container prune -f
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 --memory=6g \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
-    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} ${1} --log-json
+    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ ${1} --log-json
 }
 
 stop() {
@@ -500,7 +502,12 @@ start() {
     docker rm node-exporter-""" + VERSIONS.get('node_exporter') + """ &> /dev/null || echo 0
     docker run -td -p 9100:9100 --name node-exporter-""" + VERSIONS.get('node_exporter') + """ \
         --net=host --restart=unless-stopped --pull=always \
-        ${NODE_EXPORTER_IMAGE} &> /dev/null &
+        ${NODE_EXPORTER_IMAGE} \
+        --collector.disable-defaults \
+        --collector.cpu \
+        --collector.meminfo \
+        --collector.filesystem \
+        &> /dev/null &
 }
 
 stop() {
@@ -630,6 +637,10 @@ metrics:
             scrape_interval: 30s
             static_configs:
               - targets: ['localhost:9256']
+            metric_relabel_configs:
+              - source_labels: [__name__]
+                regex: 'namedprocess_namegroup_cpu_seconds_total|namedprocess_namegroup_memory_bytes'
+                action: keep
   service:
     log_level: info
     pipelines:

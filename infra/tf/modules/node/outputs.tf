@@ -10,6 +10,18 @@ output "instances" {
   }
 }
 
+output "instances_list" {
+  description = "The provisioned instances"
+  value = [
+    for instance in google_compute_instance.this : {
+      name        = instance.name,
+      external_ip = instance.network_interface[0].access_config[0].nat_ip,
+      zone        = instance.zone,
+      self_link   = instance.self_link,
+    }
+  ]
+}
+
 output "id" {
   description = "The provisioned instances IDs"
   value       = { for instance in google_compute_instance.this : instance.name => instance.id }
@@ -38,6 +50,11 @@ output "zones" {
 }
 
 output "service_account" {
-  description = "The GCP service account associated to the instances"
-  value       = google_service_account.this
+  description = "The GCP service accounts associated to the instances"
+  value = {
+    for service_account in google_service_account.this : service_account.name => {
+      account_id = service_account.account_id,
+      email = service_account.email,
+    }
+  }
 }

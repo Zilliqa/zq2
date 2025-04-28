@@ -246,8 +246,8 @@ impl Machine {
         let output = self.run(inner_command, true)?;
         if !output.status.success() {
             return Err(anyhow!(
-                "getting local block number failed: {:?}",
-                output.stderr
+                "getting local block number failed: {}",
+                String::from_utf8_lossy(&output.stderr)
             ));
         }
 
@@ -277,21 +277,7 @@ impl Machine {
             params.clone().unwrap_or("[]".to_string()),
         );
 
-        let args = &[
-            "--max-time",
-            &timeout.to_string(),
-            "-X",
-            "POST",
-            "-H",
-            "Content-Type:application/json",
-            "-H",
-            "accept:application/json,*/*;q=0.5",
-            "--data",
-            &body,
-            &format!("http://{}:{}", self.external_address, port.value()),
-        ];
-
-        let output = if port == NodePort::Admin {
+        let output = {
             let inner_command = format!(
                 r#"curl --max-time {} -X POST -H 'content-type: application/json' -H 'accept:application/json,*/*;q=0.5' -d '{}' http://localhost:{}"#,
                 &timeout.to_string(),
@@ -299,16 +285,14 @@ impl Machine {
                 port.value()
             );
             self.run(&inner_command, false)?
-        } else {
-            Command::new("curl").args(args).output()?
         };
 
         if !output.status.success() {
             return Err(anyhow!(
-                "getting rpc response for {} with params {:?} failed: {:?}",
+                "getting rpc response for {} with params {:?} failed: {}",
                 method,
                 params,
-                output.stderr
+                String::from_utf8_lossy(&output.stderr)
             ));
         }
 
@@ -384,7 +368,6 @@ impl fmt::Display for ConsensusInfo {
 
 #[derive(Debug, Deserialize)]
 struct HighQc {
-    signature: String,
     cosigned: String,
     view: String,
     block_hash: String,
@@ -393,7 +376,6 @@ struct HighQc {
 impl Default for HighQc {
     fn default() -> Self {
         Self {
-            signature: "---".to_string(),
             cosigned: "---".to_string(),
             view: "---".to_string(),
             block_hash: "---".to_string(),
@@ -405,8 +387,8 @@ impl fmt::Display for HighQc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "view: {}\tblock_hash: {}\tcosigned: {}\nsign: {}",
-            self.view, self.block_hash, self.cosigned, self.signature
+            "view: {}\tblock_hash: {}\tcosigned: {}",
+            self.view, self.block_hash, self.cosigned
         )
     }
 }
@@ -667,7 +649,7 @@ impl ChainNode {
         let cmd = "sudo rm -f /tmp/config.toml /tmp/provision_node.py";
         let output = self.machine.run(cmd, true)?;
         if !output.status.success() {
-            println!("{:?}", output.stderr);
+            println!("{}", String::from_utf8_lossy(&output.stderr));
             return Err(anyhow!("Error removing previous installation files"));
         }
 
@@ -675,7 +657,7 @@ impl ChainNode {
             let cmd = "sudo rm -f /tmp/checkpoint_cron_job.sh";
             let output = self.machine.run(cmd, true)?;
             if !output.status.success() {
-                println!("{:?}", output.stderr);
+                println!("{}", String::from_utf8_lossy(&output.stderr));
                 return Err(anyhow!("Error removing previous checkpoint cron job"));
             }
         }
@@ -684,7 +666,7 @@ impl ChainNode {
             let cmd = "sudo rm -f /tmp/persistence_export_cron_job.sh";
             let output = self.machine.run(cmd, true)?;
             if !output.status.success() {
-                println!("{:?}", output.stderr);
+                println!("{}", String::from_utf8_lossy(&output.stderr));
                 return Err(anyhow!(
                     "Error removing previous persistence export cron job"
                 ));
@@ -700,7 +682,7 @@ impl ChainNode {
         let cmd = "sudo chmod 666 /tmp/config.toml /tmp/provision_node.py && sudo mv /tmp/config.toml /config.toml && sudo python3 /tmp/provision_node.py";
         let output = self.machine.run(cmd, true)?;
         if !output.status.success() {
-            println!("{:?}", output.stderr);
+            println!("{}", String::from_utf8_lossy(&output.stderr));
             return Err(anyhow!("Error running the provisioning script"));
         }
 
@@ -712,7 +694,7 @@ impl ChainNode {
 
             let output = self.machine.run(cmd, true)?;
             if !output.status.success() {
-                println!("{:?}", output.stderr);
+                println!("{}", String::from_utf8_lossy(&output.stderr));
                 return Err(anyhow!("Error creating the checkpoint cronjob"));
             }
         }
@@ -725,7 +707,7 @@ impl ChainNode {
 
             let output = self.machine.run(cmd, true)?;
             if !output.status.success() {
-                println!("{:?}", output.stderr);
+                println!("{}", String::from_utf8_lossy(&output.stderr));
                 return Err(anyhow!("Error creating the persistence export cronjob"));
             }
         }
@@ -817,13 +799,14 @@ impl ChainNode {
             EthereumAddress::from_private_key(&self.chain.genesis_private_key().await?)?;
         let role_name = self.role.to_string();
         let eth_chain_id = self.eth_chain_id.to_string();
-        let contract_upgrade_block_heights = self.chain()?.get_contract_upgrades_block_heights();
+        let contract_upgrades = self.chain()?.get_contract_upgrades_block_heights();
         // 4201 is the publically exposed port - We don't expose everything there.
         let public_api = if self.role == NodeRole::Api || self.role == NodeRole::PrivateApi {
             // Enable all APIs, except `admin_` for API nodes.
             json!({
                 "port": 4201,
                 "enabled_apis": [
+                    "debug",
                     "erigon",
                     "eth",
                     "net",
@@ -904,8 +887,8 @@ impl ChainNode {
         );
         ctx.insert("genesis_address", &genesis_account.address);
         ctx.insert(
-            "contract_upgrade_block_heights",
-            &contract_upgrade_block_heights.map(|c| c.to_toml().to_string()),
+            "contract_upgrades",
+            &contract_upgrades.to_toml().to_string(),
         );
         // convert json to toml formatting
         let toml_servers: toml::Value = serde_json::from_value(api_servers)?;
@@ -926,10 +909,6 @@ impl ChainNode {
                     .collect::<Result<Vec<_>>>()?,
             );
         }
-        ctx.insert(
-            "staker_withdrawal_period",
-            &self.chain()?.get_staker_withdrawal_period(),
-        );
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
             if self.role == NodeRole::Validator {

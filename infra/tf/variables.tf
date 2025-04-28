@@ -219,6 +219,7 @@ variable "private_api" {
     instance_type          = optional(string, "e2-standard-2")
     provisioning_model     = optional(string, "STANDARD")
     generate_external_ip   = optional(bool, false)
+    detach_load_balancer   = optional(bool, false)
     firewall_source_ranges = optional(list(string), [])
     dns_names              = optional(list(string), [])
     nodes = optional(list(object({
@@ -264,6 +265,13 @@ variable "private_api" {
     ])
     error_message = "The private-api key must NOT be one of: 'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'private-api', 'sentry'."
   }
+}
+
+variable "jsonrpc_allowed_sources" {
+  description = "A list of CIDR blocks allowed to reach the nodes RPC port."
+  type        = list(string)
+  nullable    = false
+  default     = []
 }
 
 variable "subdomain" {
