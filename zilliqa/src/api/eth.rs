@@ -1025,23 +1025,13 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
 
     match &mut filter.kind {
         FilterKind::Block(block_filter) => {
-            let mut i = match block_filter.last_block {
-                Some(x) => x + 1,
-                None => 0,
-            };
-            let endpoint = match node.resolve_block_number(BlockNumberOrTag::Latest)? {
-                Some(x) => x.number(),
-                None => return Ok(json!(Vec::<String>::new())),
-            };
+            let headers = block_filter.consume_headers()?;
 
-            let mut results = Vec::new();
-            while i <= endpoint {
-                if let Some(block) = node.resolve_block_number(BlockNumberOrTag::Number(i))? {
-                    block_filter.last_block = Some(i);
-                    results.push(B256::from(block.hash()).to_hex());
-                }
-                i += 1;
-            }
+            let results: Vec<_> = headers
+                .into_iter()
+                .map(|header| B256::from(header.hash).to_hex())
+                .collect();
+
             Ok(json!(results))
         }
 
@@ -1135,7 +1125,9 @@ fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
     let node = node.lock().unwrap();
     let mut filters = node.filters.lock().unwrap();
 
-    let filter = BlockFilter { last_block: None };
+    let filter = BlockFilter {
+        block_receiver: node.subscribe_to_new_blocks(),
+    };
     let id = filters.add_filter(FilterKind::Block(filter));
     Ok(id)
 }

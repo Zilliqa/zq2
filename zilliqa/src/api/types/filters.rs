@@ -3,28 +3,62 @@ use std::{
     time::Duration,
 };
 
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 
 use super::eth::GetLogsParams;
-use crate::{crypto::Hash, time::SystemTime};
+use crate::{crypto::Hash, message::BlockHeader, time::SystemTime};
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct Filter {
     pub created_at: SystemTime,
     pub last_poll: SystemTime,
     pub kind: FilterKind,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub enum FilterKind {
     Block(BlockFilter),
     PendingTx(PendingTxFilter),
     Log(LogFilter),
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct BlockFilter {
-    pub last_block: Option<u64>,
+    pub block_receiver: tokio::sync::broadcast::Receiver<BlockHeader>,
+}
+
+impl BlockFilter {
+    pub fn consume_headers(&mut self) -> anyhow::Result<Vec<BlockHeader>> {
+        let mut headers = Vec::new();
+
+        // Try to receive all currently available messages
+        loop {
+            match self.block_receiver.try_recv() {
+                Ok(header) => {
+                    // Successfully got a header, add it to our vec
+                    headers.push(header);
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+                    // No more messages available, we're done
+                    break;
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                    // We've lagged behind, some messages were missed
+                    return Err(anyhow!(
+                        "Filter was not polled in time, {} BlockHeaders missed",
+                        skipped
+                    ));
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                    // Channel is closed
+                    return Err(anyhow!("Filter has been deleted"));
+                }
+            }
+        }
+
+        Ok(headers)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -61,7 +95,7 @@ impl Filter {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Default, Serialize)]
+#[derive(Debug, Default)]
 pub struct Filters {
     filters: HashMap<u128, Filter>,
     actions_since_cleanup: usize,
