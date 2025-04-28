@@ -1,6 +1,6 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
-use alloy::{primitives::Address, rlp::Encodable};
+use alloy::primitives::Address;
 use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
 use rand::{Rng, distributions::Alphanumeric};
@@ -157,9 +157,9 @@ pub struct NodeConfig {
     /// The location of persistence data. If not set, uses a temporary path.
     #[serde(default)]
     pub data_dir: Option<String>,
-    /// Size of the in-memory state trie cache, in bytes. Defaults to 256 MiB.
-    #[serde(default = "state_cache_size_default")]
-    pub state_cache_size: usize,
+    /// Size of the in-memory database cache, in bytes. Defaults to 512 MiB.
+    #[serde(default = "cache_size_default")]
+    pub cache_size: usize,
     /// Persistence checkpoint to load.
     #[serde(default)]
     pub load_checkpoint: Option<Checkpoint>,
@@ -195,7 +195,7 @@ impl Default for NodeConfig {
             consensus: ConsensusConfig::default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            state_cache_size: state_cache_size_default(),
+            cache_size: cache_size_default(),
             load_checkpoint: None,
             do_checkpoints: false,
             block_request_limit: block_request_limit_default(),
@@ -285,8 +285,8 @@ pub fn allowed_timestamp_skew_default() -> Duration {
     Duration::from_secs(60)
 }
 
-pub fn state_cache_size_default() -> usize {
-    256 * 1024 * 1024 // 256 MiB
+pub fn cache_size_default() -> usize {
+    512 * 1024 * 1024 // 512 MiB
 }
 
 pub fn eth_chain_id_default() -> u64 {
@@ -532,43 +532,6 @@ impl Forks {
             .unwrap_or_else(|i| i - 1);
         &self.0[index]
     }
-
-    pub fn find_height_fork_first_activated(&self, fork_name: ForkName) -> Option<u64> {
-        let mut sorted_fork = self.0.clone();
-        sorted_fork.sort_by_key(|item| item.at_height);
-        for fork in sorted_fork.iter() {
-            if match fork_name {
-                ForkName::ExecutableBlocks => fork.executable_blocks,
-                ForkName::FailedScillaCallFromGasExemptCallerCausesRevert => {
-                    fork.failed_scilla_call_from_gas_exempt_caller_causes_revert
-                }
-                ForkName::CallMode1SetsCallerToParentCaller => {
-                    fork.call_mode_1_sets_caller_to_parent_caller
-                }
-                ForkName::ScillaMessagesCanCallEvmContracts => {
-                    fork.scilla_messages_can_call_evm_contracts
-                }
-                ForkName::ScillaContractCreationIncrementsAccountBalance => {
-                    fork.scilla_contract_creation_increments_account_balance
-                }
-                ForkName::ScillaJsonPreserveOrder => fork.scilla_json_preserve_order,
-                ForkName::ScillaCallRespectsEvmStateChanges => {
-                    fork.scilla_call_respects_evm_state_changes
-                }
-                ForkName::OnlyMutatedAccountsUpdateState => fork.only_mutated_accounts_update_state,
-                ForkName::ScillaCallGasExemptAddrs => {
-                    fork.scilla_call_gas_exempt_addrs.length() != 0
-                }
-                ForkName::ScillaBlockNumberReturnsCurrentBlock => {
-                    fork.scilla_block_number_returns_current_block
-                }
-                ForkName::ScillaMapsAreEncodedCorrectly => fork.scilla_maps_are_encoded_correctly,
-            } {
-                return Some(fork.at_height);
-            }
-        }
-        None
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -589,20 +552,6 @@ pub struct Fork {
     pub apply_scilla_delta_when_evm_succeeded: bool,
     pub apply_state_changes_only_if_transaction_succeeds: bool,
     pub scilla_deduct_funds_from_actual_sender: bool,
-}
-
-pub enum ForkName {
-    ExecutableBlocks,
-    FailedScillaCallFromGasExemptCallerCausesRevert,
-    CallMode1SetsCallerToParentCaller,
-    ScillaMessagesCanCallEvmContracts,
-    ScillaContractCreationIncrementsAccountBalance,
-    ScillaJsonPreserveOrder,
-    ScillaCallRespectsEvmStateChanges,
-    OnlyMutatedAccountsUpdateState,
-    ScillaCallGasExemptAddrs,
-    ScillaBlockNumberReturnsCurrentBlock,
-    ScillaMapsAreEncodedCorrectly,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

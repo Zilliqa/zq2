@@ -13,7 +13,7 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 use http::Extensions;
-use itertools::{Either, Itertools};
+use itertools::Either;
 use jsonrpsee::{
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
     core::StringError,
@@ -479,12 +479,12 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     Ok(block)
 }
 
-pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block_hash: Hash) -> Result<[u8; 256]> {
+pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u8; 256]> {
     let mut logs_bloom = [0; 256];
-    let block = node
-        .get_block(block_hash)?
-        .ok_or_else(|| anyhow!("block not found"))?;
-    for txn_receipt in node.get_transaction_receipts_in_block(block_hash)?.iter() {
+    for txn_hash in &block.transactions {
+        let txn_receipt = node
+            .get_transaction_receipt(*txn_hash)?
+            .ok_or_else(|| anyhow!("missing receipt"))?;
         // Ideally we'd implement a full blown bloom filter type but this'll do for now
         txn_receipt
             .logs
@@ -494,11 +494,11 @@ pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block_hash: Hash) -> Result
                 Log::Evm(log) => log,
                 Log::Scilla(log) => log.into_evm(),
             })
-            .map(|log| {
-                let log_index = log.log_index.unwrap();
+            .enumerate()
+            .for_each(|(log_index, log)| {
                 let log = eth::Log::new(
                     log,
-                    log_index,
+                    log_index as u64,
                     txn_receipt.index as usize,
                     txn_receipt.tx_hash,
                     block.number(),
@@ -506,16 +506,13 @@ pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block_hash: Hash) -> Result
                 );
 
                 log.bloom(&mut logs_bloom);
-
-                log
-            })
-            .collect_vec();
+            });
     }
     Ok(logs_bloom)
 }
 
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
-    let logs_bloom = get_block_logs_bloom(node, block.header.hash)?;
+    let logs_bloom = get_block_logs_bloom(node, block)?;
     if !full {
         let miner = node.get_proposer_reward_address(block.header)?;
         let block_gas_limit = block.gas_limit();
@@ -648,71 +645,55 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
         }
     };
 
-    // Get the receipts for each transaction. This is an iterator of (receipt, txn_index, txn_hash, block_number, block_hash).
-    let receipts = blocks
-        .map(|block: Result<_>| {
-            let block = block?;
-            let block_number = block.number();
-            let block_hash = block.hash();
-            let receipts = node.get_transaction_receipts_in_block(block_hash)?;
+    let mut logs = vec![];
 
-            Ok(block
-                .transactions
-                .into_iter()
-                .enumerate()
-                .zip(receipts)
-                .map(move |((txn_index, txn_hash), receipt)| {
-                    (receipt, txn_index, txn_hash, block_number, block_hash)
-                }))
-        })
-        .flatten_ok();
+    for block in blocks {
+        let block = block?;
 
-    // Get the logs from each receipt and filter them based on the provided parameters. This is an iterator of (log, log_index, txn_index, txn_hash, block_number, block_hash).
-    let logs = receipts
-        .map(|r: Result<_>| {
-            let (receipt, txn_index, txn_hash, block_number, block_hash) = r?;
-            Ok(receipt
-                .logs
-                .into_iter()
-                .map(|log| match log {
-                    Log::Evm(log) => log,
-                    Log::Scilla(log) => log.into_evm(),
-                })
-                .map(move |l| (l, txn_index, txn_hash, block_number, block_hash)))
-        })
-        .flatten_ok()
-        .filter_ok(|(log, _, _, _, _)| {
-            params
-                .address
-                .as_ref()
-                .map(|a| a.contains(&log.address))
-                .unwrap_or(true)
-        })
-        .filter_ok(|(log, _, _, _, _)| {
-            params
-                .topics
-                .iter()
-                .zip(log.topics.iter())
-                .all(|(filter_topic, log_topic)| {
-                    filter_topic.is_empty() || filter_topic.contains(log_topic)
-                })
-        });
+        for (txn_index, txn_hash) in block.transactions.iter().enumerate() {
+            let receipt = node
+                .get_transaction_receipt(*txn_hash)?
+                .ok_or(anyhow!("missing receipt"))?;
 
-    // Finally convert the iterator to our response format.
-    let logs = logs.map(|l: Result<_>| {
-        let (log, txn_index, txn_hash, block_number, block_hash) = l?;
-        let log_index = log.log_index.unwrap();
-        Ok(eth::Log::new(
-            log,
-            log_index,
-            txn_index,
-            txn_hash,
-            block_number,
-            block_hash,
-        ))
-    });
+            for (log_index, log) in receipt.logs.into_iter().enumerate() {
+                let log = match log {
+                    Log::Evm(l) => l,
+                    Log::Scilla(l) => l.into_evm(),
+                };
 
-    logs.collect()
+                if !params
+                    .address
+                    .as_ref()
+                    .map(|a| a.contains(&log.address))
+                    .unwrap_or(true)
+                {
+                    continue;
+                }
+
+                if !params
+                    .topics
+                    .iter()
+                    .zip(log.topics.iter())
+                    .all(|(filter_topic, log_topic)| {
+                        filter_topic.is_empty() || filter_topic.contains(log_topic)
+                    })
+                {
+                    continue;
+                }
+
+                logs.push(eth::Log::new(
+                    log,
+                    log_index as u64,
+                    txn_index,
+                    *txn_hash,
+                    block.number(),
+                    block.hash(),
+                ));
+            }
+        }
+    }
+
+    Ok(logs)
 }
 
 fn get_transaction_by_block_hash_and_index(
@@ -915,7 +896,7 @@ async fn subscribe(
             while let Ok(header) = new_blocks.recv().await {
                 let miner = node.lock().unwrap().get_proposer_reward_address(header)?;
                 let block_gas_limit = node.lock().unwrap().config.consensus.eth_block_gas_limit;
-                let logs_bloom = get_block_logs_bloom(&node.lock().unwrap(), header.hash)?;
+                let logs_bloom = [0; 256]; // TODO
                 let header = eth::Header::from_header(
                     header,
                     miner.unwrap_or_default(),

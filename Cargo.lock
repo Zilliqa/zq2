@@ -1596,6 +1596,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytesize"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3c8f83209414aacf0eeae3cf730b18d6981697fba62f200fcfb92b9f082acba"
+
+[[package]]
 name = "bzip2"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4497,6 +4503,7 @@ dependencies = [
  "console",
  "number_prefix",
  "portable-atomic",
+ "rayon",
  "unicode-width",
  "web-time",
 ]
@@ -7076,6 +7083,16 @@ dependencies = [
  "ring 0.16.20",
  "time",
  "yasna",
+]
+
+[[package]]
+name = "redb"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea0a72cd7140de9fc3e318823b883abf819c20d478ec89ce880466dc2ef263c6"
+dependencies = [
+ "libc",
+ "log",
 ]
 
 [[package]]
@@ -10652,6 +10669,7 @@ dependencies = [
  "blsful",
  "bs58",
  "bytes",
+ "bytesize",
  "cbor4ii 1.0.0",
  "cfg-if",
  "clap",
@@ -10683,9 +10701,12 @@ dependencies = [
  "prost 0.13.5",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+ "rayon",
+ "redb",
  "revm",
  "revm-inspectors",
  "rusqlite",
+ "rustc-hash 2.1.1",
  "scilla-parser 2.0.0",
  "scopeguard",
  "semver 1.0.26",

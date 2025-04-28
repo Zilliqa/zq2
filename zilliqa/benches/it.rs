@@ -58,7 +58,7 @@ fn process_empty(c: &mut Criterion) {
         local_channel: local_message_sender,
         request_id: RequestId::default(),
     };
-    let db = Db::new::<PathBuf>(None, 0, 1024, None).unwrap();
+    let db = Db::new::<PathBuf>(None, 0, 1024).unwrap();
     let mut consensus = Consensus::new(
         secret_key,
         toml::from_str(&format!(
@@ -180,7 +180,7 @@ fn consensus(
         request_id: RequestId::default(),
     };
     let data_dir = tempdir().unwrap();
-    let db = Db::new(Some(data_dir.path()), 0, 1024, None).unwrap();
+    let db = Db::new(Some(data_dir.path()), 0, 512 * 1024 * 1024).unwrap();
     let mut config: NodeConfig = toml::from_str(
         r#"
             consensus.rewards_per_hour = "1"
