@@ -18,6 +18,7 @@ templatefile() vars:
 - secret_key, the ZQ2 node secret key
 - role, the node role: validator or apps
 - otterscan_image, the Otterscan docker image (incl. version)
+- enable_faucet, a flag to enable the faucet Spout app
 - spout_image, the Eth Spout docker image (incl. version)
 - stats_dashboard_image, the Stats dashboard docker image (incl. version)
 - stats_agent_image, the Stats agent docker image (incl. version)
@@ -43,6 +44,7 @@ def query_metadata_key(key: str) -> str:
 
 ZQ2_IMAGE="{{ docker_image }}"
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
+SPOUT_ENABLED="{{ enable_faucet }}" == "true"
 SPOUT_IMAGE="{{ spout_image }}"
 STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
 STATS_AGENT_IMAGE="{{ stats_agent_image }}"
@@ -864,9 +866,12 @@ def go(role):
             log("Configuring the blockchain app node")
             stop_apps()
             install_otterscan()
-            install_spout()
             install_stats_dashboard()
             start_apps()
+            if SPOUT_ENABLED:
+                stop_spout()
+                install_spout()                
+                start_spout()
         case _:
             log(f"Invalide role {role}")
             log("Provisioning aborted")
@@ -1054,15 +1059,23 @@ def install_exporters():
     install_process_exporter()
 
 def start_apps():
-    for app in [ "otterscan", "spout", "stats_dashboard" ]:
+    for app in [ "otterscan", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
             run_or_die(["sudo", "systemctl", "start", f"{app}"])
     pass
 
 def stop_apps():
-    for app in [ "otterscan", "spout", "stats_dashboard" ]:
+    for app in [ "otterscan", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
             run_or_die(["sudo", "systemctl", "stop", f"{app}"])
+    pass
+
+def start_spout():
+    run_or_die(["sudo", "systemctl", "start", "spout"])
+
+def stop_spout():
+    if os.path.exists(f"/etc/systemd/system/spout.service"):
+        run_or_die(["sudo", "systemctl", "stop", "spout"])
     pass
 
 def start_stats_agent():
