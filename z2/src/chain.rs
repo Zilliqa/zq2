@@ -117,7 +117,7 @@ pub enum Chain {
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
             log_level = "zilliqa=trace",
-            enable_faucet = "true"
+            enable_faucet = "false"
         )
     )]
     Zq2Mainnet,
