@@ -98,8 +98,7 @@ impl ExternalNetwork {
             IDISPATCHER_EVENTS::new(self.network.chain_gateway, provider.clone());
         let finalized_block = provider
             .get_block(
-                BlockId::Number(BlockNumberOrTag::Finalized),
-                BlockTransactionsKind::Hashes,
+                BlockId::Number(BlockNumberOrTag::Finalized)
             )
             .await?;
         let finalized_block_num = finalized_block.map_or(0, |x| x.header.number);
