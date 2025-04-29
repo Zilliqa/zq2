@@ -20,7 +20,8 @@ pub enum Chain {
             genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-richard.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info"
+            log_level = "zilliqa=info",
+            enable_faucet = "true"
         )
     )]
     Zq2Richard,
@@ -31,7 +32,8 @@ pub enum Chain {
             genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-persistence.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info"
+            log_level = "zilliqa=info",
+            enable_faucet = "true"
         )
     )]
     Zq2Persistence,
@@ -42,7 +44,8 @@ pub enum Chain {
             genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-infratest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info"
+            log_level = "zilliqa=info",
+            enable_faucet = "true"
         )
     )]
     Zq2InfraTest,
@@ -53,7 +56,8 @@ pub enum Chain {
             genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-perftest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info"
+            log_level = "zilliqa=info",
+            enable_faucet = "true"
         )
     )]
     Zq2PerfTest,
@@ -64,7 +68,8 @@ pub enum Chain {
             genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-devnet.zilliqa.com",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "true"
         )
     )]
     Zq2Devnet,
@@ -75,7 +80,8 @@ pub enum Chain {
             genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-prototestnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "true"
         )
     )]
     Zq2ProtoTestnet,
@@ -86,7 +92,8 @@ pub enum Chain {
             genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-protomainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "true"
         )
     )]
     Zq2ProtoMainnet,
@@ -97,7 +104,8 @@ pub enum Chain {
             genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-testnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "true"
         )
     )]
     Zq2Testnet,
@@ -108,7 +116,8 @@ pub enum Chain {
             genesis_amount = "900_000_000_000_000_000_000",
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "false"
         )
     )]
     Zq2Mainnet,
@@ -315,5 +324,11 @@ impl Chain {
         let log_level = self.get_str("log_level");
 
         Ok(log_level.unwrap_or("zilliqa=trace"))
+    }
+
+    pub fn get_enable_faucet(&self) -> Result<&'static str> {
+        let enable_faucet = self.get_str("enable_faucet");
+
+        Ok(enable_faucet.unwrap_or("true"))
     }
 }

@@ -988,6 +988,7 @@ impl ChainNode {
         let role_name = &self.role.to_string();
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
+        let enable_faucet = self.chain()?.get_enable_faucet()?;
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
         let stats_dashboard_image = &docker_image(
             "stats_dashboard",
@@ -1018,6 +1019,7 @@ impl ChainNode {
         var_map.insert("role", role_name);
         var_map.insert("docker_image", z2_image);
         var_map.insert("otterscan_image", otterscan_image);
+        var_map.insert("enable_faucet", enable_faucet);
         var_map.insert("spout_image", spout_image);
         var_map.insert("stats_dashboard_image", stats_dashboard_image);
         var_map.insert("stats_dashboard_key", stats_dashboard_key);

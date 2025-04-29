@@ -22,6 +22,7 @@ variable "apps" {
     provisioning_model         = optional(string, "STANDARD")
     generate_external_ip       = optional(bool, false)
     detach_load_balancer       = optional(bool, false)
+    enable_faucet              = optional(bool, true)
     faucet_max_hourly_requests = optional(number, 1000000)
     nodes = optional(list(object({
       count  = number
