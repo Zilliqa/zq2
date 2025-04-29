@@ -886,6 +886,7 @@ impl ChainNode {
             &serde_json::to_string_pretty(&genesis_deposits)?,
         );
         ctx.insert("genesis_address", &genesis_account.address);
+        ctx.insert("genesis_amount", &self.chain()?.get_genesis_amount()?);
         ctx.insert(
             "contract_upgrades",
             &contract_upgrades.to_toml().to_string(),

@@ -17,6 +17,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-richard",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-richard.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=info"
@@ -27,6 +28,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-persistence",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-persistence.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=info"
@@ -37,6 +39,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-infratest",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-infratest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=info"
@@ -47,6 +50,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-perftest",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-perftest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=info"
@@ -57,6 +61,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-devnet",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-devnet.zilliqa.com",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=trace"
@@ -67,6 +72,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-prototestnet",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-prototestnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
             log_level = "zilliqa=trace"
@@ -77,6 +83,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-protomainnet",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-protomainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
             log_level = "zilliqa=trace"
@@ -87,6 +94,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-testnet",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
             subdomain = "zq2-testnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
             log_level = "zilliqa=trace"
@@ -97,6 +105,7 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-mainnet",
         props(
+            genesis_amount = "900_000_000_000_000_000_000",
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
             log_level = "zilliqa=trace"
@@ -268,6 +277,19 @@ impl Chain {
         Err(anyhow!(
             "{}",
             format!("Subdomain not available for the chain {}", self).red()
+        ))
+    }
+
+    pub fn get_genesis_amount(&self) -> Result<&'static str> {
+        let genesis_amount = self.get_str("genesis_amount");
+
+        if let Some(genesis_amount) = genesis_amount {
+            return Ok(genesis_amount);
+        }
+
+        Err(anyhow!(
+            "{}",
+            format!("Genesis amount not available for the chain {}", self).red()
         ))
     }
 
