@@ -862,6 +862,7 @@ impl ChainNode {
             ))?
         };
 
+        let genesis_deposits_amount = &self.chain()?.get_genesis_deposits_amount()?;
         let genesis_deposits = serde_json::to_value(
             validator_addresses
                 .iter()
@@ -869,7 +870,7 @@ impl ChainNode {
                     (
                         v.bls_public_key,
                         v.peer_id,
-                        "20_000_000_000_000_000_000_000_000",
+                        &genesis_deposits_amount,
                         "0x0000000000000000000000000000000000000000",
                         &genesis_account.address,
                     )
