@@ -264,7 +264,7 @@ fn run_scilla_docker() -> Result<Child> {
         .arg("--rm")
         .arg("-v")
         .arg("/tmp:/scilla_ext_libs")
-        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72")
+        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:e762f387")
         .arg("/scilla/0/bin/scilla-server-http")
         .spawn()?;
 
