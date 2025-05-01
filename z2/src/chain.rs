@@ -123,6 +123,7 @@ pub enum Chain {
         props(
             genesis_amount = "900_000_000_000_000_000_000",
             genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
+            validator_control_address = "0x0000000000000000000000000000000000000000",
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
             log_level = "zilliqa=trace",
@@ -356,5 +357,9 @@ impl Chain {
         let enable_faucet = self.get_str("enable_faucet");
 
         Ok(enable_faucet.unwrap_or("true"))
+    }
+
+    pub fn get_validator_control_address(&self) -> Option<&'static str> {
+        self.get_str("validator_control_address")
     }
 }
