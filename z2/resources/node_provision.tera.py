@@ -25,6 +25,7 @@ templatefile() vars:
 - zq2_metrics_image, the ZQ2 metrics docker image (incl. version)
 - log_level, the ZQ2 network service log level
 - project_id, id of the GCP project
+- chain_name, name of the ZQ2 chain
 - node_name, name of the ZQ2 node
 """
 
@@ -49,7 +50,6 @@ SPOUT_ENABLED="{{ enable_faucet }}" == "true"
 SPOUT_IMAGE="{{ spout_image }}"
 STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
 STATS_AGENT_IMAGE="{{ stats_agent_image }}"
-GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
 CHECKPOINT_URL="{{ checkpoint_url }}"
 SUBDOMAIN=query_metadata_key("subdomain")
@@ -322,11 +322,12 @@ SPOUT_IMAGE="{{ spout_image }}"
 
 start() {
     docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
+    GENESIS_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis-key")
     docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e RPC_URL=https://api.""" + SUBDOMAIN + """ \
         -e NATIVE_TOKEN_SYMBOL="ZIL" \
-        -e PRIVATE_KEY=""" + GENESIS_KEY + """ \
+        -e PRIVATE_KEY=${GENESIS_KEY} \
         -e ETH_AMOUNT=100 \
         -e EXPLORER_URL="https://explorer.""" + SUBDOMAIN + """" \
         -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
@@ -369,9 +370,10 @@ STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
 
 start() {
     docker rm stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ &> /dev/null || echo 0
+    STATS_DASHBOARD_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-key")
     docker run -td -p 3000:3000 --name stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
-        -e WS_SECRET="{{ stats_dashboard_key }}" \
+        -e WS_SECRET=${STATS_DASHBOARD_KEY} \
         --restart=unless-stopped --pull=always \
         ${STATS_DASHBOARD_IMAGE}
 }
@@ -410,6 +412,7 @@ STATS_AGENT_IMAGE="{{ stats_agent_image }}"
 
 start() {
     docker rm stats-agent-""" + VERSIONS.get('stats_agent') + """ &> /dev/null || echo 0
+    STATS_DASHBOARD_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-key")
     docker run -td --name stats-agent-""" + VERSIONS.get('stats_agent') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         --net=host \
@@ -419,7 +422,7 @@ start() {
         -e INSTANCE_NAME=""" + os.uname().nodename + """ \
         -e CONTACT_DETAILS="devops@zilliqa.com" \
         -e WS_SERVER="ws://stats.""" + SUBDOMAIN + """" \
-        -e WS_SECRET="{{ stats_dashboard_key }}" \
+        -e WS_SECRET=${STATS_DASHBOARD_KEY} \
         -e VERBOSITY="2" \
         --restart=unless-stopped --pull=always \
         ${STATS_AGENT_IMAGE}
