@@ -874,7 +874,10 @@ impl ChainNode {
         };
 
         let genesis_account_address = self.chain.genesis_address().await?;
-        let validator_control_address = &genesis_account_address;
+        let validator_control_address = self
+            .chain()?
+            .get_validator_control_address()
+            .unwrap_or(&genesis_account_address);
 
         let genesis_deposits_amount = &self.chain()?.get_genesis_deposits_amount()?;
         let genesis_deposits = serde_json::to_value(
