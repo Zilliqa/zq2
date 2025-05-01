@@ -15,7 +15,6 @@ templatefile() vars:
 - checkpoint_url, the ZQ2 checkpoint URL used for recover the validator nodes
 - persistence_url, the ZQ2 persistence URL used for recover the network
 - docker_image, the ZQ2 docker image (incl. version)
-- secret_key, the ZQ2 node secret key
 - role, the node role: validator or apps
 - otterscan_image, the Otterscan docker image (incl. version)
 - enable_faucet, a flag to enable the faucet Spout app
@@ -25,6 +24,8 @@ templatefile() vars:
 - subdomain, the ZQ2 network domain name
 - zq2_metrics_image, the ZQ2 metrics docker image (incl. version)
 - log_level, the ZQ2 network service log level
+- project_id, id of the GCP project
+- node_name, name of the ZQ2 node
 """
 
 def query_metadata_key(key: str) -> str:
@@ -48,7 +49,6 @@ SPOUT_ENABLED="{{ enable_faucet }}" == "true"
 SPOUT_IMAGE="{{ spout_image }}"
 STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
 STATS_AGENT_IMAGE="{{ stats_agent_image }}"
-SECRET_KEY="{{ secret_key }}"
 GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
 CHECKPOINT_URL="{{ checkpoint_url }}"
@@ -236,12 +236,13 @@ ZQ2_IMAGE="{{ docker_image }}"
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker container prune -f
+    PRIVATE_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-pk")
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 --memory=6g \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
-    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ ${1} --log-json
+    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ ${PRIVATE_KEY} --log-json
 }
 
 stop() {
@@ -249,7 +250,7 @@ stop() {
 }
 
 case ${1} in
-    start|stop) ${1} ${2};;
+    start|stop) ${1} ;;
 esac
 
 exit 0
@@ -261,7 +262,7 @@ Description=Zilliqa Node
 
 [Service]
 Type=forking
-ExecStart=/usr/local/bin/zq2.sh start """ + SECRET_KEY + """
+ExecStart=/usr/local/bin/zq2.sh start
 ExecStop=/usr/local/bin/zq2.sh stop
 RemainAfterExit=yes
 Restart=on-failure

@@ -997,11 +997,6 @@ impl ChainNode {
         )?;
         let stats_agent_image =
             &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
-        let private_key = if *role_name == NodeRole::Apps.to_string() {
-            ""
-        } else {
-            &self.get_private_key().await?
-        };
         let genesis_key = if *role_name == NodeRole::Apps.to_string() {
             &self.chain.genesis_private_key().await?
         } else {
@@ -1015,6 +1010,8 @@ impl ChainNode {
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
         let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
         let log_level = self.chain()?.get_log_level()?;
+        let project_id = &self.machine.project_id;
+        let node_name = &self.machine.name;
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
@@ -1025,12 +1022,13 @@ impl ChainNode {
         var_map.insert("stats_dashboard_image", stats_dashboard_image);
         var_map.insert("stats_dashboard_key", stats_dashboard_key);
         var_map.insert("stats_agent_image", stats_agent_image);
-        var_map.insert("secret_key", private_key);
         var_map.insert("genesis_key", genesis_key);
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
         var_map.insert("zq2_metrics_image", zq2_metrics_image);
         var_map.insert("log_level", log_level);
+        var_map.insert("project_id", project_id);
+        var_map.insert("node_name", node_name);
 
         let ctx = Context::from_serialize(var_map)?;
         let rendered_template = Tera::one_off(provisioning_script, &ctx, false)?;
