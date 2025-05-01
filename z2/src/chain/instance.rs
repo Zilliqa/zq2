@@ -6,8 +6,9 @@ use serde_json::value::Value;
 use super::{
     Chain,
     config::NetworkConfig,
-    node::{ChainNode, Machine, NodeRole, retrieve_secret_by_role},
+    node::{ChainNode, Machine, NodeRole},
 };
+use crate::secret::Secret;
 
 #[derive(Clone, Debug)]
 pub struct ChainInstance {
@@ -177,8 +178,8 @@ impl ChainInstance {
         Ok(nodes)
     }
 
-    pub async fn genesis_private_key(&self) -> Result<String> {
-        let private_keys = retrieve_secret_by_role(
+    pub fn genesis_private_key(&self) -> Result<String> {
+        let private_keys = Secret::get_secrets_by_role(
             &self.config.name,
             self.chain()?.get_project_id()?,
             "genesis",
@@ -194,18 +195,14 @@ impl ChainInstance {
         }
     }
 
-    pub async fn stats_dashboard_key(&self) -> Result<String> {
-        let private_keys = retrieve_secret_by_role(
-            &self.config.name,
-            self.chain()?.get_project_id()?,
-            "stats-dashboard",
-        )?;
+    pub async fn genesis_address(&self) -> Result<String> {
+        let nodes = self.nodes().await?;
 
-        if let Some(private_key) = private_keys.first() {
-            Ok(private_key.value()?)
+        if let Some(node) = nodes.first() {
+            node.get_genesis_address()
         } else {
             Err(anyhow!(
-                "No secrets with role stats-dashboard found in the network {}",
+                "Error retrieving at least one node in the network {}",
                 &self.name()
             ))
         }

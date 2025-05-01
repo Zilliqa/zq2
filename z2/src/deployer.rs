@@ -165,7 +165,7 @@ async fn post_install(chain: ChainInstance) -> Result<()> {
         return anyhow::Ok(());
     }
 
-    let genesis_private_key = chain.genesis_private_key().await?;
+    let genesis_private_key = chain.genesis_private_key()?;
     let url = chain.chain()?.get_api_endpoint()?;
 
     let genesis_address = EthereumAddress::from_private_key(&genesis_private_key)?;
@@ -275,7 +275,7 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
         chain.name()
     );
 
-    let genesis_private_key = chain.genesis_private_key().await?;
+    let genesis_private_key = chain.genesis_private_key()?;
     for node in validators {
         let permit = semaphore.clone().acquire_owned().await?;
         let genesis_key = genesis_private_key.clone();
@@ -299,7 +299,7 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
 }
 
 pub async fn get_node_deposit_commands(genesis_private_key: &str, node: &ChainNode) -> Result<()> {
-    let private_keys = node.get_private_key().await?;
+    let private_keys = node.get_private_key()?;
     let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
     let deposit_auth_signature = node_ethereum_address.secret_key.deposit_auth_signature(
         node.chain_id(),
@@ -327,7 +327,7 @@ pub async fn run_stakers(config_file: &str) -> Result<()> {
 
     println!("Retrieving the stakers info in the chain {}", chain.name());
 
-    let genesis_private_key = chain.genesis_private_key().await?;
+    let genesis_private_key = chain.genesis_private_key()?;
     let signer_client =
         validators::SignerClient::new(&chain.chain()?.get_api_endpoint()?, &genesis_private_key)?;
     println!("Loading the stakers...");
@@ -336,7 +336,7 @@ pub async fn run_stakers(config_file: &str) -> Result<()> {
     println!("Loading the internal nodes...");
     let mut internal_validators = HashMap::<String, String>::new();
     for node in validators {
-        let private_keys = node.get_private_key().await?;
+        let private_keys = node.get_private_key()?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
 
         internal_validators.insert(
@@ -416,8 +416,8 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
     let mut failures = vec![];
 
     for node in validators {
-        let genesis_private_key = chain.genesis_private_key().await?;
-        let private_keys = node.get_private_key().await?;
+        let genesis_private_key = chain.genesis_private_key()?;
+        let private_keys = node.get_private_key()?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
         let deposit_auth_signature = node_ethereum_address.secret_key.deposit_auth_signature(
             node.chain_id(),
@@ -502,8 +502,8 @@ pub async fn run_deposit_top_up(config_file: &str, node_selection: bool, amount:
     let mut failures = vec![];
 
     for node in validators {
-        let genesis_private_key = chain.genesis_private_key().await?;
-        let private_keys = node.get_private_key().await?;
+        let genesis_private_key = chain.genesis_private_key()?;
+        let private_keys = node.get_private_key()?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
 
         let signer_client = validators::SignerClient::new(
@@ -572,8 +572,8 @@ pub async fn run_unstake(config_file: &str, node_selection: bool, amount: u8) ->
     let mut failures = vec![];
 
     for node in validators {
-        let genesis_private_key = chain.genesis_private_key().await?;
-        let private_keys = node.get_private_key().await?;
+        let genesis_private_key = chain.genesis_private_key()?;
+        let private_keys = node.get_private_key()?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
 
         let signer_client = validators::SignerClient::new(
@@ -642,8 +642,8 @@ pub async fn run_withdraw(config_file: &str, node_selection: bool) -> Result<()>
     let mut failures = vec![];
 
     for node in validators {
-        let genesis_private_key = chain.genesis_private_key().await?;
-        let private_keys = node.get_private_key().await?;
+        let genesis_private_key = chain.genesis_private_key()?;
+        let private_keys = node.get_private_key()?;
         let node_ethereum_address = EthereumAddress::from_private_key(&private_keys)?;
 
         let signer_client = validators::SignerClient::new(
@@ -1079,6 +1079,7 @@ pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<()
         labels,
         chain.chain()?.get_project_id()?,
         force,
+        None,
     )
     .await;
 
@@ -1103,6 +1104,33 @@ pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<
         labels,
         chain.chain()?.get_project_id()?,
         force,
+        None,
+    )
+    .await;
+
+    multi_progress.stop();
+
+    result
+}
+
+pub async fn run_generate_genesis_address(config_file: &str, force: bool) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config).await?;
+
+    let multi_progress = cliclack::multi_progress("Generating the genesis address".yellow());
+
+    let genesis_address = EthereumAddress::from_private_key(&chain.genesis_private_key()?)?.address;
+    let secret_name = &format!("{}-genesis-address", chain.name());
+    let mut labels = BTreeMap::<String, String>::new();
+    labels.insert("role".to_string(), "genesis-address".to_owned());
+    labels.insert("zq2-network".to_string(), chain.name());
+    let result = generate_secret(
+        &multi_progress,
+        secret_name,
+        labels,
+        chain.chain()?.get_project_id()?,
+        force,
+        Some(genesis_address.to_string()),
     )
     .await;
 
@@ -1163,7 +1191,7 @@ pub async fn run_generate_private_keys(
             labels.insert("role".to_string(), role);
             labels.insert("zq2-network".to_string(), chain_name);
             labels.insert("node-name".to_string(), node.clone().name);
-            let result = generate_secret(&mp, secret_name, labels, project_id, force).await;
+            let result = generate_secret(&mp, secret_name, labels, project_id, force, None).await;
             drop(permit); // Release the permit when the task is done
             (node, result)
         });
@@ -1196,6 +1224,7 @@ async fn generate_secret(
     labels: BTreeMap<String, String>,
     project_id: &str,
     force: bool,
+    secret_value: Option<String>,
 ) -> Result<()> {
     let progress_bar = multi_progress.add(cliclack::progress_bar(if force { 4 } else { 3 }));
     let mut filters = Vec::<String>::new();
@@ -1235,10 +1264,9 @@ async fn generate_secret(
         "{}: Creating new secret version if not exist",
         name
     ));
-    let secret_value = Secret::generate_random_secret();
 
     if secrets[0].value().is_err() {
-        secrets[0].add_version(&secret_value)?;
+        secrets[0].add_version(secret_value)?;
     }
     progress_bar.inc(1);
 

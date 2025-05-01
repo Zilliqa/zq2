@@ -327,7 +327,7 @@ start() {
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e RPC_URL=https://api.""" + SUBDOMAIN + """ \
         -e NATIVE_TOKEN_SYMBOL="ZIL" \
-        -e PRIVATE_KEY=${GENESIS_KEY} \
+        -e PRIVATE_KEY="${GENESIS_KEY}" \
         -e ETH_AMOUNT=100 \
         -e EXPLORER_URL="https://explorer.""" + SUBDOMAIN + """" \
         -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
@@ -373,7 +373,7 @@ start() {
     STATS_DASHBOARD_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-key")
     docker run -td -p 3000:3000 --name stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
-        -e WS_SECRET=${STATS_DASHBOARD_KEY} \
+        -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
         --restart=unless-stopped --pull=always \
         ${STATS_DASHBOARD_IMAGE}
 }
@@ -422,7 +422,7 @@ start() {
         -e INSTANCE_NAME=""" + os.uname().nodename + """ \
         -e CONTACT_DETAILS="devops@zilliqa.com" \
         -e WS_SERVER="ws://stats.""" + SUBDOMAIN + """" \
-        -e WS_SECRET=${STATS_DASHBOARD_KEY} \
+        -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
         -e VERBOSITY="2" \
         --restart=unless-stopped --pull=always \
         ${STATS_AGENT_IMAGE}
