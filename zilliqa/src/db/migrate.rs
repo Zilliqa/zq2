@@ -345,12 +345,12 @@ impl Db {
                 success: row.get(3)?,
                 gas_used: row.get(4)?,
                 cumulative_gas_used: row.get(5)?,
-                contract_address: row.get::<_, Option<AddressSqlable>>(6)?.map(|a| a.0),
-                logs: row.get::<_, VecLogSqlable>(7)?.0,
-                transitions: row.get::<_, VecScillaTransitionSqlable>(8)?.0,
+                contract_address: row.get::<_, Option<AddressSqlable>>(6)?.map(|a| a.into()),
+                logs: row.get::<_, VecLogSqlable>(7)?.into(),
+                transitions: row.get::<_, VecScillaTransitionSqlable>(8)?.into(),
                 accepted: row.get(9)?,
-                errors: row.get::<_, MapScillaErrorSqlable>(10)?.0,
-                exceptions: row.get::<_, VecScillaExceptionSqlable>(11)?.0,
+                errors: row.get::<_, MapScillaErrorSqlable>(10)?.into(),
+                exceptions: row.get::<_, VecScillaExceptionSqlable>(11)?.into(),
             })
         })?;
         for chunk in old_receipts
