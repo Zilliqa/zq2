@@ -1542,3 +1542,56 @@ async fn get_block_receipts(mut network: Network) {
 
     assert!(receipts.contains(&individual1));
 }
+
+#[zilliqa_macros::test]
+async fn get_block_by_number(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Make sure there's at least one block to retrieve
+    network.run_until_block(&wallet, 2u64.into(), 50).await;
+
+    // Get the latest block number
+    let latest_number = provider.get_block_number().await.unwrap();
+
+    // Query eth_getBlockByNumber with 'latest', full transactions requested
+    let block = provider
+        .request::<_, serde_json::Value>("eth_getBlockByNumber", (latest_number, true))
+        .await
+        .unwrap();
+
+    // Some block fields should always be present
+    assert_eq!(
+        block["number"],
+        serde_json::json!(format!("0x{:x}", latest_number.as_u64()))
+    );
+    assert!(block["hash"].as_str().unwrap().starts_with("0x"));
+    assert!(block["parentHash"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(block["uncles"], serde_json::json!([])); // No uncles in ZQ2
+
+    // Specific required fields
+    // difficulty: 0x0
+    assert_eq!(block["difficulty"], serde_json::json!("0x0"));
+
+    // sha3Uncles: RLP( [] ), 0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347
+    assert_eq!(
+        block["sha3Uncles"],
+        serde_json::json!("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
+    );
+
+    // miner is a proper address, not "None"
+    let miner = block["miner"].as_str().unwrap();
+    assert!(
+        miner.starts_with("0x") && miner.len() == 42,
+        "Miner field is not a 20-byte address: {miner}"
+    );
+
+    // Some other typical fields
+    assert!(block["transactions"].is_array());
+
+    // Block gasLimit/gasUsed, timestamp, size are all nonzero/zero
+    assert!(block["gasLimit"].as_str().unwrap().starts_with("0x"));
+    assert!(block["gasUsed"].as_str().unwrap().starts_with("0x"));
+    assert!(block["timestamp"].as_str().unwrap().starts_with("0x"));
+    assert!(u64::from_str_radix(&block["size"].as_str().unwrap()[2..], 16).unwrap() > 0);
+}
