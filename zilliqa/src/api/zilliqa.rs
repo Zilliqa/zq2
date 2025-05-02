@@ -756,19 +756,15 @@ fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::T
 
 fn get_txn_fees_for_block(node: &Node, block: &Block) -> Result<u128> {
     let read = node.db.read()?;
-    let transactions = read.transactions()?;
     let receipts = read.receipts()?;
     block
         .transactions
         .iter()
         .map(|txn_hash| {
-            let txn = transactions
-                .get(*txn_hash)?
-                .ok_or_else(|| anyhow!("missing transaction"))?;
             let receipt = receipts
                 .get(*txn_hash)?
                 .ok_or_else(|| anyhow!("missing receipt"))?;
-            Ok((receipt.gas_used.0 as u128) * txn.gas_price_per_evm_gas())
+            Ok(receipt.gas_used.0 as u128)
         })
         .sum()
 }
