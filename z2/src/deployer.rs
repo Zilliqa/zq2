@@ -1063,7 +1063,7 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
     Ok(())
 }
 
-pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<()> {
+pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<String> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
 
@@ -1088,7 +1088,7 @@ pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<()
     result
 }
 
-pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
+pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<String> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
 
@@ -1113,7 +1113,7 @@ pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<
     result
 }
 
-pub async fn run_generate_genesis_address(config_file: &str, force: bool) -> Result<()> {
+pub async fn run_generate_genesis_address(config_file: &str, force: bool) -> Result<String> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
 
@@ -1225,7 +1225,7 @@ async fn generate_secret(
     project_id: &str,
     force: bool,
     secret_value: Option<String>,
-) -> Result<()> {
+) -> Result<String> {
     let progress_bar = multi_progress.add(cliclack::progress_bar(if force { 4 } else { 3 }));
     let mut filters = Vec::<String>::new();
     for (k, v) in labels.clone() {
@@ -1265,13 +1265,83 @@ async fn generate_secret(
         name
     ));
 
-    if secrets[0].value().is_err() {
-        secrets[0].add_version(secret_value)?;
-    }
+    let curret_secret_value = if secrets[0].value().is_err() {
+        secrets[0].add_version(secret_value)?
+    } else {
+        secrets[0].value()?
+    };
     progress_bar.inc(1);
 
     // Process completed
     progress_bar.stop(format!("{} {}: Secret created", "✔".green(), name));
+
+    Ok(curret_secret_value)
+}
+
+pub async fn run_setup_secrets_grants(config_file: &str) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config).await?;
+
+    // Create a list of instances
+    let mut machines = chain.machines();
+    machines.retain(|m| m.labels.get("role") != Some(&NodeRole::Apps.to_string()));
+    machines.sort_by_key(|machine| machine.name.to_owned());
+
+    let semaphore = Arc::new(Semaphore::new(50));
+    let mut futures = vec![];
+
+    let multi_progress = cliclack::multi_progress("Generating the node private keys".yellow());
+
+    for machine in machines {
+        let permit = semaphore.clone().acquire_owned().await?;
+        let chain_name = chain.name();
+        let service_account = machine.get_service_account()?;
+        let future = task::spawn(async move {
+            let private_key_secret = &format!("{}-pk", machine.clone().name);
+            let stats_dashboard_secret = &format!("{}-stats-dashboard-key", &chain_name);
+            let genesis_address_secret = &format!("{}-genesis-address", &chain_name);
+            let project_id = &machine.clone().project_id;
+            let service_account = &service_account.clone();
+            let private_key_result =
+                Secret::grant_service_account(private_key_secret, project_id, service_account);
+            let stats_dashboard_result =
+                Secret::grant_service_account(stats_dashboard_secret, project_id, service_account);
+            let genesis_address_result =
+                Secret::grant_service_account(genesis_address_secret, project_id, service_account);
+
+            let result = if private_key_result.is_ok()
+                && stats_dashboard_result.is_ok()
+                && genesis_address_result.is_ok()
+            {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "Error: granting the service account {service_account} to the secrets"
+                ))
+            };
+
+            drop(permit); // Release the permit when the task is done
+            (machine, result)
+        });
+        futures.push(future);
+    }
+
+    let results = futures::future::join_all(futures).await;
+
+    multi_progress.stop();
+
+    let mut failures = vec![];
+
+    for result in results {
+        if let (machine, Err(err)) = result? {
+            println!("Node {} failed with error: {}", machine.name, err);
+            failures.push(machine.name);
+        }
+    }
+
+    for failure in failures {
+        log::error!("FAILURE: {}", failure);
+    }
 
     Ok(())
 }

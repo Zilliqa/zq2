@@ -124,6 +124,8 @@ enum DeployerCommands {
     GenerateGenesisKey(DeployerGenerateGenesisArgs),
     /// Generate the Stats Dashboard key. --force to replace if already existing
     GenerateStatsKey(DeployerGenerateStatsArgs),
+    /// Generate the network secrets. --force to replace if already existing
+    GenerateSecrets(DeployerGenerateGenesisArgs),
 }
 
 #[derive(Args, Debug)]
@@ -1138,6 +1140,19 @@ async fn main() -> Result<()> {
                             "Failed to run deployer generate-stats-key command: {}",
                             err
                         )
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::GenerateSecrets(arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_secrets(&config_file, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer generate-secrets command: {}", err)
                     })?;
                 Ok(())
             }

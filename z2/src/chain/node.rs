@@ -195,6 +195,33 @@ impl Machine {
         Ok(())
     }
 
+    pub fn get_service_account(&self) -> Result<String> {
+        let output = Command::new("gcloud")
+            .args([
+                "compute",
+                "instances",
+                "describe",
+                &self.name,
+                "--project",
+                &self.project_id,
+                "--zone",
+                &self.zone,
+                "--format",
+                "value(serviceAccounts[0].email)",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Error retrieving {} service account: {}",
+                self.name,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+    }
+
     async fn copy(&self, file_from: &[&str], file_to: &str) -> Result<()> {
         let tgt_spec = format!("{0}:{file_to}", &self.name);
         let args = [
