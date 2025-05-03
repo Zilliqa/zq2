@@ -14,7 +14,7 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub fn add_version(&self, value: Option<String>) -> Result<()> {
+    pub fn add_version(&self, value: Option<String>) -> Result<String> {
         let value = value.unwrap_or(Self::generate_random_secret());
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
@@ -45,7 +45,7 @@ impl Secret {
             ));
         }
 
-        Ok(())
+        Ok(value)
     }
 
     pub fn create(project_id: &str, name: &str, labels: BTreeMap<String, String>) -> Result<Self> {
@@ -112,6 +112,38 @@ impl Secret {
         }
 
         Ok(())
+    }
+
+    pub fn grant_service_account(
+        secret_name: &str,
+        project_id: &str,
+        service_account_name: &str,
+    ) -> Result<String> {
+        let output = Command::new("gcloud")
+            .args([
+                "secrets",
+                "add-iam-policy-binding",
+                secret_name,
+                "--project",
+                project_id,
+                "--member",
+                &format!("serviceAccount:{}", service_account_name),
+                "--role",
+                "roles/secretmanager.secretAccessor",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Error granting the service account '{}' access to the secret '{}' in the project {}: {}",
+                service_account_name,
+                secret_name,
+                project_id,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
     }
 
     pub fn value(&self) -> Result<String> {
