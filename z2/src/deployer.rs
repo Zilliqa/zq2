@@ -1080,6 +1080,8 @@ pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<St
         chain.chain()?.get_project_id()?,
         force,
         None,
+        None,
+        None,
     )
     .await;
 
@@ -1106,6 +1108,8 @@ pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<
         labels,
         chain.chain()?.get_project_id()?,
         force,
+        None,
+        None,
         None,
     )
     .await;
@@ -1135,6 +1139,8 @@ pub async fn run_generate_genesis_address(config_file: &str, force: bool) -> Res
         chain.chain()?.get_project_id()?,
         force,
         Some(genesis_address.to_string()),
+        None,
+        None,
     )
     .await;
 
@@ -1191,15 +1197,18 @@ pub async fn run_generate_private_keys(
             .unwrap_or_else(|| panic!("The machine {} has no label role", node.name))
             .clone();
         let future = task::spawn(async move {
-            let secret_name = &format!("{}-pk", node.clone().name);
+            let secret_name = &format!("{}-enckey", node.clone().name);
             let project_id = &node.clone().project_id;
+            let kms_keyring = Some(format!("kms-{}", chain_name));
+            let kms_key = Some(node.clone().name);
             let mut labels = BTreeMap::<String, String>::new();
             labels.insert("is-private-key".to_string(), "true".to_string());
+            labels.insert("encrypted".to_string(), "true".to_string());
             labels.insert("role".to_string(), role);
-            labels.insert("zq2-network".to_string(), chain_name);
+            labels.insert("zq2-network".to_string(), chain_name.clone());
             labels.insert("node-name".to_string(), node.clone().name);
             let mut result =
-                generate_secret(&mp, secret_name, labels, project_id, force, None).await;
+                generate_secret(&mp, secret_name, labels, project_id, force, None, kms_keyring, kms_key).await;
 
             let private_key_result =
                 Secret::grant_service_account(secret_name, project_id, &service_account);
@@ -1207,7 +1216,6 @@ pub async fn run_generate_private_keys(
             if result.is_ok() {
                 result = private_key_result;
             }
-
             drop(permit); // Release the permit when the task is done
 
             (node, result)
@@ -1242,7 +1250,9 @@ async fn generate_secret(
     project_id: &str,
     force: bool,
     secret_value: Option<String>,
-) -> Result<String> {
+    kms_keyring: Option<String>,
+    kms_key: Option<String>,
+) -> Result<()> {
     let progress_bar = multi_progress.add(cliclack::progress_bar(if force { 4 } else { 3 }));
     let mut filters = Vec::<String>::new();
     for (k, v) in labels.clone() {
@@ -1282,8 +1292,8 @@ async fn generate_secret(
         name
     ));
 
-    let curret_secret_value = if secrets[0].value().is_err() {
-        secrets[0].add_version(secret_value)?
+    let current_secret_value = if secrets[0].value().is_err() {
+        secrets[0].add_version(secret_value, kms_keyring, kms_key)?;
     } else {
         secrets[0].value()?
     };
@@ -1292,7 +1302,7 @@ async fn generate_secret(
     // Process completed
     progress_bar.stop(format!("{} {}: Secret created", "✔".green(), name));
 
-    Ok(curret_secret_value)
+    Ok(current_secret_value)
 }
 
 async fn run_setup_secrets_grants(config_file: &str, secret_name: &str) -> Result<()> {

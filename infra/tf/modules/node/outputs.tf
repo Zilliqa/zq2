@@ -2,10 +2,11 @@ output "instances" {
   description = "The provisioned instances"
   value = {
     for instance in google_compute_instance.this : instance.name => {
-      name        = instance.name,
-      external_ip = instance.network_interface[0].access_config[0].nat_ip,
-      zone        = instance.zone,
-      self_link   = instance.self_link,
+      name            = instance.name,
+      external_ip     = instance.network_interface[0].access_config[0].nat_ip,
+      zone            = instance.zone,
+      self_link       = instance.self_link,
+      service_account = try(instance.service_account[0].email, null)
     }
   }
 }
@@ -47,14 +48,4 @@ output "zones" {
   value = distinct(flatten([
     for instance in local.instances : instance.zone
   ]))
-}
-
-output "service_account" {
-  description = "The GCP service accounts associated to the instances"
-  value = {
-    for service_account in google_service_account.this : service_account.name => {
-      account_id = service_account.account_id,
-      email      = service_account.email,
-    }
-  }
 }
