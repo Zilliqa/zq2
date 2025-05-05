@@ -313,7 +313,7 @@ pub fn get_block_transaction_receipts_inner(
                 Log::Evm(log) => log,
                 Log::Scilla(log) => log.into_evm(),
             };
-            let log_index = log.log_index.unwrap();
+            let log_index = 0; // log.log_index.unwrap();
             let log = eth::Log::new(
                 log,
                 log_index,
@@ -965,7 +965,7 @@ async fn subscribe(
                         ),
                         transaction_hash: Some(receipt.tx_hash.into()),
                         transaction_index: Some(transaction_index as u64),
-                        log_index: Some(log.log_index.unwrap()),
+                        log_index: Some(0), // log.log_index.unwrap()),
                         removed: false,
                     };
                     let _ = sink.send(SubscriptionMessage::from_json(&log)?).await;

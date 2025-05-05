@@ -135,7 +135,7 @@ impl TransactionApplyResult {
                             address: l.address,
                             topics,
                             data: data.to_vec(),
-                            log_index: None,
+                            // log_index: None,
                         })
                     })
                     .collect(),
@@ -2106,7 +2106,7 @@ pub fn scilla_call(
                     address: to_addr,
                     event_name: event.event_name,
                     params: event.params,
-                    log_index: None,
+                    // log_index: None,
                 };
                 logs.push(log);
             }

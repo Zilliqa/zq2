@@ -3281,13 +3281,13 @@ pub fn annotate_receipt_with_log_indices(
                 address: x.address,
                 topics: x.topics,
                 data: x.data,
-                log_index: Some(*log_index),
+                // log_index: Some(*log_index),
             }),
             Log::Scilla(x) => Log::Scilla(ScillaLog {
                 address: x.address,
                 event_name: x.event_name,
                 params: x.params,
-                log_index: Some(*log_index),
+                // log_index: Some(*log_index),
             }),
         };
         logs.push(log);
