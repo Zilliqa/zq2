@@ -77,11 +77,11 @@ resource "google_storage_bucket" "checkpoint" {
 }
 
 resource "google_storage_bucket_iam_binding" "checkpoint_bucket_admins" {
-  bucket  = google_storage_bucket.checkpoint.name
-  role    = "roles/storage.objectAdmin"
+  bucket = google_storage_bucket.checkpoint.name
+  role   = "roles/storage.objectAdmin"
   members = [
-    for name, sa in module.checkpoints.service_account : 
-      "serviceAccount:${sa.email}"
+    for name, sa in module.checkpoints.service_account :
+    "serviceAccount:${sa.email}"
   ]
 }
 
