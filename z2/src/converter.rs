@@ -601,6 +601,8 @@ pub async fn convert_persistence(
     write.blocks()?.insert(&empty_high_qc_block)?;
     write.high_qc()?.set(&empty_high_qc_block.header.qc)?;
 
+    write.commit()?;
+
     println!(
         "Persistence conversion done up to block {}",
         zq2_db
