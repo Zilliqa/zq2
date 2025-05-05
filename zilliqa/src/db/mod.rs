@@ -308,7 +308,7 @@ impl Db {
 
                 if migrate {
                     let sql_path = path.join("db.sqlite3");
-                    db = db.migrate_from(rusqlite::Connection::open(&sql_path)?, cache_size)?;
+                    db = db.migrate_from(rusqlite::Connection::open(&sql_path)?)?;
                     fs::rename(sql_path, path.join("db.sqlite3.backup"))?;
                 }
 

@@ -191,7 +191,7 @@ struct BlockRow {
 }
 
 impl Db {
-    pub fn migrate_from(self, sql: Connection, cache_size: usize) -> Result<Db> {
+    pub fn migrate_from(self, sql: Connection) -> Result<Db> {
         sql.trace_v2(
             rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
             Some(|statement| {
@@ -486,16 +486,6 @@ impl Db {
 
         let path = self.path.clone().expect("valid path");
         let db = self.into_raw();
-
-        info!("compacting");
-        mem::drop(db);
-        let mut db = redb::Database::builder()
-            .set_cache_size(cache_size)
-            .set_repair_callback(|repair| {
-                info!(progress = repair.progress(), "repairing database");
-            })
-            .create(path.join("db.redb"))?;
-        db.compact()?;
 
         Ok(Db {
             db: Arc::new(db),
