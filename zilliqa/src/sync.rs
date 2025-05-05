@@ -459,13 +459,13 @@ impl Sync {
             // prune prune-interval
             range
                 .end()
-                .saturating_sub(self.prune_interval.max(MIN_PRUNE_INTERVAL))
+                .saturating_sub(self.prune_interval.saturating_sub(1))
         } else if self.sync_base_height != u64::MAX {
             // prune below sync-base-height
             range
                 .end()
-                .saturating_sub(MIN_PRUNE_INTERVAL)
-                .min(self.sync_base_height.saturating_sub(1))
+                .saturating_sub(MIN_PRUNE_INTERVAL.saturating_sub(1))
+                .min(self.sync_base_height)
         } else {
             return Ok(());
         };
@@ -473,7 +473,7 @@ impl Sync {
         // Prune canonical, and non-canonical blocks.
         tracing::debug!(?range, "sync::Prune",);
         let start_now = Instant::now();
-        for number in *range.start()..=prune_ceil {
+        for number in *range.start()..prune_ceil {
             // check if we have time to prune
             if start_now.elapsed().as_millis() > Self::PRUNE_TIMEOUT_MS {
                 break;
@@ -1379,40 +1379,40 @@ impl Sync {
             .into_iter()
             .sorted_by_key(|p| Reverse(p.block.number()))
             .collect_vec();
-        if !response.is_empty() {
-            // Store it from high to low
-            for BlockTransactionsReceipts {
-                block,
-                transaction_receipts,
-            } in response
-            {
-                // Check for correct order
-                if number == block.number() && hash == block.hash() {
-                    number = number.saturating_sub(1);
-                    hash = block.header.qc.block_hash;
-                } else {
-                    tracing::error!(
-                        "sync::StoreProposals : unexpected proposal number={number} != {}; hash={hash} != {}",
-                        block.number(),
-                        block.hash(),
-                    );
-                    return Ok(());
-                }
 
-                // Verify ZQ2 blocks only - ZQ1 blocks have faux block hashes, to maintain history.
-                if block.verify_hash().is_err() && block.number() >= self.zq1_ceil_height {
-                    return Err(anyhow::anyhow!(
-                        "sync::StoreProposals : unverified {}",
-                        block.number()
-                    ));
-                }
-                tracing::trace!(
-                    number = %block.number(), hash = %block.hash(),
-                    "sync::StoreProposals : applying",
+        // Store it from high to low
+        for BlockTransactionsReceipts {
+            block,
+            transaction_receipts,
+        } in response
+        {
+            // Check for correct order
+            if number == block.number() && hash == block.hash() {
+                number = number.saturating_sub(1);
+                hash = block.header.qc.block_hash;
+            } else {
+                tracing::error!(
+                    "sync::StoreProposals : unexpected proposal number={number} != {}; hash={hash} != {}",
+                    block.number(),
+                    block.hash(),
                 );
+                return Ok(());
+            }
 
-                // Store it
-                self.db.with_sqlite_tx(|sqlite_tx| {
+            // Verify ZQ2 blocks only - ZQ1 blocks have faux block hashes, to maintain history.
+            if block.verify_hash().is_err() && block.number() >= self.zq1_ceil_height {
+                return Err(anyhow::anyhow!(
+                    "sync::StoreProposals : unverified {}",
+                    block.number()
+                ));
+            }
+            tracing::trace!(
+                number = %block.number(), hash = %block.hash(),
+                "sync::StoreProposals : applying",
+            );
+
+            // Store it
+            self.db.with_sqlite_tx(|sqlite_tx| {
                     // Insert block                    
                     self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
                     // Insert transactions/receipts
@@ -1426,13 +1426,19 @@ impl Sync {
                             tracing::error!(number = %block.number(), index = %rt.index, hash = %rt.tx_hash, "sync::StoreProposals : unverifiable");
                             self.db
                                 .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st)?;
-                        } // receipts will fail, on unverified ZQ2 blocks
+                        } else {
+                            anyhow::bail!(
+                                "sync::StoreProposal : unverifiable transaction {}/{}/{}",
+                                block.number(),
+                                rt.index,
+                                rt.tx_hash
+                            )
+                        }
                         self.db
                             .insert_transaction_receipt_with_db_tx(sqlite_tx, rt)?;
                     }
                     Ok(())
                 })?;
-            }
         }
         Ok(())
     }
