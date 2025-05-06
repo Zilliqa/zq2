@@ -14,7 +14,8 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub fn add_version(&self, value: &str) -> Result<()> {
+    pub fn add_version(&self, value: Option<String>) -> Result<String> {
+        let value = value.unwrap_or(Self::generate_random_secret());
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
             self.name
@@ -44,7 +45,7 @@ impl Secret {
             ));
         }
 
-        Ok(())
+        Ok(value)
     }
 
     pub fn create(project_id: &str, name: &str, labels: BTreeMap<String, String>) -> Result<Self> {
@@ -81,6 +82,68 @@ impl Secret {
             name: name.to_owned(),
             labels,
         })
+    }
+
+    fn generate_random_secret() -> String {
+        let mut data = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut data);
+        hex::encode(data)
+    }
+
+    pub fn delete(&self) -> Result<()> {
+        let project_id = &self.project_id.clone().context(format!(
+            "Error retrieving the project ID of the secret {}",
+            self.name
+        ))?;
+
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "secrets",
+                "delete",
+                &self.name,
+                "--quiet",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!("listing secrets failed"));
+        }
+
+        Ok(())
+    }
+
+    pub fn grant_service_account(
+        secret_name: &str,
+        project_id: &str,
+        service_account_name: &str,
+    ) -> Result<String> {
+        let output = Command::new("gcloud")
+            .args([
+                "secrets",
+                "add-iam-policy-binding",
+                secret_name,
+                "--project",
+                project_id,
+                "--member",
+                &format!("serviceAccount:{}", service_account_name),
+                "--role",
+                "roles/secretmanager.secretAccessor",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Error granting the service account '{}' access to the secret '{}' in the project {}: {}",
+                service_account_name,
+                secret_name,
+                project_id,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
     }
 
     pub fn value(&self) -> Result<String> {
@@ -144,33 +207,18 @@ impl Secret {
         Ok(secrets)
     }
 
-    pub fn generate_random_secret() -> String {
-        let mut data = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut data);
-        hex::encode(data)
-    }
-
-    pub fn delete(&self) -> Result<()> {
-        let project_id = &self.project_id.clone().context(format!(
-            "Error retrieving the project ID of the secret {}",
-            self.name
-        ))?;
-
-        let output = Command::new("gcloud")
-            .args([
-                "--project",
-                project_id,
-                "secrets",
-                "delete",
-                &self.name,
-                "--quiet",
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            return Err(anyhow!("listing secrets failed"));
-        }
-
-        Ok(())
+    pub fn get_secrets_by_role(
+        chain_name: &str,
+        project_id: &str,
+        role_name: &str,
+    ) -> Result<Vec<Secret>> {
+        Self::get_secrets(
+            project_id,
+            format!(
+                "labels.zq2-network={} AND labels.role={}",
+                chain_name, role_name
+            )
+            .as_str(),
+        )
     }
 }

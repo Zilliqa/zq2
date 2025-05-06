@@ -1264,6 +1264,10 @@ impl Sync {
             .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))
             .ok(); // ignore errors, retry with subsequent peer(s).
     }
+
+    pub fn peer_ids(&self) -> Vec<PeerId> {
+        self.peers.peer_ids()
+    }
 }
 
 #[derive(Debug)]
@@ -1294,6 +1298,15 @@ impl SyncPeers {
 
     fn count(&self) -> usize {
         self.peers.lock().unwrap().len()
+    }
+
+    fn peer_ids(&self) -> Vec<PeerId> {
+        self.peers
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|peer| peer.peer_id)
+            .collect::<Vec<_>>()
     }
 
     /// Downgrade a peer based on the response received.

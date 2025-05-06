@@ -264,7 +264,7 @@ fn run_scilla_docker() -> Result<Child> {
         .arg("--rm")
         .arg("-v")
         .arg("/tmp:/scilla_ext_libs")
-        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72")
+        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:e762f387")
         .arg("/scilla/0/bin/scilla-server-http")
         .spawn()?;
 
@@ -593,11 +593,15 @@ pub async fn convert_persistence(
     // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
     let highest_block = zq2_db.read()?.blocks()?.max_canonical_by_view()?.unwrap();
 
+    let state_root_hash = state.root_hash()?;
+
     let write = zq2_db.write()?;
     let empty_high_qc_block =
-        create_empty_block_from_parent(&highest_block, secret_key, state.root_hash()?);
+        create_empty_block_from_parent(&highest_block, secret_key, state_root_hash);
     write.blocks()?.insert(&empty_high_qc_block)?;
     write.high_qc()?.set(&empty_high_qc_block.header.qc)?;
+
+    write.commit()?;
 
     println!(
         "Persistence conversion done up to block {}",

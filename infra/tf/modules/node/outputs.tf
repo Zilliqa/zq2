@@ -54,7 +54,7 @@ output "service_account" {
   value = {
     for service_account in google_service_account.this : service_account.name => {
       account_id = service_account.account_id,
-      email = service_account.email,
+      email      = service_account.email,
     }
   }
 }
