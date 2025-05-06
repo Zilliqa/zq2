@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use itertools::Itertools;
 use libp2p::PeerId;
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
@@ -334,8 +334,8 @@ impl Sync {
             SyncState::Phase0 if self.in_pipeline == 0 => {
                 let meta = self.recent_proposals.back().unwrap().header;
                 let parent_hash = meta.qc.block_hash;
-                // No parent block, trigger active-sync
-                if !self.db.contains_canonical_block(&parent_hash)? {
+                // No parent block, trigger sync
+                if !self.db.read()?.blocks()?.contains_hash(parent_hash)? {
                     self.active_sync_count = self.active_sync_count.saturating_add(1);
                     tracing::debug!(from_hash = %parent_hash, "sync::DoSync : syncing",);
                     // Ensure started_at_block_number is set before running this.
@@ -384,8 +384,10 @@ impl Sync {
         // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
         let highest_block = self
             .db
-            .get_highest_recorded_block()?
-            .expect("db is not empty");
+            .read()?
+            .blocks()?
+            .max_by_view()?
+            .ok_or(anyhow!("no blocks"))?;
 
         // drain, filter and sort cached-blocks.
         let proposals = self
@@ -419,7 +421,7 @@ impl Sync {
             let range = proposals.first().as_ref().unwrap().number()
                 ..=proposals.last().as_ref().unwrap().number();
             tracing::info!(?range, "sync::DoSync : finishing");
-            if self.db.contains_canonical_block(&ancestor_hash)? {
+            if self.db.read()?.blocks()?.contains_hash(ancestor_hash)? {
                 self.inject_proposals(proposals)?;
             }
         }
@@ -434,8 +436,11 @@ impl Sync {
     fn update_started_at(&mut self) -> Result<()> {
         self.started_at = self
             .db
-            .get_highest_canonical_block_number()?
-            .expect("no highest canonical block");
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .ok_or_else(|| anyhow!("missing canonical block"))?
+            .number();
         Ok(())
     }
 
@@ -446,7 +451,16 @@ impl Sync {
         let txs = block
             .transactions
             .iter()
-            .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
+            .map(|hash| {
+                self.db
+                    .read()
+                    .unwrap()
+                    .transactions()
+                    .unwrap()
+                    .get(*hash)
+                    .unwrap()
+                    .unwrap()
+            })
             // handle verification on the client-side
             .map(|tx| {
                 let hash = tx.calculate_hash();
@@ -609,7 +623,7 @@ impl Sync {
         let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
         for hash in request {
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(block) = self.db.read()?.blocks()?.by_hash(hash)? else {
                 break; // that's all we have!
             };
             proposals.push(self.block_to_proposal(block));
@@ -731,7 +745,7 @@ impl Sync {
         }
 
         // Must have at least 1 block, genesis/checkpoint
-        let block = self.db.get_highest_canonical_block()?.unwrap();
+        let block = self.db.read()?.blocks()?.max_canonical_by_view()?.unwrap();
 
         tracing::info!(%from, number = %block.number(), "sync::BlockRequest : received probe");
 
@@ -878,13 +892,11 @@ impl Sync {
 
         // Chain segment is sane, drop redundant blocks already in the DB.
         let mut drop = false;
+        let blocks = self.db.read()?.blocks()?;
         let response = response
             .into_iter()
             .filter(|b| {
-                drop |= self
-                    .db
-                    .contains_canonical_block(&b.header.hash)
-                    .unwrap_or_default();
+                drop |= blocks.contains_hash(b.header.hash).unwrap_or_default();
                 !drop
             })
             .collect_vec();
@@ -921,9 +933,7 @@ impl Sync {
 
             // Check if the segment hits our history
             let block_hash = segment.last().as_ref().unwrap().qc.block_hash;
-            self.db
-                .contains_canonical_block(&block_hash)
-                .unwrap_or_default()
+            self.db.read()?.blocks()?.contains_hash(block_hash)?
         } else {
             true
         };
@@ -972,7 +982,12 @@ impl Sync {
         let batch_size = Self::MAX_BATCH_SIZE
             .min(request.to_height.saturating_sub(request.from_height) as usize);
         let mut metas = Vec::with_capacity(batch_size);
-        let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
+        let Some(block) = self
+            .db
+            .read()?
+            .blocks()?
+            .canonical_by_height(request.to_height)?
+        else {
             tracing::warn!("sync::MetadataRequest : unknown block height");
             return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         };
@@ -980,7 +995,7 @@ impl Sync {
         let mut hash = block.hash();
         while metas.len() <= batch_size {
             // grab the parent
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(block) = self.db.read()?.blocks()?.by_hash(hash)? else {
                 break; // that's all we have!
             };
             hash = block.parent_hash();
@@ -1125,7 +1140,10 @@ impl Sync {
 
         let highest_number = self
             .db
-            .get_highest_canonical_block_number()?
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .map(|b| b.number())
             .unwrap_or_default();
 
         // Output some stats
@@ -1204,8 +1222,11 @@ impl Sync {
 
         let current_block = self
             .db
-            .get_highest_canonical_block_number()?
-            .expect("no highest block");
+            .read()?
+            .blocks()?
+            .max_canonical_by_view()?
+            .expect("no highest block")
+            .number();
 
         let peer_count = self.peers.count() + self.in_flight.len();
 
@@ -1243,6 +1264,10 @@ impl Sync {
             .send_external_message(peer, ExternalMessage::BlockRequest(BlockRequest::default()))
             .ok(); // ignore errors, retry with subsequent peer(s).
     }
+
+    pub fn peer_ids(&self) -> Vec<PeerId> {
+        self.peers.peer_ids()
+    }
 }
 
 #[derive(Debug)]
@@ -1273,6 +1298,15 @@ impl SyncPeers {
 
     fn count(&self) -> usize {
         self.peers.lock().unwrap().len()
+    }
+
+    fn peer_ids(&self) -> Vec<PeerId> {
+        self.peers
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|peer| peer.peer_id)
+            .collect::<Vec<_>>()
     }
 
     /// Downgrade a peer based on the response received.
@@ -1445,7 +1479,7 @@ impl std::fmt::Display for SyncState {
 ///
 /// V1 - peers that support original sync algorithm in `block_store.rs`
 /// V2 - peers that support new sync algorithm in `sync.rs`
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum PeerVer {
     V1 = 1,
     V2 = 2,
@@ -1463,7 +1497,7 @@ impl FromSql for PeerVer {
 
 impl ToSql for PeerVer {
     fn to_sql(&self) -> Result<ToSqlOutput, rusqlite::Error> {
-        Ok((self.clone() as u32).into())
+        Ok((*self as u32).into())
     }
 }
 

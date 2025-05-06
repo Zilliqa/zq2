@@ -8,6 +8,7 @@ use std::{
 use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 
 use super::types::{eth::QuorumCertificate, hex};
@@ -25,6 +26,7 @@ pub fn rpc_module(
             ("admin_generateCheckpoint", checkpoint),
             ("admin_blockRange", admin_block_range),
             ("admin_forceView", force_view),
+            ("admin_getPeers", get_peers),
         ]
     )
 }
@@ -40,7 +42,7 @@ struct ConsensusInfo {
 
 /// TODO: place-holder for now, feel free to change it.
 fn admin_block_range(_params: Params, node: &Arc<Mutex<Node>>) -> Result<RangeInclusive<u64>> {
-    node.lock().unwrap().db.available_range()
+    node.lock().unwrap().db.read()?.blocks()?.height_range()
 }
 
 fn consensus_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<ConsensusInfo> {
@@ -94,4 +96,9 @@ fn force_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let mut node = node.lock().unwrap();
     node.consensus.force_view(view.to::<u64>(), timeout_at)?;
     Ok(true)
+}
+
+fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<PeerId>> {
+    let node = node.lock().unwrap();
+    Ok(node.consensus.sync.peer_ids())
 }

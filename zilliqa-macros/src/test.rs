@@ -169,7 +169,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                 .arg("--rm")
                 .arg("-v")
                 .arg("/tmp:/scilla_ext_libs")
-                .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72")
+                .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:e762f387")
                 .arg("/scilla/0/bin/scilla-server-http")
                 .spawn()
                 .unwrap();
@@ -188,7 +188,12 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                     break;
                 }
                 if i >= 1200 {
-                    panic!("container is still not running");
+                    let logs = std::process::Command::new("docker")
+                        .arg("logs")
+                        .arg(&name)
+                        .output()
+                        .unwrap();
+                    panic!("container is still not running: {logs:?}");
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }

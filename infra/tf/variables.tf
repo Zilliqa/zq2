@@ -22,6 +22,7 @@ variable "apps" {
     provisioning_model         = optional(string, "STANDARD")
     generate_external_ip       = optional(bool, false)
     detach_load_balancer       = optional(bool, false)
+    enable_faucet              = optional(bool, true)
     faucet_max_hourly_requests = optional(number, 1000000)
     nodes = optional(list(object({
       count  = number
@@ -298,12 +299,6 @@ variable "vpc_main_subnet_name" {
   description = "(Optional) ZQ2 VPC subnet name"
   type        = string
   nullable    = false
-}
-
-variable "gcp_docker_registry_project_id" {
-  description = "(Optional) ZQ2 Artifact Registry project id"
-  type        = string
-  default     = "prj-p-devops-services-tvwmrf63"
 }
 
 variable "persistence_bucket_force_destroy" {

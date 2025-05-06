@@ -100,7 +100,7 @@ resource "google_compute_backend_service" "private_api" {
   session_affinity      = "CLIENT_IP"
 
   dynamic "backend" {
-    for_each = each.value.config.detach_load_balancer ? {} : { "${each.key}" = google_compute_instance_group.private_api[each.key] }
+    for_each = each.value.config.detach_load_balancer ? {} : { format("%s", each.key) = google_compute_instance_group.private_api[each.key] }
     content {
       group           = backend.value.self_link
       balancing_mode  = "UTILIZATION"

@@ -181,7 +181,9 @@ impl Header {
             parent_hash: header.qc.block_hash.into(),
             mix_hash: B256::ZERO,
             nonce: [0; 8],
-            sha_3_uncles: B256::ZERO, // Uncles do not exist in ZQ2
+            sha_3_uncles: "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"
+                .parse::<B256>()
+                .unwrap(), // Uncles do not exist in ZQ2
             transactions_root: header.transactions_root_hash.into(),
             state_root: header.state_root_hash.into(),
             receipts_root: header.receipts_root_hash.into(),
@@ -371,7 +373,7 @@ pub struct Log {
 impl Log {
     pub fn new(
         log: EvmLog,
-        log_index: usize,
+        log_index: u64,
         transaction_index: usize,
         transaction_hash: Hash,
         block_number: u64,
@@ -379,7 +381,7 @@ impl Log {
     ) -> Log {
         Log {
             removed: false,
-            log_index: log_index as u64,
+            log_index,
             transaction_index: transaction_index as u64,
             transaction_hash: transaction_hash.into(),
             block_hash: block_hash.into(),
