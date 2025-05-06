@@ -37,9 +37,7 @@ use crate::{
     state::State,
     sync::{Sync, SyncPeers},
     time::SystemTime,
-    transaction::{
-        EvmGas, EvmLog, Log, ScillaLog, SignedTransaction, TransactionReceipt, VerifiedTransaction,
-    },
+    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 #[derive(Debug)]
@@ -2759,24 +2757,28 @@ impl Consensus {
         // Then, revert the blocks from the head block to the common ancestor
         // Then, apply the blocks (forward) from the common ancestor to the parent of the new block
         let mut head = self.head_block();
+        let mut head_height = head.number();
         let mut proposed_block = block.clone();
+        let mut proposed_block_height = block.number();
         trace!(
             "Dealing with fork: between head block {} (height {}), and proposed block {} (height {})",
             head.hash(),
-            head.number(),
+            head_height,
             proposed_block.hash(),
-            proposed_block.number(),
+            proposed_block_height
         );
 
         // Need to make sure both pointers are at the same height
-        while head.number() > proposed_block.number() {
+        while head_height > proposed_block_height {
             trace!("Stepping back head block pointer");
             head = self.get_block(&head.parent_hash())?.unwrap();
+            head_height = head.number();
         }
 
-        while proposed_block.number() > head.number() {
+        while proposed_block_height > head_height {
             trace!("Stepping back proposed block pointer");
             proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
+            proposed_block_height = proposed_block.number();
         }
 
         // We now have both hash pointers at the same height, we can walk back until they are equal.
@@ -2903,8 +2905,6 @@ impl Consensus {
             trace!("applying {} transactions to state", transactions.len());
         }
 
-        let mut log_index: u64 = 0;
-
         // Early return if it is safe to fast-forward
         if self.receipts_cache_hash == block.receipts_root_hash()
             && from.is_some_and(|peer_id| peer_id == self.peer_id())
@@ -2922,8 +2922,6 @@ impl Consensus {
                     .receipts_cache
                     .remove(txn_hash)
                     .expect("receipt cached during proposal assembly");
-
-                let receipt = annotate_receipt_with_log_indices(receipt, &mut log_index);
 
                 // Recover set of receipts
                 block_receipts.push((receipt, tx_index));
@@ -2975,7 +2973,6 @@ impl Consensus {
         let mut cumulative_gas_used = EvmGas(0);
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
-        let mut log_index: u64 = 0;
         let mut cumulative_gas_fee = 0_u128;
 
         let transaction_hashes = verified_txns
@@ -3015,7 +3012,6 @@ impl Consensus {
                 .ok_or_else(|| anyhow!("Overflow occurred in cumulative gas fee calculation"))?;
 
             let receipt = Self::create_txn_receipt(result, tx_hash, tx_index, cumulative_gas_used);
-            let receipt = annotate_receipt_with_log_indices(receipt, &mut log_index);
 
             let receipt_hash = receipt.compute_hash();
 
@@ -3261,42 +3257,6 @@ impl Consensus {
         }
         Ok(())
     }
-}
-
-/// Takes a transaction receipt and assigns sequential log indices to each log entry in the receipt.
-///
-/// The `log_index` counter is updated in-place to maintain a continuous sequence of log indices
-/// across multiple calls to this function for different receipts in the same block.
-pub fn annotate_receipt_with_log_indices(
-    receipt: TransactionReceipt,
-    log_index: &mut u64,
-) -> TransactionReceipt {
-    let mut logs = Vec::new();
-
-    let mut receipt = receipt.clone();
-
-    for log_no_index in receipt.logs {
-        let log = match log_no_index {
-            Log::Evm(x) => Log::Evm(EvmLog {
-                address: x.address,
-                topics: x.topics,
-                data: x.data,
-                // log_index: Some(*log_index),
-            }),
-            Log::Scilla(x) => Log::Scilla(ScillaLog {
-                address: x.address,
-                event_name: x.event_name,
-                params: x.params,
-                // log_index: Some(*log_index),
-            }),
-        };
-        logs.push(log);
-        *log_index += 1;
-    }
-
-    receipt.logs = logs;
-
-    receipt
 }
 
 #[cfg(test)]
