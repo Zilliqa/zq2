@@ -22,7 +22,7 @@ use crate::{
     crypto::{self, Hash},
     db::{Db, TrieStorage},
     error::ensure_success,
-    message::{BlockHeader, MAX_COMMITTEE_SIZE},
+    message::{Block, BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
     scilla::{ParamValue, Scilla, Transition},
     serde_util::vec_param_value,
@@ -39,7 +39,7 @@ use crate::{
 /// the storage root is used to index into the state
 /// all the keys are hashed and stored in the same sled tree
 pub struct State {
-    pub sql: Arc<Db>,
+    sql: Arc<Db>,
     db: Arc<TrieStorage>,
     accounts: PatriciaTrie<TrieStorage>,
     /// The Scilla interpreter interface. Note that it is lazily initialized - This is a bit of a hack to ensure that
@@ -428,6 +428,18 @@ impl State {
             &bincode::serialize(&account)?,
         )?)
     }
+
+    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
+        self.sql.get_canonical_block_by_number(number)
+    }
+
+    pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
+        self.sql.get_highest_canonical_block_number()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.accounts.iter().next().is_none()
+    }
 }
 
 pub mod contract_addr {
@@ -626,16 +638,11 @@ mod tests {
     use revm::primitives::FixedBytes;
 
     use super::*;
-    use crate::{
-        api::to_hex::ToHex,
-        cfg::NodeConfig,
-        db::{ArcDb, Db},
-        message::BlockHeader,
-    };
+    use crate::{api::to_hex::ToHex, cfg::NodeConfig, db::Db, message::BlockHeader};
 
     #[test]
     fn deposit_contract_updateability() {
-        let db = Db::new::<PathBuf>(None, 0, 0).unwrap();
+        let db = Db::new::<PathBuf>(None, 0, 0, None).unwrap();
         let db = Arc::new(db);
         let config = NodeConfig::default();
 
