@@ -1774,6 +1774,7 @@ async fn test_uninstall_filter(mut network: Network) {
     assert!(result.is_err());
 }
 
+#[zilliqa_macros::test]
 async fn get_block_by_number(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let provider = wallet.provider();
