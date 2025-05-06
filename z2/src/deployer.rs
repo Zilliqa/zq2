@@ -1252,7 +1252,7 @@ async fn generate_secret(
     secret_value: Option<String>,
     kms_keyring: Option<String>,
     kms_key: Option<String>,
-) -> Result<()> {
+) -> Result<String> {
     let progress_bar = multi_progress.add(cliclack::progress_bar(if force { 4 } else { 3 }));
     let mut filters = Vec::<String>::new();
     for (k, v) in labels.clone() {
@@ -1293,7 +1293,7 @@ async fn generate_secret(
     ));
 
     let current_secret_value = if secrets[0].value().is_err() {
-        secrets[0].add_version(secret_value, kms_keyring, kms_key)?;
+        secrets[0].add_version(secret_value, kms_keyring, kms_key)?
     } else {
         secrets[0].value()?
     };
