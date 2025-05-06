@@ -56,6 +56,8 @@ SUBDOMAIN=query_metadata_key("subdomain")
 ZQ2_METRICS_ENABLED=query_metadata_key("private-api") == "metrics"
 ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
 LOG_LEVEL='{{ log_level }}'
+PROJECT_ID="{{ project_id }}"
+KMS_PROJECT_ID = "prj-p-kms-2vduab0g" if PROJECT_ID.startswith("prj-p") else "prj-d-kms-tw1xyxbh"
 
 def mount_checkpoint_file():
     if CHECKPOINT_URL is not None and CHECKPOINT_URL != "":
@@ -236,14 +238,14 @@ ZQ2_IMAGE="{{ docker_image }}"
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker container prune -f
-    gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=/tmp/{{ node_name }}-key --key="{{ node_name }}" --keyring="kms-{{ chain_name }}" --location=global --project="$(if [[ {{ project_id }} == prj-d* ]]; then echo prj-d-kms-tw1xyxbh; else echo prj-p-kms-2vduab0g; fi)"
-    cat /tmp/{{ node_name }}-key
+    PRIVATE_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ node_name }}" --keyring="kms-{{ chain_name }}" --location=global --project=""" + KMS_PROJECT_ID + """)
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 --memory=6g \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
-    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ $(cat /tmp/{{ node_name }}-key) --log-json
+    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ "${PRIVATE_KEY}" --log-json
+    unset PRIVATE_KEY
 }
 
 stop() {

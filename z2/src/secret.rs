@@ -15,7 +15,7 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub fn add_version(&self, value: Option<String>, kms_keyring: Option<String>, kms_key: Option<String>) -> Result<()> {
+    pub fn add_version(&self, value: Option<String>, kms_keyring: Option<String>, kms_key: Option<String>) -> Result<String> {
         let value = value.unwrap_or(Self::generate_random_secret());
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
