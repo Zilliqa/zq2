@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use anyhow::anyhow;
 
@@ -98,7 +101,7 @@ impl PendingTxFilter {
 pub struct LogFilter {
     pub criteria: Box<alloy::rpc::types::Filter>,
     pub last_block_number: Option<u64>,
-    pub last_log_index: Option<u64>,
+    pub seen_logs: HashSet<super::eth::Log>,
 }
 
 impl Filter {

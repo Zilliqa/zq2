@@ -1038,25 +1038,10 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
             let all_logs = get_logs_inner(&log_filter.criteria, &node)?;
             let result: Vec<eth::Log> = all_logs
                 .iter()
-                .filter(
-                    |log| match (log_filter.last_block_number, log_filter.last_log_index) {
-                        (Some(bn), _) if bn > log.block_number => false,
-                        (Some(bn), Some(li)) if bn == log.block_number && li >= log.log_index => {
-                            false
-                        }
-                        _ => true,
-                    },
-                )
+                .filter(|log| !log_filter.seen_logs.contains(log))
                 .cloned()
                 .collect();
-            log_filter.last_block_number =
-                Some(all_logs.iter().fold(0, |acc, b| acc.max(b.block_number)));
-            log_filter.last_log_index = Some(
-                all_logs
-                    .iter()
-                    .filter(|x| x.block_number == log_filter.last_block_number.unwrap())
-                    .fold(0, |acc, b| acc.max(b.log_index)),
-            );
+            log_filter.seen_logs = all_logs.into_iter().collect();
             Ok(json!(result))
         }
     }
@@ -1128,7 +1113,7 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
     let id = filters.add_filter(FilterKind::Log(LogFilter {
         criteria: Box::new(criteria),
         last_block_number: None,
-        last_log_index: None,
+        seen_logs: std::collections::HashSet::new(),
     }));
     Ok(id)
 }
