@@ -6,7 +6,8 @@ locals {
     module.validators.instances,
     module.apis.instances,
     module.checkpoints.instances,
-    module.persistences.instances
+    module.persistences.instances,
+    { for k, v in module.private_apis : k => v.instances }
   )
 }
 
