@@ -170,8 +170,6 @@ pub struct Consensus {
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
-    /// Pruning interval i.e. how many blocks to keep in the database.
-    prune_interval: u64,
     /// Used for testing and test network recovery
     force_view: Option<(u64, DateTime)>,
 }
@@ -295,8 +293,6 @@ impl Consensus {
             peers.clone(),
         )?;
 
-        let prune_interval = config.sync.prune_interval;
-
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -320,7 +316,6 @@ impl Consensus {
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
-            prune_interval,
             force_view: None,
         };
 
@@ -626,8 +621,6 @@ impl Consensus {
             block.hash()
         );
 
-        // FIXME: Cleanup
-
         if self.db.contains_block(&block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
             return Ok(None);
@@ -762,10 +755,12 @@ impl Consensus {
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
+                self.sync.set_validator(false);
                 return Ok(None);
             } else {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
+                self.sync.set_validator(true);
 
                 if self.create_next_block_on_timeout {
                     warn!("Create block on timeout set. Clearing");
@@ -3086,31 +3081,7 @@ impl Consensus {
             ));
         }
 
-        self.prune_history(block.header.number)?;
         self.broadcast_commit_receipts(from, block, block_receipts)
-    }
-
-    /// Prune the history
-    ///
-    /// Performs pruning of 1000-blocks at a time. If the prune_interval is unset (u64::MAX by default), pruning is disabled.
-    fn prune_history(&mut self, number: u64) -> Result<()> {
-        if self.prune_interval == u64::MAX {
-            return Ok(()); // pruning is disabled
-        }
-        let range = self.db.available_range()?;
-        let prune_at = number
-            .saturating_sub(self.prune_interval.saturating_sub(1)) // off-by-one
-            .min(range.start().saturating_add(1000)); // gradually prune 1000-blocks at a time
-        if range.contains(&prune_at) {
-            for n in *range.start()..prune_at {
-                let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
-                if let Some(block) = block {
-                    tracing::trace!(number = %block.number(), hash=%block.hash(), "Prune block");
-                    self.db.remove_block(&block)?;
-                }
-            }
-        }
-        Ok(())
     }
 
     fn broadcast_commit_receipts(

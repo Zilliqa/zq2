@@ -437,9 +437,20 @@ impl Db {
     /// Returns the lowest and highest block numbers of stored blocks
     pub fn available_range(&self) -> Result<RangeInclusive<u64>> {
         let db = self.db.lock().unwrap();
-        let (min, max) = db
-            .prepare_cached("SELECT MIN(height), MAX(height) FROM blocks")?
-            .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        // Doing it together is slow
+        // sqlite> EXPLAIN QUERY PLAN SELECT MIN(height), MAX(height) FROM blocks;
+        // QUERY PLAN
+        // `--SCAN blocks USING COVERING INDEX idx_blocks_height
+        let min = db
+            .prepare_cached("SELECT MIN(height) FROM blocks")?
+            .query_row([], |row| row.get::<_, u64>(0))
+            .optional()?
+            .unwrap_or_default();
+        let max = db
+            .prepare_cached("SELECT MAX(height) FROM blocks")?
+            .query_row([], |row| row.get::<_, u64>(0))
+            .optional()?
+            .unwrap_or_default();
         Ok(min..=max)
     }
 
@@ -941,6 +952,67 @@ impl Db {
             .prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?
             .execute([block.header.hash])?;
         Ok(())
+    }
+
+    /// Delete the block and its related transactions and receipts
+    pub fn prune_block(&self, block: &Block, is_canonical: bool) -> Result<()> {
+        let hash = block.hash();
+        self.with_sqlite_tx(|db| {
+            // get a list of transactions
+            let txns = db
+                .prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
+                .query_map([hash], |row| row.get(0))?
+                .collect::<Result<Vec<Hash>, _>>()?;
+
+            // Delete child row, before deleting parents
+            // https://github.com/Zilliqa/zq2/issues/2216#issuecomment-2812501876
+            db.prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
+                .execute([hash])?;
+
+            // Delete the block after all references are deleted
+            db.prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?
+                .execute([hash])?;
+
+            // Delete all other references to this list of txns
+            if is_canonical {
+                for tx in txns {
+                    // Deletes all other references to this txn; txn can only exist in one canonical block.
+                    db.prepare_cached("DELETE FROM receipts WHERE tx_hash = ?1")?
+                        .execute([tx])?;
+                    // Delete the txn itself after all references are deleted
+                    db.prepare_cached("DELETE FROM transactions WHERE tx_hash = ?1")?
+                        .execute([tx])?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub fn get_blocks_by_height(&self, height: u64) -> Result<Vec<Block>> {
+        let rows = self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1")?
+            .query_map([height], |row| Ok(Block {
+                header: BlockHeader {
+                    hash: row.get(0)?,
+                    view: row.get(1)?,
+                    number: row.get(2)?,
+                    qc: row.get(3)?,
+                    signature: row.get(4)?,
+                    state_root_hash: row.get(5)?,
+                    transactions_root_hash: row.get(6)?,
+                    receipts_root_hash: row.get(7)?,
+                    timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
+                    gas_used: row.get(9)?,
+                    gas_limit: row.get(10)?,
+                },
+                agg: row.get(11)?,
+                transactions: vec![],
+            })
+        )?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
