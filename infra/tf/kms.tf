@@ -7,7 +7,7 @@ locals {
     module.apis.instances,
     module.checkpoints.instances,
     module.persistences.instances,
-    { for k, v in module.private_apis : k => v.instances }
+    for key, private_api in module.private_apis : key => private_api.instances
   )
 }
 
