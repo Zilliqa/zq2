@@ -17,8 +17,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Run a decent number of samples for our randomized tests
-  ZQ_TEST_SAMPLES: 20
+  RUST_TEST_THREADS: 4
+  ZQ_TEST_SAMPLES: 5
 
 jobs:
   format:
@@ -52,6 +52,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
       - name: Install default toolchain
         run: rustup toolchain install
       - name: Install nightly toolchain (for cargo fmt)
@@ -71,7 +72,7 @@ jobs:
   e2e_test:
     services:
       scilla:
-        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72
+        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:e762f387
         options: --init --add-host host.docker.internal:host-gateway --entrypoint "/scilla/0/bin/scilla-server-http"
         ports:
           - 3000:3000

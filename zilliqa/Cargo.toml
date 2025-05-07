@@ -56,7 +56,7 @@ rand = "0.8.5"
 rand_chacha = "0.3.1"
 revm = { version = "19.6.0", features = ["optional_no_base_fee"] }
 revm-inspectors = { version = "0.16.0", features = ["js-tracer"] }
-rusqlite = { version = "0.34.0", features = ["bundled", "trace"] }
+rusqlite = { version = "0.35.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 serde_bytes = "0.11.17"
 serde_json = { version = "1.0.140", features = ["raw_value","arbitrary_precision"] }
@@ -66,7 +66,7 @@ tempfile = "3.19.1"
 time = { version = "0.3.37", features = ["formatting", "macros"] }
 tokio = { version = "1.44.2", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.17"
-toml = "0.8.20"
+toml = "0.8.21"
 tower = "0.4.13"
 tower-http = { version = "0.6.1", features = ["cors"] }
 tracing = "0.1.41"
