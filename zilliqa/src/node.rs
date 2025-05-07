@@ -31,7 +31,7 @@ use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
-    cfg::NodeConfig,
+    cfg::{ForkName, NodeConfig},
     consensus::Consensus,
     crypto::{Hash, SecretKey},
     db::Db,
@@ -202,10 +202,15 @@ impl Node {
             local_channel: local_sender_channel,
             request_id: RequestId::default(),
         };
+        let executable_blocks_height = config
+            .consensus
+            .get_forks()?
+            .find_height_fork_first_activated(ForkName::ExecutableBlocks);
         let db = Arc::new(Db::new(
             config.data_dir.as_ref(),
             config.eth_chain_id,
-            config.cache_size,
+            config.state_cache_size,
+            executable_blocks_height,
         )?);
         let node = Node {
             config: config.clone(),
@@ -474,11 +479,10 @@ impl Node {
             BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
             BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
             BlockNumberOrTag::Finalized => {
-                let read = self.db.read()?;
-                let Some(view) = read.finalized_view()?.get()? else {
+                let Some(view) = self.db.get_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
-                let Some(block) = read.blocks()?.by_view(view)? else {
+                let Some(block) = self.db.get_block_by_view(view)? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
                 Ok(Some(block))
@@ -564,6 +568,9 @@ impl Node {
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
@@ -616,6 +623,9 @@ impl Node {
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
@@ -641,15 +651,6 @@ impl Node {
         let block = self
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
-        if !self
-            .consensus
-            .state()
-            .forks
-            .get(block.number())
-            .executable_blocks
-        {
-            return Err(anyhow!("State required to execute request does not exist"));
-        }
         let parent = self
             .get_block(block.parent_hash())?
             .ok_or_else(|| anyhow!("missing block: {}", block.parent_hash()))?;
@@ -657,6 +658,9 @@ impl Node {
             .consensus
             .state()
             .at_root(parent.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         let mut traces: Vec<TraceResult> = Vec::new();
 
@@ -854,6 +858,9 @@ impl Node {
             .consensus
             .state()
             .at_root(block.state_root_hash().into());
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         state.call_contract(from_addr, to_addr, data, amount, block.header)
     }
@@ -900,6 +907,9 @@ impl Node {
             .get_block(block_number)?
             .ok_or_else(|| anyhow!("missing block: {block_number}"))?;
         let state = self.get_state(&block)?;
+        if state.is_empty() {
+            return Err(anyhow!("State required to execute request does not exist"));
+        }
 
         state.estimate_gas(
             from_addr,
@@ -931,6 +941,13 @@ impl Node {
 
     pub fn get_chain_tip(&self) -> u64 {
         self.consensus.head_block().header.number
+    }
+
+    pub fn get_transaction_receipts_in_block(
+        &self,
+        block_hash: Hash,
+    ) -> Result<Vec<TransactionReceipt>> {
+        self.db.get_transaction_receipts_in_block(&block_hash)
     }
 
     pub fn get_finalized_height(&self) -> Result<u64> {

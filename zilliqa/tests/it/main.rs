@@ -77,8 +77,8 @@ use zilliqa::{
         Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
-        max_rpc_response_size_default, scilla_ext_libs_path_default, state_rpc_limit_default,
-        total_native_token_supply_default, u64_max,
+        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -391,7 +391,7 @@ impl Network {
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            cache_size: 1024 * 1024,
+            state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
             do_checkpoints,
             block_request_limit: block_request_limit_default(),
@@ -510,7 +510,7 @@ impl Network {
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            cache_size: 1024 * 1024,
+            state_cache_size: state_cache_size_default(),
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
             consensus: ConsensusConfig {
@@ -1199,8 +1199,8 @@ impl Network {
         let initial_timeout = timeout;
         let db = self.get_node(0).db.clone();
         loop {
-            if let Some(view) = db.read()?.finalized_view()?.get()? {
-                if let Some(block) = db.read()?.blocks()?.by_view(view)? {
+            if let Some(view) = db.get_finalized_view()? {
+                if let Some(block) = db.get_block_by_view(view)? {
                     if block.number() >= target_block {
                         return Ok(());
                     }
