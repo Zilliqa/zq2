@@ -4,7 +4,7 @@ use anyhow::{Context, Ok, Result, anyhow};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
-use base64::{engine::general_purpose, Engine as _};
+use crate::kms::KmsService;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Secret {
@@ -15,7 +15,7 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub fn add_version(&self, value: Option<String>, kms_keyring: Option<String>, kms_key: Option<String>) -> Result<String> {
+    pub fn add_version(&self, value: Option<String>, encrypted: bool) -> Result<String> {
         let value = value.unwrap_or(Self::generate_random_secret());
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
@@ -25,41 +25,28 @@ impl Secret {
         // Create a new named temporary file with the secret
         let mut temp_file = NamedTempFile::new()?;
 
-        // Encrypt if both KMS key and keyring are provided
-        if let (Some(kms_keyring), Some(kms_key)) = (kms_keyring, kms_key) {
-            let mut plaintext_file = NamedTempFile::new()?;
-            writeln!(plaintext_file, "{}", value)?;
-
-            // Determine KMS project ID based on prefix
-            let kms_project_id = if project_id.starts_with("prj-d") {
-                "prj-d-kms-tw1xyxbh"
-            } else if project_id.starts_with("prj-p") {
-                "prj-p-kms-2vduab0g"
+        if encrypted {
+            // Check if we have the required labels to generate the KMS keyring and key
+            let chain_name = self.labels.get("zq2-network").ok_or_else(|| {
+                anyhow!("Cannot encrypt: missing 'zq2-network' label for KMS keyring")
+            })?;      
+            let key_name = if let Some(node_name) = self.labels.get("node-name") {
+                node_name.to_string()
+            } else if let Some(role) = self.labels.get("role") {
+                format!("{}-{}", chain_name, role)
             } else {
-                project_id
+                return Err(anyhow!("Cannot encrypt: missing both 'node-name' and 'role' labels for KMS key"));
             };
-
-            let ciphertext_tempfile = NamedTempFile::new()?;
-            let status = Command::new("gcloud")
-                .args([
-                    "kms", "encrypt",
-                    "--plaintext-file", plaintext_file.path().to_str().unwrap(),
-                    "--ciphertext-file", ciphertext_tempfile.path().to_str().unwrap(),
-                    "--keyring", &kms_keyring,
-                    "--key", &kms_key,
-                    "--location", "global",
-                    "--project", kms_project_id,
-                ])
-                .status()?;
-            if !status.success() {
-                return Err(anyhow::anyhow!("KMS encryption failed"));
-            }
-
-            // Read binary ciphertext and encode as base64
-            let ciphertext_bytes = std::fs::read(ciphertext_tempfile.path())?;
-            let ciphertext_base64 = general_purpose::STANDARD.encode(&ciphertext_bytes);
             
-            // Write base64 to final output file
+            // Encrypt using KmsService
+            let ciphertext_base64 = KmsService::encrypt(
+                project_id,
+                &value,
+                &format!("kms-{}", chain_name),
+                &key_name
+            )?;
+            
+            // Write base64 encrypted content to file
             writeln!(temp_file, "{}", ciphertext_base64)?;
         } else {
             // Write plaintext directly if not encrypted

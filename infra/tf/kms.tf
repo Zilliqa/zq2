@@ -7,7 +7,7 @@ locals {
     module.apis.instances,
     module.checkpoints.instances,
     module.persistences.instances,
-    { for k, v in module.private_apis : k => v.instances }
+    merge([for private_api in module.private_apis : private_api.instances]...)
   )
 }
 
@@ -32,10 +32,44 @@ resource "google_kms_crypto_key" "node" {
   }
 }
 
-resource "google_kms_crypto_key_iam_member" "key_encrypter_decrypter" {
+resource "google_kms_crypto_key_iam_member" "node_key_encrypter_decrypter" {
   for_each = local.instances_map
 
   crypto_key_id = google_kms_crypto_key.node[each.value.name].id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${each.value.service_account}"
+}
+
+resource "google_kms_crypto_key" "stats_dashboard" {
+  name     = "${var.chain_name}-stats-dashboard"
+  key_ring = google_kms_key_ring.keyring.id
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_kms_crypto_key_iam_member" "stats_dashboard_key_encrypter_decrypter" {
+  for_each = local.instances_map
+
+  crypto_key_id = google_kms_crypto_key.stats_dashboard.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${each.value.service_account}"
+}
+
+resource "google_kms_crypto_key" "genesis" {
+  name     = "${var.chain_name}-genesis"
+  key_ring = google_kms_key_ring.keyring.id
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_kms_crypto_key_iam_member" "genesis_key_encrypter_decrypter" {
+  for_each = module.apps.instances
+
+  crypto_key_id = google_kms_crypto_key.genesis.id
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
   member        = "serviceAccount:${each.value.service_account}"
 }

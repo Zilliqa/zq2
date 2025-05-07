@@ -18,6 +18,7 @@ use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::instance::ChainInstance;
 use crate::{address::EthereumAddress, chain::Chain};
+use crate::kms::KmsService;
 
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
@@ -268,12 +269,13 @@ impl Machine {
             .output()?)
     }
 
-    pub fn get_private_key(&self) -> Result<String> {
+    pub fn get_private_key(&self, chain_name: &str) -> Result<String> {
+        // Get the base64 encoded secret from Secret Manager
         let cmd = format!(
-            "gcloud secrets versions access latest --project=\"{}\" --secret=\"{}-pk\"",
+            "gcloud secrets versions access latest --project=\"{}\" --secret=\"{}-enckey\"",
             self.project_id, self.name
         );
-
+    
         let output = self.run(&cmd, false)?;
         if !output.status.success() {
             return Err(anyhow!(
@@ -282,8 +284,19 @@ impl Machine {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-
-        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+    
+        // Get the base64 encoded ciphertext
+        let base64_ciphertext = std::str::from_utf8(&output.stdout)?.trim();
+        
+        // Use the KmsService to decrypt the key
+        let plaintext = KmsService::decrypt(
+            &self.project_id,
+            base64_ciphertext,
+            &format!("kms-{}", chain_name),
+            &self.name
+        )?;
+        
+        Ok(plaintext)
     }
 
     pub fn get_genesis_address(&self, chain_name: &str) -> Result<String> {
@@ -607,7 +620,7 @@ impl ChainNode {
             ));
         }
 
-        self.machine.get_private_key()
+        self.machine.get_private_key(&self.chain.name())
     }
 
     pub fn get_genesis_address(&self) -> Result<String> {
