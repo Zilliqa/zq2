@@ -309,13 +309,19 @@ pub fn get_block_transaction_receipts_inner(
 
         // Required workaround for incorrectly converted nonces for zq1 scilla transactions
         let contract_address = match &signed_transaction.tx {
-            SignedTransaction::Zilliqa { .. } => Some(zil_contract_address(
-                signed_transaction.signer,
-                signed_transaction
-                    .tx
-                    .nonce()
-                    .ok_or_else(|| anyhow!("Unable to extract nonce!"))?,
-            )),
+            SignedTransaction::Zilliqa { tx, .. } => {
+                if tx.to_addr.is_zero() && receipt.success {
+                    Some(zil_contract_address(
+                        signed_transaction.signer,
+                        signed_transaction
+                            .tx
+                            .nonce()
+                            .ok_or_else(|| anyhow!("Unable to extract nonce!"))?,
+                    ))
+                } else {
+                    receipt.contract_address
+                }
+            }
             _ => receipt.contract_address,
         };
 
