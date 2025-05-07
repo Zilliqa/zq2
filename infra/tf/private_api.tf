@@ -166,7 +166,7 @@ resource "google_compute_target_https_proxy" "private_api" {
 data "google_compute_global_address" "private_api" {
   for_each = local.private_api_instances
 
-  name = "${each.value.dns_name}-${replace(var.subdomain, ".", "-")}"
+  name = "${replace(each.value.dns_name, ".", "-")}-${replace(var.subdomain, ".", "-")}"
 }
 
 resource "google_compute_global_forwarding_rule" "private_api_http" {

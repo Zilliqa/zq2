@@ -135,7 +135,6 @@ impl TransactionApplyResult {
                             address: l.address,
                             topics,
                             data: data.to_vec(),
-                            log_index: None,
                         })
                     })
                     .collect(),
@@ -415,10 +414,7 @@ impl DatabaseRef for &State {
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         Ok(self
-            .sql
-            .read()?
-            .blocks()?
-            .canonical_by_height(number)?
+            .get_canonical_block_by_number(number)?
             .map(|block| B256::new(block.hash().0))
             .unwrap_or_default())
     }
@@ -631,7 +627,7 @@ impl State {
         current_block: BlockHeader,
         inspector: impl ScillaInspector,
     ) -> Result<ScillaResultAndState> {
-        let mut state = PendingState::new(self.clone());
+        let mut state = PendingState::new(self.try_clone()?);
 
         // Issue 1509 - for Scilla transitions, follow the legacy ZQ1 behaviour of deducting a small amount
         // of gas for the invocation and the rest of the gas once the txn has run.
@@ -687,7 +683,7 @@ impl State {
                 new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
             {
                 trace!("scilla_txn: cannot deduct remaining gas - txn failed");
-                let mut failed_state = PendingState::new(self.clone());
+                let mut failed_state = PendingState::new(self.try_clone()?);
                 return Ok((result, failed_state.finalize()));
             }
         }
@@ -708,12 +704,6 @@ impl State {
         inspector: I,
         enable_inspector: bool,
     ) -> Result<TransactionApplyResult> {
-        if !self.forks.get(current_block.number).executable_blocks {
-            return Err(anyhow!(
-                "transactions at this block height are not executable"
-            ));
-        }
-
         let hash = txn.hash;
         let from_addr = txn.signer;
         info!(?txn, "executing txn");
@@ -1113,12 +1103,6 @@ impl State {
         gas_price: Option<u128>,
         value: u128,
     ) -> Result<u64> {
-        if !self.forks.get(current_block.number).executable_blocks {
-            return Err(anyhow!(
-                "transactions at this block height are not executable"
-            ));
-        }
-
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
         let mut max = self.max_gas_for_caller(from_addr, value, gas_price, gas)?.0;
@@ -1214,12 +1198,6 @@ impl State {
         amount: u128,
         current_block: BlockHeader,
     ) -> Result<ExecutionResult> {
-        if !self.forks.get(current_block.number).executable_blocks {
-            return Err(anyhow!(
-                "transactions at this block height are not executable"
-            ));
-        }
-
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
             to_addr,
@@ -1345,21 +1323,11 @@ impl PendingState {
     }
 
     pub fn get_canonical_block_by_number(&self, block_number: u64) -> Result<Option<Block>> {
-        self.pre_state
-            .sql
-            .read()?
-            .blocks()?
-            .canonical_by_height(block_number)
+        self.pre_state.get_canonical_block_by_number(block_number)
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
-        Ok(self
-            .pre_state
-            .sql
-            .read()?
-            .blocks()?
-            .max_canonical_by_view()?
-            .map(|b| b.number()))
+        self.pre_state.get_highest_canonical_block_number()
     }
 
     pub fn touch(&mut self, address: Address) {
@@ -2106,7 +2074,6 @@ pub fn scilla_call(
                     address: to_addr,
                     event_name: event.event_name,
                     params: event.params,
-                    log_index: None,
                 };
                 logs.push(log);
             }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, sync::Arc};
+use std::{collections::HashMap, error::Error, sync::Arc};
 
 use parking_lot::RwLock;
 
@@ -8,7 +8,7 @@ use crate::errors::MemDBError;
 /// You should first write the data to the cache and write the data
 /// to the database in bulk after the end of a set of operations.
 pub trait DB: Send + Sync {
-    type Error: Display;
+    type Error: Error;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error>;
 
