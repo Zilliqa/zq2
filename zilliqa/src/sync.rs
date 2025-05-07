@@ -182,9 +182,8 @@ impl Sync {
 
         let zq1_ceil_height = config
             .consensus
-            .forks
-            .first()
-            .map(|f| f.at_height)
+            .get_forks()?
+            .find_height_fork_first_activated(crate::cfg::ForkName::ExecutableBlocks)
             .unwrap_or_default();
 
         Ok(Self {
