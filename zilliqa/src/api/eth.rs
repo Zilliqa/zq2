@@ -314,8 +314,7 @@ pub fn get_block_transaction_receipts_inner(
                 signed_transaction
                     .tx
                     .nonce()
-                    .ok_or_else(|| anyhow!("Unable to extract nonce!"))?
-                    + 1,
+                    .ok_or_else(|| anyhow!("Unable to extract nonce!"))?,
             )),
             _ => receipt.contract_address,
         };
