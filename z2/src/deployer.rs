@@ -1063,7 +1063,7 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
     Ok(())
 }
 
-pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<()> {
+pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<String> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
 
@@ -1085,10 +1085,12 @@ pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<()
 
     multi_progress.stop();
 
+    run_setup_secrets_grants(config_file, secret_name).await?;
+
     result
 }
 
-pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
+pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<String> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
 
@@ -1110,10 +1112,12 @@ pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<
 
     multi_progress.stop();
 
+    run_setup_secrets_grants(config_file, secret_name).await?;
+
     result
 }
 
-pub async fn run_generate_genesis_address(config_file: &str, force: bool) -> Result<()> {
+pub async fn run_generate_genesis_address(config_file: &str, force: bool) -> Result<String> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
 
@@ -1135,6 +1139,8 @@ pub async fn run_generate_genesis_address(config_file: &str, force: bool) -> Res
     .await;
 
     multi_progress.stop();
+
+    run_setup_secrets_grants(config_file, secret_name).await?;
 
     result
 }
@@ -1178,6 +1184,7 @@ pub async fn run_generate_private_keys(
         let permit = semaphore.clone().acquire_owned().await?;
         let mp = multi_progress.to_owned();
         let chain_name = chain.name();
+        let service_account = node.get_service_account()?;
         let role = node
             .labels
             .get("role")
@@ -1191,8 +1198,18 @@ pub async fn run_generate_private_keys(
             labels.insert("role".to_string(), role);
             labels.insert("zq2-network".to_string(), chain_name);
             labels.insert("node-name".to_string(), node.clone().name);
-            let result = generate_secret(&mp, secret_name, labels, project_id, force, None).await;
+            let mut result =
+                generate_secret(&mp, secret_name, labels, project_id, force, None).await;
+
+            let private_key_result =
+                Secret::grant_service_account(secret_name, project_id, &service_account);
+
+            if result.is_ok() {
+                result = private_key_result;
+            }
+
             drop(permit); // Release the permit when the task is done
+
             (node, result)
         });
         futures.push(future);
@@ -1225,7 +1242,7 @@ async fn generate_secret(
     project_id: &str,
     force: bool,
     secret_value: Option<String>,
-) -> Result<()> {
+) -> Result<String> {
     let progress_bar = multi_progress.add(cliclack::progress_bar(if force { 4 } else { 3 }));
     let mut filters = Vec::<String>::new();
     for (k, v) in labels.clone() {
@@ -1265,13 +1282,60 @@ async fn generate_secret(
         name
     ));
 
-    if secrets[0].value().is_err() {
-        secrets[0].add_version(secret_value)?;
-    }
+    let curret_secret_value = if secrets[0].value().is_err() {
+        secrets[0].add_version(secret_value)?
+    } else {
+        secrets[0].value()?
+    };
     progress_bar.inc(1);
 
     // Process completed
     progress_bar.stop(format!("{} {}: Secret created", "✔".green(), name));
+
+    Ok(curret_secret_value)
+}
+
+async fn run_setup_secrets_grants(config_file: &str, secret_name: &str) -> Result<()> {
+    let config = NetworkConfig::from_file(config_file).await?;
+    let chain = ChainInstance::new(config).await?;
+
+    // Create a list of instances
+    let mut machines = chain.machines();
+    machines.sort_by_key(|machine| machine.name.to_owned());
+
+    let multi_progress =
+        cliclack::multi_progress("Granting the node SA to access the secrets".yellow());
+
+    let mut results = vec![];
+
+    for machine in machines {
+        log::info!(
+            "Granting the secret {} to the service account {}",
+            secret_name,
+            machine.name
+        );
+        let service_account = machine.get_service_account()?;
+        let project_id = &machine.clone().project_id;
+        let service_account = &service_account.clone();
+        let grants_result = Secret::grant_service_account(secret_name, project_id, service_account);
+
+        results.push((machine, grants_result));
+    }
+
+    multi_progress.stop();
+
+    let mut failures = vec![];
+
+    for result in results {
+        if let (machine, Err(err)) = result {
+            println!("Node {} failed with error: {}", machine.name, err);
+            failures.push(machine.name);
+        }
+    }
+
+    for failure in failures {
+        log::error!("FAILURE: {}", failure);
+    }
 
     Ok(())
 }

@@ -479,7 +479,7 @@ fn get_latest_tx_block(_: Params, node: &Arc<Mutex<Node>>) -> Result<zil::TxBloc
         .get_block(BlockId::latest())?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
-    let txn_fees = get_txn_fees_for_block(&node, &block)?;
+    let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
     let tx_block: zil::TxBlock = zil::TxBlock::new(&block, txn_fees);
     Ok(tx_block)
 }
@@ -545,7 +545,7 @@ fn get_blockchain_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<BlockchainI
         num_peers: num_peers as u16,
         num_tx_blocks,
         num_ds_blocks,
-        num_transactions,
+        num_transactions: num_transactions as u64,
         transaction_rate,
         tx_block_rate,
         ds_block_rate,
@@ -748,25 +748,17 @@ fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::T
     if block.number() > node.get_finalized_height()? {
         return Err(anyhow!("Block not finalized"));
     }
-    let txn_fees = get_txn_fees_for_block(&node, &block)?;
+    let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
     let block: zil::TxBlock = zil::TxBlock::new(&block, txn_fees);
 
     Ok(Some(block))
 }
 
-fn get_txn_fees_for_block(node: &Node, block: &Block) -> Result<u128> {
-    let read = node.db.read()?;
-    let receipts = read.receipts()?;
-    block
-        .transactions
+fn get_txn_fees_for_block(node: &Node, hash: Hash) -> Result<u128> {
+    Ok(node
+        .get_transaction_receipts_in_block(hash)?
         .iter()
-        .map(|txn_hash| {
-            let receipt = receipts
-                .get(*txn_hash)?
-                .ok_or_else(|| anyhow!("missing receipt"))?;
-            Ok(receipt.gas_used.0 as u128)
-        })
-        .sum()
+        .fold(0, |acc, txnrcpt| acc + txnrcpt.gas_used.0 as u128))
 }
 
 // GetTxBlockVerbose
@@ -787,7 +779,7 @@ fn get_tx_block_verbose(
     let proposer = node
         .get_proposer_reward_address(block.header)?
         .expect("No proposer");
-    let txn_fees = get_txn_fees_for_block(&node, &block)?;
+    let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
     let block: zil::TxBlockVerbose = zil::TxBlockVerbose::new(&block, txn_fees, proposer);
 
     Ok(Some(block))

@@ -9,7 +9,7 @@ resource "random_id" "name_suffix" {
 }
 
 resource "google_service_account" "this" {
-  for_each = { for k, v in local.instances_map : v.resource_name => v }
+  for_each = local.instances_map
 
   account_id   = "sa-${substr(md5(each.value.resource_name), 0, 27)}"
   display_name = each.value.resource_name
@@ -64,7 +64,7 @@ resource "google_compute_instance" "this" {
   labels = merge(local.labels, { "node-name" = each.value.resource_name })
 
   service_account {
-    email = google_service_account.this[each.value.resource_name].email
+    email = google_service_account.this[each.value.resource_id].email
     scopes = [
       "https://www.googleapis.com/auth/cloud-platform",
       "https://www.googleapis.com/auth/devstorage.read_only",

@@ -440,7 +440,7 @@ mod tests {
     use crate::{
         cfg::NodeConfig,
         crypto::Hash,
-        db::{ArcDb, Db},
+        db::Db,
         state::State,
         transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
     };
@@ -496,7 +496,7 @@ mod tests {
     fn get_in_memory_state() -> Result<State> {
         let node_config = NodeConfig::default();
 
-        let db = Db::new::<PathBuf>(None, 0, 0)?;
+        let db = Db::new::<PathBuf>(None, 0, 0, None)?;
         let db = Arc::new(db);
 
         State::new_with_genesis(db.state_trie()?, node_config, db.clone())
