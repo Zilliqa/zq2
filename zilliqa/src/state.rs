@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt::Display,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
+    time::Duration,
 };
 
 use alloy::{
@@ -53,6 +54,7 @@ pub struct State {
     pub gas_price: u128,
     pub chain_id: ChainId,
     pub forks: Forks,
+    pub max_txn_execution_time: Duration,
 }
 
 impl State {
@@ -71,6 +73,7 @@ impl State {
             gas_price: *consensus_config.gas_price,
             chain_id: ChainId::new(config.eth_chain_id),
             forks: consensus_config.get_forks()?,
+            max_txn_execution_time: consensus_config.max_txn_execution_time,
             sql,
         })
     }
@@ -329,6 +332,7 @@ impl State {
             gas_price: self.gas_price,
             chain_id: self.chain_id,
             forks: self.forks.clone(),
+            max_txn_execution_time: self.max_txn_execution_time,
             sql: self.sql.clone(),
         }
     }
