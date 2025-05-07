@@ -38,6 +38,7 @@ use crate::{
     cfg::EnabledApi,
     crypto::Hash,
     error::ensure_success,
+    exec::zil_contract_address,
     message::Block,
     node::Node,
     pool::TxAddResult,
@@ -306,6 +307,19 @@ pub fn get_block_transaction_receipts_inner(
             tx_hash, receipt
         );
 
+        // Required workaround for incorrectly converted nonces for zq1 scilla transactions
+        let contract_address = match &signed_transaction.tx {
+            SignedTransaction::Zilliqa { .. } => Some(zil_contract_address(
+                signed_transaction.signer,
+                signed_transaction
+                    .tx
+                    .nonce()
+                    .ok_or_else(|| anyhow!("Unable to extract nonce!"))?
+                    + 1,
+            )),
+            _ => receipt.contract_address,
+        };
+
         let mut logs_bloom = [0; 256];
 
         let mut logs = Vec::new();
@@ -343,7 +357,7 @@ pub fn get_block_transaction_receipts_inner(
             cumulative_gas_used: receipt.cumulative_gas_used,
             effective_gas_price: transaction.max_fee_per_gas(),
             gas_used: receipt.gas_used,
-            contract_address: receipt.contract_address,
+            contract_address,
             logs,
             logs_bloom,
             ty: 0,
