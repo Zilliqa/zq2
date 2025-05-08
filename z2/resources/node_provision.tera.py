@@ -417,7 +417,7 @@ STATS_AGENT_IMAGE="{{ stats_agent_image }}"
 
 start() {
     docker rm stats-agent-""" + VERSIONS.get('stats_agent') + """ &> /dev/null || echo 0
-    STATS_DASHBOARD_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-key")
+    STATS_DASHBOARD_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-stats-dashboard" --keyring="kms-{{ chain_name }}" --location=global --project=""" + KMS_PROJECT_ID + """)
     docker run -td --name stats-agent-""" + VERSIONS.get('stats_agent') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         --net=host \
@@ -431,6 +431,7 @@ start() {
         -e VERBOSITY="2" \
         --restart=unless-stopped --pull=always \
         ${STATS_AGENT_IMAGE}
+    unset STATS_DASHBOARD_KEY
 }
 
 stop() {

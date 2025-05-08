@@ -1,6 +1,9 @@
 use std::{
     net::Ipv4Addr,
-    sync::{Arc, Mutex, atomic::AtomicUsize},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicPtr, AtomicUsize},
+    },
     time::{Duration, SystemTime},
 };
 
@@ -97,6 +100,7 @@ impl NodeLauncher {
         local_outbound_message_sender: UnboundedSender<LocalMessageTuple>,
         request_responses_sender: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         peer_num: Arc<AtomicUsize>,
+        swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
     ) -> Result<(Self, NodeInputChannels, Arc<SyncPeers>)> {
         /// Helper to create a (sender, receiver) pair for a channel.
         fn sender_receiver<T>() -> (UnboundedSender<T>, UnboundedReceiverStream<T>) {
@@ -112,7 +116,7 @@ impl NodeLauncher {
         let (reset_timeout_sender, reset_timeout_receiver) = sender_receiver();
 
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-        let peers: Arc<SyncPeers> = Arc::new(SyncPeers::new(peer_id));
+        let sync_peers = Arc::new(SyncPeers::new(peer_id));
 
         let node = Node::new(
             config.clone(),
@@ -122,7 +126,8 @@ impl NodeLauncher {
             request_responses_sender,
             reset_timeout_sender.clone(),
             peer_num,
-            peers.clone(),
+            sync_peers.clone(),
+            swarm_peers.clone(),
         )?;
 
         let node = Arc::new(Mutex::new(node));
@@ -174,7 +179,7 @@ impl NodeLauncher {
             local_messages: local_messages_sender,
         };
 
-        Ok((launcher, input_channels, peers))
+        Ok((launcher, input_channels, sync_peers))
     }
 
     pub async fn start_shard_node(&mut self) -> Result<()> {

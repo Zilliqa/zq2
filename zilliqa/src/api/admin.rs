@@ -1,6 +1,7 @@
 //! An administrative API
 
 use std::{
+    collections::BTreeMap,
     ops::RangeInclusive,
     sync::{Arc, Mutex},
 };
@@ -27,6 +28,7 @@ pub fn rpc_module(
             ("admin_blockRange", admin_block_range),
             ("admin_forceView", force_view),
             ("admin_getPeers", get_peers),
+            ("admin_votesReceived", votes_received),
         ]
     )
 }
@@ -98,7 +100,29 @@ fn force_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     Ok(true)
 }
 
-fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<PeerId>> {
+#[derive(Clone, Debug, Serialize)]
+struct PeerInfo {
+    pub swarm_peers: Vec<PeerId>,
+    pub sync_peers: Vec<PeerId>,
+}
+
+fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<PeerInfo> {
     let node = node.lock().unwrap();
-    Ok(node.consensus.sync.peer_ids())
+    let (swarm_peers, sync_peers) = node.get_peer_ids()?;
+    Ok(PeerInfo {
+        swarm_peers,
+        sync_peers,
+    })
+}
+
+/// Returns information about NewView votes
+fn votes_received(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<BTreeMap<u64, crate::consensus::NewViewVote>> {
+    let node = node.lock().unwrap();
+
+    let new_views = node.consensus.get_new_views();
+
+    Ok(new_views)
 }

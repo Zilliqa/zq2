@@ -17,8 +17,7 @@ use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::instance::ChainInstance;
-use crate::{address::EthereumAddress, chain::Chain};
-use crate::kms::KmsService;
+use crate::{address::EthereumAddress, chain::Chain, kms::KmsService};
 
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
@@ -275,7 +274,7 @@ impl Machine {
             "gcloud secrets versions access latest --project=\"{}\" --secret=\"{}-enckey\"",
             self.project_id, self.name
         );
-    
+
         let output = self.run(&cmd, false)?;
         if !output.status.success() {
             return Err(anyhow!(
@@ -284,18 +283,18 @@ impl Machine {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-    
+
         // Get the base64 encoded ciphertext
         let base64_ciphertext = std::str::from_utf8(&output.stdout)?.trim();
-        
+
         // Use the KmsService to decrypt the key
         let plaintext = KmsService::decrypt(
             &self.project_id,
             base64_ciphertext,
             &format!("kms-{}", chain_name),
-            &self.name
+            &self.name,
         )?;
-        
+
         Ok(plaintext)
     }
 

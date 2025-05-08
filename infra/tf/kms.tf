@@ -50,7 +50,7 @@ resource "google_kms_crypto_key" "stats_dashboard" {
 }
 
 resource "google_kms_crypto_key_iam_member" "stats_dashboard_key_encrypter_decrypter" {
-  for_each = local.instances_map
+  for_each = merge(local.instances_map, module.apps.instances)
 
   crypto_key_id = google_kms_crypto_key.stats_dashboard.id
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"

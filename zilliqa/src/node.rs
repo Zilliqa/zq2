@@ -1,6 +1,9 @@
 use std::{
     fmt::Debug,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{AtomicPtr, AtomicUsize},
+    },
     time::Duration,
 };
 
@@ -165,6 +168,7 @@ pub struct Node {
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
+    swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -191,7 +195,8 @@ impl Node {
         request_responses: UnboundedSender<(ResponseChannel, ExternalMessage)>,
         reset_timeout: UnboundedSender<Duration>,
         peer_num: Arc<AtomicUsize>,
-        peers: Arc<SyncPeers>,
+        sync_peers: Arc<SyncPeers>,
+        swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
     ) -> Result<Node> {
         config.validate()?;
         let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
@@ -226,9 +231,10 @@ impl Node {
                 message_sender,
                 reset_timeout,
                 db,
-                peers,
+                sync_peers,
             )?,
             peer_num,
+            swarm_peers,
         };
         Ok(node)
     }
@@ -1023,5 +1029,15 @@ impl Node {
                 .broadcast_proposal(ExternalMessage::Proposal(proposal))?;
         }
         Ok(())
+    }
+
+    pub fn get_peer_ids(&self) -> Result<(Vec<PeerId>, Vec<PeerId>)> {
+        let sync_peers = self.consensus.sync.peer_ids();
+        let swarm_peers: Vec<PeerId>;
+        unsafe {
+            let swarm_ptr = self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed);
+            swarm_peers = (*swarm_ptr).clone();
+        }
+        Ok((swarm_peers, sync_peers))
     }
 }

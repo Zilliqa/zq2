@@ -40,8 +40,8 @@ use crate::{
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
-#[derive(Debug)]
-struct NewViewVote {
+#[derive(Clone, Debug, Serialize)]
+pub struct NewViewVote {
     signatures: Vec<BlsSignature>,
     cosigned: BitArray,
     cosigned_weight: u128,
@@ -148,7 +148,7 @@ pub struct Consensus {
     /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
-    new_views: BTreeMap<u64, NewViewVote>,
+    pub new_views: BTreeMap<u64, NewViewVote>,
     new_view_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
@@ -413,6 +413,10 @@ impl Consensus {
             .get_canonical_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
+    }
+
+    pub fn get_new_views(&self) -> BTreeMap<u64, NewViewVote> {
+        self.new_views.clone()
     }
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
@@ -755,12 +759,10 @@ impl Consensus {
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
-                self.sync.set_validator(false);
                 return Ok(None);
             } else {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
-                self.sync.set_validator(true);
 
                 if self.create_next_block_on_timeout {
                     warn!("Create block on timeout set. Clearing");
@@ -1712,32 +1714,6 @@ impl Consensus {
     pub fn new_view(&mut self, new_view: NewView) -> Result<Option<NetworkMessage>> {
         trace!("Received new view for view: {:?}", new_view.view);
 
-        let mut current_view = self.get_view()?;
-        // if the vote is too old and does not count anymore
-        if new_view.view < current_view {
-            trace!(
-                new_view.view,
-                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
-                current_view,
-                new_view.view
-            );
-            return Ok(None);
-        }
-
-        if self.get_block(&new_view.qc.block_hash)?.is_none() {
-            trace!("high_qc block does not exist for NewView. Attemping to fetch block via sync");
-            self.sync.sync_from_probe()?;
-            return Ok(None);
-        }
-
-        // The leader for this view should be chosen according to the parent of the highest QC
-        // What happens when there are multiple QCs with different parents?
-        // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            trace!(new_view.view, "skipping new view, not the leader");
-            return Ok(None);
-        }
-
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
         // verify the sender's signature on the block hash
@@ -1759,6 +1735,26 @@ impl Consensus {
 
         // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
+
+        let mut current_view = self.get_view()?;
+        // if the vote is too old and does not count anymore
+        if new_view.view < current_view {
+            trace!(
+                new_view.view,
+                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
+                current_view,
+                new_view.view
+            );
+            return Ok(None);
+        }
+
+        // The leader for this view should be chosen according to the parent of the highest QC
+        // What happens when there are multiple QCs with different parents?
+        // if we are not the leader of the round in which the vote counts
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
+            trace!(new_view.view, "skipping new view, not the leader");
+            return Ok(None);
+        }
 
         let NewViewVote {
             mut signatures,

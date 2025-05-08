@@ -4,6 +4,7 @@ use anyhow::{Context, Ok, Result, anyhow};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
+
 use crate::kms::KmsService;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -29,23 +30,25 @@ impl Secret {
             // Check if we have the required labels to generate the KMS keyring and key
             let chain_name = self.labels.get("zq2-network").ok_or_else(|| {
                 anyhow!("Cannot encrypt: missing 'zq2-network' label for KMS keyring")
-            })?;      
+            })?;
             let key_name = if let Some(node_name) = self.labels.get("node-name") {
                 node_name.to_string()
             } else if let Some(role) = self.labels.get("role") {
                 format!("{}-{}", chain_name, role)
             } else {
-                return Err(anyhow!("Cannot encrypt: missing both 'node-name' and 'role' labels for KMS key"));
+                return Err(anyhow!(
+                    "Cannot encrypt: missing both 'node-name' and 'role' labels for KMS key"
+                ));
             };
-            
+
             // Encrypt using KmsService
             let ciphertext_base64 = KmsService::encrypt(
                 project_id,
                 &value,
                 &format!("kms-{}", chain_name),
-                &key_name
+                &key_name,
             )?;
-            
+
             // Write base64 encrypted content to file
             writeln!(temp_file, "{}", ciphertext_base64)?;
         } else {
