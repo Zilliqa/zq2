@@ -127,15 +127,19 @@ pub struct SyncConfig {
     /// Cannot be set if prune_interval is set.
     #[serde(default = "u64_max")]
     pub base_height: u64,
+    /// Service passive-sync flag
+    #[serde(default)]
+    pub ignore_passive: bool,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
-        SyncConfig {
+        Self {
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
             prune_interval: u64_max(),
             base_height: u64_max(),
+            ignore_passive: false,
         }
     }
 }
@@ -204,6 +208,7 @@ impl Default for NodeConfig {
                 block_request_batch_size: block_request_batch_size_default(),
                 base_height: u64_max(),
                 prune_interval: u64_max(),
+                ignore_passive: false,
             },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
