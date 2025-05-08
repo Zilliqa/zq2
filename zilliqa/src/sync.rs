@@ -253,11 +253,6 @@ impl Sync {
             .find(|(p, r)| p.peer_id == failure.peer && *r == failure.request_id)
         {
             tracing::warn!(peer = %failure.peer, err=%failure.error, "sync::RequestFailure : failed");
-            if !matches!(failure.error, libp2p::autonat::OutboundFailure::Timeout) {
-                // drop the peer, in case of non-timeout errors
-                peer.score = u32::MAX;
-            }
-
             match &self.state {
                 SyncState::Phase1(_) => self.handle_active_response(failure.peer, None)?,
                 SyncState::Phase2(_) => self.handle_multiblock_response(failure.peer, None)?,
