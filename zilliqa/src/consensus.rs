@@ -40,8 +40,8 @@ use crate::{
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
-#[derive(Debug)]
-struct NewViewVote {
+#[derive(Clone, Debug, Serialize)]
+pub struct NewViewVote {
     signatures: Vec<BlsSignature>,
     cosigned: BitArray,
     cosigned_weight: u128,
@@ -148,7 +148,7 @@ pub struct Consensus {
     /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
-    new_views: BTreeMap<u64, NewViewVote>,
+    pub new_views: BTreeMap<u64, NewViewVote>,
     new_view_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
@@ -413,6 +413,12 @@ impl Consensus {
             .get_canonical_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
+    }
+
+    /// Returns information about received NewView votes
+    /// Returns a vector of tuples containing (view, signatures_count, cosigned_weight, qcs_count)
+    pub fn get_new_views(&self) -> BTreeMap<u64, NewViewVote> {
+        self.new_views.clone()
     }
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
@@ -3160,6 +3166,23 @@ impl Consensus {
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
         self.sync.get_sync_data()
+    }
+
+    /// Gets information about the new view votes received by this node
+    ///
+    /// Returns a vector of tuples containing (view, signatures_count, cosigned_weight, qcs_count)
+    pub fn get_new_view_votes_info(&self) -> Vec<(u64, usize, u128, usize)> {
+        self.new_views
+            .iter()
+            .map(|(view, vote)| {
+                (
+                    *view,
+                    vote.signatures.len(),
+                    vote.cosigned_weight,
+                    vote.qcs.len(),
+                )
+            })
+            .collect()
     }
 
     /// This function is intended for use only by admin_forceView API. It is dangerous and should not be touched outside of testing or test network recovery.
