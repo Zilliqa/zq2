@@ -6,7 +6,10 @@ use std::{
     convert::TryFrom,
     fmt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, atomic::AtomicUsize},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicPtr, AtomicUsize},
+    },
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -355,7 +358,8 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
     let peers_count = Arc::new(AtomicUsize::new(0));
 
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-    let peers = Arc::new(SyncPeers::new(peer_id));
+    let sync_peers = Arc::new(SyncPeers::new(peer_id));
+    let swarm_peers = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(Vec::new()))));
 
     let my_node = Arc::new(Mutex::new(zilliqa::node::Node::new(
         config,
@@ -365,7 +369,8 @@ pub fn get_implemented_jsonrpc_methods() -> Result<HashMap<ApiMethod, PageStatus
         s3,
         s4,
         peers_count,
-        peers,
+        sync_peers,
+        swarm_peers,
     )?));
     let module = zilliqa::api::rpc_module(my_node.clone(), &[]);
     for m in module.method_names() {
