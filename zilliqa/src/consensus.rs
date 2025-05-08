@@ -170,8 +170,6 @@ pub struct Consensus {
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
-    /// Pruning interval i.e. how many blocks to keep in the database.
-    prune_interval: u64,
     /// Used for testing and test network recovery
     force_view: Option<(u64, DateTime)>,
 }
@@ -295,8 +293,6 @@ impl Consensus {
             peers.clone(),
         )?;
 
-        let prune_interval = config.sync.prune_interval;
-
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -320,7 +316,6 @@ impl Consensus {
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
-            prune_interval,
             force_view: None,
         };
 
@@ -625,8 +620,6 @@ impl Consensus {
             "handling block proposal {}",
             block.hash()
         );
-
-        // FIXME: Cleanup
 
         if self.db.contains_block(&block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
@@ -1717,32 +1710,6 @@ impl Consensus {
     pub fn new_view(&mut self, new_view: NewView) -> Result<Option<NetworkMessage>> {
         trace!("Received new view for view: {:?}", new_view.view);
 
-        let mut current_view = self.get_view()?;
-        // if the vote is too old and does not count anymore
-        if new_view.view < current_view {
-            trace!(
-                new_view.view,
-                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
-                current_view,
-                new_view.view
-            );
-            return Ok(None);
-        }
-
-        if self.get_block(&new_view.qc.block_hash)?.is_none() {
-            trace!("high_qc block does not exist for NewView. Attemping to fetch block via sync");
-            self.sync.sync_from_probe()?;
-            return Ok(None);
-        }
-
-        // The leader for this view should be chosen according to the parent of the highest QC
-        // What happens when there are multiple QCs with different parents?
-        // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            trace!(new_view.view, "skipping new view, not the leader");
-            return Ok(None);
-        }
-
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
         // verify the sender's signature on the block hash
@@ -1764,6 +1731,26 @@ impl Consensus {
 
         // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
+
+        let mut current_view = self.get_view()?;
+        // if the vote is too old and does not count anymore
+        if new_view.view < current_view {
+            trace!(
+                new_view.view,
+                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
+                current_view,
+                new_view.view
+            );
+            return Ok(None);
+        }
+
+        // The leader for this view should be chosen according to the parent of the highest QC
+        // What happens when there are multiple QCs with different parents?
+        // if we are not the leader of the round in which the vote counts
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
+            trace!(new_view.view, "skipping new view, not the leader");
+            return Ok(None);
+        }
 
         let NewViewVote {
             mut signatures,
@@ -3086,31 +3073,7 @@ impl Consensus {
             ));
         }
 
-        self.prune_history(block.header.number)?;
         self.broadcast_commit_receipts(from, block, block_receipts)
-    }
-
-    /// Prune the history
-    ///
-    /// Performs pruning of 1000-blocks at a time. If the prune_interval is unset (u64::MAX by default), pruning is disabled.
-    fn prune_history(&mut self, number: u64) -> Result<()> {
-        if self.prune_interval == u64::MAX {
-            return Ok(()); // pruning is disabled
-        }
-        let range = self.db.available_range()?;
-        let prune_at = number
-            .saturating_sub(self.prune_interval.saturating_sub(1)) // off-by-one
-            .min(range.start().saturating_add(1000)); // gradually prune 1000-blocks at a time
-        if range.contains(&prune_at) {
-            for n in *range.start()..prune_at {
-                let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
-                if let Some(block) = block {
-                    tracing::trace!(number = %block.number(), hash=%block.hash(), "Prune block");
-                    self.db.remove_block(&block)?;
-                }
-            }
-        }
-        Ok(())
     }
 
     fn broadcast_commit_receipts(

@@ -38,8 +38,8 @@ use crate::{
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
-        Block, BlockHeader, ExternalMessage, InjectedProposal, InternalMessage, IntershardCall,
-        Proposal, SyncBlockHeader,
+        Block, BlockHeader, BlockTransactionsReceipts, ExternalMessage, InjectedProposal,
+        InternalMessage, IntershardCall, Proposal, SyncBlockHeader,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -293,9 +293,13 @@ impl Node {
                     .handle_multiblock_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
+            ExternalMessage::PassiveSyncRequest(request) => {
+                let message = self.consensus.sync.handle_passive_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
+            }
             // RFC-161 sync algorithm, phase 1.
             ExternalMessage::MetaDataRequest(request) => {
-                let message = self.consensus.sync.handle_metadata_request(from, request)?;
+                let message = self.consensus.sync.handle_active_request(from, request)?;
                 self.request_responses.send((response_channel, message))?;
             }
             // Respond to block probe requests.
@@ -344,21 +348,37 @@ impl Node {
     pub fn handle_response(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling response");
         match message {
-            // >= 0.6.0
+            // 0.6.0
             ExternalMessage::MultiBlockResponse(response) => self
                 .consensus
                 .sync
                 .handle_multiblock_response(from, Some(response))?,
-            // >= 0.7.0
+            // 0.7.0
             ExternalMessage::SyncBlockHeaders(response) => self
                 .consensus
                 .sync
-                .handle_metadata_response(from, Some(response))?,
-            // >= 0.8.0 probe response
+                .handle_active_response(from, Some(response))?,
+            // 0.8.0 probe response
             ExternalMessage::BlockResponse(response) => {
                 self.consensus.sync.handle_block_response(from, response)?
             }
-            // FIXME: 0.6.0 compatibility, to be removed after all nodes >= 0.7.0
+            // 0.8.0 passive sync
+            ExternalMessage::PassiveSyncResponse(response) => self
+                .consensus
+                .sync
+                .handle_passive_response(from, Some(response))?,
+            ExternalMessage::PassiveSyncResponseLZ(response) => {
+                // decompress the block
+                let mut decoder = lz4::Decoder::new(std::io::Cursor::new(response))?;
+                let mut buf = Vec::new();
+                std::io::Read::read_to_end(&mut decoder, &mut buf).unwrap();
+                let response =
+                    cbor4ii::serde::from_slice::<BlockTransactionsReceipts>(&buf).unwrap();
+                self.consensus
+                    .sync
+                    .handle_passive_response(from, Some(vec![response]))?;
+            }
+            // FIXME: 0.6.0 compatibility, to be removed after all nodes > 0.7.0
             ExternalMessage::MetaDataResponse(response) => {
                 let response = response
                     .into_iter()
@@ -369,7 +389,7 @@ impl Node {
                     .collect_vec();
                 self.consensus
                     .sync
-                    .handle_metadata_response(from, Some(response))?
+                    .handle_active_response(from, Some(response))?
             }
             ExternalMessage::Acknowledgement => {
                 self.consensus.sync.handle_acknowledgement(from)?;

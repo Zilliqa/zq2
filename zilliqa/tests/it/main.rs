@@ -18,6 +18,7 @@ mod eth;
 mod ots;
 mod persistence;
 mod staking;
+mod sync;
 mod trace;
 mod txpool;
 mod unreliable;
@@ -96,7 +97,7 @@ pub struct NewNodeOptions {
     onchain_key: Option<SigningKey>,
     checkpoint: Option<Checkpoint>,
     prune_interval: Option<u64>,
-    sync_base_height: Option<u64>,
+    base_height: Option<u64>,
 }
 
 impl NewNodeOptions {
@@ -399,7 +400,8 @@ impl Network {
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
                 prune_interval: u64_max(),
-                sync_base_height: u64_max(),
+                base_height: u64_max(),
+                ignore_passive: false,
             },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
@@ -550,7 +552,8 @@ impl Network {
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
                 prune_interval: options.prune_interval.unwrap_or(u64_max()),
-                sync_base_height: options.sync_base_height.unwrap_or(u64_max()),
+                base_height: options.base_height.unwrap_or(u64_max()),
+                ignore_passive: false,
             },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),

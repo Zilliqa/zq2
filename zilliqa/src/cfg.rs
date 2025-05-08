@@ -126,16 +126,20 @@ pub struct SyncConfig {
     /// Lowest block to sync from, during passive-sync.
     /// Cannot be set if prune_interval is set.
     #[serde(default = "u64_max")]
-    pub sync_base_height: u64,
+    pub base_height: u64,
+    /// Service passive-sync flag
+    #[serde(default)]
+    pub ignore_passive: bool,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
-        SyncConfig {
+        Self {
             max_blocks_in_flight: max_blocks_in_flight_default(),
             block_request_batch_size: block_request_batch_size_default(),
             prune_interval: u64_max(),
-            sync_base_height: u64_max(),
+            base_height: u64_max(),
+            ignore_passive: false,
         }
     }
 }
@@ -202,8 +206,9 @@ impl Default for NodeConfig {
             sync: SyncConfig {
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
-                sync_base_height: u64_max(),
+                base_height: u64_max(),
                 prune_interval: u64_max(),
+                ignore_passive: false,
             },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
@@ -229,10 +234,18 @@ impl NodeConfig {
                 }
             }
         }
+        if self.sync.base_height != u64_max() && self.sync.prune_interval != u64_max() {
+            return Err(anyhow!(
+                "base_height and prune_interval cannot be set at the same time"
+            ));
+        }
 
         // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
-        if self.sync.prune_interval < 300 {
-            return Err(anyhow!("prune_interval must be at least 300",));
+        if self.sync.prune_interval < crate::sync::MIN_PRUNE_INTERVAL {
+            return Err(anyhow!(
+                "prune_interval must be at least {}",
+                crate::sync::MIN_PRUNE_INTERVAL
+            ));
         }
         // 100 is a reasonable minimum for a node to be useful.
         if self.sync.block_request_batch_size < 100 {
