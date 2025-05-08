@@ -98,7 +98,17 @@ fn force_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     Ok(true)
 }
 
-fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<PeerId>> {
+#[derive(Clone, Debug, Serialize)]
+struct PeerInfo {
+    pub swarm_peers: Vec<PeerId>,
+    pub sync_peers: Vec<PeerId>,
+}
+
+fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<PeerInfo> {
     let node = node.lock().unwrap();
-    Ok(node.consensus.sync.peer_ids())
+    let (swarm_peers, sync_peers) = node.get_peer_ids()?;
+    Ok(PeerInfo {
+        swarm_peers,
+        sync_peers,
+    })
 }
