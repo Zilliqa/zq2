@@ -114,7 +114,6 @@ pub struct Sync {
     in_pipeline: usize,
     // our peer id
     peer_id: PeerId,
-    is_validator: bool,
     // internal sync state
     state: SyncState,
     // fixed-size queue of the most recent proposals
@@ -136,6 +135,7 @@ pub struct Sync {
     // passive sync
     sync_base_height: u64,
     zq1_ceil_height: u64,
+    ignore_passive: bool,
 }
 
 impl Sync {
@@ -186,6 +186,8 @@ impl Sync {
             .find_height_fork_first_activated(crate::cfg::ForkName::ExecutableBlocks)
             .unwrap_or_default();
 
+        let ignore_passive = config.sync.ignore_passive; // defaults to servicing passive-sync requests
+
         Ok(Self {
             db,
             message_sender,
@@ -212,15 +214,10 @@ impl Sync {
             last_probe_at: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(), // allow immediate sync at startup
             sync_base_height,
             prune_interval,
-            is_validator: true, // assume true on restart, until next epoch
             size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
             zq1_ceil_height,
+            ignore_passive,
         })
-    }
-
-    pub fn set_validator(&mut self, is_validator: bool) {
-        tracing::trace!(peer_id = %self.peer_id, %is_validator, "sync::SetValidator");
-        self.is_validator = is_validator;
     }
 
     /// Skip Failure
@@ -250,17 +247,12 @@ impl Sync {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.error_count = self.error_count.saturating_add(1);
-        if let Some((peer, _)) = self
+        if self
             .in_flight
-            .iter_mut()
-            .find(|(p, r)| p.peer_id == failure.peer && *r == failure.request_id)
+            .iter()
+            .any(|(p, r)| p.peer_id == failure.peer && *r == failure.request_id)
         {
             tracing::warn!(peer = %failure.peer, err=%failure.error, "sync::RequestFailure : failed");
-            if !matches!(failure.error, libp2p::autonat::OutboundFailure::Timeout) {
-                // drop the peer, in case of non-timeout errors
-                peer.score = u32::MAX;
-            }
-
             match &self.state {
                 SyncState::Phase1(_) => self.handle_active_response(failure.peer, None)?,
                 SyncState::Phase2(_) => self.handle_multiblock_response(failure.peer, None)?,
@@ -617,14 +609,14 @@ impl Sync {
         );
 
         // Check if we should service this request - https://github.com/Zilliqa/zq2/issues/1878
-        if self.is_validator {
-            tracing::warn!("sync::PassiveRequest : skip validator");
+        if self.ignore_passive {
+            tracing::warn!("sync::PassiveRequest : ignored");
             return Ok(ExternalMessage::PassiveSyncResponse(vec![]));
         }
 
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()?.as_secs() > 20 {
-            tracing::warn!("sync::PassiveRequest : stale request");
+            tracing::warn!("sync::PassiveRequest : stale");
             return Ok(ExternalMessage::PassiveSyncResponse(vec![]));
         }
 
@@ -797,7 +789,7 @@ impl Sync {
                 self.peers
                     .done_with_peer(self.in_flight.pop_front(), DownGrade::None);
                 if self.do_multiblock_response(from, response)? {
-                    return Ok(()); // successful 
+                    return Ok(()); // successful
                 };
             } else {
                 // Empty response, downgrade peer and retry phase 1.
@@ -1412,7 +1404,7 @@ impl Sync {
 
             // Store it
             self.db.with_sqlite_tx(|sqlite_tx| {
-                    // Insert block                    
+                    // Insert block
                     self.db.insert_block_with_db_tx(sqlite_tx, &block)?;
                     // Insert transactions/receipts
                     for (st, rt) in transaction_receipts {

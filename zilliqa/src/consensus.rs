@@ -755,12 +755,10 @@ impl Consensus {
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
-                self.sync.set_validator(false);
                 return Ok(None);
             } else {
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
-                self.sync.set_validator(true);
 
                 if self.create_next_block_on_timeout {
                     warn!("Create block on timeout set. Clearing");
