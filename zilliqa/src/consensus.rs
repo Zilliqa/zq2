@@ -415,8 +415,6 @@ impl Consensus {
             .unwrap()
     }
 
-    /// Returns information about received NewView votes
-    /// Returns a vector of tuples containing (view, signatures_count, cosigned_weight, qcs_count)
     pub fn get_new_views(&self) -> BTreeMap<u64, NewViewVote> {
         self.new_views.clone()
     }
@@ -3166,23 +3164,6 @@ impl Consensus {
 
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
         self.sync.get_sync_data()
-    }
-
-    /// Gets information about the new view votes received by this node
-    ///
-    /// Returns a vector of tuples containing (view, signatures_count, cosigned_weight, qcs_count)
-    pub fn get_new_view_votes_info(&self) -> Vec<(u64, usize, u128, usize)> {
-        self.new_views
-            .iter()
-            .map(|(view, vote)| {
-                (
-                    *view,
-                    vote.signatures.len(),
-                    vote.cosigned_weight,
-                    vote.qcs.len(),
-                )
-            })
-            .collect()
     }
 
     /// This function is intended for use only by admin_forceView API. It is dangerous and should not be touched outside of testing or test network recovery.

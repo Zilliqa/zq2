@@ -105,7 +105,7 @@ fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<PeerId>> {
     Ok(node.consensus.sync.peer_ids())
 }
 
-/// Returns information about NewView votes received by the leader node
+/// Returns information about NewView votes
 fn votes_received(
     _params: Params,
     node: &Arc<Mutex<Node>>,
