@@ -116,7 +116,10 @@ impl P2pNode {
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
                     request_response: request_response::cbor::Behaviour::new(
-                        iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
+                        iter::once((
+                            StreamProtocol::new("/zq2/req-resp/1.0.0"),
+                            ProtocolSupport::Full,
+                        )),
                         Default::default(),
                     ),
                     gossipsub: gossipsub::Behaviour::new(
@@ -133,9 +136,13 @@ impl P2pNode {
                     .map_err(|e| anyhow!(e))?,
                     autonat_client: autonat::v2::client::Behaviour::default(),
                     autonat_server: autonat::v2::server::Behaviour::default(),
-                    kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
+                    kademlia: kad::Behaviour::with_config(
+                        peer_id,
+                        MemoryStore::new(peer_id),
+                        kad::Config::new(StreamProtocol::new("/zq2/kad/1.0.0")),
+                    ),
                     identify: identify::Behaviour::new(
-                        identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
+                        identify::Config::new("zq2/1.0.0".into(), key_pair.public())
                             .with_hide_listen_addrs(true)
                             .with_push_listen_addr_updates(true),
                     ),
