@@ -301,6 +301,12 @@ variable "vpc_main_subnet_name" {
   nullable    = false
 }
 
+variable "gcp_docker_registry_project_id" {
+  description = "(Optional) ZQ2 Artifact Registry project id"
+  type        = string
+  default     = "prj-p-devops-services-tvwmrf63"
+}
+
 variable "persistence_bucket_force_destroy" {
   description = "(Optional) Whether force destroying the persistence bucket deprovisioning the infrastructure."
   type        = bool
