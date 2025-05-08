@@ -146,7 +146,7 @@ impl P2pNode {
             // meaning the connection is immediately closed before the protocol can use it. libp2p may change the
             // default in the future to 10 seconds too (https://github.com/libp2p/rust-libp2p/pull/4967).
             .with_swarm_config(|config| {
-                config.with_idle_connection_timeout(Duration::from_secs(10))
+                config.with_idle_connection_timeout(Duration::from_secs(60))
             })
             .build();
 
