@@ -247,10 +247,10 @@ impl Sync {
         failure: OutgoingMessageFailure,
     ) -> Result<()> {
         self.error_count = self.error_count.saturating_add(1);
-        if let Some((peer, _)) = self
+        if self
             .in_flight
-            .iter_mut()
-            .find(|(p, r)| p.peer_id == failure.peer && *r == failure.request_id)
+            .iter()
+            .any(|(p, r)| p.peer_id == failure.peer && *r == failure.request_id)
         {
             tracing::warn!(peer = %failure.peer, err=%failure.error, "sync::RequestFailure : failed");
             match &self.state {
