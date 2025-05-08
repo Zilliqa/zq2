@@ -1035,7 +1035,7 @@ impl Node {
         let sync_peers = self.consensus.sync.peer_ids();
         let swarm_peers: Vec<PeerId>;
         unsafe {
-            let swarm_ptr = self.swarm_peers.load(std::sync::atomic::Ordering::SeqCst);
+            let swarm_ptr = self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed);
             swarm_peers = (*swarm_ptr).clone();
         }
         Ok((swarm_peers, sync_peers))

@@ -260,9 +260,9 @@ impl P2pNode {
                         SwarmEvent::ConnectionEstablished{..} => {
                             // update peers when new peer connects/disconnects
                             let new_peers = Box::into_raw(Box::new(self.swarm.connected_peers().cloned().collect_vec()));
-                            let old_ptr = self.swarm_peers.swap(new_peers, std::sync::atomic::Ordering::SeqCst);
+                            let old_ptr = self.swarm_peers.swap(new_peers, std::sync::atomic::Ordering::Relaxed);
                             unsafe {
-                                        let _old_vec = Box::from_raw(old_ptr); // Old vec will be dropped here
+                                let _ = Box::from_raw(old_ptr); // previous vec will be dropped here
                             }
                         }
                         // only dial after we have a listen address, to reuse port
@@ -467,14 +467,16 @@ impl P2pNode {
                 _ = terminate.recv() => {
                     self.shard_threads.shutdown().await;
                     unsafe {
-                            let _ = Box::from_raw(self.swarm_peers.load(std::sync::atomic::Ordering::SeqCst));
+                        let _ = Box::from_raw(self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed));
+                        // previous vec will be dropped here
                     }
                     break;
                 },
                 _ = signal::ctrl_c() => {
                     self.shard_threads.shutdown().await;
                     unsafe {
-                            let _ = Box::from_raw(self.swarm_peers.load(std::sync::atomic::Ordering::SeqCst));
+                        let _ = Box::from_raw(self.swarm_peers.load(std::sync::atomic::Ordering::Relaxed));
+                        // previous vec will be dropped here
                     }
                     break;
                 },
