@@ -36,7 +36,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex, MutexGuard,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -178,7 +178,8 @@ fn node(
     std::mem::forget(reset_timeout_receiver);
 
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-    let peers = Arc::new(SyncPeers::new(peer_id));
+    let sync_peers = Arc::new(SyncPeers::new(peer_id));
+    let swarm_peers = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(Vec::new()))));
 
     let node = Node::new(
         NodeConfig {
@@ -193,7 +194,8 @@ fn node(
         request_responses_sender,
         reset_timeout_sender,
         Arc::new(AtomicUsize::new(0)),
-        peers.clone(),
+        sync_peers.clone(),
+        swarm_peers,
     )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> =
@@ -208,7 +210,7 @@ fn node(
             inner: node,
             dir: datadir,
             rpc_module,
-            peers,
+            peers: sync_peers,
         },
         message_receiver,
         local_message_receiver,
