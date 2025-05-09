@@ -186,18 +186,20 @@ impl ChainInstance {
         )?;
 
         if let Some(private_key) = private_keys.first() {
-            // Get the encrypted value
-            let encrypted_value = private_key.value()?;
+            let value = private_key.value()?;
 
-            // Use the KmsService to decrypt the key
-            let value = KmsService::decrypt(
-                self.chain()?.get_project_id()?,
-                &encrypted_value,
-                &format!("kms-{}", self.name()),
-                &format!("{}-genesis", self.name()),
-            )?;
-
-            Ok(value)
+            // Decrypt the key if KMS is enabled
+            if self.chain()?.get_enable_kms()? {
+                let decrypted_value = KmsService::decrypt(
+                    self.chain()?.get_project_id()?,
+                    &value,
+                    &format!("kms-{}", self.name()),
+                    &format!("{}-genesis", self.name()),
+                )?;
+                Ok(decrypted_value)
+            } else {
+                Ok(value)
+            }
         } else {
             Err(anyhow!(
                 "No secrets with role genesis found in the network {}",
