@@ -593,10 +593,11 @@ pub async fn convert_persistence(
     // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
     let highest_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
     let highest_block = zq2_db.get_block_by_view(highest_block)?.unwrap();
+    let state_root_hash = state.root_hash()?;
 
     zq2_db.with_sqlite_tx(|sqlite_tx| {
         let empty_high_qc_block =
-            create_empty_block_from_parent(&highest_block, secret_key, state.root_hash()?);
+            create_empty_block_from_parent(&highest_block, secret_key, state_root_hash);
         zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
         zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.header.qc)?;
         Ok(())
