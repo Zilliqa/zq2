@@ -373,7 +373,7 @@ pub struct Log {
 impl Log {
     pub fn new(
         log: EvmLog,
-        log_index: u64,
+        log_index: usize,
         transaction_index: usize,
         transaction_hash: Hash,
         block_number: u64,
@@ -381,7 +381,7 @@ impl Log {
     ) -> Log {
         Log {
             removed: false,
-            log_index,
+            log_index: log_index as u64,
             transaction_index: transaction_index as u64,
             transaction_hash: transaction_hash.into(),
             block_hash: block_hash.into(),

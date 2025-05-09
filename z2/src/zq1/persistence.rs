@@ -360,7 +360,6 @@ impl Log {
                 address: l.address,
                 topics: l.topics.clone(),
                 data: l.data.clone(),
-                log_index: None,
             })),
             Log::Zilliqa(log) => {
                 let event_name = log
@@ -384,7 +383,6 @@ impl Log {
                     address: address.parse()?,
                     event_name: event_name.to_string(),
                     params,
-                    log_index: None,
                 }))
             }
         }

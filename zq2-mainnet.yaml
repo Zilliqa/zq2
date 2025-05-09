@@ -1,5 +1,5 @@
 name: zq2-mainnet
-eth_chain_id: 32770
+eth_chain_id: 32769
 roles:
 - bootstrap
 - validator
@@ -9,7 +9,7 @@ roles:
 - persistence
 - private-api
 versions:
-  zq2: v0.7.0
+  zq2: v0.8.0
   otterscan: develop
   spout: main
   stats_dashboard: v0.0.4

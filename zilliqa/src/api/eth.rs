@@ -38,6 +38,7 @@ use crate::{
     cfg::EnabledApi,
     crypto::Hash,
     error::ensure_success,
+    exec::zil_contract_address,
     message::Block,
     node::Node,
     pool::TxAddResult,
@@ -281,6 +282,7 @@ pub fn get_block_transaction_receipts_inner(
         return Err(anyhow!("Block not found"));
     };
 
+    let mut log_index = 0;
     let mut receipts = Vec::new();
 
     for (transaction_index, tx_hash) in block.transactions.iter().enumerate() {
@@ -305,6 +307,24 @@ pub fn get_block_transaction_receipts_inner(
             tx_hash, receipt
         );
 
+        // Required workaround for incorrectly converted nonces for zq1 scilla transactions
+        let contract_address = match &signed_transaction.tx {
+            SignedTransaction::Zilliqa { tx, .. } => {
+                if tx.to_addr.is_zero() && receipt.success {
+                    Some(zil_contract_address(
+                        signed_transaction.signer,
+                        signed_transaction
+                            .tx
+                            .nonce()
+                            .ok_or_else(|| anyhow!("Unable to extract nonce!"))?,
+                    ))
+                } else {
+                    receipt.contract_address
+                }
+            }
+            _ => receipt.contract_address,
+        };
+
         let mut logs_bloom = [0; 256];
 
         let mut logs = Vec::new();
@@ -313,7 +333,6 @@ pub fn get_block_transaction_receipts_inner(
                 Log::Evm(log) => log,
                 Log::Scilla(log) => log.into_evm(),
             };
-            let log_index = log.log_index.unwrap();
             let log = eth::Log::new(
                 log,
                 log_index,
@@ -322,6 +341,7 @@ pub fn get_block_transaction_receipts_inner(
                 block.number(),
                 block.hash(),
             );
+            log_index += 1;
             log.bloom(&mut logs_bloom);
             logs.push(log);
         }
@@ -342,7 +362,7 @@ pub fn get_block_transaction_receipts_inner(
             cumulative_gas_used: receipt.cumulative_gas_used,
             effective_gas_price: transaction.max_fee_per_gas(),
             gas_used: receipt.gas_used,
-            contract_address: receipt.contract_address,
+            contract_address,
             logs,
             logs_bloom,
             ty: 0,
@@ -498,7 +518,7 @@ pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u
             .for_each(|(log_index, log)| {
                 let log = eth::Log::new(
                     log,
-                    log_index as u64,
+                    log_index,
                     txn_receipt.index as usize,
                     txn_receipt.tx_hash,
                     block.number(),
@@ -659,7 +679,7 @@ fn get_logs_inner(
 
                 logs.push(eth::Log::new(
                     log,
-                    log_index as u64,
+                    log_index,
                     txn_index,
                     *txn_hash,
                     block.number(),
@@ -872,7 +892,12 @@ async fn subscribe(
             while let Ok(header) = new_blocks.recv().await {
                 let miner = node.lock().unwrap().get_proposer_reward_address(header)?;
                 let block_gas_limit = node.lock().unwrap().config.consensus.eth_block_gas_limit;
-                let logs_bloom = [0; 256]; // TODO
+                let block = node
+                    .lock()
+                    .unwrap()
+                    .get_block(header.hash)?
+                    .ok_or_else(|| anyhow!("missing block"))?;
+                let logs_bloom = get_block_logs_bloom(&node.lock().unwrap(), &block)?;
                 let header = eth::Header::from_header(
                     header,
                     miner.unwrap_or_default(),
@@ -899,7 +924,18 @@ async fn subscribe(
                     continue;
                 }
 
+                // We track log index plus one because we have to increment before we use the log index, and log indexes are 0-based.
+                let mut log_index_plus_one: i64 = get_block_transaction_receipts_inner(
+                    &node.lock().unwrap(),
+                    receipt.block_hash,
+                )?
+                .iter()
+                .take_while(|x| x.transaction_index < receipt.index)
+                .map(|x| x.logs.len())
+                .sum::<usize>() as i64;
+
                 for log in receipt.logs.into_iter() {
+                    log_index_plus_one += 1;
                     // Only consider EVM logs
                     let Log::Evm(log) = log else {
                         continue;
@@ -941,7 +977,7 @@ async fn subscribe(
                         ),
                         transaction_hash: Some(receipt.tx_hash.into()),
                         transaction_index: Some(transaction_index as u64),
-                        log_index: Some(log.log_index.unwrap()),
+                        log_index: Some((log_index_plus_one - 1) as u64),
                         removed: false,
                     };
                     let _ = sink.send(SubscriptionMessage::from_json(&log)?).await;

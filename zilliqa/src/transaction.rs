@@ -1015,7 +1015,6 @@ pub struct EvmLog {
     pub address: Address,
     pub topics: Vec<B256>,
     pub data: Vec<u8>,
-    pub log_index: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1025,7 +1024,6 @@ pub struct ScillaLog {
     pub event_name: String,
     #[serde(with = "vec_param_value")]
     pub params: Vec<ParamValue>,
-    pub log_index: Option<u64>,
 }
 
 impl ScillaLog {
@@ -1054,7 +1052,6 @@ impl ScillaLog {
                 format!("{}(string)", log.event_name).into_bytes(),
             )],
             data,
-            log_index: self.log_index,
         }
     }
 }

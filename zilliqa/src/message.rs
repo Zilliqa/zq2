@@ -17,7 +17,7 @@ use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::TrieStorage,
     time::SystemTime,
-    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
+    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
@@ -283,6 +283,10 @@ pub enum ExternalMessage {
     MultiBlockResponse(Vec<Proposal>),
     /// 0.7.0
     SyncBlockHeaders(Vec<SyncBlockHeader>),
+    /// 0.8.0
+    PassiveSyncRequest(RequestBlocksByHash),
+    PassiveSyncResponse(Vec<BlockTransactionsReceipts>),
+    PassiveSyncResponseLZ(Vec<u8>), // compressed block
 }
 
 impl ExternalMessage {
@@ -298,6 +302,15 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::PassiveSyncResponseLZ(r) => {
+                write!(f, "PassiveSyncResponseLZ({})", r.len())
+            }
+            ExternalMessage::PassiveSyncResponse(r) => {
+                write!(f, "PassiveSyncResponse({})", r.len())
+            }
+            ExternalMessage::PassiveSyncRequest(r) => {
+                write!(f, "PassiveSyncRequest({})", r.hash)
+            }
             ExternalMessage::SyncBlockHeaders(r) => {
                 write!(f, "SyncBlockHeaders({})", r.len())
             }
@@ -311,11 +324,7 @@ impl Display for ExternalMessage {
                 write!(f, "MetaDataResponse({})", r.len())
             }
             ExternalMessage::MetaDataRequest(r) => {
-                write!(
-                    f,
-                    "MetaDataRequest(from={}, to={})",
-                    r.from_height, r.to_height
-                )
+                write!(f, "MetaDataRequest({:?})", r.from_height..=r.to_height)
             }
             ExternalMessage::InjectedProposal(p) => {
                 write!(f, "InjectedProposal {}", p.block.number())
@@ -540,7 +549,18 @@ pub struct SyncBlockHeader {
     pub header: BlockHeader,
     pub size_estimate: usize,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBlocksByHash {
+    pub hash: Hash,
+    pub count: usize,
+    pub request_at: SystemTime,
+}
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockTransactionsReceipts {
+    pub block: Block,
+    pub transaction_receipts: Vec<(SignedTransaction, TransactionReceipt)>,
+}
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockHeader {

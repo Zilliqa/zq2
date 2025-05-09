@@ -18,6 +18,7 @@ mod eth;
 mod ots;
 mod persistence;
 mod staking;
+mod sync;
 mod trace;
 mod txpool;
 mod unreliable;
@@ -35,7 +36,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex, MutexGuard,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -77,8 +78,8 @@ use zilliqa::{
         Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
         block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
         failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
-        max_rpc_response_size_default, scilla_ext_libs_path_default, state_rpc_limit_default,
-        total_native_token_supply_default, u64_max,
+        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
+        state_rpc_limit_default, total_native_token_supply_default, u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -96,7 +97,7 @@ pub struct NewNodeOptions {
     onchain_key: Option<SigningKey>,
     checkpoint: Option<Checkpoint>,
     prune_interval: Option<u64>,
-    sync_base_height: Option<u64>,
+    base_height: Option<u64>,
 }
 
 impl NewNodeOptions {
@@ -177,7 +178,8 @@ fn node(
     std::mem::forget(reset_timeout_receiver);
 
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-    let peers = Arc::new(SyncPeers::new(peer_id));
+    let sync_peers = Arc::new(SyncPeers::new(peer_id));
+    let swarm_peers = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(Vec::new()))));
 
     let node = Node::new(
         NodeConfig {
@@ -192,7 +194,8 @@ fn node(
         request_responses_sender,
         reset_timeout_sender,
         Arc::new(AtomicUsize::new(0)),
-        peers.clone(),
+        sync_peers.clone(),
+        swarm_peers,
     )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> =
@@ -207,7 +210,7 @@ fn node(
             inner: node,
             dir: datadir,
             rpc_module,
-            peers,
+            peers: sync_peers,
         },
         message_receiver,
         local_message_receiver,
@@ -391,7 +394,7 @@ impl Network {
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            cache_size: 1024 * 1024,
+            state_cache_size: state_cache_size_default(),
             load_checkpoint: None,
             do_checkpoints,
             block_request_limit: block_request_limit_default(),
@@ -399,7 +402,8 @@ impl Network {
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
                 prune_interval: u64_max(),
-                sync_base_height: u64_max(),
+                base_height: u64_max(),
+                ignore_passive: false,
             },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
@@ -510,7 +514,7 @@ impl Network {
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
-            cache_size: 1024 * 1024,
+            state_cache_size: state_cache_size_default(),
             load_checkpoint: options.checkpoint.clone(),
             do_checkpoints: self.do_checkpoints,
             consensus: ConsensusConfig {
@@ -550,7 +554,8 @@ impl Network {
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
                 prune_interval: options.prune_interval.unwrap_or(u64_max()),
-                sync_base_height: options.sync_base_height.unwrap_or(u64_max()),
+                base_height: options.base_height.unwrap_or(u64_max()),
+                ignore_passive: false,
             },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
@@ -1199,8 +1204,8 @@ impl Network {
         let initial_timeout = timeout;
         let db = self.get_node(0).db.clone();
         loop {
-            if let Some(view) = db.read()?.finalized_view()?.get()? {
-                if let Some(block) = db.read()?.blocks()?.by_view(view)? {
+            if let Some(view) = db.get_finalized_view()? {
+                if let Some(block) = db.get_block_by_view(view)? {
                     if block.number() >= target_block {
                         return Ok(());
                     }
