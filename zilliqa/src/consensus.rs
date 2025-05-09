@@ -319,7 +319,7 @@ impl Consensus {
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
             force_view: None,
-            in_committee: false,
+            in_committee: true,
         };
 
         // If we're at genesis, add the genesis block and return

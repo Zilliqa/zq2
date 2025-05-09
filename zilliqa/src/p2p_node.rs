@@ -44,6 +44,11 @@ use crate::{
     sync::SyncPeers,
 };
 
+/// Validator topic is for broadcasts which only apply to validators.
+///
+/// - Broadcasts are so sent to the public topic (Proposal)
+/// - Direct messages are not sent to any topic (Vote, NewView)
+/// - Re-sending of NewView is sent to the Validator-only topic
 static VALIDATOR_TOPIC_SUFFIX: &str = "-validator";
 
 /// Messages are a tuple of the destination shard ID and the actual message.
@@ -243,6 +248,11 @@ impl P2pNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&Self::shard_id_to_topic(shard_id, None))?;
+        // subscribe to validator topic by default. Unsubscribe later if we find that we are not in the committee
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&Self::validator_topic(shard_id))?;
         Ok(())
     }
 
