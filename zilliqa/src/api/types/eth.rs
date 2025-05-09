@@ -348,7 +348,7 @@ pub struct TransactionReceipt {
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Log {
     pub removed: bool,
@@ -415,7 +415,7 @@ fn m3_2048(bloom: &mut [u8; 256], data: &[u8]) {
 }
 
 /// A type for representing null, a single item or an array of items.
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum OneOrMany<T> {
     Null,
