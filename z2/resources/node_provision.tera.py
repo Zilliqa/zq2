@@ -18,6 +18,7 @@ templatefile() vars:
 - role, the node role: validator or apps
 - otterscan_image, the Otterscan docker image (incl. version)
 - enable_faucet, a flag to enable the faucet Spout app
+- enable_kms, a flag to enable the KMS decryption for the keys
 - spout_image, the Eth Spout docker image (incl. version)
 - stats_dashboard_image, the Stats dashboard docker image (incl. version)
 - stats_agent_image, the Stats agent docker image (incl. version)
@@ -57,6 +58,7 @@ ZQ2_METRICS_ENABLED=query_metadata_key("private-api") == "metrics"
 ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
 LOG_LEVEL='{{ log_level }}'
 PROJECT_ID="{{ project_id }}"
+KMS_ENABLED="{{ enable_kms }}" == "true"
 KMS_PROJECT_ID = "prj-p-kms-2vduab0g" if PROJECT_ID.startswith("prj-p") else "prj-d-kms-tw1xyxbh"
 
 def mount_checkpoint_file():
@@ -230,6 +232,15 @@ WantedBy=multi-user.target
 
 SCILLA_SERVER_PORT="62831"
 
+if KMS_ENABLED:
+    PRIVATE_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ node_name }}" --keyring="kms-{{ chain_name }}" --location=global --project="' + KMS_PROJECT_ID + '")'
+    GENESIS_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-genesis" --keyring="kms-{{ chain_name }}" --location=global --project="' + KMS_PROJECT_ID + '")'
+    STATS_DASHBOARD_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-stats-dashboard" --keyring="kms-{{ chain_name }}" --location=global --project="' + KMS_PROJECT_ID + '")'
+else:
+    PRIVATE_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-pk")'
+    GENESIS_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis-key")'
+    STATS_DASHBOARD_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-key")'
+
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
@@ -238,7 +249,7 @@ ZQ2_IMAGE="{{ docker_image }}"
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker container prune -f
-    PRIVATE_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ node_name }}" --keyring="kms-{{ chain_name }}" --location=global --project=""" + KMS_PROJECT_ID + """)
+    PRIVATE_KEY=""" + PRIVATE_KEY_CMD + """
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 --memory=6g \
@@ -325,7 +336,7 @@ SPOUT_IMAGE="{{ spout_image }}"
 
 start() {
     docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
-    GENESIS_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-genesis" --keyring="kms-{{ chain_name }}" --location=global --project=""" + KMS_PROJECT_ID + """)
+    GENESIS_KEY=""" + GENESIS_KEY_CMD + """
     docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e RPC_URL=https://api.""" + SUBDOMAIN + """ \
@@ -374,7 +385,7 @@ STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
 
 start() {
     docker rm stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ &> /dev/null || echo 0
-    STATS_DASHBOARD_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-stats-dashboard" --keyring="kms-{{ chain_name }}" --location=global --project=""" + KMS_PROJECT_ID + """)
+    STATS_DASHBOARD_KEY=""" + STATS_DASHBOARD_KEY_CMD + """
     docker run -td -p 3000:3000 --name stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
@@ -417,7 +428,7 @@ STATS_AGENT_IMAGE="{{ stats_agent_image }}"
 
 start() {
     docker rm stats-agent-""" + VERSIONS.get('stats_agent') + """ &> /dev/null || echo 0
-    STATS_DASHBOARD_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-stats-dashboard" --keyring="kms-{{ chain_name }}" --location=global --project=""" + KMS_PROJECT_ID + """)
+    STATS_DASHBOARD_KEY=""" + STATS_DASHBOARD_KEY_CMD + """
     docker run -td --name stats-agent-""" + VERSIONS.get('stats_agent') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         --net=host \
