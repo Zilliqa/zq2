@@ -8,7 +8,7 @@ use super::{
     config::NetworkConfig,
     node::{ChainNode, Machine, NodeRole},
 };
-use crate::secret::Secret;
+use crate::{kms::KmsService, secret::Secret};
 
 #[derive(Clone, Debug)]
 pub struct ChainInstance {
@@ -186,7 +186,20 @@ impl ChainInstance {
         )?;
 
         if let Some(private_key) = private_keys.first() {
-            Ok(private_key.value()?)
+            let value = private_key.value()?;
+
+            // Decrypt the key if KMS is enabled
+            if self.chain()?.get_enable_kms()? {
+                let decrypted_value = KmsService::decrypt(
+                    self.chain()?.get_project_id()?,
+                    &value,
+                    &format!("kms-{}", self.name()),
+                    &format!("{}-genesis", self.name()),
+                )?;
+                Ok(decrypted_value)
+            } else {
+                Ok(value)
+            }
         } else {
             Err(anyhow!(
                 "No secrets with role genesis found in the network {}",

@@ -86,15 +86,15 @@ resource "google_storage_bucket_iam_binding" "persistence_bucket_admins" {
   role   = "roles/storage.objectAdmin"
   members = concat(
     flatten([
-      [for name, sa in module.bootstraps.service_account : "serviceAccount:${sa.email}"],
-      [for name, sa in module.validators.service_account : "serviceAccount:${sa.email}"],
-      [for name, sa in module.apis.service_account : "serviceAccount:${sa.email}"],
-      [for name, sa in module.checkpoints.service_account : "serviceAccount:${sa.email}"],
-      [for name, sa in module.persistences.service_account : "serviceAccount:${sa.email}"]
+      [for name, instance in module.bootstraps.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.validators.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.apis.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.checkpoints.instances : "serviceAccount:${instance.service_account}"],
+      [for name, instance in module.persistences.instances : "serviceAccount:${instance.service_account}"]
     ]),
     flatten([
       for private_api in module.private_apis : [
-        for name, sa in private_api.service_account : "serviceAccount:${sa.email}"
+        for name, instance in private_api.instances : "serviceAccount:${instance.service_account}"
       ]
     ])
   )
