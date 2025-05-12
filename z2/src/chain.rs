@@ -365,14 +365,14 @@ impl Chain {
     pub fn get_enable_faucet(&self) -> Result<bool> {
         let enable_faucet = self.get_str("enable_faucet");
         let enable_faucet_bool = enable_faucet.unwrap_or("false").to_lowercase() == "true";
-        
+
         Ok(enable_faucet_bool)
     }
 
     pub fn get_enable_kms(&self) -> Result<bool> {
         let enable_kms = self.get_str("enable_kms");
         let enable_kms_bool = enable_kms.unwrap_or("false").to_lowercase() == "true";
-        
+
         Ok(enable_kms_bool)
     }
 

@@ -1069,7 +1069,11 @@ pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<St
 
     let multi_progress = cliclack::multi_progress("Generating the Stats Dashboard key".yellow());
 
-    let secret_suffix = if chain.chain()?.get_enable_kms()? { "-enckey" } else { "" };
+    let secret_suffix = if chain.chain()?.get_enable_kms()? {
+        "-enckey"
+    } else {
+        ""
+    };
     let secret_name = &format!("{}-stats-dashboard{}", chain.name(), secret_suffix);
     let mut labels = BTreeMap::<String, String>::new();
     labels.insert("role".to_string(), "stats-dashboard".to_owned());
@@ -1098,7 +1102,11 @@ pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<
 
     let multi_progress = cliclack::multi_progress("Generating the genesis key".yellow());
 
-    let secret_suffix = if chain.chain()?.get_enable_kms()? { "-enckey" } else { "" };
+    let secret_suffix = if chain.chain()?.get_enable_kms()? {
+        "-enckey"
+    } else {
+        ""
+    };
     let secret_name = &format!("{}-genesis{}", chain.name(), secret_suffix);
     let mut labels = BTreeMap::<String, String>::new();
     labels.insert("role".to_string(), "genesis".to_owned());
@@ -1206,8 +1214,16 @@ pub async fn run_generate_private_keys(
             labels.insert("role".to_string(), role);
             labels.insert("zq2-network".to_string(), chain_name.clone());
             labels.insert("node-name".to_string(), node.clone().name);
-            let mut result =
-                generate_secret(&mp, secret_name, labels, project_id, force, None, get_enable_kms).await;
+            let mut result = generate_secret(
+                &mp,
+                secret_name,
+                labels,
+                project_id,
+                force,
+                None,
+                get_enable_kms,
+            )
+            .await;
 
             let private_key_result =
                 Secret::grant_service_account(secret_name, project_id, &service_account);

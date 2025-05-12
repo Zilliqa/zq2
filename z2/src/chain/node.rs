@@ -622,7 +622,8 @@ impl ChainNode {
             ));
         }
 
-        self.machine.get_private_key(&self.chain.name(), self.chain()?.get_enable_kms()?)
+        self.machine
+            .get_private_key(&self.chain.name(), self.chain()?.get_enable_kms()?)
     }
 
     pub fn get_genesis_address(&self) -> Result<String> {
@@ -1048,8 +1049,16 @@ impl ChainNode {
         let role_name = &self.role.to_string();
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
-        let enable_faucet = if self.chain()?.get_enable_faucet()? { "true" } else { "false" };
-        let enable_kms = if self.chain()?.get_enable_kms()? { "true" } else { "false" };
+        let enable_faucet = if self.chain()?.get_enable_faucet()? {
+            "true"
+        } else {
+            "false"
+        };
+        let enable_kms = if self.chain()?.get_enable_kms()? {
+            "true"
+        } else {
+            "false"
+        };
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
         let stats_dashboard_image = &docker_image(
             "stats_dashboard",
