@@ -131,7 +131,7 @@ type EarlyProposal = (
 /// - In this case, the view will time out with no leader successfully proposing a block.
 /// - From this point forward, block view =/= block number
 /// - The view will increment on all or some nodes. The timeout for view increments doubles each time,
-///    which guarantees all nodes eventually are on the same view
+///   which guarantees all nodes eventually are on the same view
 /// - Nodes send a NewView message, which is a signature over the view, and their highQC
 /// - This is collected to form an aggQC
 /// - This aggQC is used to propose a block

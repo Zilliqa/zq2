@@ -8,7 +8,9 @@ use ethers::{
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::new_view_broadcast_interval_default, contracts, crypto::NodePublicKey,
+    cfg::{new_view_broadcast_interval_default, scilla_server_socket_directory_default},
+    contracts,
+    crypto::NodePublicKey,
     state::contract_addr,
 };
 mod admin;
@@ -365,7 +367,7 @@ impl Network {
                 scilla_address: scilla_address.clone(),
                 scilla_stdlib_dir: scilla_stdlib_dir.clone(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
-                local_address: "host.docker.internal".to_owned(),
+                scilla_server_socket_directory: scilla_server_socket_directory_default(),
                 rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
                 minimum_stake: 32_000_000_000_000_000_000u128.into(),
@@ -523,7 +525,7 @@ impl Network {
                 consensus_timeout: Duration::from_secs(5),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 block_time: Duration::from_millis(25),
-                local_address: "host.docker.internal".to_owned(),
+                scilla_server_socket_directory: scilla_server_socket_directory_default(),
                 rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
                 minimum_stake: 32_000_000_000_000_000_000u128.into(),

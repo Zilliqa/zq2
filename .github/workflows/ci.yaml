@@ -65,6 +65,8 @@ jobs:
       # Run `cargo fmt` with nightly, because we use 'unstable' rustfmt features.
       - name: rustfmt
         run: cargo +nightly fmt --all --check
+      - name: Create socket directory with correct permissions
+        run: sudo mkdir -p -m 777 /tmp/scilla-state-server
       - name: Test
         run: cargo test --tests --examples --bins --all-features
       - name: Verify working directory is clean
@@ -72,8 +74,8 @@ jobs:
   e2e_test:
     services:
       scilla:
-        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:e762f387
-        options: --init --add-host host.docker.internal:host-gateway --entrypoint "/scilla/0/bin/scilla-server-http"
+        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:5ad0f726
+        options: --init --volume "/tmp/scilla-state-server:/tmp/scilla-state-server" --entrypoint "/scilla/0/bin/scilla-server-http"
         ports:
           - 3000:3000
         volumes:
@@ -83,6 +85,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Fix socket directory permissions
+        run: sudo chmod o+w /tmp/scilla-state-server
       - name: Test connection to Scilla server
         run: curl http://localhost:3000
       - name: Install Rust
