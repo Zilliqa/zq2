@@ -327,7 +327,7 @@ impl Display for ExternalMessage {
             ExternalMessage::BlockResponse(r) => {
                 let mut views = r.proposals.iter().map(|p| p.view());
                 let first = views.next();
-                let last = views.last();
+                let last = views.next_back();
                 match (first, last) {
                     (None, None) => write!(f, "BlockResponse([])"),
                     (Some(first), None) => {

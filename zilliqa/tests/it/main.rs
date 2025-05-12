@@ -262,6 +262,7 @@ struct Network {
     do_checkpoints: bool,
     blocks_per_epoch: u64,
     deposit_v3_upgrade_block_height: Option<u64>,
+    scilla_server_socket_directory: String,
 }
 
 impl Network {
@@ -278,6 +279,7 @@ impl Network {
         do_checkpoints: bool,
         blocks_per_epoch: u64,
         deposit_v3_upgrade_block_height: Option<u64>,
+        scilla_server_socket_directory: String,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -291,6 +293,7 @@ impl Network {
             do_checkpoints,
             blocks_per_epoch,
             deposit_v3_upgrade_block_height,
+            scilla_server_socket_directory,
         )
     }
 
@@ -307,6 +310,7 @@ impl Network {
         do_checkpoints: bool,
         blocks_per_epoch: u64,
         deposit_v3_upgrade_block_height: Option<u64>,
+        scilla_server_socket_directory: String,
     ) -> Network {
         let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -365,7 +369,7 @@ impl Network {
                 scilla_address: scilla_address.clone(),
                 scilla_stdlib_dir: scilla_stdlib_dir.clone(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
-                local_address: "host.docker.internal".to_owned(),
+                scilla_server_socket_directory: scilla_server_socket_directory.clone(),
                 rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
                 minimum_stake: 32_000_000_000_000_000_000u128.into(),
@@ -473,6 +477,7 @@ impl Network {
             blocks_per_epoch,
             scilla_stdlib_dir,
             deposit_v3_upgrade_block_height,
+            scilla_server_socket_directory,
         }
     }
 
@@ -523,7 +528,7 @@ impl Network {
                 consensus_timeout: Duration::from_secs(5),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 block_time: Duration::from_millis(25),
-                local_address: "host.docker.internal".to_owned(),
+                scilla_server_socket_directory: self.scilla_server_socket_directory.clone(),
                 rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
                 minimum_stake: 32_000_000_000_000_000_000u128.into(),
@@ -945,6 +950,7 @@ impl Network {
                                     self.do_checkpoints,
                                     self.blocks_per_epoch,
                                     self.deposit_v3_upgrade_block_height,
+                                    self.scilla_server_socket_directory.clone(),
                                 ),
                             );
                         }

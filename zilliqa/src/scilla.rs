@@ -2,7 +2,8 @@
 
 use std::{
     collections::BTreeMap,
-    net::{Ipv4Addr, SocketAddr},
+    fs,
+    path::Path,
     str,
     sync::{
         Arc, Mutex,
@@ -24,6 +25,7 @@ use jsonrpsee::{
     types::{ErrorObject, error::CALL_EXECUTION_FAILED_CODE},
 };
 use prost::Message as _;
+use rand::{Rng, distributions::Alphanumeric};
 use revm::primitives::BLOCK_HASH_HISTORY;
 use serde::{
     Deserialize, Deserializer, Serialize,
@@ -214,7 +216,6 @@ pub struct Scilla {
     request_tx: Sender<(&'static str, ObjectParams)>,
     response_rx: Mutex<Receiver<Result<Value, ClientError>>>,
     state_server: Arc<Mutex<StateServer>>,
-    local_address: String,
     scilla_stdlib_dir: String,
 }
 
@@ -238,7 +239,7 @@ impl Scilla {
     ///
     /// After creating the [StateServer], we wrap it in an `Arc<Mutex<T>>` and send a clone back to the main thread,
     /// to enable shared access to the server.
-    pub fn new(address: String, local_address: String, scilla_stdlib_dir: String) -> Scilla {
+    pub fn new(address: String, socket_dir: String, scilla_stdlib_dir: String) -> Scilla {
         let (request_tx, request_rx) = channel();
         let (response_tx, response_rx) = channel();
 
@@ -271,7 +272,7 @@ impl Scilla {
                 .unwrap();
 
             runtime.block_on(async {
-                let server = StateServer::new().await.unwrap();
+                let server = StateServer::new(&socket_dir).await.unwrap();
                 let handle = server.handle.clone();
                 let server = Arc::new(Mutex::new(server));
                 tx.send(Arc::clone(&server)).unwrap();
@@ -284,16 +285,12 @@ impl Scilla {
             request_tx,
             response_rx: Mutex::new(response_rx),
             state_server,
-            local_address,
             scilla_stdlib_dir,
         }
     }
 
     fn state_server_addr(&self) -> String {
-        let local_addr = &self.local_address;
-        let addr = self.state_server.lock().unwrap().addr;
-
-        format!("{local_addr}:{}", addr.port())
+        self.state_server.lock().unwrap().endpoint.clone()
     }
 
     pub fn check_contract(
@@ -597,7 +594,7 @@ pub struct Message {
 
 #[derive(Debug)]
 struct StateServer {
-    addr: SocketAddr,
+    endpoint: String,
     handle: ServerHandle,
     /// This should be `Some` when a call is being made to the Scilla server. It stores the current contract address
     /// and state.
@@ -605,11 +602,22 @@ struct StateServer {
 }
 
 impl StateServer {
-    async fn new() -> Result<StateServer> {
-        let server = jsonrpsee::server::Server::builder()
-            .build((Ipv4Addr::UNSPECIFIED, 0))
-            .await?;
-        let addr = server.local_addr()?;
+    async fn new(socket_dir: &str) -> Result<StateServer> {
+        fs::create_dir_all(socket_dir)?;
+        let mut path = "scilla-state-server-".to_owned();
+        let suffix: String = rand::thread_rng()
+            .sample_iter(Alphanumeric)
+            .take(6)
+            .map(char::from)
+            .collect();
+        path.push_str(&suffix);
+        let endpoint = Path::new(socket_dir)
+            .join(path)
+            .to_str()
+            .unwrap()
+            .to_owned();
+
+        let server = reth_ipc::server::Builder::default().build(endpoint.clone());
 
         let mut module = RpcModule::new(());
 
@@ -747,10 +755,10 @@ impl StateServer {
             }
         })?;
 
-        let handle = server.start(module);
+        let handle = server.start(module).await?;
 
         Ok(StateServer {
-            addr,
+            endpoint,
             handle,
             active_call,
         })
