@@ -129,8 +129,8 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-mainnet",
         props(
-            genesis_amount = "900_000_000_000_000_000_000",
-            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
+            genesis_amount = "100_000_000_000_000_000_000",
+            genesis_deposits_amount = "80_000_000_000_000_000_000_000_000",
             validator_control_address = "0x254eEBf02A2D5e9f57440F66E2a001B1D476ec23",
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
