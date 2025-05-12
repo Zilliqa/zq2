@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    cfg::ConsensusConfig,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::TrieStorage,
     time::SystemTime,
@@ -765,8 +764,8 @@ impl Block {
         self.header.number
     }
 
-    pub fn is_genesis(&self, cfg: &ConsensusConfig) -> bool {
-        self.number() == cfg.genesis_block_at_height
+    pub fn is_genesis(&self) -> bool {
+        self.number() == 0
     }
 
     pub fn hash(&self) -> Hash {
