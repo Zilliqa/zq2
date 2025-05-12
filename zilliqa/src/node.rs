@@ -419,7 +419,7 @@ impl Node {
                 self.message_sender
                     .send_message_to_coordinator(InternalMessage::LaunchShard(source))?;
             }
-            InternalMessage::LaunchShard(..) | InternalMessage::ExportBlockCheckpoint(..) => {
+            _ => {
                 warn!(
                     "{message} type messages should be handled by the coordinator, not forwarded to a node.",
                 );

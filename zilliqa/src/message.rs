@@ -399,6 +399,18 @@ pub enum InternalMessage {
         TrieStorage,
         Box<Path>,
     ),
+    /// Notify p2p cordinator to subscribe to a particular gossipsub topic
+    SubscribeToGossipSubTopic(GossipSubTopic),
+    /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
+    UnsubscribeFromGossipSubTopic(GossipSubTopic),
+}
+
+#[derive(Debug, Clone)]
+pub enum GossipSubTopic {
+    /// General topic for all nodes. Includes Proposal messages
+    General(u64),
+    /// Topic for Validators only. Includes NewView messages
+    Validator(u64),
 }
 
 /// Returns a terse, human-readable summary of a message.
@@ -410,6 +422,12 @@ impl Display for InternalMessage {
             InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
             InternalMessage::ExportBlockCheckpoint(block, ..) => {
                 write!(f, "ExportCheckpoint({})", block.number())
+            }
+            InternalMessage::SubscribeToGossipSubTopic(topic) => {
+                write!(f, "SubscribeToGossipSubTopic({:?})", topic)
+            }
+            InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
+                write!(f, "UnsubscribeFromGossipSubTopic({:?})", topic)
             }
         }
     }
