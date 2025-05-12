@@ -591,13 +591,21 @@ pub async fn convert_persistence(
     }
 
     // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
-    let highest_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
-    let highest_block = zq2_db.get_block_by_view(highest_block)?.unwrap();
+    let highest_zq1_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
+    let highest_zq1_block = zq2_db.get_block_by_view(highest_zq1_block)?.unwrap();
     let state_root_hash = state.root_hash()?;
 
     zq2_db.with_sqlite_tx(|sqlite_tx| {
+        // Insert finalized zq2_block_1 with empty qc
+        let empty_block =
+            create_empty_block_from_parent(&highest_zq1_block, secret_key, state_root_hash);
+        zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_block)?;
+        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_block.header.qc)?;
+        zq2_db.set_finalized_view_with_db_tx(sqlite_tx, empty_block.view())?;
+
+        // Insert empty zq2_block_2 that has a qc which points to zq2_block_1
         let empty_high_qc_block =
-            create_empty_block_from_parent(&highest_block, secret_key, state_root_hash);
+            create_empty_block_from_parent(&empty_block, secret_key, state_root_hash);
         zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
         zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.header.qc)?;
         Ok(())
