@@ -82,7 +82,7 @@ thiserror = "2.0.12"
 lru-mem = "0.3.0"
 opentelemetry-semantic-conventions = { version = "0.28.0", features = ["semconv_experimental"] }
 semver = "1.0.23"
-foundry-compilers = { version = "0.14.1", features = ["svm-solc"] }
+foundry-compilers = { version = "0.15.0", features = ["svm-solc"] }
 
 [dev-dependencies]
 alloy = { version = "0.12.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
