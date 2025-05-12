@@ -6,7 +6,7 @@ use crate::Network;
 #[zilliqa_macros::test]
 async fn generate_checkpoint(mut network: Network) {
     let wallet = network.genesis_wallet().await;
-    network.run_until_block(&wallet, 8.into(), 400).await;
+    network.run_until_block(&wallet, 8.into(), 800).await;
     let response: Value = wallet
         .provider()
         .request("admin_generateCheckpoint", ["0x4"])

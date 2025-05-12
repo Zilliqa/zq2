@@ -17,9 +17,12 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-richard",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
+            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-richard.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info"
+            log_level = "zilliqa=info",
+            enable_faucet = "true"
         )
     )]
     Zq2Richard,
@@ -27,9 +30,12 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-persistence",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
+            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-persistence.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info"
+            log_level = "zilliqa=info",
+            enable_faucet = "true"
         )
     )]
     Zq2Persistence,
@@ -37,9 +43,12 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-infratest",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
+            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-infratest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info"
+            log_level = "zilliqa=info",
+            enable_faucet = "true"
         )
     )]
     Zq2InfraTest,
@@ -47,9 +56,12 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-perftest",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
+            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-perftest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info"
+            log_level = "zilliqa=info",
+            enable_faucet = "true"
         )
     )]
     Zq2PerfTest,
@@ -57,9 +69,12 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-devnet",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
+            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-devnet.zilliqa.com",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "true"
         )
     )]
     Zq2Devnet,
@@ -67,9 +82,12 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-prototestnet",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
+            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-prototestnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "true"
         )
     )]
     Zq2ProtoTestnet,
@@ -77,9 +95,12 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-protomainnet",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
+            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-protomainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "true"
         )
     )]
     Zq2ProtoMainnet,
@@ -87,9 +108,12 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-testnet",
         props(
+            genesis_amount = "900_000_000_000_000_000_000_000_000",
+            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
             subdomain = "zq2-testnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "true"
         )
     )]
     Zq2Testnet,
@@ -97,9 +121,13 @@ pub enum Chain {
     #[strum(
         serialize = "zq2-mainnet",
         props(
+            genesis_amount = "100_000_000_000_000_000_000",
+            genesis_deposits_amount = "80_000_000_000_000_000_000_000_000",
+            validator_control_address = "0x254eEBf02A2D5e9f57440F66E2a001B1D476ec23",
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
-            log_level = "zilliqa=trace"
+            log_level = "zilliqa=trace",
+            enable_faucet = "false"
         )
     )]
     Zq2Mainnet,
@@ -163,6 +191,7 @@ impl Chain {
         match self {
             Chain::Zq2ProtoTestnet | Chain::Zq2ProtoMainnet => Some(json!({
                 "at_height": 0,
+                "executable_blocks": false,
                 "call_mode_1_sets_caller_to_parent_caller": false,
                 "failed_scilla_call_from_gas_exempt_caller_causes_revert": false,
                 "scilla_messages_can_call_evm_contracts": false,
@@ -174,6 +203,9 @@ impl Chain {
                 "scilla_block_number_returns_current_block": false,
                 "scilla_maps_are_encoded_correctly": false,
                 "transfer_gas_fee_to_zero_account": false,
+                "apply_state_changes_only_if_transaction_succeeds": false,
+                "apply_scilla_delta_when_evm_succeeded" : false,
+                "scilla_deduct_funds_from_actual_sender": false
             })),
             _ => None,
         }
@@ -182,6 +214,7 @@ impl Chain {
     pub fn get_forks(&self) -> Option<Vec<Value>> {
         match self {
             Chain::Zq2ProtoTestnet => Some(vec![
+                json!({ "at_height": 7507088, "executable_blocks": true }),
                 json!({
                     "at_height": 7855000,
                     "scilla_call_gas_exempt_addrs": [
@@ -211,8 +244,11 @@ impl Chain {
                 json!({ "at_height": 12884400, "only_mutated_accounts_update_state": true, "scilla_block_number_returns_current_block": true }),
                 // estimated: 2025-03-12T12:29:22Z
                 json!({ "at_height": 12931200, "scilla_maps_are_encoded_correctly": true }),
+                // estimated: 2025-04-24T20:13:22Z
+                json!({ "at_height": 14767200, "transfer_gas_fee_to_zero_account": true, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded": true, "scilla_deduct_funds_from_actual_sender": true }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
+                json!({ "at_height": 4277188, "executable_blocks": true }),
                 json!({
                     "at_height": 4683779,
                     "scilla_call_gas_exempt_addrs": [
@@ -243,6 +279,8 @@ impl Chain {
                 json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true }),
                 // estimated: 2025-03-17T13:16:37Z
                 json!({ "at_height": 9010800, "scilla_call_respects_evm_state_changes": true, "only_mutated_accounts_update_state": true, "scilla_block_number_returns_current_block": true, "scilla_maps_are_encoded_correctly": true }),
+                // estimated: 2025-04-28T08:05:32Z
+                json!({ "at_height": 9896400, "transfer_gas_fee_to_zero_account": true, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded": true, "scilla_deduct_funds_from_actual_sender": true }),
             ]),
             _ => None,
         }
@@ -258,6 +296,36 @@ impl Chain {
         Err(anyhow!(
             "{}",
             format!("Subdomain not available for the chain {}", self).red()
+        ))
+    }
+
+    pub fn get_genesis_amount(&self) -> Result<&'static str> {
+        let genesis_amount = self.get_str("genesis_amount");
+
+        if let Some(genesis_amount) = genesis_amount {
+            return Ok(genesis_amount);
+        }
+
+        Err(anyhow!(
+            "{}",
+            format!("Genesis amount not available for the chain {}", self).red()
+        ))
+    }
+
+    pub fn get_genesis_deposits_amount(&self) -> Result<&'static str> {
+        let genesis_deposits_amount = self.get_str("genesis_deposits_amount");
+
+        if let Some(genesis_deposits_amount) = genesis_deposits_amount {
+            return Ok(genesis_deposits_amount);
+        }
+
+        Err(anyhow!(
+            "{}",
+            format!(
+                "Genesis deposits amount not available for the chain {}",
+                self
+            )
+            .red()
         ))
     }
 
@@ -283,5 +351,15 @@ impl Chain {
         let log_level = self.get_str("log_level");
 
         Ok(log_level.unwrap_or("zilliqa=trace"))
+    }
+
+    pub fn get_enable_faucet(&self) -> Result<&'static str> {
+        let enable_faucet = self.get_str("enable_faucet");
+
+        Ok(enable_faucet.unwrap_or("true"))
+    }
+
+    pub fn get_validator_control_address(&self) -> Option<&'static str> {
+        self.get_str("validator_control_address")
     }
 }

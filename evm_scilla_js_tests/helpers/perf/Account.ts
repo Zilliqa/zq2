@@ -42,8 +42,3 @@ export async function fundAccount(zilliqa: Zilliqa, address: string, amount: BN,
     })
   );
 }
-
-export async function getNonce(zilliqa: Zilliqa, address: string): Promise<number> {
-  const balance = await zilliqa.blockchain.getBalance(address);
-  return balance.result.nonce as number;
-}

@@ -64,7 +64,7 @@ fn get_header_by_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<Optio
     };
 
     let node = node.lock().unwrap();
-    let logs_bloom = super::eth::get_block_logs_bloom(&node, block.header.hash)?;
+    let logs_bloom = super::eth::get_block_logs_bloom(&node, block)?;
 
     let miner = node.get_proposer_reward_address(block.header)?;
 

@@ -1,13 +1,15 @@
 //! An administrative API
 
 use std::{
+    collections::BTreeMap,
     ops::RangeInclusive,
     sync::{Arc, Mutex},
 };
 
-use alloy::eips::BlockId;
+use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
 use jsonrpsee::{RpcModule, types::Params};
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 
 use super::types::{eth::QuorumCertificate, hex};
@@ -24,6 +26,9 @@ pub fn rpc_module(
             ("admin_consensusInfo", consensus_info),
             ("admin_generateCheckpoint", checkpoint),
             ("admin_blockRange", admin_block_range),
+            ("admin_forceView", force_view),
+            ("admin_getPeers", get_peers),
+            ("admin_votesReceived", votes_received),
         ]
     )
 }
@@ -84,4 +89,40 @@ fn checkpoint(params: Params, node: &Arc<Mutex<Node>>) -> Result<CheckpointRespo
         hash,
         block: block.number().to_hex(),
     })
+}
+
+fn force_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+    let mut params = params.sequence();
+    let view: U64 = params.next()?;
+    let timeout_at: String = params.next()?;
+    let mut node = node.lock().unwrap();
+    node.consensus.force_view(view.to::<u64>(), timeout_at)?;
+    Ok(true)
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PeerInfo {
+    pub swarm_peers: Vec<PeerId>,
+    pub sync_peers: Vec<PeerId>,
+}
+
+fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<PeerInfo> {
+    let node = node.lock().unwrap();
+    let (swarm_peers, sync_peers) = node.get_peer_ids()?;
+    Ok(PeerInfo {
+        swarm_peers,
+        sync_peers,
+    })
+}
+
+/// Returns information about NewView votes
+fn votes_received(
+    _params: Params,
+    node: &Arc<Mutex<Node>>,
+) -> Result<BTreeMap<u64, crate::consensus::NewViewVote>> {
+    let node = node.lock().unwrap();
+
+    let new_views = node.consensus.get_new_views();
+
+    Ok(new_views)
 }

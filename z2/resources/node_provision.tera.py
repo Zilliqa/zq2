@@ -15,15 +15,18 @@ templatefile() vars:
 - checkpoint_url, the ZQ2 checkpoint URL used for recover the validator nodes
 - persistence_url, the ZQ2 persistence URL used for recover the network
 - docker_image, the ZQ2 docker image (incl. version)
-- secret_key, the ZQ2 node secret key
 - role, the node role: validator or apps
 - otterscan_image, the Otterscan docker image (incl. version)
+- enable_faucet, a flag to enable the faucet Spout app
 - spout_image, the Eth Spout docker image (incl. version)
 - stats_dashboard_image, the Stats dashboard docker image (incl. version)
 - stats_agent_image, the Stats agent docker image (incl. version)
 - subdomain, the ZQ2 network domain name
 - zq2_metrics_image, the ZQ2 metrics docker image (incl. version)
 - log_level, the ZQ2 network service log level
+- project_id, id of the GCP project
+- chain_name, name of the ZQ2 chain
+- node_name, name of the ZQ2 node
 """
 
 def query_metadata_key(key: str) -> str:
@@ -43,11 +46,10 @@ def query_metadata_key(key: str) -> str:
 
 ZQ2_IMAGE="{{ docker_image }}"
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
+SPOUT_ENABLED="{{ enable_faucet }}" == "true"
 SPOUT_IMAGE="{{ spout_image }}"
 STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
 STATS_AGENT_IMAGE="{{ stats_agent_image }}"
-SECRET_KEY="{{ secret_key }}"
-GENESIS_KEY="{{ genesis_key }}"
 PERSISTENCE_URL="{{ persistence_url }}"
 CHECKPOINT_URL="{{ checkpoint_url }}"
 SUBDOMAIN=query_metadata_key("subdomain")
@@ -234,12 +236,13 @@ ZQ2_IMAGE="{{ docker_image }}"
 start() {
     docker rm zilliqa-""" + VERSIONS.get('zilliqa') + """ &> /dev/null || echo 0
     docker container prune -f
+    PRIVATE_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-pk")
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 --memory=6g \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
-    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ ${1} --log-json
+    """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ ${PRIVATE_KEY} --log-json
 }
 
 stop() {
@@ -247,7 +250,7 @@ stop() {
 }
 
 case ${1} in
-    start|stop) ${1} ${2};;
+    start|stop) ${1} ;;
 esac
 
 exit 0
@@ -259,7 +262,7 @@ Description=Zilliqa Node
 
 [Service]
 Type=forking
-ExecStart=/usr/local/bin/zq2.sh start """ + SECRET_KEY + """
+ExecStart=/usr/local/bin/zq2.sh start
 ExecStop=/usr/local/bin/zq2.sh stop
 RemainAfterExit=yes
 Restart=on-failure
@@ -319,11 +322,12 @@ SPOUT_IMAGE="{{ spout_image }}"
 
 start() {
     docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
+    GENESIS_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis-key")
     docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         -e RPC_URL=https://api.""" + SUBDOMAIN + """ \
         -e NATIVE_TOKEN_SYMBOL="ZIL" \
-        -e PRIVATE_KEY=""" + GENESIS_KEY + """ \
+        -e PRIVATE_KEY="${GENESIS_KEY}" \
         -e ETH_AMOUNT=100 \
         -e EXPLORER_URL="https://explorer.""" + SUBDOMAIN + """" \
         -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
@@ -366,9 +370,10 @@ STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
 
 start() {
     docker rm stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ &> /dev/null || echo 0
+    STATS_DASHBOARD_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-key")
     docker run -td -p 3000:3000 --name stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
-        -e WS_SECRET="{{ stats_dashboard_key }}" \
+        -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
         --restart=unless-stopped --pull=always \
         ${STATS_DASHBOARD_IMAGE}
 }
@@ -407,6 +412,7 @@ STATS_AGENT_IMAGE="{{ stats_agent_image }}"
 
 start() {
     docker rm stats-agent-""" + VERSIONS.get('stats_agent') + """ &> /dev/null || echo 0
+    STATS_DASHBOARD_KEY=$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-key")
     docker run -td --name stats-agent-""" + VERSIONS.get('stats_agent') + """ \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
         --net=host \
@@ -416,7 +422,7 @@ start() {
         -e INSTANCE_NAME=""" + os.uname().nodename + """ \
         -e CONTACT_DETAILS="devops@zilliqa.com" \
         -e WS_SERVER="ws://stats.""" + SUBDOMAIN + """" \
-        -e WS_SECRET="{{ stats_dashboard_key }}" \
+        -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
         -e VERBOSITY="2" \
         --restart=unless-stopped --pull=always \
         ${STATS_AGENT_IMAGE}
@@ -502,7 +508,12 @@ start() {
     docker rm node-exporter-""" + VERSIONS.get('node_exporter') + """ &> /dev/null || echo 0
     docker run -td -p 9100:9100 --name node-exporter-""" + VERSIONS.get('node_exporter') + """ \
         --net=host --restart=unless-stopped --pull=always \
-        ${NODE_EXPORTER_IMAGE} &> /dev/null &
+        ${NODE_EXPORTER_IMAGE} \
+        --collector.disable-defaults \
+        --collector.cpu \
+        --collector.meminfo \
+        --collector.filesystem \
+        &> /dev/null &
 }
 
 stop() {
@@ -596,6 +607,7 @@ logging:
       include_paths:
         - /var/lib/docker/containers/*/*.log
         - /zilliqa.log
+      record_log_file_path: true
   processors:
     parse_log:
         type: parse_json
@@ -632,6 +644,10 @@ metrics:
             scrape_interval: 30s
             static_configs:
               - targets: ['localhost:9256']
+            metric_relabel_configs:
+              - source_labels: [__name__]
+                regex: 'namedprocess_namegroup_cpu_seconds_total|namedprocess_namegroup_memory_bytes'
+                action: keep
   service:
     log_level: info
     pipelines:
@@ -855,9 +871,12 @@ def go(role):
             log("Configuring the blockchain app node")
             stop_apps()
             install_otterscan()
-            install_spout()
             install_stats_dashboard()
             start_apps()
+            if SPOUT_ENABLED:
+                stop_spout()
+                install_spout()                
+                start_spout()
         case _:
             log(f"Invalide role {role}")
             log("Provisioning aborted")
@@ -1045,15 +1064,23 @@ def install_exporters():
     install_process_exporter()
 
 def start_apps():
-    for app in [ "otterscan", "spout", "stats_dashboard" ]:
+    for app in [ "otterscan", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
             run_or_die(["sudo", "systemctl", "start", f"{app}"])
     pass
 
 def stop_apps():
-    for app in [ "otterscan", "spout", "stats_dashboard" ]:
+    for app in [ "otterscan", "stats_dashboard" ]:
         if os.path.exists(f"/etc/systemd/system/{app}.service"):
             run_or_die(["sudo", "systemctl", "stop", f"{app}"])
+    pass
+
+def start_spout():
+    run_or_die(["sudo", "systemctl", "start", "spout"])
+
+def stop_spout():
+    if os.path.exists(f"/etc/systemd/system/spout.service"):
+        run_or_die(["sudo", "systemctl", "stop", "spout"])
     pass
 
 def start_stats_agent():

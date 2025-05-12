@@ -11,6 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
+use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
@@ -39,8 +40,8 @@ use crate::{
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
-#[derive(Debug)]
-struct NewViewVote {
+#[derive(Clone, Debug, Serialize)]
+pub struct NewViewVote {
     signatures: Vec<BlsSignature>,
     cosigned: BitArray,
     cosigned_weight: u128,
@@ -147,7 +148,7 @@ pub struct Consensus {
     /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
     buffered_votes: BTreeMap<Hash, Vec<Vote>>,
-    new_views: BTreeMap<u64, NewViewVote>,
+    pub new_views: BTreeMap<u64, NewViewVote>,
     new_view_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
@@ -169,8 +170,8 @@ pub struct Consensus {
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
-    /// Pruning interval i.e. how many blocks to keep in the database.
-    prune_interval: u64,
+    /// Used for testing and test network recovery
+    force_view: Option<(u64, DateTime)>,
 }
 
 impl Consensus {
@@ -230,17 +231,17 @@ impl Consensus {
             }
         };
 
-        let (start_view, finalized_view, high_qc) = {
+        let (start_view, high_qc) = {
             match db.get_high_qc()? {
                 Some(qc) => {
                     let high_block = db
                         .get_block_by_hash(&qc.block_hash)?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-                    let finalized_number = db
+                    let finalized_view = db
                         .get_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
                     let finalized_block = db
-                        .get_block_by_view(finalized_number)?
+                        .get_block_by_view(finalized_view)?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
@@ -254,11 +255,11 @@ impl Consensus {
                     trace!(
                         "recovery: high_block view {0}, finalized_number {1}, start_view {2}",
                         high_block.view(),
-                        finalized_number,
+                        finalized_view,
                         start_view
                     );
 
-                    if finalized_number > high_block.view() {
+                    if finalized_view > high_block.view() {
                         // We know of a finalized view higher than the view in finalized_number; start there.
                         state.set_to_root(finalized_block.header.state_root_hash.into());
                     } else {
@@ -266,39 +267,20 @@ impl Consensus {
                         state.set_to_root(high_block.header.state_root_hash.into());
                     }
 
-                    // If we have newer blocks, erase them
-                    // @todo .. more elegantly :-)
-                    loop {
-                        let head_block = db
-                            .get_highest_recorded_block()?
-                            .ok_or_else(|| anyhow!("can't find highest block in database!"))?;
-                        trace!(
-                            "recovery: highest_block_number {} view {}",
-                            head_block.number(),
-                            head_block.view()
-                        );
-
-                        if head_block.view() > high_block.view()
-                            && head_block.view() > finalized_number
-                        {
-                            trace!("recovery: stored block {0} reverted", head_block.number());
-                            db.remove_transactions_executed_in_block(&head_block.hash())?;
-                            db.remove_block(&head_block)?;
-                        } else {
-                            break;
-                        }
-                    }
-
                     info!(
                         "During recovery, starting consensus at view {}, finalised view {}",
-                        start_view, finalized_number
+                        start_view, finalized_view
                     );
-                    (start_view, finalized_number, qc)
+                    (start_view, qc)
                 }
                 None => {
                     let start_view = 1;
                     let finalized_view = 0;
-                    (start_view, finalized_view, QuorumCertificate::genesis())
+                    // We always mark view 1 as voted even though we haven't voted yet, because we can only send a
+                    // `Vote` for the genesis block. We can never send `NewView(1)`.
+                    db.set_view(start_view, true)?;
+                    db.set_finalized_view(finalized_view)?;
+                    (start_view, QuorumCertificate::genesis())
                 }
             }
         };
@@ -310,8 +292,6 @@ impl Consensus {
             message_sender.clone(),
             peers.clone(),
         )?;
-
-        let prune_interval = config.prune_interval;
 
         let mut consensus = Consensus {
             secret_key,
@@ -336,11 +316,22 @@ impl Consensus {
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
-            prune_interval,
+            force_view: None,
         };
 
-        consensus.db.set_view(start_view)?;
-        consensus.set_finalized_view(finalized_view)?;
+        // If we're at genesis, add the genesis block and return
+        if latest_block_view == 0 {
+            if let Some(genesis) = latest_block {
+                // The genesis block might already be stored and we were interrupted before we got a
+                // QC for it.
+                if consensus.get_block(&genesis.hash())?.is_none() {
+                    consensus.add_block(None, genesis.clone())?;
+                }
+            }
+            // treat genesis as finalized
+            consensus.set_finalized_view(latest_block_view)?;
+            return Ok(consensus);
+        }
 
         // If we started from a checkpoint, execute the checkpointed block now
         if let Some((block, transactions, parent)) = checkpoint_data {
@@ -355,22 +346,6 @@ impl Consensus {
             )?;
 
             consensus.sync.set_checkpoint(&block);
-            consensus.set_finalized_view(block.view())?;
-            consensus.set_view(block.view() + 1)?;
-        } else {
-            // If we're at genesis, add the genesis block and return
-            if latest_block_view == 0 {
-                if let Some(genesis) = latest_block {
-                    // The genesis block might already be stored and we were interrupted before we got a
-                    // QC for it.
-                    if consensus.get_block(&genesis.hash())?.is_none() {
-                        consensus.add_block(None, genesis.clone())?;
-                    }
-                }
-                // treat genesis as finalized
-                consensus.set_finalized_view(latest_block_view)?;
-                return Ok(consensus);
-            }
         }
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
@@ -388,34 +363,16 @@ impl Consensus {
                     view_diff,
                     min_view_since_high_qc_updated
                 );
-                consensus.db.set_view(min_view_since_high_qc_updated)?;
-                // Build NewView so that we can immediately contribute to consensus moving along if it has halted
-                consensus.build_new_view()?;
+                consensus
+                    .db
+                    .set_view(min_view_since_high_qc_updated, false)?;
             }
+        }
 
-            // Remind block_store of our peers and request any potentially missing blocks
-            let high_block = consensus
-                .db
-                .get_block_by_hash(&high_qc.block_hash)?
-                .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
-
-            let executed_block = BlockHeader {
-                number: high_block.header.number + 1,
-                ..Default::default()
-            };
-            let state_at = consensus.state.at_root(high_block.state_root_hash().into());
-
-            // Grab last seen committee's peerIds in case others also went offline
-            let committee = state_at.get_stakers(executed_block)?;
-            let recent_peer_ids = committee
-                .iter()
-                .filter(|&&peer_public_key| peer_public_key != consensus.public_key())
-                .filter_map(|&peer_public_key| {
-                    state_at.get_peer_id(peer_public_key).unwrap_or(None)
-                })
-                .collect_vec();
-
-            peers.add_peers(recent_peer_ids);
+        // If we haven't already sent a `Vote` in our current view, we can build a `NewView` in case the network is
+        // stuck.
+        if !consensus.db.get_voted_in_view()? {
+            consensus.build_new_view()?;
         }
 
         Ok(consensus)
@@ -456,6 +413,10 @@ impl Consensus {
             .get_canonical_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
+    }
+
+    pub fn get_new_views(&self) -> BTreeMap<u64, NewViewVote> {
+        self.new_views.clone()
     }
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
@@ -512,15 +473,16 @@ impl Consensus {
             // Check if enough time elapsed to propose block
             if milliseconds_remaining_of_block_time == 0 {
                 match self.propose_new_block() {
-                    Ok(Some((block, transactions))) => {
+                    Ok(Some(network_message)) => {
                         self.create_next_block_on_timeout = false;
-                        return Ok(Some((
-                            None,
-                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                        )));
+                        return Ok(Some(network_message));
+                    }
+                    Ok(None) => {
+                        error!("Failed to finalise block proposal.");
+                        self.create_next_block_on_timeout = false;
+                        self.early_proposal = None;
                     }
                     Err(e) => error!("Failed to finalise proposal: {e}"),
-                    _ => {}
                 };
             } else {
                 self.reset_timeout
@@ -540,8 +502,9 @@ impl Consensus {
             // Resend NewView message for this view if timeout period is a multiple of consensus_timeout
             if (milliseconds_since_last_view_change
                 > self.config.consensus.consensus_timeout.as_millis() as u64)
+                && !self.config.consensus.new_view_broadcast_interval.is_zero()
                 && (Duration::from_millis(milliseconds_since_last_view_change).as_secs()
-                    % self.config.consensus.consensus_timeout.as_secs())
+                    % self.config.consensus.new_view_broadcast_interval.as_secs())
                     == 0
             {
                 if let Some((_, ExternalMessage::NewView(new_view))) =
@@ -597,13 +560,14 @@ impl Consensus {
             view, next_view, next_exponential_backoff_timeout
         );
 
-        self.set_view(next_view)?;
+        self.set_view(next_view, false)?;
         let new_view = self.build_new_view()?;
         Ok(Some(new_view))
     }
 
     /// All values returned in milliseconds
     pub fn get_consensus_timeout_params(&self) -> Result<(u64, u64, u64)> {
+        let view = self.get_view()?;
         let milliseconds_since_last_view_change = SystemTime::now()
             .duration_since(self.view_updated_at)
             .unwrap_or_default();
@@ -619,10 +583,23 @@ impl Consensus {
                 .saturating_sub(TIME_TO_ALLOW_PROPOSAL_BROADCAST);
         }
 
+        let mut exponential_backoff_timeout = self.exponential_backoff_timeout(view);
+
+        // Override exponential_backoff_timeout in forced set view scenario
+        match self.force_view {
+            Some((forced_view, timeout_instant)) if view == forced_view => {
+                exponential_backoff_timeout = SystemTime::from(timeout_instant)
+                    .duration_since(SystemTime::now())?
+                    .saturating_sub(milliseconds_since_last_view_change)
+                    .as_millis() as u64;
+            }
+            _ => {}
+        }
+
         Ok((
             milliseconds_since_last_view_change.as_millis() as u64,
             milliseconds_remaining_of_block_time.as_millis() as u64,
-            self.exponential_backoff_timeout(self.get_view()?),
+            exponential_backoff_timeout,
         ))
     }
 
@@ -647,8 +624,6 @@ impl Consensus {
             "handling block proposal {}",
             block.hash()
         );
-
-        // FIXME: Cleanup
 
         if self.db.contains_block(&block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
@@ -741,7 +716,8 @@ impl Consensus {
 
             if view != proposal_view + 1 {
                 view = proposal_view + 1;
-                self.set_view(view)?;
+                // We will send a vote in this view.
+                self.set_view(view, true)?;
                 debug!("*** setting view to proposal view... view is now {}", view);
             }
 
@@ -750,15 +726,12 @@ impl Consensus {
                 let count = buffered_votes.len();
                 for (i, vote) in buffered_votes.into_iter().enumerate() {
                     trace!("applying buffered vote {} of {count}", i + 1);
-                    if let Some((block, transactions)) = self.vote(vote)? {
+                    if let Some(network_message) = self.vote(vote)? {
                         // If we reached the supermajority while processing this vote, send the next block proposal.
                         // Further votes are ignored (including our own).
                         // TODO(#720): We should prioritise our own vote.
                         trace!("supermajority reached, sending next proposal");
-                        return Ok(Some((
-                            None,
-                            ExternalMessage::Proposal(Proposal::from_parts(block, transactions)),
-                        )));
+                        return Ok(Some(network_message));
                     }
                     // A bit hacky: processing of our buffered votes may have resulted in an early_proposal be created and awaiting empty block timeout for broadcast. In this case we must return now
                     if self.create_next_block_on_timeout
@@ -1002,7 +975,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn vote(&mut self, vote: Vote) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    pub fn vote(&mut self, vote: Vote) -> Result<Option<NetworkMessage>> {
         let block_hash = vote.block_hash;
         let block_view = vote.view;
         let current_view = self.get_view()?;
@@ -1115,7 +1088,7 @@ impl Consensus {
             );
             // if we are already in the round in which the vote counts and have reached supermajority
             if supermajority_reached {
-                // We propose new block immediately if there's something in mempool or it's the first view
+                // We propose new block immediately if it is the first view
                 // Otherwise the block will be proposed on timeout
                 if current_view == 1 {
                     return self.propose_new_block();
@@ -1123,7 +1096,12 @@ impl Consensus {
 
                 self.early_proposal_assemble_at(None)?;
 
-                return self.ready_for_block_proposal();
+                // It is possible that we have collected votes for a forked block. Do not propose in that case.
+                if let Some(early_proposal) = &self.early_proposal {
+                    if early_proposal.0.parent_hash() == block_hash {
+                        return self.ready_for_block_proposal();
+                    }
+                }
             }
         } else {
             self.votes.insert(
@@ -1482,7 +1460,7 @@ impl Consensus {
 
     /// Called when consensus will accept our early_block.
     /// Either propose now or set timeout to allow for txs to come in.
-    fn ready_for_block_proposal(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn ready_for_block_proposal(&mut self) -> Result<Option<NetworkMessage>> {
         // Check if there's enough time to wait on a timeout and then propagate an empty block in the network before other participants trigger NewView
         let (milliseconds_since_last_view_change, milliseconds_remaining_of_block_time, _) =
             self.get_consensus_timeout_params()?;
@@ -1524,16 +1502,8 @@ impl Consensus {
             .get_block(&early_qc.block_hash)?
             .context("missing parent block")?;
 
-        // Ensure sane state
-        let previous_state_root_hash = state.root_hash()?;
-        if previous_state_root_hash != block.state_root_hash() {
-            warn!(
-                "state root hash mismatch, expected: {:?}, actual: {:?}",
-                block.state_root_hash(),
-                previous_state_root_hash
-            );
-            state.set_to_root(block.state_root_hash().into());
-        }
+        // Set state to that of parent
+        state.set_to_root(block.state_root_hash().into());
 
         // Internal states
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
@@ -1627,7 +1597,7 @@ impl Consensus {
 
     /// Produces the Proposal block.
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
-    fn propose_new_block(&mut self) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
+    fn propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
         // We expect early_proposal to exist already but try create incase it doesn't
         self.early_proposal_assemble_at(None)?;
         let (pending_block, applied_txs, _, _, cumulative_gas_fee) =
@@ -1660,7 +1630,10 @@ impl Consensus {
 
         info!(proposal_hash = ?final_block.hash(), ?final_block.header.view, ?final_block.header.number, txns = final_block.transactions.len(), "######### proposing block");
 
-        Ok(Some((final_block, broadcasted_transactions)))
+        Ok(Some((
+            None,
+            ExternalMessage::Proposal(Proposal::from_parts(final_block, broadcasted_transactions)),
+        )))
     }
 
     /// Insert transaction and add to early_proposal if possible.
@@ -1738,11 +1711,8 @@ impl Consensus {
         Ok(committee)
     }
 
-    pub fn new_view(
-        &mut self,
-        new_view: NewView,
-    ) -> Result<Option<(Block, Vec<VerifiedTransaction>)>> {
-        trace!("Received new view for height: {:?}", new_view.view);
+    pub fn new_view(&mut self, new_view: NewView) -> Result<Option<NetworkMessage>> {
+        trace!("Received new view for view: {:?}", new_view.view);
 
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
@@ -1766,14 +1736,6 @@ impl Consensus {
         // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
 
-        // The leader for this view should be chosen according to the parent of the highest QC
-        // What happens when there are multiple QCs with different parents?
-        // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            trace!(new_view.view, "skipping new view, not the leader");
-            return Ok(None);
-        }
-
         let mut current_view = self.get_view()?;
         // if the vote is too old and does not count anymore
         if new_view.view < current_view {
@@ -1783,6 +1745,14 @@ impl Consensus {
                 current_view,
                 new_view.view
             );
+            return Ok(None);
+        }
+
+        // The leader for this view should be chosen according to the parent of the highest QC
+        // What happens when there are multiple QCs with different parents?
+        // if we are not the leader of the round in which the vote counts
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
+            trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
 
@@ -1852,7 +1822,7 @@ impl Consensus {
                         new_view.view
                     );
                     current_view = new_view.view;
-                    self.set_view(current_view)?;
+                    self.set_view(current_view, false)?;
                 }
 
                 // if we are already in the round in which the vote counts and have reached supermajority we can propose a block
@@ -2006,7 +1976,7 @@ impl Consensus {
                 self.db.set_high_qc(new_high_qc)?;
                 self.high_qc = new_high_qc;
                 if new_high_qc_view >= view {
-                    self.set_view(new_high_qc_view + 1)?;
+                    self.set_view(new_high_qc_view + 1, false)?;
                 }
             }
         }
@@ -2179,7 +2149,7 @@ impl Consensus {
         }
 
         if self.block_is_first_in_epoch(block.number())
-            && !block.is_genesis(&self.config.consensus)
+            && !block.is_genesis()
             && self.config.do_checkpoints
             && self.epoch_is_checkpoint(self.epoch_number(block.number()))
         {
@@ -2483,11 +2453,6 @@ impl Consensus {
         Ok(block.header.qc)
     }
 
-    pub fn get_genesis_block(&self) -> Result<Option<Block>> {
-        self.db
-            .get_canonical_block_by_number(self.config.consensus.genesis_block_at_height)
-    }
-
     pub fn get_block(&self, key: &Hash) -> Result<Option<Block>> {
         self.db.get_block_by_hash(key)
     }
@@ -2511,8 +2476,8 @@ impl Consensus {
         }))
     }
 
-    fn set_view(&mut self, view: u64) -> Result<()> {
-        if self.db.set_view(view)? {
+    fn set_view(&mut self, view: u64, voted: bool) -> Result<()> {
+        if self.db.set_view(view, voted)? {
             self.view_updated_at = SystemTime::now();
         } else {
             warn!(
@@ -2714,8 +2679,13 @@ impl Consensus {
             number: block.header.number + 1,
             ..Default::default()
         };
-        let public_key = state_at.leader(view, executed_block).unwrap();
-        let peer_id = state_at.get_peer_id(public_key).unwrap().unwrap();
+        let Ok(public_key) = state_at.leader(view, executed_block) else {
+            return None;
+        };
+
+        let Ok(Some(peer_id)) = state_at.get_peer_id(public_key) else {
+            return None;
+        };
 
         Some(Validator {
             public_key,
@@ -2750,7 +2720,7 @@ impl Consensus {
         let mut proposed_block = block.clone();
         let mut proposed_block_height = block.number();
         trace!(
-            "Dealing with fork: from block {} (height {}), back to block {} (height {})",
+            "Dealing with fork: between head block {} (height {}), and proposed block {} (height {})",
             head.hash(),
             head_height,
             proposed_block.hash(),
@@ -2776,6 +2746,12 @@ impl Consensus {
             head = self.get_block(&head.parent_hash())?.unwrap();
             proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
         }
+        trace!(
+            "common ancestor found: {}, view: {}, height: {}",
+            head.hash(),
+            head.view(),
+            head.number()
+        );
 
         // Now, we want to revert the blocks until the head block is the common ancestor
         while self.head_block().hash() != head.hash() {
@@ -2811,9 +2787,6 @@ impl Consensus {
                 self.transaction_pool
                     .insert_transaction(orig_tx, account_nonce);
             }
-            // then purge them all from the db, including receipts and indexes
-            self.db
-                .remove_transactions_executed_in_block(&head_block.hash())?;
 
             // this block is no longer in the main chain
             self.db.mark_block_as_non_canonical(head_block.hash())?;
@@ -2822,27 +2795,35 @@ impl Consensus {
         // Now, we execute forward from the common ancestor to the new block parent which can
         // be required in rare cases.
         // We have the chain of blocks from the ancestor upwards to the proposed block via walking back.
+        // We also keep track of the hash of the block of the previous iteration of this loop, to detect infinite loops
+        // and give up.
+        let mut last_block = block.hash();
         while self.head_block().hash() != block.parent_hash() {
             trace!("Advancing the head block to prepare for proposed block fork.");
             trace!("Head block: {:?}", self.head_block());
             trace!("desired block hash: {}", block.parent_hash());
 
             let desired_block_height = self.head_block().number() + 1;
-            // Pointer to parent of head block
+            // Pointer to parent of proposed block
             let mut block_pointer = self
                 .get_block(&block.parent_hash())?
                 .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
 
-            // If the parent of the proposed
             if block_pointer.header.number < desired_block_height {
                 panic!("block height mismatch when advancing head block pointer");
             }
 
+            // Update pointer to be the next block in the proposed block's chain which the node's chain has not yet executed
             while block_pointer.header.number != desired_block_height {
                 block_pointer = self
                     .get_block(&block_pointer.parent_hash())?
                     .ok_or_else(|| anyhow!("missing block when advancing head block pointer"))?;
             }
+
+            if block_pointer.hash() == last_block {
+                return Err(anyhow!("entered loop while dealing with fork"));
+            }
+            last_block = block_pointer.hash();
 
             // We now have the block pointer at the desired height, we can apply it.
             trace!("Fork execution of block: {block_pointer:?}");
@@ -3017,7 +2998,7 @@ impl Consensus {
 
         if cumulative_gas_used != block.gas_used() {
             warn!(
-                "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different that the one provided in the block: {}",
+                "Cumulative gas used by executing all transactions: {cumulative_gas_used} is different than the one provided in the block: {}",
                 block.gas_used()
             );
             return Ok(());
@@ -3096,33 +3077,7 @@ impl Consensus {
             ));
         }
 
-        self.prune_history(block.header.number)?;
         self.broadcast_commit_receipts(from, block, block_receipts)
-    }
-
-    /// Prune the history
-    ///
-    /// Performs pruning of 1000-blocks at a time. If the prune_interval is unset (u64::MAX by default), pruning is disabled.
-    fn prune_history(&mut self, number: u64) -> Result<()> {
-        if self.prune_interval == u64::MAX {
-            return Ok(()); // pruning is disabled
-        }
-        let range = self.db.available_range()?;
-        let prune_at = number
-            .saturating_sub(self.prune_interval.saturating_sub(1)) // off-by-one
-            .min(range.start().saturating_add(1000)); // gradually prune 1000-blocks at a time
-        if range.contains(&prune_at) {
-            for n in *range.start()..prune_at {
-                let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
-                if let Some(block) = block {
-                    tracing::trace!(number = %block.number(), hash=%block.hash(), "Prune block");
-                    self.db
-                        .remove_transactions_executed_in_block(&block.hash())?;
-                    self.db.remove_block(&block)?;
-                }
-            }
-        }
-        Ok(())
     }
 
     fn broadcast_commit_receipts(
@@ -3199,21 +3154,35 @@ impl Consensus {
         Ok(count)
     }
 
-    pub fn tick(&mut self) -> Result<()> {
-        trace!("consensus::tick()");
-        trace!("request_missing_blocks from timer");
-
-        // TODO: Drive passive-sync from Timeouts
-        if !self.sync.am_syncing()? {
-            self.sync.sync_to_genesis()?;
-        } else {
-            trace!("not syncing ...");
-        }
-        Ok(())
-    }
-
     pub fn get_sync_data(&self) -> Result<Option<SyncingStruct>> {
         self.sync.get_sync_data()
+    }
+
+    /// This function is intended for use only by admin_forceView API. It is dangerous and should not be touched outside of testing or test network recovery.
+    ///
+    /// Force set our view and override exponential timeout such that view timeouts at given timestamp
+    /// View value must be larger than current
+    pub fn force_view(&mut self, view: u64, timeout_at: String) -> Result<()> {
+        if self.get_view()? > view {
+            return Err(anyhow!(
+                "view cannot be forced into lower view than current"
+            ));
+        }
+        match timeout_at.parse::<DateTime>() {
+            Ok(datetime) => self.force_view = Some((view, datetime)),
+            Err(_) => {
+                return Err(anyhow!(
+                    "timeout date must be in format 2001-01-02T12:13:14Z"
+                ));
+            }
+        };
+        self.set_view(view, false)?;
+
+        // Build a new view - We assume the network is stuck.
+        if !self.db.get_voted_in_view()? {
+            self.build_new_view()?;
+        }
+        Ok(())
     }
 }
 

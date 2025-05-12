@@ -711,9 +711,9 @@ async fn get_storage_at(mut network: Network) {
 /// Helper method for send transaction tests.
 async fn send_transaction(
     network: &mut Network,
+    wallet: &Wallet,
     mut tx: TypedTransaction,
 ) -> (Transaction, TransactionReceipt) {
-    let wallet = network.genesis_wallet().await;
     wallet.fill_transaction(&mut tx, None).await.unwrap();
     let sig = wallet.signer().sign_transaction_sync(&tx).unwrap();
     let expected_hash = tx.hash(&sig);
@@ -744,7 +744,8 @@ async fn send_transaction(
 async fn send_legacy_transaction(mut network: Network) {
     let to = H160::random_using(network.rng.lock().unwrap().deref_mut());
     let tx = TransactionRequest::pay(to, 123).into();
-    let (tx, receipt) = send_transaction(&mut network, tx).await;
+    let wallet = network.genesis_wallet().await;
+    let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 0);
     assert_eq!(receipt.to.unwrap(), to);
@@ -766,7 +767,8 @@ async fn send_eip2930_transaction(mut network: Network) {
     };
     let tx = Eip2930TransactionRequest::new(TransactionRequest::pay(to, 123), access_list.clone())
         .into();
-    let (tx, receipt) = send_transaction(&mut network, tx).await;
+    let wallet = network.genesis_wallet().await;
+    let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 1);
     assert_eq!(tx.access_list.unwrap(), access_list);
@@ -795,7 +797,8 @@ async fn send_eip1559_transaction(mut network: Network) {
         .max_fee_per_gas(gas_price)
         .max_priority_fee_per_gas(gas_price)
         .into();
-    let (tx, receipt) = send_transaction(&mut network, tx).await;
+    let wallet = network.genesis_wallet().await;
+    let (tx, receipt) = send_transaction(&mut network, &wallet, tx).await;
 
     assert_eq!(tx.transaction_type.unwrap().as_u64(), 2);
     assert_eq!(tx.access_list.unwrap(), access_list);
@@ -920,7 +923,7 @@ async fn revert_transaction(mut network: Network) {
     let success_call = TransactionRequest::new()
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(true)]).unwrap());
-    let (_, receipt) = send_transaction(&mut network, success_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, success_call.into()).await;
     assert_eq!(receipt.status.unwrap().as_u32(), 1);
 
     // Ensure value was incremented
@@ -939,7 +942,7 @@ async fn revert_transaction(mut network: Network) {
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
         .gas(1_000_000); // Pass a gas limit, otherwise estimate_gas is called and fails due to the revert
-    let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, revert_call.into()).await;
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
 
     // Ensure value was NOT incremented a second time
@@ -976,7 +979,7 @@ async fn gas_charged_on_revert(mut network: Network) {
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(false)]).unwrap())
         .gas(large_gas_limit);
-    let (_, receipt) = send_transaction(&mut network, revert_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, revert_call.into()).await;
 
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
     assert!(receipt.gas_used.is_some());
@@ -999,7 +1002,7 @@ async fn gas_charged_on_revert(mut network: Network) {
         .to(contract_address)
         .data(setter.encode_input(&[Token::Bool(true)]).unwrap())
         .gas(small_gas_limit);
-    let (_, receipt) = send_transaction(&mut network, fail_out_of_gas_call.into()).await;
+    let (_, receipt) = send_transaction(&mut network, &wallet, fail_out_of_gas_call.into()).await;
 
     assert_eq!(receipt.status.unwrap().as_u32(), 0);
     let balance_after_call = wallet.get_balance(wallet.address(), None).await.unwrap();
@@ -1176,6 +1179,7 @@ async fn priority_fees_tx(mut network: Network) {
 #[zilliqa_macros::test]
 async fn pending_transaction_is_returned_by_get_transaction_by_hash(mut network: Network) {
     let wallet = network.genesis_wallet().await;
+
     let provider = wallet.provider();
 
     // Send a transaction.
@@ -1231,35 +1235,56 @@ async fn get_transaction_by_index(mut network: Network) {
     let r1 = network.run_until_receipt(&wallet, h1, 50).await;
     let r2 = network.run_until_receipt(&wallet, h2, 50).await;
 
-    assert_eq!(r1.block_hash, r2.block_hash);
+    // NOTE: they are not always in the same block
+    if r1.block_hash == r2.block_hash {
+        let block_hash = r1.block_hash.unwrap();
+        let block_number = r1.block_number.unwrap();
 
-    let block_hash = r1.block_hash.unwrap();
-    let block_number = r1.block_number.unwrap();
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_hash, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h2);
 
-    let txn = wallet
-        .get_transaction_by_block_and_index(block_hash, 0u64.into())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(txn.hash, h2);
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_number, 1u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h1);
+    } else {
+        let block_hash = r2.block_hash.unwrap();
+        let block_number = r1.block_number.unwrap();
 
-    let txn = wallet
-        .get_transaction_by_block_and_index(block_number, 1u64.into())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(txn.hash, h1);
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_hash, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h2);
+
+        let txn = wallet
+            .get_transaction_by_block_and_index(block_number, 0u64.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(txn.hash, h1);
+    }
 }
 
 #[zilliqa_macros::test]
 async fn block_subscription(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    let mut block_stream = wallet.subscribe_blocks().await.unwrap();
+    let mut block_stream: ethers::providers::SubscriptionStream<
+        '_,
+        LocalRpcClient,
+        ethers::types::Block<H256>,
+    > = wallet.subscribe_blocks().await.unwrap();
+    network.run_until_block(&wallet, 3.into(), 100).await;
 
-    network.run_until_block(&wallet, 3.into(), 50).await;
-
-    // Assert the stream contains 3 blocks.
+    // Assert the stream contains next 3 blocks.
     assert_eq!(
         block_stream.next().await.unwrap().number.unwrap().as_u64(),
         1
@@ -1359,8 +1384,7 @@ async fn get_accounts_with_extra_args(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn deploy_deterministic_deployment_proxy(mut network: Network) {
-    let wallet = network.random_wallet().await;
-    let provider = wallet.inner();
+    let wallet = network.genesis_wallet().await;
 
     let signer: H160 = "0x3fab184622dc19b6109349b94811493bf2a45362"
         .parse()
@@ -1371,7 +1395,7 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
 
     // Send the signer enough money to cover the deployment.
     let tx = TransactionRequest::pay(signer, gas_price * gas);
-    send_transaction(&mut network, tx.into()).await;
+    send_transaction(&mut network, &wallet, tx.into()).await;
 
     // Transaction from https://github.com/Arachnid/deterministic-deployment-proxy.
     let tx = TransactionRequest::new()
@@ -1387,13 +1411,9 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
         v: 27,
     };
     let raw_tx = tx.rlp_signed(&signature);
-    let hash = provider
-        .send_raw_transaction(raw_tx)
-        .await
-        .unwrap()
-        .tx_hash();
+    let hash = wallet.send_raw_transaction(raw_tx).await.unwrap().tx_hash();
 
-    let receipt = network.run_until_receipt(&wallet, hash, 100).await;
+    let receipt = network.run_until_receipt(&wallet, hash, 150).await;
 
     assert_eq!(receipt.from, signer);
     assert_eq!(
@@ -1407,6 +1427,8 @@ async fn deploy_deterministic_deployment_proxy(mut network: Network) {
 #[zilliqa_macros::test]
 async fn test_send_transaction_errors(mut network: Network) {
     let wallet = network.random_wallet().await;
+    network.run_until_block(&wallet, 3.into(), 70).await;
+
     async fn send_transaction_get_error(wallet: &Wallet, tx: TransactionRequest) -> (i64, String) {
         let result = wallet.send_transaction(tx, None).await;
         assert!(result.is_err());
@@ -1426,7 +1448,8 @@ async fn test_send_transaction_errors(mut network: Network) {
 
     // Give the signer some funds.
     let tx = TransactionRequest::pay(wallet.address(), 2 * gas_price * gas);
-    send_transaction(&mut network, tx.into()).await;
+    let genesis_wallet = network.genesis_wallet().await;
+    send_transaction(&mut network, &genesis_wallet, tx.into()).await;
 
     // Deliberately set too low a gas fee
     {
@@ -1475,13 +1498,8 @@ pub enum SyncingResult {
 async fn test_eth_syncing(mut network: Network) {
     let client = network.rpc_client(0).await.unwrap();
     let wallet = network.random_wallet().await;
-    network
-        .run_until_async(
-            || async { wallet.get_block_number().await.unwrap().as_u64() > 4 },
-            100,
-        )
-        .await
-        .unwrap();
+    network.run_until_block(&wallet, 3.into(), 70).await;
+
     let result = client
         .request_optional::<(), SyncingResult>("eth_syncing", None)
         .await
@@ -1523,4 +1541,57 @@ async fn get_block_receipts(mut network: Network) {
         .unwrap();
 
     assert!(receipts.contains(&individual1));
+}
+
+#[zilliqa_macros::test]
+async fn get_block_by_number(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Make sure there's at least one block to retrieve
+    network.run_until_block(&wallet, 2u64.into(), 50).await;
+
+    // Get the latest block number
+    let latest_number = provider.get_block_number().await.unwrap();
+
+    // Query eth_getBlockByNumber with 'latest', full transactions requested
+    let block = provider
+        .request::<_, serde_json::Value>("eth_getBlockByNumber", (latest_number, true))
+        .await
+        .unwrap();
+
+    // Some block fields should always be present
+    assert_eq!(
+        block["number"],
+        serde_json::json!(format!("0x{:x}", latest_number.as_u64()))
+    );
+    assert!(block["hash"].as_str().unwrap().starts_with("0x"));
+    assert!(block["parentHash"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(block["uncles"], serde_json::json!([])); // No uncles in ZQ2
+
+    // Specific required fields
+    // difficulty: 0x0
+    assert_eq!(block["difficulty"], serde_json::json!("0x0"));
+
+    // sha3Uncles: RLP( [] ), 0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347
+    assert_eq!(
+        block["sha3Uncles"],
+        serde_json::json!("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
+    );
+
+    // miner is a proper address, not "None"
+    let miner = block["miner"].as_str().unwrap();
+    assert!(
+        miner.starts_with("0x") && miner.len() == 42,
+        "Miner field is not a 20-byte address: {miner}"
+    );
+
+    // Some other typical fields
+    assert!(block["transactions"].is_array());
+
+    // Block gasLimit/gasUsed, timestamp, size are all nonzero/zero
+    assert!(block["gasLimit"].as_str().unwrap().starts_with("0x"));
+    assert!(block["gasUsed"].as_str().unwrap().starts_with("0x"));
+    assert!(block["timestamp"].as_str().unwrap().starts_with("0x"));
+    assert!(u64::from_str_radix(&block["size"].as_str().unwrap()[2..], 16).unwrap() > 0);
 }

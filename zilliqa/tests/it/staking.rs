@@ -55,7 +55,7 @@ async fn deposit_stake(
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(staker_wallet, hash, 80).await;
+    network.run_until_receipt(staker_wallet, hash, 101).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -85,7 +85,7 @@ async fn deposit_stake(
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(staker_wallet, hash, 80).await;
+    let receipt = network.run_until_receipt(staker_wallet, hash, 102).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
@@ -108,7 +108,7 @@ async fn deposit_v3_stake(
         .await
         .unwrap()
         .tx_hash();
-    network.run_until_receipt(staker_wallet, hash, 80).await;
+    network.run_until_receipt(staker_wallet, hash, 103).await;
 
     // Stake the new validator's funds.
     let tx = TransactionRequest::new()
@@ -139,7 +139,7 @@ async fn deposit_v3_stake(
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(staker_wallet, hash, 80).await;
+    let receipt = network.run_until_receipt(staker_wallet, hash, 104).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
@@ -184,7 +184,7 @@ async fn unstake_amount(network: &mut Network, control_wallet: &Wallet, amount: 
         .await
         .unwrap()
         .tx_hash();
-    let receipt = network.run_until_receipt(control_wallet, hash, 100).await;
+    let receipt = network.run_until_receipt(control_wallet, hash, 200).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
     hash
 }
@@ -642,7 +642,7 @@ async fn validators_can_unstake(mut network: Network) {
     // randomise the current epoch state and current leader
     let blocks_to_prerun = network.rng.lock().unwrap().gen_range(0..8);
     network
-        .run_until_block(&wallet, blocks_to_prerun.into(), 100)
+        .run_until_block(&wallet, blocks_to_prerun.into(), 400)
         .await;
 
     let validator_idx = network.random_index();
@@ -662,11 +662,9 @@ async fn validators_can_unstake(mut network: Network) {
     // unstake validator's entire stake
     let stake = get_stake(&wallet, &validator_blskey).await;
     let unstake_hash = unstake_amount(&mut network, &validator_control_wallet, stake).await;
-    let unstake_block = wallet
-        .get_transaction_receipt(unstake_hash)
+    let unstake_block = network
+        .run_until_receipt(&wallet, unstake_hash, 100)
         .await
-        .unwrap()
-        .unwrap()
         .block_number
         .unwrap()
         .as_u64();

@@ -181,7 +181,9 @@ impl Header {
             parent_hash: header.qc.block_hash.into(),
             mix_hash: B256::ZERO,
             nonce: [0; 8],
-            sha_3_uncles: B256::ZERO, // Uncles do not exist in ZQ2
+            sha_3_uncles: "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"
+                .parse::<B256>()
+                .unwrap(), // Uncles do not exist in ZQ2
             transactions_root: header.transactions_root_hash.into(),
             state_root: header.state_root_hash.into(),
             receipts_root: header.receipts_root_hash.into(),
@@ -202,7 +204,7 @@ impl Header {
 }
 
 /// A transaction object, returned by the Ethereum API.
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
     #[serde(serialize_with = "option_hex")]
