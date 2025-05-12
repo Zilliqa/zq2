@@ -607,6 +607,7 @@ logging:
       include_paths:
         - /var/lib/docker/containers/*/*.log
         - /zilliqa.log
+      record_log_file_path: true
   processors:
     parse_log:
         type: parse_json
