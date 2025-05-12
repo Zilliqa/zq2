@@ -124,7 +124,9 @@ impl P2pNode {
                 Ok(Behaviour {
                     request_response: request_response::cbor::Behaviour::new(
                         iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
-                        Default::default(),
+                        request_response::Config::default()
+                            // This is a temporary patch to prevent long-running Scilla executions causing nodes to Timeout - https://github.com/Zilliqa/zq2/issues/2667
+                            .with_request_timeout(Duration::from_secs(60)),
                     ),
                     gossipsub: gossipsub::Behaviour::new(
                         MessageAuthenticity::Signed(key_pair.clone()),
