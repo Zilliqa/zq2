@@ -603,11 +603,25 @@ pub async fn convert_persistence(
         zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_block.header.qc)?;
         zq2_db.set_finalized_view_with_db_tx(sqlite_tx, empty_block.view())?;
 
-        // Insert empty zq2_block_2 that has a qc which points to zq2_block_1
-        let empty_high_qc_block =
-            create_empty_block_from_parent(&empty_block, secret_key, state_root_hash);
-        zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
-        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.header.qc)?;
+        // Insert qc which points to zq2_block_1
+        {
+            let vote = Vote::new(
+                secret_key,
+                empty_block.hash(),
+                secret_key.node_public_key(),
+                empty_block.number(),
+            );
+
+            let qc = QuorumCertificate::new(
+                &[vote.signature()],
+                bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
+                empty_block.hash(),
+                empty_block.number(),
+            );
+
+            zq2_db.set_high_qc_with_db_tx(sqlite_tx, qc)?;
+        }
+
         Ok(())
     })?;
 
