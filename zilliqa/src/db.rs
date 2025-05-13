@@ -1145,7 +1145,7 @@ impl Db {
         sqlite_tx: &Connection,
         receipt: TransactionReceipt,
     ) -> Result<()> {
-        sqlite_tx.prepare_cached("INSERT INTO receipts
+        sqlite_tx.prepare_cached("INSERT OR IGNORE INTO receipts
                 (tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions)
             VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)",)?.execute(            
             named_params! {
