@@ -22,7 +22,7 @@ use crate::{
     serde_util::num_as_str,
     time::SystemTime,
     transaction::{
-        ScillaGas, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
+        EvmGas, ScillaGas, SignedTransaction, TransactionReceipt, VerifiedTransaction, ZilAmount,
     },
 };
 
@@ -33,7 +33,7 @@ pub struct TxBlock {
 }
 
 impl TxBlock {
-    pub fn new(block: &Block, txn_fees: u128) -> Self {
+    pub fn new(block: &Block, txn_fees: EvmGas) -> Self {
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlock {
@@ -82,7 +82,7 @@ pub struct TxBlockHeader {
     #[serde(with = "num_as_str")]
     pub rewards: u128,
     #[serde(with = "num_as_str")]
-    pub txn_fees: u128,
+    pub txn_fees: EvmGas,
     #[serde(serialize_with = "hex_no_prefix")]
     pub prev_block_hash: B256,
     #[serde(with = "num_as_str")]
@@ -109,7 +109,7 @@ pub struct TxBlockVerbose {
 }
 
 impl TxBlockVerbose {
-    pub fn new(block: &Block, txn_fees: u128, proposer: Address) -> Self {
+    pub fn new(block: &Block, txn_fees: EvmGas, proposer: Address) -> Self {
         let mut scalar = [0; 32];
         scalar[31] = 1;
         TxBlockVerbose {
