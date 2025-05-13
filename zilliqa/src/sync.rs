@@ -1131,6 +1131,7 @@ impl Sync {
         let segment = response
             .into_iter()
             .filter(|b| {
+                tracing::trace!(size = %b.size_estimate, number = %b.header.number, "sync::DoMetadataResponse : block-size");
                 drop |= self
                     .db
                     .contains_canonical_block(&b.header.hash)
@@ -1154,7 +1155,7 @@ impl Sync {
                 .filter(|&sb| {
                     self.segments.insert_sync_metadata(&sb.header); // record all metadata
                     block_size = block_size.saturating_add(sb.size_estimate);
-                    tracing::trace!(total=%block_size, "sync::MetadataResponse : response size");
+                    tracing::trace!(total=%block_size, "sync::DoMetadataResponse : response size");
                     if block_size > Self::RESPONSE_SIZE_THRESHOLD {
                         block_size = 0;
                         true
