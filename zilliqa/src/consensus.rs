@@ -97,7 +97,7 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-type BlockVotes = (Vec<BlsSignature>, BitArray, u128, bool);
+pub type BlockVotes = (Vec<BlsSignature>, BitArray, u128, bool);
 
 type EarlyProposal = (
     Block,
@@ -144,10 +144,10 @@ pub struct Consensus {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub sync: Sync,
-    votes: BTreeMap<Hash, BlockVotes>,
+    pub votes: BTreeMap<Hash, BlockVotes>,
     /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
-    buffered_votes: BTreeMap<Hash, Vec<Vote>>,
+    pub buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     pub new_views: BTreeMap<u64, NewViewVote>,
     new_view_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
@@ -416,10 +416,6 @@ impl Consensus {
             .get_canonical_block_by_number(highest_block_number)
             .unwrap()
             .unwrap()
-    }
-
-    pub fn get_new_views(&self) -> BTreeMap<u64, NewViewVote> {
-        self.new_views.clone()
     }
 
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {

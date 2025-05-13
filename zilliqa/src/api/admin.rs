@@ -1,7 +1,6 @@
 //! An administrative API
 
 use std::{
-    collections::BTreeMap,
     ops::RangeInclusive,
     sync::{Arc, Mutex},
 };
@@ -12,7 +11,7 @@ use jsonrpsee::{RpcModule, types::Params};
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 
-use super::types::{eth::QuorumCertificate, hex};
+use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{api::to_hex::ToHex, cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
@@ -116,13 +115,16 @@ fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<PeerInfo> {
 }
 
 /// Returns information about NewView votes
-fn votes_received(
-    _params: Params,
-    node: &Arc<Mutex<Node>>,
-) -> Result<BTreeMap<u64, crate::consensus::NewViewVote>> {
+fn votes_received(_params: Params, node: &Arc<Mutex<Node>>) -> Result<VotesReceivedReturnee> {
     let node = node.lock().unwrap();
 
-    let new_views = node.consensus.get_new_views();
-
-    Ok(new_views)
+    let new_views = node.consensus.new_views.clone();
+    let votes = node.consensus.votes.clone();
+    let buffered_votes = node.consensus.buffered_votes.clone();
+    let returnee = VotesReceivedReturnee {
+        new_views,
+        votes,
+        buffered_votes,
+    };
+    Ok(returnee)
 }
