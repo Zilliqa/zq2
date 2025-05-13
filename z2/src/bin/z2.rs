@@ -336,7 +336,6 @@ enum ConverterCommands {
 #[derive(Clone, Debug)]
 struct SecretKeys(Vec<SecretKey>);
 
-// implement parsing of *all* keys from one string into your newtype
 impl FromStr for SecretKeys {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
