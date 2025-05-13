@@ -154,7 +154,9 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
 
             name.extend(rand::Rng::sample_iter(rng, &rand::distributions::Alphanumeric).map(char::from).take(8));
 
-            std::fs::create_dir_all("/tmp/scilla-state-server").unwrap();
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new().recursive(true).mode(0o777).create("/tmp/scilla_ext_libs").unwrap();
+            std::fs::DirBuilder::new().recursive(true).mode(0o777).create("/tmp/scilla-sockets").unwrap();
 
             let scilla_stdlib_dir = "/scilla/0/_build/default/src/stdlib/";
             // Spawn a Scilla container for this group of tests.
@@ -162,15 +164,13 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                 .arg("run")
                 .arg("--name")
                 .arg(&name)
-                .arg("--volume")
-                .arg("/tmp/scilla-state-server:/tmp/scilla-state-server")
                 // Let Docker auto-assign a free port on the host. The scilla-server listens on port 3000.
                 .arg("--publish")
                 .arg("3000")
                 .arg("--init")
                 .arg("--rm")
-                .arg("-v")
-                .arg("/tmp:/scilla_ext_libs")
+                .arg("--volume")
+                .arg("/tmp:/tmp")
                 .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:5ad0f726")
                 .arg("/scilla/0/bin/scilla-server-http")
                 .spawn()

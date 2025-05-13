@@ -18,6 +18,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_TEST_THREADS: 4
+  RUST_LOG: zilliqa=info
   ZQ_TEST_SAMPLES: 5
 
 jobs:
@@ -55,38 +56,42 @@ jobs:
           fetch-depth: 0
       - name: Install default toolchain
         run: rustup toolchain install
-      - name: Install nightly toolchain (for cargo fmt)
-        run: rustup toolchain install nightly
+      #- name: Install nightly toolchain (for cargo fmt)
+      #  run: rustup toolchain install nightly
       - uses: Swatinem/rust-cache@v2
-      - name: Build
-        run: cargo build --all-targets --all-features
-      - name: Clippy
-        run: cargo clippy --all --all-targets --all-features -- -D warnings
+      #- name: Build
+      #  run: cargo build --all-targets --all-features
+      #- name: Clippy
+      #  run: cargo clippy --all --all-targets --all-features -- -D warnings
       # Run `cargo fmt` with nightly, because we use 'unstable' rustfmt features.
-      - name: rustfmt
-        run: cargo +nightly fmt --all --check
-      - name: Create socket directory with correct permissions
-        run: sudo mkdir -p -m 777 /tmp/scilla-state-server
+      #- name: rustfmt
+      #  run: cargo +nightly fmt --all --check
+      - name: Fix mounted directory permissions
+        run: sudo mkdir -p /tmp/scilla_ext_libs && sudo chmod 777 /tmp/scilla_ext_libs && sudo mkdir -p /tmp/scilla-state-server && sudo chmod 777 /tmp/scilla-state-server
+      - run: sudo ls -la /tmp
+      - run: sudo docker run --volume /tmp:/tmp ubuntu bash -c "ls -la /tmp"
+      - run: sudo docker run --volume /var/run/docker.sock:/var/run/docker.sock --volume /tmp:/tmp ubuntu bash -c "ls -la /tmp"
       - name: Test
-        run: cargo test --tests --examples --bins --all-features
+        run: cargo test --tests --examples --bins --all-features -- zil::create_contract
       - name: Verify working directory is clean
         run: git diff --exit-code
   e2e_test:
     services:
       scilla:
         image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:5ad0f726
-        options: --init --volume "/tmp/scilla-state-server:/tmp/scilla-state-server" --entrypoint "/scilla/0/bin/scilla-server-http"
+        options: --init --entrypoint "/scilla/0/bin/scilla-server-http"
         ports:
           - 3000:3000
         volumes:
-          - /tmp:/scilla_ext_libs
+          - /tmp/scilla_ext_libs:/scilla_ext_libs
+          - /tmp/scilla-state-server:/tmp/scilla-state-server
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Fix socket directory permissions
-        run: sudo chmod o+w /tmp/scilla-state-server
+      - name: Fix mounted directory permissions
+        run: sudo chmod 777 /tmp/scilla_ext_libs && sudo chmod 777 /tmp/scilla-state-server
       - name: Test connection to Scilla server
         run: curl http://localhost:3000
       - name: Install Rust

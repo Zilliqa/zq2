@@ -770,7 +770,7 @@ pub fn scilla_stdlib_dir_default() -> String {
 
 pub fn scilla_ext_libs_path_default() -> ScillaExtLibsPath {
     ScillaExtLibsPath {
-        zq2: ScillaExtLibsPathInZq2(String::from("/tmp")),
+        zq2: ScillaExtLibsPathInZq2(String::from("/tmp/scilla_ext_libs")),
         scilla: ScillaExtLibsPathInScilla(String::from("/scilla_ext_libs")),
     }
 }

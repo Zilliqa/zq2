@@ -366,6 +366,35 @@ impl Scilla {
             .json_errors(true)
             .is_library(init.is_library()?)
             .build()?;
+        
+        let addr = self.state_server_addr();
+        tracing::info!(%addr);
+        let last_slash = addr.match_indices('/').next_back().unwrap().0;
+        let (addr, _) = addr.split_at(last_slash);
+        tracing::info!(%addr);
+        for file in std::fs::read_dir(addr)? {
+            tracing::info!("socket file: {:?}", file?);
+        }
+
+        let output = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(format!("ls -la /tmp"))
+            .output()
+            .unwrap();
+        tracing::info!("tmp contents on host: {output:?}");
+
+        let output = std::process::Command::new("docker")
+            .arg("run")
+            .arg("--volume")
+            .arg("/tmp:/tmp")
+            .arg("ubuntu")
+            .arg("bash")
+            .arg("-c")
+            .arg(format!("ls -la /tmp"))
+            .output()
+            .unwrap();
+        tracing::info!("tmp contents in docker: {output:?}");
+
 
         let (response, state) = self.state_server.lock().unwrap().active_call(
             sender,
@@ -756,6 +785,10 @@ impl StateServer {
         })?;
 
         let handle = server.start(module).await?;
+
+        for file in std::fs::read_dir(socket_dir)? {
+            tracing::info!("socket file: {:?}", file?);
+        }
 
         Ok(StateServer {
             endpoint,
