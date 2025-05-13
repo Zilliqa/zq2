@@ -237,19 +237,4 @@ impl Secret {
 
         Ok(secrets)
     }
-
-    pub fn get_secrets_by_role(
-        chain_name: &str,
-        project_id: &str,
-        role_name: &str,
-    ) -> Result<Vec<Secret>> {
-        Self::get_secrets(
-            project_id,
-            format!(
-                "labels.zq2-network={} AND labels.role={}",
-                chain_name, role_name
-            )
-            .as_str(),
-        )
-    }
 }

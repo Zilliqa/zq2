@@ -1210,7 +1210,6 @@ pub async fn run_generate_private_keys(
             let project_id = &node.clone().project_id;
             let mut labels = BTreeMap::<String, String>::new();
             labels.insert("is-private-key".to_string(), "true".to_string());
-            labels.insert("encrypted".to_string(), "true".to_string());
             labels.insert("role".to_string(), role);
             labels.insert("zq2-network".to_string(), chain_name.clone());
             labels.insert("node-name".to_string(), node.clone().name);
@@ -1261,7 +1260,7 @@ pub async fn run_generate_private_keys(
 async fn generate_secret(
     multi_progress: &MultiProgress,
     name: &str,
-    labels: BTreeMap<String, String>,
+    mut labels: BTreeMap<String, String>,
     project_id: &str,
     force: bool,
     secret_value: Option<String>,
@@ -1269,6 +1268,9 @@ async fn generate_secret(
 ) -> Result<String> {
     let progress_bar = multi_progress.add(cliclack::progress_bar(if force { 4 } else { 3 }));
     let mut filters = Vec::<String>::new();
+    if encrypted {
+        labels.insert("encrypted".to_string(), "true".to_string());
+    }
     for (k, v) in labels.clone() {
         filters.push(format!("labels.{}={}", k, v));
     }
