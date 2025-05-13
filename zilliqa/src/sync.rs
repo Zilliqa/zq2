@@ -1532,11 +1532,6 @@ impl Sync {
         }))
     }
 
-    /// Sets the checkpoint, if node was started from a checkpoint.
-    pub fn set_checkpoint(&mut self, _checkpoint: &Block) {
-        tracing::debug!("sync::Checkpoint");
-    }
-
     // Add an in-flight request
     fn add_in_flight(&mut self, peer_info: PeerInfo, request_id: RequestId) {
         self.in_flight.push_back((peer_info, request_id));
