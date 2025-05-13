@@ -180,15 +180,13 @@ impl ChainInstance {
 
     pub fn genesis_private_key(&self) -> Result<String> {
         let mut filter = format!(
-            "labels.zq2-network={} AND labels.role=genesis", 
+            "labels.zq2-network={} AND labels.role=genesis",
             &self.config.name
         );
         if self.chain()?.get_enable_kms()? {
             filter.push_str(" AND labels.encrypted=true");
         }
-        let private_keys = Secret::get_secrets(
-            self.chain()?.get_project_id()?, 
-            filter.as_str())?;
+        let private_keys = Secret::get_secrets(self.chain()?.get_project_id()?, filter.as_str())?;
 
         if let Some(private_key) = private_keys.first() {
             let value = private_key.value()?;
