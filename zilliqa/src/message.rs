@@ -242,14 +242,6 @@ pub struct InjectedProposal {
     pub block: Proposal,
 }
 
-/// TODO: Remove. Unused in RFC161 algorithm
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessProposal {
-    // An encoded PeerId
-    pub from: Vec<u8>,
-    pub block: Proposal,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntershardCall {
     pub source_address: Address,
@@ -269,7 +261,7 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    ProcessProposal(ProcessProposal),
+    ProcessProposal,
     NewTransaction(SignedTransaction),
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
@@ -278,7 +270,7 @@ pub enum ExternalMessage {
     InjectedProposal(InjectedProposal),
     /// 0.6.0
     MetaDataRequest(RequestBlocksByHeight),
-    MetaDataResponse(Vec<BlockHeader>),
+    MetaDataResponse,
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),
     /// 0.7.0
@@ -320,8 +312,8 @@ impl Display for ExternalMessage {
             ExternalMessage::MultiBlockResponse(r) => {
                 write!(f, "MultiBlockResponse({})", r.len())
             }
-            ExternalMessage::MetaDataResponse(r) => {
-                write!(f, "MetaDataResponse({})", r.len())
+            ExternalMessage::MetaDataResponse => {
+                unimplemented!("deprecated")
             }
             ExternalMessage::MetaDataRequest(r) => {
                 write!(f, "MetaDataRequest({:?})", r.from_height..=r.to_height)
@@ -335,15 +327,8 @@ impl Display for ExternalMessage {
             ExternalMessage::BlockRequest(r) => {
                 write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
             }
-            ExternalMessage::ProcessProposal(r) => {
-                write!(
-                    f,
-                    "ProcessProposal({}, view={} num={})",
-                    PeerId::from_bytes(&r.from)
-                        .map_or("(undecodable)".to_string(), |x| x.to_base58()),
-                    r.block.header.view,
-                    r.block.header.number
-                )
+            ExternalMessage::ProcessProposal => {
+                unreachable!("deprecated")
             }
             ExternalMessage::BlockResponse(r) => {
                 let mut views = r.proposals.iter().map(|p| p.view());

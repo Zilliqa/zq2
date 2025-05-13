@@ -22,7 +22,6 @@ use alloy::{
     },
 };
 use anyhow::{Result, anyhow};
-use itertools::Itertools;
 use libp2p::{PeerId, request_response::OutboundFailure};
 use rand::RngCore;
 use revm::{Inspector, primitives::ExecutionResult};
@@ -42,7 +41,7 @@ use crate::{
     inspector::{self, ScillaInspector},
     message::{
         Block, BlockHeader, BlockTransactionsReceipts, ExternalMessage, InjectedProposal,
-        InternalMessage, IntershardCall, Proposal, SyncBlockHeader,
+        InternalMessage, IntershardCall, Proposal,
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
@@ -385,21 +384,10 @@ impl Node {
                     .handle_passive_response(from, Some(vec![response]))?;
             }
             // FIXME: 0.6.0 compatibility, to be removed after all nodes > 0.7.0
-            ExternalMessage::MetaDataResponse(response) => {
-                let response = response
-                    .into_iter()
-                    .map(|bh| SyncBlockHeader {
-                        header: bh,
-                        size_estimate: (1024 * 1024 * bh.gas_used.0 / bh.gas_limit.0) as usize, // guesstimate
-                    })
-                    .collect_vec();
-                self.consensus
-                    .sync
-                    .handle_active_response(from, Some(response))?
+            ExternalMessage::MetaDataResponse => {
+                unimplemented!("deprecated")
             }
-            ExternalMessage::Acknowledgement => {
-                self.consensus.sync.handle_acknowledgement(from)?;
-            }
+            ExternalMessage::Acknowledgement => {} // do nothing
             msg => {
                 warn!(%msg, "unexpected message type");
             }
