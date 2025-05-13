@@ -261,6 +261,7 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
+    #[deprecated(since = "0.7.0")]
     ProcessProposal,
     NewTransaction(SignedTransaction),
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
@@ -270,6 +271,7 @@ pub enum ExternalMessage {
     InjectedProposal(InjectedProposal),
     /// 0.6.0
     MetaDataRequest(RequestBlocksByHeight),
+    #[deprecated(since = "0.9.0")]
     MetaDataResponse,
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),
@@ -312,9 +314,6 @@ impl Display for ExternalMessage {
             ExternalMessage::MultiBlockResponse(r) => {
                 write!(f, "MultiBlockResponse({})", r.len())
             }
-            ExternalMessage::MetaDataResponse => {
-                unimplemented!("deprecated")
-            }
             ExternalMessage::MetaDataRequest(r) => {
                 write!(f, "MetaDataRequest({:?})", r.from_height..=r.to_height)
             }
@@ -326,9 +325,6 @@ impl Display for ExternalMessage {
             ExternalMessage::NewView(n) => write!(f, "NewView({})", n.view),
             ExternalMessage::BlockRequest(r) => {
                 write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
-            }
-            ExternalMessage::ProcessProposal => {
-                unreachable!("deprecated")
             }
             ExternalMessage::BlockResponse(r) => {
                 let mut views = r.proposals.iter().map(|p| p.view());

@@ -383,10 +383,6 @@ impl Node {
                     .sync
                     .handle_passive_response(from, Some(vec![response]))?;
             }
-            // FIXME: 0.6.0 compatibility, to be removed after all nodes > 0.7.0
-            ExternalMessage::MetaDataResponse => {
-                unimplemented!("deprecated")
-            }
             ExternalMessage::Acknowledgement => {} // do nothing
             msg => {
                 warn!(%msg, "unexpected message type");
