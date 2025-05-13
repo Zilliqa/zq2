@@ -333,13 +333,29 @@ enum ConverterCommands {
     PrintTransactionConverter(ConverterPrintTransactionConfigStruct),
 }
 
+#[derive(Clone, Debug)]
+struct SecretKeys(Vec<SecretKey>);
+
+// implement parsing of *all* keys from one string into your newtype
+impl FromStr for SecretKeys {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut v = Vec::new();
+        for part in s.split(',') {
+            let key = SecretKey::from_hex(part.trim())
+                .map_err(|e| format!("invalid key ‘{}’: {}", part, e))?;
+            v.push(key);
+        }
+        Ok(SecretKeys(v))
+    }
+}
+
 #[derive(Args, Debug)]
 struct ConvertConfigStruct {
     zq1_persistence_directory: String,
     zq2_data_dir: String,
     zq2_config_file: String,
-    #[arg(value_parser = SecretKey::from_hex)]
-    secret_key: SecretKey,
+    secret_keys: SecretKeys,
 }
 #[derive(Args, Debug)]
 struct ConverterPrintTransactionConfigStruct {
@@ -1159,7 +1175,7 @@ async fn main() -> Result<()> {
                     &arg.zq1_persistence_directory,
                     &arg.zq2_data_dir,
                     &arg.zq2_config_file,
-                    arg.secret_key,
+                    arg.secret_keys.0.clone(),
                 )
                 .await?;
                 Ok(())
