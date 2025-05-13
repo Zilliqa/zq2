@@ -48,7 +48,7 @@ session later. Use `screen`)
 ```
 screen -a
 export Z2_CONVERTER=true
-z2 converter convert /my/dir/persistences/zq1 /my/dir/persistences/zq2 config.toml <secret key>
+z2 converter convert /my/dir/persistences/zq1 /my/dir/persistences/zq2 config.toml <secret_key1>,<secret_key2>,...,<secret_keyn>
 ```
 
 The secret key is for a single validator which will be assumed to have 64 ZIL staked, so that the network has a validator on startup.
