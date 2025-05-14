@@ -339,7 +339,7 @@ pub async fn convert_persistence(
     zq1_db: zq1::Db,
     zq2_db: Db,
     zq2_config: Config,
-    secret_key: SecretKey,
+    secret_keys: Vec<SecretKey>,
 ) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
@@ -461,6 +461,8 @@ pub async fn convert_persistence(
         .skip_while(|(n, _)| *n <= current_block);
 
     let mut parent_hash = Hash::ZERO;
+
+    let secret_key = secret_keys[0];
 
     for (block_number, block) in tx_blocks_iter {
         let mut transactions = Vec::new();
@@ -598,29 +600,14 @@ pub async fn convert_persistence(
     zq2_db.with_sqlite_tx(|sqlite_tx| {
         // Insert finalized zq2_block_1 with empty qc
         let empty_block =
-            create_empty_block_from_parent(&highest_zq1_block, secret_key, state_root_hash);
+            create_empty_block_from_parent(&highest_zq1_block, &secret_keys, state_root_hash);
         zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_block)?;
         zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_block.header.qc)?;
         zq2_db.set_finalized_view_with_db_tx(sqlite_tx, empty_block.view())?;
 
         // Insert qc which points to zq2_block_1
-        {
-            let vote = Vote::new(
-                secret_key,
-                empty_block.hash(),
-                secret_key.node_public_key(),
-                empty_block.number(),
-            );
-
-            let qc = QuorumCertificate::new(
-                &[vote.signature()],
-                bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
-                empty_block.hash(),
-                empty_block.number(),
-            );
-
-            zq2_db.set_high_qc_with_db_tx(sqlite_tx, qc)?;
-        }
+        let qc = get_qc_for_block(&empty_block, &secret_keys);
+        zq2_db.set_high_qc_with_db_tx(sqlite_tx, qc)?;
 
         Ok(())
     })?;
@@ -633,27 +620,28 @@ pub async fn convert_persistence(
     Ok(())
 }
 
+fn get_qc_for_block(block: &Block, keys: &[SecretKey]) -> QuorumCertificate {
+    let mut cosigned = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
+    let mut votes = Vec::new();
+
+    for (index, key) in keys.iter().enumerate() {
+        cosigned.set(index, true);
+        let vote = Vote::new(*key, block.hash(), key.node_public_key(), block.number());
+        votes.push(vote.signature());
+    }
+
+    QuorumCertificate::new(&votes, cosigned, block.hash(), block.number())
+}
+
 fn create_empty_block_from_parent(
     parent_block: &Block,
-    secret_key: SecretKey,
+    secret_keys: &[SecretKey],
     state_root_hash: Hash,
 ) -> Block {
-    let vote = Vote::new(
-        secret_key,
-        parent_block.hash(),
-        secret_key.node_public_key(),
-        parent_block.number(),
-    );
-
-    let qc = QuorumCertificate::new(
-        &[vote.signature()],
-        bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
-        parent_block.hash(),
-        parent_block.number(),
-    );
+    let qc = get_qc_for_block(parent_block, secret_keys);
 
     Block::from_qc(
-        secret_key,
+        secret_keys[0],
         parent_block.header.view + 1,
         parent_block.header.number + 1,
         qc,
