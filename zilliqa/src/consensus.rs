@@ -504,16 +504,16 @@ impl Consensus {
                     % self.config.consensus.new_view_broadcast_interval.as_secs())
                     == 0
             {
-                if let Some((_, ExternalMessage::NewView(new_view))) =
-                    self.new_view_message_cache.as_ref()
-                {
-                    if new_view.view == self.get_view()? {
-                        // When re-sending new view messages we broadcast them, rather than only sending them to the
-                        // view leader. This speeds up network recovery when many nodes have different high QCs.
-                        return Ok(Some((None, ExternalMessage::NewView(new_view.clone()))));
+                match self.new_view_message_cache.take() {
+                    Some((_, ExternalMessage::NewView(new_view))) => {
+                        // If new_view message is not for this view then it must be outdated
+                        if new_view.view == self.get_view()? {
+                            // When re-sending new view messages we broadcast them, rather than only sending them to the
+                            // view leader. This speeds up network recovery when many nodes have different high QCs.
+                            return Ok(Some((None, ExternalMessage::NewView(new_view))));
+                        }
                     }
-                    // If new_view message is not for this view then it must be outdated
-                    self.new_view_message_cache = None;
+                    _ => unimplemented!("new_view_message_cache"),
                 }
             }
 
@@ -728,6 +728,7 @@ impl Consensus {
                         // Further votes are ignored (including our own).
                         // TODO(#720): We should prioritise our own vote.
                         trace!("supermajority reached, sending next proposal");
+                        self.new_view_message_cache = Some(network_message.clone());
                         return Ok(Some(network_message));
                     }
                     // A bit hacky: processing of our buffered votes may have resulted in an early_proposal be created and awaiting empty block timeout for broadcast. In this case we must return now
