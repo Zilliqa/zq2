@@ -439,10 +439,8 @@ impl Consensus {
                 );
                 let leader = self.leader_at_block(&block, view).unwrap();
                 let vote = self.vote_from_block(&block);
-                return Ok(Some((
-                    Some(leader.peer_id),
-                    ExternalMessage::Vote(Box::new(vote)),
-                )));
+                let network_msg = self.build_vote(leader.peer_id, vote);
+                return Ok(Some(network_msg));
             } else {
                 info!(
                     "We are on view: {:?} but we are not a validator, so we are waiting.",
@@ -511,6 +509,11 @@ impl Consensus {
                             // When re-sending new view messages we broadcast them, rather than only sending them to the
                             // view leader. This speeds up network recovery when many nodes have different high QCs.
                             return Ok(Some((None, ExternalMessage::NewView(new_view))));
+                        }
+                    }
+                    Some((peer, ExternalMessage::Vote(vote))) => {
+                        if vote.view == self.get_view()? {
+                            return Ok(Some((peer, ExternalMessage::Vote(vote))));
                         }
                     }
                     _ => unimplemented!("new_view_message_cache"),
@@ -784,10 +787,8 @@ impl Consensus {
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
-                    return Ok(Some((
-                        Some(next_leader.peer_id),
-                        ExternalMessage::Vote(Box::new(vote)),
-                    )));
+                    let network_message = self.build_vote(next_leader.peer_id, vote);
+                    return Ok(Some(network_message));
                 }
             }
         } else {
@@ -795,6 +796,12 @@ impl Consensus {
         }
 
         Ok(None)
+    }
+
+    fn build_vote(&mut self, peer_id: PeerId, vote: Vote) -> NetworkMessage {
+        let network_msg = (Some(peer_id), ExternalMessage::Vote(Box::new(vote)));
+        self.new_view_message_cache = Some(network_msg.clone());
+        network_msg
     }
 
     /// Apply the rewards at the tail-end of the Proposal.
