@@ -6,7 +6,9 @@ use serde::{Serializer, ser::SerializeSeq};
 use super::to_hex::ToHex;
 use crate::crypto;
 
+pub mod admin;
 pub mod eth;
+pub mod filters;
 pub mod ots;
 pub mod txpool;
 pub mod zil;

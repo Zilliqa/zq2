@@ -419,7 +419,7 @@ pub async fn run_persistence_converter(
     zq1_pers_dir: &str,
     zq2_data_dir: &str,
     zq2_config: &str,
-    secret_key: SecretKey,
+    secret_keys: Vec<SecretKey>,
 ) -> Result<()> {
     println!("🐼 Converting {zq1_pers_dir} into {zq2_data_dir}.. ");
     let zq1_dir = PathBuf::from_str(zq1_pers_dir)?;
@@ -436,7 +436,7 @@ pub async fn run_persistence_converter(
         None,
     )?;
     let zq1_db = zq1::Db::new(zq1_dir)?;
-    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_key).await?;
+    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_keys).await?;
     Ok(())
 }
 
