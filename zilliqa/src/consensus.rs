@@ -149,7 +149,7 @@ pub struct Consensus {
     // TODO(#719): Consider how to limit the size of this.
     pub buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     pub new_views: BTreeMap<u64, NewViewVote>,
-    new_view_message_cache: Option<NetworkMessage>,
+    network_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
     state: State,
@@ -304,7 +304,7 @@ impl Consensus {
             votes: BTreeMap::new(),
             buffered_votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
-            new_view_message_cache: None,
+            network_message_cache: None,
             high_qc,
             state,
             db,
@@ -396,7 +396,7 @@ impl Consensus {
             ))),
         );
 
-        self.new_view_message_cache = Some(new_view_message.clone());
+        self.network_message_cache = Some(new_view_message.clone());
         Ok(new_view_message)
     }
 
@@ -502,7 +502,7 @@ impl Consensus {
                     % self.config.consensus.new_view_broadcast_interval.as_secs())
                     == 0
             {
-                match self.new_view_message_cache.take() {
+                match self.network_message_cache.take() {
                     Some((_, ExternalMessage::NewView(new_view))) => {
                         // If new_view message is not for this view then it must be outdated
                         if new_view.view == self.get_view()? {
@@ -516,7 +516,7 @@ impl Consensus {
                             return Ok(Some((peer, ExternalMessage::Vote(vote))));
                         }
                     }
-                    _ => unimplemented!("new_view_message_cache"),
+                    _ => unimplemented!("network_message_cache"),
                 }
             }
 
@@ -731,7 +731,6 @@ impl Consensus {
                         // Further votes are ignored (including our own).
                         // TODO(#720): We should prioritise our own vote.
                         trace!("supermajority reached, sending next proposal");
-                        self.new_view_message_cache = Some(network_message.clone());
                         return Ok(Some(network_message));
                     }
                     // A bit hacky: processing of our buffered votes may have resulted in an early_proposal be created and awaiting empty block timeout for broadcast. In this case we must return now
@@ -800,7 +799,7 @@ impl Consensus {
 
     fn build_vote(&mut self, peer_id: PeerId, vote: Vote) -> NetworkMessage {
         let network_msg = (Some(peer_id), ExternalMessage::Vote(Box::new(vote)));
-        self.new_view_message_cache = Some(network_msg.clone());
+        self.network_message_cache = Some(network_msg.clone());
         network_msg
     }
 
