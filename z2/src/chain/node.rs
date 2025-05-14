@@ -17,7 +17,7 @@ use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::instance::ChainInstance;
-use crate::{address::EthereumAddress, chain::Chain};
+use crate::{address::EthereumAddress, chain::Chain, kms::KmsService};
 
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
@@ -268,10 +268,12 @@ impl Machine {
             .output()?)
     }
 
-    pub fn get_private_key(&self) -> Result<String> {
+    pub fn get_private_key(&self, chain_name: &str, enable_kms: bool) -> Result<String> {
+        // Get the base64 encoded secret from Secret Manager
+        let secret_suffix = if enable_kms { "-enckey" } else { "-pk" };
         let cmd = format!(
-            "gcloud secrets versions access latest --project=\"{}\" --secret=\"{}-pk\"",
-            self.project_id, self.name
+            "gcloud secrets versions access latest --project=\"{}\" --secret=\"{}{}\"",
+            self.project_id, self.name, secret_suffix
         );
 
         let output = self.run(&cmd, false)?;
@@ -283,7 +285,20 @@ impl Machine {
             ));
         }
 
-        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+        let value = std::str::from_utf8(&output.stdout)?.trim();
+
+        // Decrypt the key if KMS is enabled
+        if enable_kms {
+            let plaintext = KmsService::decrypt(
+                &self.project_id,
+                value,
+                &format!("kms-{}", chain_name),
+                &self.name,
+            )?;
+            Ok(plaintext)
+        } else {
+            Ok(value.to_string())
+        }
     }
 
     pub fn get_genesis_address(&self, chain_name: &str) -> Result<String> {
@@ -607,7 +622,8 @@ impl ChainNode {
             ));
         }
 
-        self.machine.get_private_key()
+        self.machine
+            .get_private_key(&self.chain.name(), self.chain()?.get_enable_kms()?)
     }
 
     pub fn get_genesis_address(&self) -> Result<String> {
@@ -1033,7 +1049,16 @@ impl ChainNode {
         let role_name = &self.role.to_string();
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
         let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
-        let enable_faucet = self.chain()?.get_enable_faucet()?;
+        let enable_faucet = if self.chain()?.get_enable_faucet()? {
+            "true"
+        } else {
+            "false"
+        };
+        let enable_kms = if self.chain()?.get_enable_kms()? {
+            "true"
+        } else {
+            "false"
+        };
         let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
         let stats_dashboard_image = &docker_image(
             "stats_dashboard",
@@ -1056,6 +1081,7 @@ impl ChainNode {
         var_map.insert("docker_image", z2_image);
         var_map.insert("otterscan_image", otterscan_image);
         var_map.insert("enable_faucet", enable_faucet);
+        var_map.insert("enable_kms", enable_kms);
         var_map.insert("spout_image", spout_image);
         var_map.insert("stats_dashboard_image", stats_dashboard_image);
         var_map.insert("stats_agent_image", stats_agent_image);
