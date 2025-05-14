@@ -1715,6 +1715,12 @@ impl Consensus {
     pub fn new_view(&mut self, new_view: NewView) -> Result<Option<NetworkMessage>> {
         trace!("Received new view for view: {:?}", new_view.view);
 
+        if self.get_block(&new_view.qc.block_hash)?.is_none() {
+            trace!("high_qc block does not exist for NewView. Attemping to fetch block via sync");
+            self.sync.sync_from_probe()?;
+            return Ok(None);
+        }
+
         // Get the committee for the qc hash (should be highest?) for this view
         let committee: Vec<_> = self.committee_for_hash(new_view.qc.block_hash)?;
         // verify the sender's signature on the block hash
