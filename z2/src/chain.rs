@@ -22,7 +22,8 @@ pub enum Chain {
             subdomain = "zq2-richard.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=info",
-            enable_faucet = "true"
+            enable_faucet = "true",
+            enable_kms = "false"
         )
     )]
     Zq2Richard,
@@ -35,7 +36,8 @@ pub enum Chain {
             subdomain = "zq2-persistence.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=info",
-            enable_faucet = "true"
+            enable_faucet = "true",
+            enable_kms = "false"
         )
     )]
     Zq2Persistence,
@@ -48,7 +50,8 @@ pub enum Chain {
             subdomain = "zq2-infratest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=info",
-            enable_faucet = "true"
+            enable_faucet = "true",
+            enable_kms = "true"
         )
     )]
     Zq2InfraTest,
@@ -61,7 +64,8 @@ pub enum Chain {
             subdomain = "zq2-perftest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=info",
-            enable_faucet = "true"
+            enable_faucet = "true",
+            enable_kms = "false"
         )
     )]
     Zq2PerfTest,
@@ -74,7 +78,8 @@ pub enum Chain {
             subdomain = "zq2-devnet.zilliqa.com",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=trace",
-            enable_faucet = "true"
+            enable_faucet = "true",
+            enable_kms = "false"
         )
     )]
     Zq2Devnet,
@@ -87,7 +92,8 @@ pub enum Chain {
             subdomain = "zq2-prototestnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
             log_level = "zilliqa=trace",
-            enable_faucet = "true"
+            enable_faucet = "true",
+            enable_kms = "false"
         )
     )]
     Zq2ProtoTestnet,
@@ -100,7 +106,8 @@ pub enum Chain {
             subdomain = "zq2-protomainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
             log_level = "zilliqa=trace",
-            enable_faucet = "true"
+            enable_faucet = "true",
+            enable_kms = "false"
         )
     )]
     Zq2ProtoMainnet,
@@ -113,7 +120,8 @@ pub enum Chain {
             subdomain = "zq2-testnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
             log_level = "zilliqa=trace",
-            enable_faucet = "true"
+            enable_faucet = "true",
+            enable_kms = "true"
         )
     )]
     Zq2Testnet,
@@ -127,7 +135,8 @@ pub enum Chain {
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
             log_level = "zilliqa=trace",
-            enable_faucet = "false"
+            enable_faucet = "false",
+            enable_kms = "true"
         )
     )]
     Zq2Mainnet,
@@ -353,10 +362,18 @@ impl Chain {
         Ok(log_level.unwrap_or("zilliqa=trace"))
     }
 
-    pub fn get_enable_faucet(&self) -> Result<&'static str> {
+    pub fn get_enable_faucet(&self) -> Result<bool> {
         let enable_faucet = self.get_str("enable_faucet");
+        let enable_faucet_bool = enable_faucet.unwrap_or("false").to_lowercase() == "true";
 
-        Ok(enable_faucet.unwrap_or("true"))
+        Ok(enable_faucet_bool)
+    }
+
+    pub fn get_enable_kms(&self) -> Result<bool> {
+        let enable_kms = self.get_str("enable_kms");
+        let enable_kms_bool = enable_kms.unwrap_or("false").to_lowercase() == "true";
+
+        Ok(enable_kms_bool)
     }
 
     pub fn get_validator_control_address(&self) -> Option<&'static str> {

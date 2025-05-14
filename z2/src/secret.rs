@@ -5,6 +5,8 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
+use crate::kms::KmsService;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Secret {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -14,7 +16,7 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub fn add_version(&self, value: Option<String>) -> Result<String> {
+    pub fn add_version(&self, value: Option<String>, encrypted: bool) -> Result<String> {
         let value = value.unwrap_or(Self::generate_random_secret());
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
@@ -23,7 +25,36 @@ impl Secret {
 
         // Create a new named temporary file with the secret
         let mut temp_file = NamedTempFile::new()?;
-        writeln!(temp_file, "{}", value)?;
+
+        if encrypted {
+            // Check if we have the required labels to generate the KMS keyring and key
+            let chain_name = self.labels.get("zq2-network").ok_or_else(|| {
+                anyhow!("Cannot encrypt: missing 'zq2-network' label for KMS keyring")
+            })?;
+            let key_name = if let Some(node_name) = self.labels.get("node-name") {
+                node_name.to_string()
+            } else if let Some(role) = self.labels.get("role") {
+                format!("{}-{}", chain_name, role)
+            } else {
+                return Err(anyhow!(
+                    "Cannot encrypt: missing both 'node-name' and 'role' labels for KMS key"
+                ));
+            };
+
+            // Encrypt using KmsService
+            let ciphertext_base64 = KmsService::encrypt(
+                project_id,
+                &value,
+                &format!("kms-{}", chain_name),
+                &key_name,
+            )?;
+
+            // Write base64 encrypted content to file
+            writeln!(temp_file, "{}", ciphertext_base64)?;
+        } else {
+            // Write plaintext directly if not encrypted
+            writeln!(temp_file, "{}", value)?;
+        }
 
         let output = Command::new("gcloud")
             .args([
@@ -205,20 +236,5 @@ impl Secret {
         }
 
         Ok(secrets)
-    }
-
-    pub fn get_secrets_by_role(
-        chain_name: &str,
-        project_id: &str,
-        role_name: &str,
-    ) -> Result<Vec<Secret>> {
-        Self::get_secrets(
-            project_id,
-            format!(
-                "labels.zq2-network={} AND labels.role={}",
-                chain_name, role_name
-            )
-            .as_str(),
-        )
     }
 }
