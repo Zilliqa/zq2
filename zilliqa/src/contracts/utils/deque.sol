@@ -1,37 +1,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
 struct Withdrawal {
     uint256 startedAt;
     uint256 amount;
 }
 
-// Implementation of a double-ended queue of `Withdrawal`s, backed by a circular buffer.
+// Animplementation of a double-ended queue of `Withdrawal`s.
 library Deque {
     struct Withdrawals {
-        Withdrawal[] values;
-        // The physical index of the first element, if it exists. If `len == 0`, the value of `head` is unimportant.
+        mapping(uint256 index => Withdrawal) values;
+        // The index of the first element.
         uint256 head;
-        // The number of elements in the queue.
-        uint256 len;
-    }
-
-    // Returns the physical index of an element, given its logical index.
-    function physicalIdx(
-        Withdrawals storage deque,
-        uint256 idx
-    ) internal view returns (uint256) {
-        uint256 physical = deque.head + idx;
-        // Wrap the physical index in case it is out-of-bounds of the buffer.
-        if (physical >= deque.values.length) {
-            return physical - deque.values.length;
-        } else {
-            return physical;
-        }
+        // The index where the next element will be inserted at the end of the queue.
+        uint256 tail;
     }
 
     function length(Withdrawals storage deque) internal view returns (uint256) {
-        return deque.len;
+        return deque.tail - deque.head;
     }
 
     // Get the element at the given logical index. Reverts if `idx >= queue.length()`.
@@ -39,43 +25,31 @@ library Deque {
         Withdrawals storage deque,
         uint256 idx
     ) internal view returns (Withdrawal storage) {
-        if (idx >= deque.len) {
-            revert("element does not exist");
-        }
-
-        uint256 pIdx = physicalIdx(deque, idx);
-        return deque.values[pIdx];
+        require(deque.head + idx < deque.tail, "element does not exist");
+        return deque.values[deque.head + idx];
     }
 
     // Push an empty element to the back of the queue. Returns a reference to the new element.
     function pushBack(
         Withdrawals storage deque
     ) internal returns (Withdrawal storage) {
-        // Add more space in the buffer if it is full.
-        if (deque.len == deque.values.length) {
-            deque.values.push();
-        }
-
-        uint256 idx = physicalIdx(deque, deque.len);
-        deque.len += 1;
-
+        uint256 idx = deque.tail;
+        deque.tail++;
         return deque.values[idx];
     }
 
-    // Pop an element from the front of the queue. Note that this returns a reference to the element in storage. This
-    // means that further mutations of the queue may invalidate the returned element. Do not use this return value
-    // after calling any other mutations on the queue.
+    // Pop an element from the front of the queue.
     function popFront(
         Withdrawals storage deque
-    ) internal returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
+    ) internal returns (Withdrawal memory) {
+        require(deque.head < deque.tail, "queue is empty");
 
-        uint256 oldHead = deque.head;
-        deque.head = physicalIdx(deque, 1);
-        deque.len -= 1;
-        return deque.values[oldHead];
+        Withdrawal memory frontElement = deque.values[deque.head];
+
+        delete deque.values[deque.head];
+        deque.head++;
+
+        return frontElement;
     }
 
     // Peeks the element at the back of the queue. Note that this returns a reference to the element in storage. This
@@ -84,11 +58,8 @@ library Deque {
     function back(
         Withdrawals storage deque
     ) internal view returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        return get(deque, deque.len - 1);
+        require(deque.head < deque.tail, "queue is empty");
+        return deque.values[deque.tail - 1];
     }
 
     // Peeks the element at the front of the queue. Note that this returns a reference to the element in storage. This
@@ -97,10 +68,7 @@ library Deque {
     function front(
         Withdrawals storage deque
     ) internal view returns (Withdrawal storage) {
-        if (deque.len == 0) {
-            revert("queue is empty");
-        }
-
-        return get(deque, 0);
+        require(deque.head < deque.tail, "queue is empty");
+        return deque.values[deque.head];
     }
 }

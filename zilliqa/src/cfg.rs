@@ -858,22 +858,12 @@ impl ContractUpgradeConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractUpgrades {
-    pub deposit_v3: Option<ContractUpgradeConfig>,
-    pub deposit_v4: Option<ContractUpgradeConfig>,
-    pub deposit_v5: Option<ContractUpgradeConfig>,
+    pub deposit_v2: Option<ContractUpgradeConfig>,
 }
 
 impl ContractUpgrades {
-    pub fn new(
-        deposit_v3: Option<ContractUpgradeConfig>,
-        deposit_v4: Option<ContractUpgradeConfig>,
-        deposit_v5: Option<ContractUpgradeConfig>,
-    ) -> ContractUpgrades {
-        Self {
-            deposit_v3,
-            deposit_v4,
-            deposit_v5,
-        }
+    pub fn new(deposit_v2: Option<ContractUpgradeConfig>) -> ContractUpgrades {
+        Self { deposit_v2 }
     }
     pub fn to_toml(&self) -> toml::Value {
         // toml doesn't like Option types. We need to manually map items in struct removing keys for None values as we go
@@ -907,9 +897,7 @@ impl ContractUpgrades {
 impl Default for ContractUpgrades {
     fn default() -> Self {
         Self {
-            deposit_v3: None,
-            deposit_v4: None,
-            deposit_v5: Some(ContractUpgradeConfig {
+            deposit_v2: Some(ContractUpgradeConfig {
                 height: 0,
                 reinitialise_params: Some(ReinitialiseParams::default()),
             }),

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.20;
 
+/// Deposit contract version 1 initialises UUPSUpgradeable. 
+
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Deque} from "./utils/deque.sol";
 
@@ -88,8 +90,6 @@ contract DepositInit is UUPSUpgradeable {
         Committee[3] _committee;
         // All stakers. Keys into this map are stored by the `Committee`.
         mapping(bytes => Staker) _stakersMap;
-        // Mapping from `controlAddress` to `blsPubKey` for each staker.
-        mapping(address => bytes) _stakerKeys;
         // The latest epoch for which the committee was calculated. It is implied that no changes have (yet) occurred in
         // future epochs, either because those epochs haven't happened yet or because they have happened, but no deposits
         // or withdrawals were made.
@@ -178,7 +178,6 @@ contract DepositInit is UUPSUpgradeable {
                 revert StakeAmountTooLow();
             }
 
-            $._stakerKeys[controlAddress] = blsPubKey;
             staker.peerId = peerId;
             staker.rewardAddress = rewardAddress;
             staker.controlAddress = controlAddress;

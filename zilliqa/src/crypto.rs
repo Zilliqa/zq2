@@ -270,7 +270,6 @@ impl SecretKey {
 
     /// Sigature for staking deposit contract authorisation.
     /// Sign over message made up of validator node's bls public key, chain_id and evm address.
-    // Used in deposit_v3
     pub fn deposit_auth_signature(&self, chain_id: u64, address: Address) -> BlsSignature {
         let mut message = [0u8; 76];
         message[..48].copy_from_slice(&self.as_bls().public_key().0.to_compressed());
