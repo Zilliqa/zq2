@@ -168,29 +168,12 @@ impl Chain {
     pub fn get_contract_upgrades_block_heights(&self) -> ContractUpgrades {
         match self {
             Self::Zq2Devnet => ContractUpgrades {
-                deposit_v3: None,
-                deposit_v4: None,
-                deposit_v5: Some(ContractUpgradeConfig {
+                deposit_v2: Some(ContractUpgradeConfig {
                     height: 0,
                     reinitialise_params: Some(ReinitialiseParams {
                         withdrawal_period: 5 * 60, // 5 minutes
                     }),
                 }),
-            },
-            Self::Zq2ProtoMainnet => ContractUpgrades {
-                // estimated: 2024-12-20T23:33:12Z
-                deposit_v3: Some(ContractUpgradeConfig::from_height(5342400)),
-                // estimated: 2025-02-12T13:25:00Z
-                deposit_v4: Some(ContractUpgradeConfig::from_height(7966800)),
-                // estimated: 2025-03-17T13:16:37Z
-                deposit_v5: Some(ContractUpgradeConfig::from_height(9010800)),
-            },
-            Self::Zq2ProtoTestnet => ContractUpgrades {
-                deposit_v3: Some(ContractUpgradeConfig::from_height(8406000)),
-                // estimated: 2025-02-03T13:55:00Z
-                deposit_v4: Some(ContractUpgradeConfig::from_height(10890000)),
-                // estimated: 2025-03-12T15:00:00Z
-                deposit_v5: Some(ContractUpgradeConfig::from_height(12934800)),
             },
             _ => ContractUpgrades::default(),
         }

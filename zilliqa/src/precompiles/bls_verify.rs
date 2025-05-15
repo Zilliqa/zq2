@@ -13,7 +13,7 @@ use crate::exec::PendingState;
 
 pub struct BlsVerify;
 
-// keep in-sync with zilliqa/src/contracts/deposit_v3.sol
+// keep in-sync with zilliqa/src/contracts/deposit_v1.sol
 impl BlsVerify {
     /// We charge gas as if we were using Ethereum precompile gas prices for each operation:
     ///     - Message to hash: SHA256 over 76 byte message: 60 + 12 * 3 = 96

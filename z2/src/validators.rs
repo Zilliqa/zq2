@@ -85,7 +85,7 @@ impl SignerClient {
             .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
             .value(params.amount as u128 * 1_000_000u128 * 10u128.pow(18))
             .data(
-                contracts::deposit_v4::DEPOSIT
+                contracts::deposit::DEPOSIT
                     .encode_input(&[
                         Token::Bytes(validator.public_key.as_bytes()),
                         Token::Bytes(validator.peer_id.to_bytes()),
@@ -121,7 +121,7 @@ impl SignerClient {
             .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
             .value(amount as u128 * 1_000_000u128 * 10u128.pow(18))
             .data(
-                contracts::deposit_v4::DEPOSIT_TOPUP
+                contracts::deposit::DEPOSIT_TOPUP
                     .encode_input(&[Token::Bytes(bls_public_key.as_bytes())])
                     .unwrap(),
             );
@@ -149,7 +149,7 @@ impl SignerClient {
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
             .data(
-                contracts::deposit_v4::UNSTAKE
+                contracts::deposit::UNSTAKE
                     .encode_input(&[
                         Token::Bytes(bls_public_key.as_bytes()),
                         Token::Uint((amount as u128 * 1_000_000u128 * 10u128.pow(18)).into()),
@@ -180,7 +180,7 @@ impl SignerClient {
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
             .data(
-                contracts::deposit_v4::UNSTAKE
+                contracts::deposit::UNSTAKE
                     .encode_input(&[
                         Token::Bytes(bls_public_key.as_bytes()),
                         Token::Uint((count as u128).into()),
@@ -209,13 +209,13 @@ impl SignerClient {
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
             .data(
-                contracts::deposit_v4::GET_STAKE
+                contracts::deposit::GET_STAKE
                     .encode_input(&[Token::Bytes(public_key.as_bytes())])
                     .unwrap(),
             );
         let output = client.call(&tx.into(), None).await.unwrap();
 
-        Ok(contracts::deposit_v4::GET_STAKE
+        Ok(contracts::deposit::GET_STAKE
             .decode_output(&output)
             .unwrap()[0]
             .clone()
@@ -228,7 +228,7 @@ impl SignerClient {
         let client = self.get_signer().await?;
 
         abigen!(
-            DEPOSIT_V4,
+            DEPOSIT_V1,
             r#"[
                 function getFutureStake(bytes calldata blsPubKey) public view returns (uint256)
             ]"#,
@@ -236,7 +236,7 @@ impl SignerClient {
         );
 
         let client = Arc::new(client.provider().to_owned());
-        let contract = DEPOSIT_V4::new(H160(contract_addr::DEPOSIT_PROXY.into_array()), client);
+        let contract = DEPOSIT_V1::new(H160(contract_addr::DEPOSIT_PROXY.into_array()), client);
 
         let future_stake = contract
             .get_future_stake(public_key.as_bytes().into())
@@ -252,14 +252,10 @@ impl SignerClient {
 
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-            .data(
-                contracts::deposit_v4::GET_STAKERS
-                    .encode_input(&[])
-                    .unwrap(),
-            );
+            .data(contracts::deposit::GET_STAKERS.encode_input(&[]).unwrap());
         let output = client.call(&tx.into(), None).await.unwrap();
 
-        let stakers = contracts::deposit_v4::GET_STAKERS
+        let stakers = contracts::deposit::GET_STAKERS
             .decode_output(&output)
             .unwrap()[0]
             .clone()
@@ -278,13 +274,13 @@ impl SignerClient {
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
             .data(
-                contracts::deposit_v4::GET_REWARD_ADDRESS
+                contracts::deposit::GET_REWARD_ADDRESS
                     .encode_input(&[Token::Bytes(public_key.as_bytes())])
                     .unwrap(),
             );
         let output = client.call(&tx.into(), None).await.unwrap();
 
-        Ok(contracts::deposit_v4::GET_REWARD_ADDRESS
+        Ok(contracts::deposit::GET_REWARD_ADDRESS
             .decode_output(&output)
             .unwrap()[0]
             .clone()
