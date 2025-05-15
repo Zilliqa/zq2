@@ -1195,11 +1195,7 @@ impl ChainNode {
     ) -> Result<()> {
         let machine = &self.machine;
 
-        let mut backup_name = name.unwrap_or(self.name());
-
-        if zip {
-            backup_name = format!("{}.zip", backup_name);
-        }
+        let backup_name = name.unwrap_or(self.name());
 
         let bar_length = if zip { 6 } else { 4 };
         let progress_bar = multi_progress.add(cliclack::progress_bar(bar_length));
