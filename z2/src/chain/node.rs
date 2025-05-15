@@ -973,7 +973,7 @@ impl ChainNode {
         }
 
         if let Some(checkpoint_url) = self.chain.checkpoint_url() {
-            if self.role == NodeRole::Validator {
+            if self.role == NodeRole::Validator || self.role == NodeRole::Bootstrap {
                 let checkpoint_file = checkpoint_url.rsplit('/').next().unwrap_or("");
                 ctx.insert("checkpoint_file", &format!("/{}", checkpoint_file));
 
