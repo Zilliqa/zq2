@@ -8,6 +8,7 @@ use alloy::primitives::B256;
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand, builder::ArgAction};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use colored::Colorize;
 use libp2p::PeerId;
 use z2lib::{
     chain::{self, node::NodePort},
@@ -732,7 +733,14 @@ fn nodespec_from_arg(arg: &Option<String>) -> Result<Option<NodeSpec>> {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(e) = real_main().await {
+        log::error!("{}", format!("Error: {e}").red());
+        std::process::exit(1);
+    }
+}
+
+async fn real_main() -> Result<()> {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .unwrap();

@@ -144,6 +144,10 @@ impl ChainInstance {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        if machines.is_empty() {
+            log::warn!("The network {} has no running machines", chain_name);
+        }
+
         Ok(machines)
     }
 

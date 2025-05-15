@@ -19,6 +19,11 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use super::instance::ChainInstance;
 use crate::{address::EthereumAddress, chain::Chain, kms::KmsService};
 
+const CONFIG_FILENAME: &str = "config.toml";
+const PROVISIONING_SCRIPT_FILENAME: &str = "provision_node.py";
+const CHECKPOINT_SCRIPT_FILENAME: &str = "checkpoint_cron_job.sh";
+const PERSISTENCE_SCRIPT_FILENAME: &str = "persistence_export_cron_job.sh";
+
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
     #[default]
@@ -518,7 +523,6 @@ impl ChainNode {
         let message = format!("Upgrading {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());
 
-        self.tag_machine()?;
         self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
@@ -651,6 +655,32 @@ impl ChainNode {
         Ok(())
     }
 
+    async fn clean_previous_install(&self) -> Result<()> {
+        let files_to_remove = [
+            format!("/tmp/{}", CONFIG_FILENAME),
+            format!("/tmp/{}", PROVISIONING_SCRIPT_FILENAME),
+            format!("/tmp/{}", CHECKPOINT_SCRIPT_FILENAME),
+            format!("/tmp/{}", PERSISTENCE_SCRIPT_FILENAME),
+        ];
+
+        let cmd = format!("sudo rm -f {}", files_to_remove.join(" "));
+        let output = self.machine.run(&cmd, true)?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "{}: Error removing previous installation files: {}",
+                self.name().bold(),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        println!(
+            "{}: Removed previous installation files",
+            self.name().bold()
+        );
+
+        Ok(())
+    }
+
     async fn import_config_files(&self) -> Result<()> {
         let temp_config_toml = NamedTempFile::new()?;
         let config_toml = &self
@@ -697,39 +727,6 @@ impl ChainNode {
         }
 
         println!("Configuration files imported in the node");
-
-        Ok(())
-    }
-
-    async fn clean_previous_install(&self) -> Result<()> {
-        let cmd = "sudo rm -f /tmp/config.toml /tmp/provision_node.py";
-        let output = self.machine.run(cmd, true)?;
-        if !output.status.success() {
-            println!("{}", String::from_utf8_lossy(&output.stderr));
-            return Err(anyhow!("Error removing previous installation files"));
-        }
-
-        if self.role == NodeRole::Checkpoint {
-            let cmd = "sudo rm -f /tmp/checkpoint_cron_job.sh";
-            let output = self.machine.run(cmd, true)?;
-            if !output.status.success() {
-                println!("{}", String::from_utf8_lossy(&output.stderr));
-                return Err(anyhow!("Error removing previous checkpoint cron job"));
-            }
-        }
-
-        if self.role == NodeRole::Persistence {
-            let cmd = "sudo rm -f /tmp/persistence_export_cron_job.sh";
-            let output = self.machine.run(cmd, true)?;
-            if !output.status.success() {
-                println!("{}", String::from_utf8_lossy(&output.stderr));
-                return Err(anyhow!(
-                    "Error removing previous persistence export cron job"
-                ));
-            }
-        }
-
-        println!("Removed previous installation files");
 
         Ok(())
     }

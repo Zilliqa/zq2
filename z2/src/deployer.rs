@@ -82,18 +82,17 @@ pub async fn install_or_upgrade(
 
     let mut bootstrap_nodes = chain_nodes.clone();
     bootstrap_nodes.retain(|node| {
-        node.role == NodeRole::Bootstrap && selected_machines.clone().contains(&node.name())
+        node.role == NodeRole::Bootstrap && selected_machines.contains(&node.name())
     });
 
     let mut apps_nodes = chain_nodes.clone();
-    apps_nodes.retain(|node| {
-        node.role == NodeRole::Apps && selected_machines.clone().contains(&node.name())
-    });
+    apps_nodes
+        .retain(|node| node.role == NodeRole::Apps && selected_machines.contains(&node.name()));
 
     chain_nodes.retain(|node| {
         node.role != NodeRole::Bootstrap
             && node.role != NodeRole::Apps
-            && selected_machines.clone().contains(&node.name())
+            && selected_machines.contains(&node.name())
     });
 
     let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade, max_parallel).await;
@@ -268,7 +267,7 @@ pub async fn get_deposit_commands(config_file: &str, node_selection: bool) -> Re
         multi_select.interact()?
     };
 
-    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+    validators.retain(|node| selected_machines.contains(&node.name()));
 
     println!(
         "Deposit commands for the validators in the chain {}",
@@ -405,7 +404,7 @@ pub async fn run_deposit(config_file: &str, node_selection: bool) -> Result<()> 
         multi_select.interact()?
     };
 
-    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+    validators.retain(|node| selected_machines.contains(&node.name()));
 
     println!(
         "Running stake deposit for the validators in the chain {}",
@@ -491,7 +490,7 @@ pub async fn run_deposit_top_up(config_file: &str, node_selection: bool, amount:
         multi_select.interact()?
     };
 
-    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+    validators.retain(|node| selected_machines.contains(&node.name()));
 
     println!(
         "Running stake deposit top-up for the validators in the chain {}",
@@ -561,7 +560,7 @@ pub async fn run_unstake(config_file: &str, node_selection: bool, amount: u8) ->
         multi_select.interact()?
     };
 
-    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+    validators.retain(|node| selected_machines.contains(&node.name()));
 
     println!(
         "Running unstake for the validators in the chain {}",
@@ -631,7 +630,7 @@ pub async fn run_withdraw(config_file: &str, node_selection: bool) -> Result<()>
         multi_select.interact()?
     };
 
-    validators.retain(|node| selected_machines.clone().contains(&node.name()));
+    validators.retain(|node| selected_machines.contains(&node.name()));
 
     println!(
         "Running withdraw for the validators in the chain {}",
