@@ -840,7 +840,7 @@ def go(role):
     install_gcloud()
     login_registry()
     match role:
-        case "bootstrap" | "api":
+        case "api":
             log("Configuring a not validator node")
             stop_healthcheck()
             install_healthcheck()
@@ -869,7 +869,7 @@ def go(role):
                 stop_zq2_metrics()
                 install_zq2_metrics()
                 start_zq2_metrics()
-        case "validator":
+        case "bootstrap" | "validator":
             log("Configuring a validator node")
             stop_healthcheck()
             install_healthcheck()
