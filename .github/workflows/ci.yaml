@@ -67,12 +67,10 @@ jobs:
       #- name: rustfmt
       #  run: cargo +nightly fmt --all --check
       - name: Fix mounted directory permissions
-        run: sudo mkdir -p /tmp/scilla_ext_libs && sudo chmod 777 /tmp/scilla_ext_libs && sudo mkdir -p /tmp/scilla-state-server && sudo chmod 777 /tmp/scilla-state-server
-      - run: sudo ls -la /tmp
-      - run: sudo docker run --volume /tmp:/tmp ubuntu bash -c "ls -la /tmp"
-      - run: sudo docker run --volume /var/run/docker.sock:/var/run/docker.sock --volume /tmp:/tmp ubuntu bash -c "ls -la /tmp"
-      - name: Test
-        run: cargo test --tests --examples --bins --all-features -- zil::create_contract
+        run: sudo mkdir -p $GITHUB_WORKSPACE/tmp/scilla_ext_libs && sudo chmod 777 $GITHUB_WORKSPACE/tmp/scilla_ext_libs && sudo mkdir -p $GITHUB_WORKSPACE/tmp/scilla-state-server && sudo chmod 777 $GITHUB_WORKSPACE/tmp/scilla-state-server
+      - run: sudo ls -la $GITHUB_WORKSPACE/tmp
+      - run: sudo docker run --volume $GITHUB_WORKSPACE/tmp:/tmp ubuntu bash -c "ls -la /tmp"
+      - run: sudo docker run --volume /var/run/docker.sock:/var/run/docker.sock --volume $GITHUB_WORKSPACE/tmp:/tmp ubuntu bash -c "ls -la /tmp"
       - name: Verify working directory is clean
         run: git diff --exit-code
   e2e_test:
