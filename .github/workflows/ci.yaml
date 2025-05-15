@@ -71,6 +71,8 @@ jobs:
       - run: sudo ls -la $GITHUB_WORKSPACE/tmp
       - run: sudo docker run --volume $GITHUB_WORKSPACE/tmp:/tmp ubuntu bash -c "ls -la /tmp"
       - run: sudo docker run --volume /var/run/docker.sock:/var/run/docker.sock --volume $GITHUB_WORKSPACE/tmp:/tmp ubuntu bash -c "ls -la /tmp"
+      - name: Test
+        run: cargo test --tests --examples --bins --all-features -- zil::create_contract
       - name: Verify working directory is clean
         run: git diff --exit-code
   e2e_test:
