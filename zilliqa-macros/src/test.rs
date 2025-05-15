@@ -154,22 +154,28 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
 
             name.extend(rand::Rng::sample_iter(rng, &rand::distributions::Alphanumeric).map(char::from).take(8));
 
+            let temp_dir = std::env::var_os("ZQ_TEST_TEMP_DIR").map(|s| s.into_string()).transpose().unwrap().unwrap_or_else(|| "/tmp".to_owned());
+
+            use std::os::unix::fs::DirBuilderExt;
+            #[allow(clippy::non_octal_unix_permissions)]
+            std::fs::DirBuilder::new().recursive(true).mode(0o777).create(format!("{temp_dir}/scilla_ext_libs")).unwrap();
+            #[allow(clippy::non_octal_unix_permissions)]
+            std::fs::DirBuilder::new().recursive(true).mode(0o777).create(format!("{temp_dir}/scilla-sockets")).unwrap();
+
             let scilla_stdlib_dir = "/scilla/0/_build/default/src/stdlib/";
             // Spawn a Scilla container for this group of tests.
             let mut child = std::process::Command::new("docker")
                 .arg("run")
                 .arg("--name")
                 .arg(&name)
-                .arg("--add-host")
-                .arg("host.docker.internal:host-gateway")
                 // Let Docker auto-assign a free port on the host. The scilla-server listens on port 3000.
                 .arg("--publish")
                 .arg("3000")
                 .arg("--init")
                 .arg("--rm")
-                .arg("-v")
-                .arg("/tmp:/scilla_ext_libs")
-                .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:e762f387")
+                .arg("--volume")
+                .arg(format!("{temp_dir}:{temp_dir}"))
+                .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:5ad0f726")
                 .arg("/scilla/0/bin/scilla-server-http")
                 .spawn()
                 .unwrap();
@@ -236,6 +242,7 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
 
             for seed in seeds {
                 let sem = sem.clone();
+                let temp_dir = temp_dir.clone();
                 let handle = set.spawn(async move {
                     let _permit = sem.acquire_owned().await.unwrap();
 
@@ -260,8 +267,17 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         if #deposit_v3_upgrade_block_height != 0 {
                             deposit_v3_upgrade_block_height_option = Option::Some(#deposit_v3_upgrade_block_height);
                         };
-                        let network = crate::Network::new(std::sync::Arc::new(std::sync::Mutex::new(rng)), 4, seed, format!("http://{addr}"),
-                                                          scilla_stdlib_dir.to_string(), #do_checkpoints, #blocks_per_epoch, deposit_v3_upgrade_block_height_option);
+                        let network = crate::Network::new(
+                            std::sync::Arc::new(std::sync::Mutex::new(rng)),
+                            4,
+                            seed,
+                            format!("http://{addr}"),
+                            scilla_stdlib_dir.to_string(),
+                            #do_checkpoints,
+                            #blocks_per_epoch,
+                            deposit_v3_upgrade_block_height_option,
+                            format!("{temp_dir}/scilla-sockets"),
+                        );
 
                         // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
                         let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(

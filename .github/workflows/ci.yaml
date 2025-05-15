@@ -18,6 +18,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_TEST_THREADS: 4
+  ZQ_TEST_TEMP_DIR: ${{ github.workspace }}/tmp
   ZQ_TEST_SAMPLES: 5
 
 jobs:
@@ -72,17 +73,20 @@ jobs:
   e2e_test:
     services:
       scilla:
-        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:e762f387
-        options: --init --add-host host.docker.internal:host-gateway --entrypoint "/scilla/0/bin/scilla-server-http"
+        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:5ad0f726
+        options: --init --entrypoint "/scilla/0/bin/scilla-server-http"
         ports:
           - 3000:3000
         volumes:
-          - /tmp:/scilla_ext_libs
+          - /tmp/scilla_ext_libs:/scilla_ext_libs
+          - /tmp/scilla-state-server:/tmp/scilla-state-server
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Fix mounted directory permissions
+        run: sudo chmod 777 /tmp/scilla_ext_libs && sudo chmod 777 /tmp/scilla-state-server
       - name: Test connection to Scilla server
         run: curl http://localhost:3000
       - name: Install Rust

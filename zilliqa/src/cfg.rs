@@ -432,11 +432,11 @@ pub struct ConsensusConfig {
     /// Where are the external libraries are stored on zq2 and scilla server's filesystem so that scilla server can find them?
     #[serde(default = "scilla_ext_libs_path_default")]
     pub scilla_ext_libs_path: ScillaExtLibsPath,
-    /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
-    /// Scilla process in Docker and this process on the host, you probably want to pass
-    /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
-    #[serde(default = "local_address_default")]
-    pub local_address: String,
+    /// Directory in which the Unix domain socket used by the Scilla state server is created. If the Scilla process is
+    /// running in Docker, this directory should be mounted inside the container too. Defaults to
+    /// "/tmp/scilla-state-server".
+    #[serde(default = "scilla_server_socket_directory_default")]
+    pub scilla_server_socket_directory: String,
     /// Reward amount issued per hour, in Wei.
     pub rewards_per_hour: Amount,
     /// Number of blocks per hour. The reward per block is set at (rewards_per_hour/blocks_per_hour) Wei.
@@ -513,7 +513,7 @@ impl Default for ConsensusConfig {
             scilla_address: scilla_address_default(),
             scilla_stdlib_dir: scilla_stdlib_dir_default(),
             scilla_ext_libs_path: scilla_ext_libs_path_default(),
-            local_address: local_address_default(),
+            scilla_server_socket_directory: scilla_server_socket_directory_default(),
             rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
             blocks_per_hour: 3600 * 40,
             minimum_stake: 32_000_000_000_000_000_000u128.into(),
@@ -770,13 +770,13 @@ pub fn scilla_stdlib_dir_default() -> String {
 
 pub fn scilla_ext_libs_path_default() -> ScillaExtLibsPath {
     ScillaExtLibsPath {
-        zq2: ScillaExtLibsPathInZq2(String::from("/tmp")),
+        zq2: ScillaExtLibsPathInZq2(String::from("/tmp/scilla_ext_libs")),
         scilla: ScillaExtLibsPathInScilla(String::from("/scilla_ext_libs")),
     }
 }
 
-pub fn local_address_default() -> String {
-    String::from("localhost")
+pub fn scilla_server_socket_directory_default() -> String {
+    String::from("/tmp/scilla-state-server")
 }
 
 pub fn blocks_per_epoch_default() -> u64 {
