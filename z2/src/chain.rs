@@ -79,7 +79,7 @@ pub enum Chain {
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=trace",
             enable_faucet = "true",
-            enable_kms = "false"
+            enable_kms = "true"
         )
     )]
     Zq2Devnet,
