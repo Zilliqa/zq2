@@ -96,6 +96,7 @@ pub struct P2pNode {
     peer_num: Arc<AtomicUsize>,
     swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
     kad_protocol: StreamProtocol,
+    protocol_version: String,
 }
 
 impl P2pNode {
@@ -113,6 +114,7 @@ impl P2pNode {
         let peer_id = PeerId::from(key_pair.public());
         info!(%peer_id);
 
+        let protocol_version = format!("zq2/{}/1.0.0", config.network);
         let kad_protocol =
             StreamProtocol::try_from_owned(format!("/zq2/{}/kad/1.0.0", config.network))?;
 
@@ -162,12 +164,9 @@ impl P2pNode {
                         kad::Config::new(kad_protocol.clone()),
                     ),
                     identify: identify::Behaviour::new(
-                        identify::Config::new(
-                            format!("zq2/{}/1.0.0", config.network),
-                            key_pair.public(),
-                        )
-                        .with_hide_listen_addrs(true)
-                        .with_push_listen_addr_updates(true),
+                        identify::Config::new(protocol_version.clone(), key_pair.public())
+                            .with_hide_listen_addrs(true)
+                            .with_push_listen_addr_updates(true),
                     ),
                 })
             })?
@@ -199,6 +198,7 @@ impl P2pNode {
             peer_num: Arc::new(AtomicUsize::new(0)),
             swarm_peers: Arc::new(AtomicPtr::new(Box::into_raw(Box::new(vec![])))),
             kad_protocol,
+            protocol_version,
         })
     }
 
@@ -333,10 +333,15 @@ impl P2pNode {
                         }
                         // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                            // only add peer, if it is on the same application protocol
+                            let is_match = info.protocol_version == self.protocol_version;
                             // will only be true if peer is publicly reachable i.e. SERVER mode.
                             let is_kad = info.protocols.iter().any(|p| *p == self.kad_protocol);
+
                             for addr in info.listen_addrs {
-                                self.swarm.add_peer_address(peer_id, addr.clone());
+                                if is_match {
+                                    self.swarm.add_peer_address(peer_id, addr.clone());
+                                }
                                 if is_kad {
                                     self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                                 }
