@@ -1,3 +1,4 @@
+network = "zq2-prototestnet"
 p2p_port = 3333
 
 bootstrap_address = [
