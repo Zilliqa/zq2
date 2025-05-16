@@ -12,11 +12,29 @@ use crate::{
     transaction::EvmGas,
 };
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Network {
+    Mainnet,
+    Testnet,
+    Devnet,
+}
+
+impl std::fmt::Display for Network {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Network::Mainnet => "mainnet",
+            Network::Testnet => "testnet",
+            Network::Devnet => "devnet",
+        };
+        write!(f, "{}", s)
+    }
+}
 // Note that z2 constructs instances of this to save as a configuration so it must be both
 // serializable and deserializable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    pub network: Network,
     /// Individual configuration for every node to run.
     #[serde(default)]
     pub nodes: Vec<NodeConfig>,
