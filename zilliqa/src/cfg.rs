@@ -17,6 +17,7 @@ pub enum Network {
     Mainnet,
     Testnet,
     Devnet,
+    Localnet,
 }
 
 impl std::fmt::Display for Network {
@@ -25,6 +26,7 @@ impl std::fmt::Display for Network {
             Network::Mainnet => "mainnet",
             Network::Testnet => "testnet",
             Network::Devnet => "devnet",
+            Network::Localnet => "localnet",
         };
         write!(f, "{}", s)
     }
