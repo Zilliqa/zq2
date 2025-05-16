@@ -114,9 +114,9 @@ impl P2pNode {
         let peer_id = PeerId::from(key_pair.public());
         info!(%peer_id);
 
-        let protocol_version = format!("zq2/{}/1.0.0", config.network);
+        let protocol_version = format!("{}/1.0.0", config.network);
         let kad_protocol =
-            StreamProtocol::try_from_owned(format!("/zq2/{}/kad/1.0.0", config.network))?;
+            StreamProtocol::try_from_owned(format!("/{}/kad/1.0.0", config.network))?;
 
         let swarm = libp2p::SwarmBuilder::with_existing_identity(key_pair)
             .with_tokio()
@@ -131,7 +131,7 @@ impl P2pNode {
                     request_response: request_response::cbor::Behaviour::new(
                         iter::once((
                             StreamProtocol::try_from_owned(format!(
-                                "/zq2/{}/req-resp/1.0.0",
+                                "/{}/req-resp/1.0.0",
                                 config.network
                             ))?,
                             ProtocolSupport::Full,
