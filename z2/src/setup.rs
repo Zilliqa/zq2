@@ -510,6 +510,7 @@ impl Setup {
                 nodes: Vec::new(),
                 p2p_port: 0,
                 external_address: None,
+                network: String::from("localhost"),
             };
             // @todo should pass this in!
             let port = self.get_json_rpc_port(*node_index as u16, false);
