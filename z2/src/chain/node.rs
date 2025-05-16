@@ -901,6 +901,7 @@ impl ChainNode {
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
+        ctx.insert("network", &self.chain.name());
         ctx.insert("eth_chain_id", &eth_chain_id);
 
         let bootstrap_address = if bootstrap_addresses.len() > 1 {
