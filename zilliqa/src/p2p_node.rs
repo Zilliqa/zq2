@@ -127,7 +127,7 @@ impl P2pNode {
                     request_response: request_response::cbor::Behaviour::new(
                         iter::once((
                             StreamProtocol::try_from_owned(format!(
-                                "/zq2/{}/req-resp/1.0.0",
+                                "/{}/req-resp/1.0.0",
                                 config.network
                             ))?,
                             ProtocolSupport::Full,
