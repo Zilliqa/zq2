@@ -396,6 +396,8 @@ impl P2pNode {
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(request_response::Event::OutboundFailure { peer, request_id, error, .. })) => {
                             if let OutboundFailure::DialFailure = error {
+                                // Trim problem peer to mitigate - https://github.com/Zilliqa/zq2/issues/2723
+                                self.swarm.behaviour_mut().kademlia.remove_peer(&peer);
                                 // We failed to send a message to a peer. The likely reason is that we don't know their
                                 // address. Someone else in the network must know it, because we learnt their peer ID.
                                 // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
