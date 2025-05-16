@@ -1542,7 +1542,11 @@ impl Sync {
     }
 
     pub fn peer_ids(&self) -> Vec<PeerId> {
-        self.peers.peer_ids()
+        self.peers
+            .peer_ids()
+            .into_iter()
+            .chain(self.in_flight.iter().map(|(p, _)| p.peer_id))
+            .collect()
     }
 }
 
