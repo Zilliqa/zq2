@@ -108,7 +108,7 @@ impl Default for ScillaServer {
             .arg("-v")
             .arg(format!("{temp_dir}:{temp_dir}"))
             .arg(
-                "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:5ad0f726",
+                "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:7ed90858",
             )
             .arg("/scilla/0/bin/scilla-server-http")
             .spawn()

@@ -31,6 +31,6 @@ RUN apt update -y && \
 
 COPY --chmod=777 ./infra/run.sh /run.sh
 COPY --from=builder /zilliqa/build/zilliqa /zilliqa
-COPY --from=asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:5ad0f726 /scilla/0 /scilla/0
+COPY --from=asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:7ed90858 /scilla/0 /scilla/0
 
 ENTRYPOINT [ "/run.sh" ]
