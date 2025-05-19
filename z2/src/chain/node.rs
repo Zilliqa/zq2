@@ -294,6 +294,7 @@ impl Machine {
                 value,
                 &format!("kms-{}", chain_name),
                 &self.name,
+                Some(self.clone()),
             )?;
             Ok(plaintext)
         } else {
