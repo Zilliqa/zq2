@@ -198,6 +198,7 @@ impl ChainInstance {
                     &value,
                     &format!("kms-{}", self.name()),
                     &format!("{}-genesis", self.name()),
+                    None,
                 )?;
                 Ok(decrypted_value)
             } else {

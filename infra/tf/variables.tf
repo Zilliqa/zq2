@@ -319,6 +319,12 @@ variable "gcp_p_kms_project_id" {
   default     = "prj-p-kms-2vduab0g"
 }
 
+variable "kms_keys_group_access" {
+  description = "(Optional) List of groups to grant access to the KMS keys"
+  type        = list(string)
+  default     = []
+}
+
 variable "persistence_bucket_force_destroy" {
   description = "(Optional) Whether force destroying the persistence bucket deprovisioning the infrastructure."
   type        = bool
