@@ -7,6 +7,7 @@ use std::{
 
 use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
+use itertools::Itertools;
 use jsonrpsee::{RpcModule, types::Params};
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
@@ -114,13 +115,18 @@ fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<PeerInfo> {
     })
 }
 
-/// Returns information about NewView votes
+/// Returns information about votes
 fn votes_received(_params: Params, node: &Arc<Mutex<Node>>) -> Result<VotesReceivedReturnee> {
     let node = node.lock().unwrap();
 
-    let new_views = node.consensus.new_views.clone();
-    let votes = node.consensus.votes.clone();
-    let buffered_votes = node.consensus.buffered_votes.clone();
+    let new_views = node.consensus.new_views.clone().into_iter().collect_vec();
+    let votes = node.consensus.votes.clone().into_iter().collect_vec();
+    let buffered_votes = node
+        .consensus
+        .buffered_votes
+        .clone()
+        .into_iter()
+        .collect_vec();
     let returnee = VotesReceivedReturnee {
         new_views,
         votes,
