@@ -427,7 +427,7 @@ impl TransactionPool {
     pub fn clear(&mut self) {
         self.transactions.clear();
         self.hash_to_index.clear();
-        self.hash_to_index.clear();
+        self.gas_index.clear();
     }
 }
 
