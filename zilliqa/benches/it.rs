@@ -189,7 +189,7 @@ fn consensus(
             consensus.minimum_stake = "1"
             consensus.eth_block_gas_limit = 84000000
             consensus.gas_price = "1"
-            consensus.scilla_address = "{}"
+            # consensus.scilla_address = "{}"
             consensus.scilla_server_socket_directory = "{}/scilla-sockets"
         "#,
         scilla.addr, scilla.temp_dir,
@@ -412,6 +412,68 @@ fn full_blocks_scilla_store(c: &mut Criterion) {
     let call = r#"{ "_tag": "Store", "params": [] }"#.to_owned();
 
     scilla_contract_benchmark(c, "full-blocks-scilla-store", code, call, 8321, 24);
+}
+
+fn full_blocks_giant_deploy(c: &mut Criterion) {
+    let code = include_str!("giant.scilla");
+
+    let signer = schnorr::SecretKey::random(&mut rand::thread_rng());
+    let key = signer.public_key();
+    let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
+    let address = Address::from_slice(&hashed[12..]);
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#
+    .to_owned();
+
+    let chain_id = 700;
+    let amount = 0;
+    let gas_price = 1;
+    let gas_limit = 2341;
+    let to = Address::ZERO;
+
+    let txns = (1..).map(|nonce| {
+        let tx = TxZilliqa {
+            chain_id,
+            nonce,
+            gas_price: ZilAmount::from_raw(gas_price),
+            gas_limit: ScillaGas(gas_limit),
+            to_addr: to,
+            amount: ZilAmount::from_raw(amount),
+            code: code.to_owned(),
+            data: data.clone(),
+        };
+        let version = ((chain_id as u32) << 16) | 1u32;
+        let proto = ProtoTransactionCoreInfo {
+            version,
+            toaddr: to.0.to_vec(),
+            senderpubkey: Some(key.to_sec1_bytes().into()),
+            amount: Some(amount.to_be_bytes().to_vec().into()),
+            gasprice: Some(gas_price.to_be_bytes().to_vec().into()),
+            gaslimit: gas_limit,
+            oneof2: Some(Nonce::Nonce(nonce)),
+            oneof8: Some(Code::Code(code.to_owned().into_bytes())),
+            oneof9: Some(Data::Data(data.clone().into_bytes())),
+        };
+        let txn_data = proto.encode_to_vec();
+        let sig = schnorr::sign(&txn_data, &signer);
+        let txn = SignedTransaction::Zilliqa { tx, key, sig };
+        txn.verify().unwrap()
+    });
+
+    full_transaction_benchmark(
+        c,
+        "full-blocks-giant-deploy",
+        address,
+        iter::empty(),
+        txns,
+        365,
+    );
 }
 
 fn scilla_contract_benchmark(
@@ -673,6 +735,6 @@ fn c_big_process_block(big: &mut Consensus, from: PeerId, proposal: Proposal) ->
 criterion_group!(
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = process_empty, full_blocks_evm_transfers, full_blocks_zil_transfers, full_blocks_erc20_transfers, full_blocks_scilla_add, full_blocks_scilla_load, full_blocks_scilla_store,
+    targets = process_empty, full_blocks_evm_transfers, full_blocks_zil_transfers, full_blocks_erc20_transfers, full_blocks_scilla_add, full_blocks_scilla_load, full_blocks_scilla_store, full_blocks_giant_deploy,
 );
 criterion_main!(benches);
