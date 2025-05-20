@@ -149,7 +149,7 @@ pub struct Consensus {
     // TODO(#719): Consider how to limit the size of this.
     pub buffered_votes: BTreeMap<Hash, Vec<Vote>>,
     pub new_views: BTreeMap<u64, NewViewVote>,
-    new_view_message_cache: Option<NetworkMessage>,
+    network_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
     state: State,
@@ -304,7 +304,7 @@ impl Consensus {
             votes: BTreeMap::new(),
             buffered_votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
-            new_view_message_cache: None,
+            network_message_cache: None,
             high_qc,
             state,
             db,
@@ -370,9 +370,13 @@ impl Consensus {
             }
         }
 
-        // If we haven't already sent a `Vote` in our current view, we can build a `NewView` in case the network is
-        // stuck.
-        if !consensus.db.get_voted_in_view()? {
+        // Set self.network_message_cache incase the network is stuck
+        if consensus.db.get_voted_in_view()? {
+            let block = consensus.head_block();
+            if let Some(leader) = consensus.leader_at_block(&block, consensus.get_view()?) {
+                consensus.build_vote(leader.peer_id, consensus.vote_from_block(&block));
+            }
+        } else {
             consensus.build_new_view()?;
         }
 
@@ -396,7 +400,7 @@ impl Consensus {
             ))),
         );
 
-        self.new_view_message_cache = Some(new_view_message.clone());
+        self.network_message_cache = Some(new_view_message.clone());
         Ok(new_view_message)
     }
 
@@ -439,10 +443,8 @@ impl Consensus {
                 );
                 let leader = self.leader_at_block(&block, view).unwrap();
                 let vote = self.vote_from_block(&block);
-                return Ok(Some((
-                    Some(leader.peer_id),
-                    ExternalMessage::Vote(Box::new(vote)),
-                )));
+                let network_msg = self.build_vote(leader.peer_id, vote);
+                return Ok(Some(network_msg));
             } else {
                 info!(
                     "We are on view: {:?} but we are not a validator, so we are waiting.",
@@ -504,16 +506,21 @@ impl Consensus {
                     % self.config.consensus.new_view_broadcast_interval.as_secs())
                     == 0
             {
-                if let Some((_, ExternalMessage::NewView(new_view))) =
-                    self.new_view_message_cache.as_ref()
-                {
-                    if new_view.view == self.get_view()? {
-                        // When re-sending new view messages we broadcast them, rather than only sending them to the
-                        // view leader. This speeds up network recovery when many nodes have different high QCs.
-                        return Ok(Some((None, ExternalMessage::NewView(new_view.clone()))));
+                match self.network_message_cache.take() {
+                    Some((_, ExternalMessage::NewView(new_view))) => {
+                        // If new_view message is not for this view then it must be outdated
+                        if new_view.view == self.get_view()? {
+                            // When re-sending new view messages we broadcast them, rather than only sending them to the
+                            // view leader. This speeds up network recovery when many nodes have different high QCs.
+                            return Ok(Some((None, ExternalMessage::NewView(new_view))));
+                        }
                     }
-                    // If new_view message is not for this view then it must be outdated
-                    self.new_view_message_cache = None;
+                    Some((peer, ExternalMessage::Vote(vote))) => {
+                        if vote.view == self.get_view()? {
+                            return Ok(Some((peer, ExternalMessage::Vote(vote))));
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -783,10 +790,8 @@ impl Consensus {
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
-                    return Ok(Some((
-                        Some(next_leader.peer_id),
-                        ExternalMessage::Vote(Box::new(vote)),
-                    )));
+                    let network_message = self.build_vote(next_leader.peer_id, vote);
+                    return Ok(Some(network_message));
                 }
             }
         } else {
@@ -794,6 +799,12 @@ impl Consensus {
         }
 
         Ok(None)
+    }
+
+    fn build_vote(&mut self, peer_id: PeerId, vote: Vote) -> NetworkMessage {
+        let network_msg = (Some(peer_id), ExternalMessage::Vote(Box::new(vote)));
+        self.network_message_cache = Some(network_msg.clone());
+        network_msg
     }
 
     /// Apply the rewards at the tail-end of the Proposal.
