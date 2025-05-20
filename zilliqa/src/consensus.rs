@@ -370,9 +370,13 @@ impl Consensus {
             }
         }
 
-        // If we haven't already sent a `Vote` in our current view, we can build a `NewView` in case the network is
-        // stuck.
-        if !consensus.db.get_voted_in_view()? {
+        // Set self.network_message_cache incase the network is stuck
+        if consensus.db.get_voted_in_view()? {
+            let block = consensus.head_block();
+            if let Some(leader) = consensus.leader_at_block(&block, consensus.get_view()?) {
+                consensus.build_vote(leader.peer_id, consensus.vote_from_block(&block));
+            }
+        } else {
             consensus.build_new_view()?;
         }
 
@@ -516,7 +520,7 @@ impl Consensus {
                             return Ok(Some((peer, ExternalMessage::Vote(vote))));
                         }
                     }
-                    _ => unimplemented!("network_message_cache"),
+                    _ => {}
                 }
             }
 
