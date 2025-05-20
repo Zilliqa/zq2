@@ -516,7 +516,7 @@ impl Consensus {
                         }
                     }
                     Some((peer, ExternalMessage::Vote(vote))) => {
-                        if vote.view == self.get_view()? {
+                        if vote.view + 1 == self.get_view()? {
                             return Ok(Some((peer, ExternalMessage::Vote(vote))));
                         }
                     }
