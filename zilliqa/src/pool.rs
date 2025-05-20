@@ -423,6 +423,12 @@ impl TransactionPool {
     pub fn has_txn_ready(&self) -> bool {
         !self.gas_index.is_empty()
     }
+
+    pub fn clear(&mut self) {
+        self.transactions.clear();
+        self.hash_to_index.clear();
+        self.gas_index.clear();
+    }
 }
 
 #[cfg(test)]
