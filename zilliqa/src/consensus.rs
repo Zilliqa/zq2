@@ -2507,7 +2507,8 @@ impl Consensus {
         // in other words, the current view is always at least 2 views ahead of the highQC's view
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
         let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as f32;
-        (consensus_timeout * (1.5f32).powi(view_difference.saturating_sub(2) as i32)).floor() as u64
+        (consensus_timeout * (1.25f32).powi(view_difference.saturating_sub(2) as i32)).floor()
+            as u64
     }
 
     /// Find minimum number of views which could have passed by in the given time difference.

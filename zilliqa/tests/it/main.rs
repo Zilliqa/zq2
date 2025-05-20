@@ -76,10 +76,11 @@ use zilliqa::{
     cfg::{
         Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
         Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
-        block_request_batch_size_default, block_request_limit_default, eth_chain_id_default,
-        failed_request_sleep_duration_default, genesis_fork_default, max_blocks_in_flight_default,
-        max_rpc_response_size_default, scilla_ext_libs_path_default, state_cache_size_default,
-        state_rpc_limit_default, total_native_token_supply_default, u64_max,
+        block_request_batch_size_default, block_request_limit_default, consensus_timeout_default,
+        eth_chain_id_default, failed_request_sleep_duration_default, genesis_fork_default,
+        max_blocks_in_flight_default, max_rpc_response_size_default, scilla_ext_libs_path_default,
+        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
+        u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -362,7 +363,7 @@ impl Network {
             consensus: ConsensusConfig {
                 genesis_deposits: genesis_deposits.clone(),
                 is_main: send_to_parent.is_none(),
-                consensus_timeout: Duration::from_secs(5),
+                consensus_timeout: consensus_timeout_default(),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 block_time: Duration::from_millis(25),
@@ -525,7 +526,7 @@ impl Network {
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
                 is_main: self.is_main(),
-                consensus_timeout: Duration::from_secs(5),
+                consensus_timeout: consensus_timeout_default(),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 block_time: Duration::from_millis(25),
                 scilla_server_socket_directory: self.scilla_server_socket_directory.clone(),

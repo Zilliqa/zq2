@@ -752,7 +752,7 @@ pub struct GenesisDeposit {
 }
 
 pub fn consensus_timeout_default() -> Duration {
-    Duration::from_secs(5)
+    Duration::from_secs(15)
 }
 
 pub fn block_time_default() -> Duration {
