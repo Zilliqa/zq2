@@ -73,7 +73,7 @@ jobs:
   e2e_test:
     services:
       scilla:
-        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:7ed90858
+        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:abdb24b1
         options: --init --entrypoint "/scilla/0/bin/scilla-server-http"
         ports:
           - 3000:3000
