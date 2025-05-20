@@ -28,6 +28,7 @@ pub fn rpc_module(
             ("admin_forceView", force_view),
             ("admin_getPeers", get_peers),
             ("admin_votesReceived", votes_received),
+            ("admin_clearMempool", clear_mempool),
         ]
     )
 }
@@ -127,4 +128,11 @@ fn votes_received(_params: Params, node: &Arc<Mutex<Node>>) -> Result<VotesRecei
         buffered_votes,
     };
     Ok(returnee)
+}
+
+fn clear_mempool(_params: Params, node: &Arc<Mutex<Node>>) -> Result<()> {
+    let mut node = node.lock().unwrap();
+
+    node.consensus.clear_mempool();
+    Ok(())
 }

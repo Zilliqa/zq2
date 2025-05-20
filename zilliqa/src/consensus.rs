@@ -3209,6 +3209,10 @@ impl Consensus {
         }
         Ok(())
     }
+
+    pub fn clear_mempool(&mut self) {
+        self.transaction_pool.clear();
+    }
 }
 
 #[cfg(test)]
