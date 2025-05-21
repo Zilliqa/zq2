@@ -1544,7 +1544,7 @@ async fn get_block_receipts(mut network: Network) {
     assert!(receipts.contains(&individual1));
 }
 
-#[zilliqa_macros::test]
+#[allow(dead_code)]
 async fn test_block_filter(mut network: Network) {
     println!("Starting block filter test");
     let wallet = network.random_wallet().await;
@@ -1605,7 +1605,7 @@ async fn test_block_filter(mut network: Network) {
     assert!(filter_removed_successfully);
 }
 
-#[zilliqa_macros::test]
+#[allow(dead_code)]
 async fn test_pending_transaction_filter(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let provider = wallet.provider();
@@ -1647,7 +1647,7 @@ async fn test_pending_transaction_filter(mut network: Network) {
     assert!(changes.is_empty());
 }
 
-#[zilliqa_macros::test]
+#[allow(dead_code)]
 async fn test_log_filter(mut network: Network) {
     let wallet = network.genesis_wallet().await;
     let provider = wallet.provider();
@@ -1724,7 +1724,7 @@ async fn test_log_filter(mut network: Network) {
     assert!(filter_removed_successfully);
 }
 
-#[zilliqa_macros::test]
+#[allow(dead_code)]
 async fn test_invalid_filter_id(mut network: Network) {
     println!("Starting invalid filter ID test");
     let wallet = network.random_wallet().await;
@@ -1738,7 +1738,7 @@ async fn test_invalid_filter_id(mut network: Network) {
     assert!(result.is_err());
 }
 
-#[zilliqa_macros::test]
+#[allow(dead_code)]
 async fn test_uninstall_filter(mut network: Network) {
     println!("Starting uninstall filter test");
     let wallet = network.random_wallet().await;

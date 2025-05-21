@@ -1038,7 +1038,10 @@ fn get_account(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 
 /// eth_getFilterChanges
 /// Polling method for a filter, which returns an array of events that have occurred since the last poll.
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
 fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+    return Err(anyhow!("API method get_filter_changes is disabled"));
     let filter_id: u128 = params.one()?;
 
     let node = node.lock().unwrap();
@@ -1085,7 +1088,10 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
 
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
 fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+    return Err(anyhow!("API method get_filter_logs is disabled"));
     let filter_id: u128 = params.one()?;
     let node = node.lock().unwrap();
     let mut filters = node.filters.lock().unwrap();
@@ -1126,7 +1132,10 @@ fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result
 
 /// eth_newBlockFilter
 /// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
 fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
+    return Err(anyhow!("API method new_block_filter is disabled"));
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
 
     let node = node.lock().unwrap();
@@ -1141,7 +1150,10 @@ fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
 
 /// eth_newFilter
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
 fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
+    return Err(anyhow!("API method new_filter is disabled"));
     let criteria: alloy::rpc::types::Filter = params.one()?;
     let node = node.lock().unwrap();
     let mut filters = node.filters.lock().unwrap();
@@ -1156,7 +1168,12 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
 
 /// eth_newPendingTransactionFilter
 /// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
 fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
+    return Err(anyhow!(
+        "API method new_pending_transaction_filter is disabled"
+    ));
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
     let node = node.lock().unwrap();
     let mut filters = node.filters.lock().unwrap();
@@ -1190,7 +1207,10 @@ fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 
 /// eth_uninstallFilter
 /// It uninstalls a filter with the given filter id.
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
 fn uninstall_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+    return Err(anyhow!("API method uninstall_filter is disabled"));
     let filter_id: u128 = params.one()?;
 
     let node = node.lock().unwrap();
