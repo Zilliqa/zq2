@@ -188,6 +188,7 @@ const CURRENT_DB_VERSION: &str = "1";
 #[derive(Debug)]
 pub struct Db {
     db: Arc<Mutex<Connection>>,
+    block_cache: Arc<Mutex<LruCache<[u8; 32], Vec<u8>>>>,
     state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
@@ -297,6 +298,9 @@ impl Db {
 
         Ok(Db {
             db: Arc::new(Mutex::new(connection)),
+            block_cache: Arc::new(Mutex::new(LruCache::new(
+                state_cache_size.max(1024 * 1024 * 64), // a ZQ2 block could be up to 1MB.
+            ))),
             state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
             path,
             executable_blocks_height,
@@ -1066,6 +1070,12 @@ impl Db {
         let Some(mut block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
+
+        if let Some(block_cache) = self.block_cache.lock().unwrap().get(&block.hash().0) {
+            let block_cache = bincode::deserialize::<Block>(block_cache)?;
+            return Ok(Some(block_cache));
+        }
+
         if self.executable_blocks_height.is_some()
             && block.header.number < self.executable_blocks_height.unwrap()
         {
@@ -1082,6 +1092,12 @@ impl Db {
             .query_map([block.header.hash], |row| row.get(0))?
             .collect::<Result<Vec<Hash>, _>>()?;
         block.transactions = transaction_hashes;
+
+        let cache_block = bincode::serialize(&block)?;
+        self.block_cache
+            .lock()
+            .unwrap()
+            .insert(block.hash().0, cache_block)?;
         Ok(Some(block))
     }
 
@@ -1147,7 +1163,7 @@ impl Db {
     ) -> Result<()> {
         sqlite_tx.prepare_cached("INSERT OR IGNORE INTO receipts
                 (tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions)
-            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)",)?.execute(            
+            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)",)?.execute(
             named_params! {
                 ":tx_hash": receipt.tx_hash,
                 ":block_hash": receipt.block_hash,
