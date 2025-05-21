@@ -576,6 +576,9 @@ impl Forks {
                     fork.scilla_block_number_returns_current_block
                 }
                 ForkName::ScillaMapsAreEncodedCorrectly => fork.scilla_maps_are_encoded_correctly,
+                ForkName::FundAccountsFromZeroAccount => {
+                    fork.fund_accounts_from_zero_account.len() != 0
+                }
             } {
                 return Some(fork.at_height);
             }
@@ -617,6 +620,7 @@ pub enum ForkName {
     ScillaCallGasExemptAddrs,
     ScillaBlockNumberReturnsCurrentBlock,
     ScillaMapsAreEncodedCorrectly,
+    FundAccountsFromZeroAccount,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -743,7 +747,7 @@ impl Fork {
             fund_accounts_from_zero_account: delta
                 .fund_accounts_from_zero_account
                 .clone()
-                .unwrap_or(self.fund_accounts_from_zero_account.clone()),
+                .unwrap_or(vec![]),
         }
     }
 }

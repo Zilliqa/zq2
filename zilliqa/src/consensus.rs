@@ -21,7 +21,7 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
-    cfg::{ConsensusConfig, NodeConfig},
+    cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
@@ -1210,26 +1210,30 @@ impl Consensus {
         })?;
 
         if !fork.fund_accounts_from_zero_account.is_empty() {
-            for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
-                info!(
-                    "adding address_amount_pair.0: {:?} to address",
-                    address_amount_pair.0
-                );
-                state.mutate_account(Address::ZERO, |a| {
-                    a.balance = a
-                        .balance
-                        .checked_sub(*address_amount_pair.1)
-                        .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
-                    Ok(())
-                })?;
-                state.mutate_account(address_amount_pair.0, |a| {
-                    a.balance = a
-                        .balance
-                        .checked_add(*address_amount_pair.1)
-                        .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
-                    Ok(())
-                })?;
-            }
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
+            {
+                if fork_height == proposal.header.number {
+                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
+                        state.mutate_account(Address::ZERO, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_sub(*address_amount_pair.1)
+                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
+                            Ok(())
+                        })?;
+                        state.mutate_account(address_amount_pair.0, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_add(*address_amount_pair.1)
+                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
+                            Ok(())
+                        })?;
+                    }
+                }
+            };
         }
 
         if self.block_is_first_in_epoch(proposal.header.number) {
@@ -3097,22 +3101,30 @@ impl Consensus {
         })?;
 
         if !fork.fund_accounts_from_zero_account.is_empty() {
-            for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
-                state.mutate_account(Address::ZERO, |a| {
-                    a.balance = a
-                        .balance
-                        .checked_sub(*address_amount_pair.1)
-                        .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
-                    Ok(())
-                })?;
-                state.mutate_account(address_amount_pair.0, |a| {
-                    a.balance = a
-                        .balance
-                        .checked_add(*address_amount_pair.1)
-                        .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
-                    Ok(())
-                })?;
-            }
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
+            {
+                if fork_height == block.header.number {
+                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
+                        state.mutate_account(Address::ZERO, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_sub(*address_amount_pair.1)
+                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
+                            Ok(())
+                        })?;
+                        state.mutate_account(address_amount_pair.0, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_add(*address_amount_pair.1)
+                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
+                            Ok(())
+                        })?;
+                    }
+                }
+            };
         }
 
         if self.block_is_first_in_epoch(block.header.number) {

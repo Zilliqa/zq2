@@ -42,3 +42,7 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
 consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 300 } } }
+consensus.genesis_fork = { at_height = 0, executable_blocks = true, call_mode_1_sets_caller_to_parent_caller = false, failed_scilla_call_from_gas_exempt_caller_causes_revert = false, scilla_messages_can_call_evm_contracts = false, scilla_contract_creation_increments_account_balance = false, scilla_json_preserve_order = false, scilla_call_respects_evm_state_changes = false, only_mutated_accounts_update_state = false, scilla_call_gas_exempt_addrs = [], scilla_block_number_returns_current_block = false, scilla_maps_are_encoded_correctly = false, transfer_gas_fee_to_zero_account = false, apply_state_changes_only_if_transaction_succeeds = false, apply_scilla_delta_when_evm_succeeded = false, scilla_deduct_funds_from_actual_sender = false, fund_accounts_from_zero_account = [] }
+consensus.forks = [
+    { at_height = 4, fund_accounts_from_zero_account = [["0x95347b860Bd49818AFAccCA8403C55C23e7BB9ED", "10000000000000000000000000"]] },
+]
