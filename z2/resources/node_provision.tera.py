@@ -429,19 +429,6 @@ STATS_AGENT_IMAGE="{{ stats_agent_image }}"
 start() {
     docker rm stats-agent-""" + VERSIONS.get('stats_agent') + """ &> /dev/null || echo 0
     STATS_DASHBOARD_KEY=""" + STATS_DASHBOARD_KEY_CMD + """
-    docker run -td --name stats-agent-""" + VERSIONS.get('stats_agent') + """ \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
-        --net=host \
-        -e RPC_HOST="localhost" \
-        -e RPC_PORT="4202" \
-        -e LISTENING_PORT="3333" \
-        -e INSTANCE_NAME=""" + os.uname().nodename + """ \
-        -e CONTACT_DETAILS="devops@zilliqa.com" \
-        -e WS_SERVER="ws://stats.""" + SUBDOMAIN + """" \
-        -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
-        -e VERBOSITY="2" \
-        --restart=unless-stopped --pull=always \
-        ${STATS_AGENT_IMAGE}
     unset STATS_DASHBOARD_KEY
 }
 
