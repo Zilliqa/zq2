@@ -1681,7 +1681,7 @@ impl Consensus {
         )))
     }
 
-    // Returns Ok(None) if the node cannot propose
+    // Returns Ok(None) if the early proposal is implausible e.g. out-of-sync proposal.
     fn can_propose(&mut self, check_block: Option<Block>) -> Result<Option<Block>> {
         // finished block check
         if let Some(final_block) = check_block {
@@ -1691,10 +1691,11 @@ impl Consensus {
                     .db
                     .get_highest_canonical_block_number()?
                     .expect("head_block must exist");
-                // if the proposed block is not the next one in the chain, then it is invalid e.g. it was out-of-sync at the early assembly and subsequently caught up.
-                if head_number.saturating_add(1) == final_block.number() {
+                // if the proposed block is lagging, then it is invalid e.g. it was out-of-sync at the early assembly and subsequently caught up.
+                if head_number <= final_block.number() {
                     return Ok(Some(final_block));
                 }
+                warn!(number = %final_block.number(), view = %final_block.view(), "out-of-sync proposal");
             }
         }
         Ok(None)
