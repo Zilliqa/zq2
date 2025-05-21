@@ -602,6 +602,7 @@ pub struct Fork {
     pub apply_scilla_delta_when_evm_succeeded: bool,
     pub apply_state_changes_only_if_transaction_succeeds: bool,
     pub scilla_deduct_funds_from_actual_sender: bool,
+    pub fund_accounts_from_zero_account: Vec<(Address, Amount)>,
 }
 
 pub enum ForkName {
@@ -686,6 +687,8 @@ pub struct ForkDelta {
     pub apply_state_changes_only_if_transaction_succeeds: Option<bool>,
     /// if true, funds are deducted from the sender of scilla message rather than the origin
     pub scilla_deduct_funds_from_actual_sender: Option<bool>,
+    /// Send funds from zero account to faucet account
+    pub fund_accounts_from_zero_account: Option<Vec<(Address, Amount)>>,
 }
 
 impl Fork {
@@ -737,6 +740,10 @@ impl Fork {
             scilla_deduct_funds_from_actual_sender: delta
                 .scilla_deduct_funds_from_actual_sender
                 .unwrap_or(self.scilla_deduct_funds_from_actual_sender),
+            fund_accounts_from_zero_account: delta
+                .fund_accounts_from_zero_account
+                .clone()
+                .unwrap_or(self.fund_accounts_from_zero_account.clone()),
         }
     }
 }
@@ -820,6 +827,7 @@ pub fn genesis_fork_default() -> Fork {
         apply_scilla_delta_when_evm_succeeded: true,
         apply_state_changes_only_if_transaction_succeeds: true,
         scilla_deduct_funds_from_actual_sender: true,
+        fund_accounts_from_zero_account: vec![],
     }
 }
 
@@ -955,6 +963,7 @@ mod tests {
                 apply_scilla_delta_when_evm_succeeded: None,
                 apply_state_changes_only_if_transaction_succeeds: None,
                 scilla_deduct_funds_from_actual_sender: None,
+                fund_accounts_from_zero_account: None,
             }],
             ..Default::default()
         };
@@ -993,6 +1002,7 @@ mod tests {
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1011,6 +1021,7 @@ mod tests {
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
                 },
             ],
             ..Default::default()
@@ -1063,6 +1074,7 @@ mod tests {
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1081,6 +1093,7 @@ mod tests {
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
                 },
             ],
             ..Default::default()
@@ -1124,6 +1137,7 @@ mod tests {
                 apply_scilla_delta_when_evm_succeeded: true,
                 apply_state_changes_only_if_transaction_succeeds: true,
                 scilla_deduct_funds_from_actual_sender: true,
+                fund_accounts_from_zero_account: vec![],
             },
             forks: vec![],
             ..Default::default()
@@ -1155,6 +1169,7 @@ mod tests {
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1173,6 +1188,7 @@ mod tests {
                     apply_scilla_delta_when_evm_succeeded: None,
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
                 },
             ],
             ..Default::default()
