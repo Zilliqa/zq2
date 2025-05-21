@@ -72,3 +72,6 @@ pub const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);
 // Consensus
 // Roughly how long to allow between finish propocessing of a Proposal and it being received by peers
 pub const TIME_TO_ALLOW_PROPOSAL_BROADCAST: Duration = Duration::from_millis(100);
+
+// Exponentional backoff timeout increases by this multiple for each view missed
+pub const EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER: f32 = 1.25f32;

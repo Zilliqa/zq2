@@ -22,7 +22,7 @@ use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
     cfg::{ConsensusConfig, NodeConfig},
-    constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+    constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -2518,8 +2518,10 @@ impl Consensus {
         // in other words, the current view is always at least 2 views ahead of the highQC's view
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
         let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as f32;
-        (consensus_timeout * (1.25f32).powi(view_difference.saturating_sub(2) as i32)).floor()
-            as u64
+        (consensus_timeout
+            * (EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER)
+                .powi(view_difference.saturating_sub(2) as i32))
+        .floor() as u64
     }
 
     /// Find minimum number of views which could have passed by in the given time difference.
@@ -2533,7 +2535,7 @@ impl Consensus {
         let mut views = 0;
         let mut total = 0.0;
         loop {
-            total += (1.5f32).powi(views);
+            total += (EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER).powi(views);
             if total > normalised_time_difference {
                 break;
             }
