@@ -189,7 +189,7 @@ fn consensus(
             consensus.minimum_stake = "1"
             consensus.eth_block_gas_limit = 84000000
             consensus.gas_price = "1"
-            # consensus.scilla_address = "{}"
+            consensus.scilla_address = "{}"
             consensus.scilla_server_socket_directory = "{}/scilla-sockets"
         "#,
         scilla.addr, scilla.temp_dir,
