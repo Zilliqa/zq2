@@ -140,9 +140,11 @@ impl NodeLauncher {
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE]);
             let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
+            let rpc_middleware = jsonrpsee::server::RpcServiceBuilder::new().rpc_logger(1000);
             let server = jsonrpsee::server::ServerBuilder::new()
                 .max_response_body_size(config.max_rpc_response_size)
                 .set_http_middleware(middleware)
+                .set_rpc_middleware(rpc_middleware)
                 .set_id_provider(EthIdProvider)
                 .build((Ipv4Addr::UNSPECIFIED, api_server.port))
                 .await;
