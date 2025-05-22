@@ -1475,15 +1475,16 @@ impl Consensus {
                 applied_txs.push(tx);
             }
         }
-        let (_, applied_txs, _, _, _) = self.early_proposal.as_ref().unwrap();
-        self.db.with_sqlite_tx(|sqlite_tx| {
-            for tx in applied_txs {
-                self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
-            }
-            Ok(())
-        })?;
-
+        {
+            let (_, applied_txs, _, _, _) = self.early_proposal.as_ref().unwrap();
+            let db = &self.db;
+            self.db.with_sqlite_tx(move |sqlite_tx| {
+                for tx in applied_txs {
+                    db.insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
+                }
+                Ok(())
+            })?;
+        }
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
             let (proposal, applied_txs, transactions_trie, receipts_trie, _) =
@@ -3079,18 +3080,19 @@ impl Consensus {
             debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
-
-        // Converted to explicit DB transaction - reduce unnecessary mutex locking
-        self.db.with_sqlite_raw(|db| {
-            for txn in &verified_txns {
-                self.db
-                    .insert_transaction_with_db_tx(db, &txn.hash, &txn.tx)?;
-            }
-            for (addr, txn_hash) in touched_addresses {
-                self.db.add_touched_address_with_db_tx(db, addr, txn_hash)?;
-            }
-            Ok(())
-        })?;
+        {
+            // Converted to explicit DB transaction - reduce unnecessary mutex locking
+            let db = &self.db;
+            self.db.with_sqlite_raw(move |db_tx| {
+                for txn in &verified_txns {
+                    db.insert_transaction_with_db_tx(db_tx, &txn.hash, &txn.tx)?;
+                }
+                for (addr, txn_hash) in touched_addresses {
+                    db.add_touched_address_with_db_tx(db_tx, addr, txn_hash)?;
+                }
+                Ok(())
+            })?;
+        }
 
         if cumulative_gas_used != block.gas_used() {
             warn!(
@@ -3226,15 +3228,16 @@ impl Consensus {
             // If we were the proposer we would've already processed the block, hence the check
             self.add_block(from, block.clone())?;
         }
-
-        // Converted to explicit DB transaction - reduce unnecessary mutex locking
-        self.db.with_sqlite_raw(|db| {
-            for (receipt, _) in block_receipts {
-                self.db.insert_transaction_receipt_with_db_tx(db, receipt)?;
-            }
-            Ok(())
-        })?;
-
+        {
+            // Converted to explicit DB transaction - reduce unnecessary mutex locking
+            let db = &self.db;
+            self.db.with_sqlite_raw(move |db_tx| {
+                for (receipt, _) in block_receipts {
+                    db.insert_transaction_receipt_with_db_tx(db_tx, receipt)?;
+                }
+                Ok(())
+            })?;
+        }
         self.db.mark_block_as_canonical(block.hash())?;
 
         Ok(())
