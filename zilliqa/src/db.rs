@@ -187,7 +187,7 @@ const CURRENT_DB_VERSION: &str = "1";
 
 #[derive(Debug)]
 pub struct Db {
-    db: Arc<Mutex<Connection>>,
+    db: Arc<Mutex<Connection>>, // do not use this directly
     state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
     /// The block height at which ZQ2 blocks begin.
@@ -673,11 +673,34 @@ impl Db {
         })
     }
 
+    pub fn begin(&self) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        Ok(db.execute_batch("BEGIN")?)
+    }
+
+    pub fn commit(&self) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        Ok(db.execute_batch("COMMIT")?)
+    }
+
+    pub fn rollback(&self) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        Ok(db.execute_batch("ROLLBACK")?)
+    }
+
     pub fn with_sqlite_tx(&self, operations: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
         let mut sqlite_tx = self.db.lock().unwrap();
         let sqlite_tx = sqlite_tx.transaction()?;
         operations(&sqlite_tx)?;
         Ok(sqlite_tx.commit()?)
+    }
+
+    pub fn with_sqlite_raw(
+        &self,
+        operations: impl FnOnce(&Connection) -> Result<()>,
+    ) -> Result<()> {
+        let sqlite_tx = self.db.lock().unwrap();
+        operations(&sqlite_tx)
     }
 
     pub fn get_block_hash_by_view(&self, view: u64) -> Result<Option<Hash>> {
