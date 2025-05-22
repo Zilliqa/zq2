@@ -1038,10 +1038,7 @@ fn get_account(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 
 /// eth_getFilterChanges
 /// Polling method for a filter, which returns an array of events that have occurred since the last poll.
-#[allow(unreachable_code)]
-#[allow(unused_variables)]
 fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
-    return Err(anyhow!("API method get_filter_changes is disabled"));
     let filter_id: u128 = params.one()?;
 
     let node = node.lock().unwrap();
@@ -1074,24 +1071,34 @@ fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_j
         }
 
         FilterKind::Log(log_filter) => {
-            let all_logs = get_logs_inner(&log_filter.criteria, &node)?;
-            let result: Vec<eth::Log> = all_logs
-                .iter()
-                .filter(|log| !log_filter.seen_logs.contains(log))
-                .cloned()
-                .collect();
-            log_filter.seen_logs = all_logs.into_iter().collect();
-            Ok(json!(result))
+            // If necessary, adjust the filter so it ignores already returned blocks
+            let last_block = log_filter.last_block_number; // exclusive
+            let criteria_last_block = log_filter.criteria.get_from_block(); // inclusive
+            let adjusted_criteria = *log_filter.criteria.clone();
+            let adjusted_criteria = match (last_block, criteria_last_block) {
+                (None, None) => adjusted_criteria,
+                (None, Some(y)) => adjusted_criteria.from_block(y),
+                (Some(x), None) => adjusted_criteria.from_block(x + 1),
+                (Some(x), Some(y)) => adjusted_criteria.from_block(std::cmp::max(x + 1, y)),
+            };
+
+            // Get the logs
+            let logs = get_logs_inner(&adjusted_criteria, &node)?;
+
+            // Set the last recorded block in the filter to the most recent block in the returned logs
+            let last_block = logs.iter().fold(None, |acc, x| {
+                Some(std::cmp::max(x.block_number, acc.unwrap_or(0)))
+            });
+            log_filter.last_block_number = last_block;
+
+            Ok(json!(logs))
         }
     }
 }
 
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
-#[allow(unreachable_code)]
-#[allow(unused_variables)]
 fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
-    return Err(anyhow!("API method get_filter_logs is disabled"));
     let filter_id: u128 = params.one()?;
     let node = node.lock().unwrap();
     let mut filters = node.filters.lock().unwrap();
@@ -1132,10 +1139,7 @@ fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result
 
 /// eth_newBlockFilter
 /// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
-#[allow(unreachable_code)]
-#[allow(unused_variables)]
 fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
-    return Err(anyhow!("API method new_block_filter is disabled"));
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
 
     let node = node.lock().unwrap();
@@ -1150,10 +1154,7 @@ fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
 
 /// eth_newFilter
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
-#[allow(unreachable_code)]
-#[allow(unused_variables)]
 fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
-    return Err(anyhow!("API method new_filter is disabled"));
     let criteria: alloy::rpc::types::Filter = params.one()?;
     let node = node.lock().unwrap();
     let mut filters = node.filters.lock().unwrap();
@@ -1161,19 +1162,13 @@ fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
     let id = filters.add_filter(FilterKind::Log(LogFilter {
         criteria: Box::new(criteria),
         last_block_number: None,
-        seen_logs: std::collections::HashSet::new(),
     }));
     Ok(id)
 }
 
 /// eth_newPendingTransactionFilter
 /// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
-#[allow(unreachable_code)]
-#[allow(unused_variables)]
 fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
-    return Err(anyhow!(
-        "API method new_pending_transaction_filter is disabled"
-    ));
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
     let node = node.lock().unwrap();
     let mut filters = node.filters.lock().unwrap();
@@ -1207,10 +1202,7 @@ fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 
 /// eth_uninstallFilter
 /// It uninstalls a filter with the given filter id.
-#[allow(unreachable_code)]
-#[allow(unused_variables)]
 fn uninstall_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
-    return Err(anyhow!("API method uninstall_filter is disabled"));
     let filter_id: u128 = params.one()?;
 
     let node = node.lock().unwrap();
