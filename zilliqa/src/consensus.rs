@@ -2764,10 +2764,10 @@ impl Consensus {
             proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
         }
         trace!(
-            "common ancestor found: {}, view: {}, height: {}",
-            head.hash(),
+            "common ancestor found: block number: {}, view: {}, hash: {}",
+            head.number(),
             head.view(),
-            head.number()
+            head.hash()
         );
 
         // Now, we want to revert the blocks until the head block is the common ancestor
@@ -2784,13 +2784,21 @@ impl Consensus {
                 panic!("genesis block is not supposed to be reverted");
             }
 
-            trace!("Reverting block {head_block:?}");
+            trace!(
+                "Reverting block number: {}, view: {}, hash: {}",
+                head_block.number(),
+                head_block.view(),
+                head_block.hash()
+            );
             // block store doesn't require anything, it will just hold blocks that may now be invalid
 
             // State is easily set - must be to the parent block, though
             trace!(
-                "Setting state to: {} aka block: {parent_block:?}",
-                parent_block.state_root_hash()
+                "Setting state to: {} aka block: number: {}, view: {}, hash: {}",
+                parent_block.state_root_hash(),
+                parent_block.number(),
+                parent_block.view(),
+                parent_block.hash()
             );
             self.state
                 .set_to_root(parent_block.state_root_hash().into());
@@ -2817,7 +2825,13 @@ impl Consensus {
         let mut last_block = block.hash();
         while self.head_block().hash() != block.parent_hash() {
             trace!("Advancing the head block to prepare for proposed block fork.");
-            trace!("Head block: {:?}", self.head_block());
+            let head_block_for_log = self.head_block();
+            trace!(
+                "Head block number: {}, view: {}, hash: {}",
+                head_block_for_log.number(),
+                head_block_for_log.view(),
+                head_block_for_log.hash()
+            );
             trace!("desired block hash: {}", block.parent_hash());
 
             let desired_block_height = self.head_block().number() + 1;
@@ -2843,7 +2857,12 @@ impl Consensus {
             last_block = block_pointer.hash();
 
             // We now have the block pointer at the desired height, we can apply it.
-            trace!("Fork execution of block: {block_pointer:?}");
+            trace!(
+                "Fork execution of block number: {}, view: {}, hash: {}",
+                block_pointer.number(),
+                block_pointer.view(),
+                block_pointer.hash()
+            );
             let transactions = block_pointer.transactions.clone();
             let transactions = transactions
                 .iter()
