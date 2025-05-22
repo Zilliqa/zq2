@@ -499,8 +499,11 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     Ok(block)
 }
 
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
 pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u8; 256]> {
     let mut logs_bloom = [0; 256];
+    return Ok(logs_bloom); // FIXME: test if it speeds eth_getBlockByNumber
     for txn_hash in &block.transactions {
         let txn_receipt = node
             .get_transaction_receipt(*txn_hash)?
