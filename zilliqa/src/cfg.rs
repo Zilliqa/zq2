@@ -577,7 +577,7 @@ impl Forks {
                 }
                 ForkName::ScillaMapsAreEncodedCorrectly => fork.scilla_maps_are_encoded_correctly,
                 ForkName::FundAccountsFromZeroAccount => {
-                    fork.fund_accounts_from_zero_account.len() != 0
+                    !fork.fund_accounts_from_zero_account.is_empty()
                 }
             } {
                 return Some(fork.at_height);
@@ -747,7 +747,7 @@ impl Fork {
             fund_accounts_from_zero_account: delta
                 .fund_accounts_from_zero_account
                 .clone()
-                .unwrap_or(vec![]),
+                .unwrap_or_default(),
         }
     }
 }
