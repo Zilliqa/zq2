@@ -285,32 +285,24 @@ pub fn get_block_transaction_receipts_inner(
     let mut log_index = 0;
     let mut receipts = Vec::new();
 
-    for (transaction_index, tx_hash) in block.transactions.iter().enumerate() {
-        let Some(signed_transaction) = node.get_transaction_by_hash(*tx_hash)? else {
+    let receipts_retrieved = node.get_transaction_receipts_in_block(block.header.hash)?;
+
+    for (transaction_index, receipt_retrieved) in receipts_retrieved.iter().enumerate() {
+        // This could maybe be a bit faster if we had a db function that queried transactions by
+        // block hash, joined on receipts, but this would be quite a bit of new code.
+        let Some(signed_transaction) = node.get_transaction_by_hash(receipt_retrieved.tx_hash)?
+        else {
             warn!(
                 "Failed to get TX by hash when getting TX receipt! {}",
-                tx_hash
+                receipt_retrieved.tx_hash
             );
             continue;
         };
-
-        let Some(receipt) = node.get_transaction_receipt(*tx_hash)? else {
-            debug!(
-                "Failed to get TX receipt when getting TX receipt! {}",
-                tx_hash
-            );
-            continue;
-        };
-
-        debug!(
-            "get_block_transaction_receipts: hash: {:?} result: {:?}",
-            tx_hash, receipt
-        );
 
         // Required workaround for incorrectly converted nonces for zq1 scilla transactions
         let contract_address = match &signed_transaction.tx {
             SignedTransaction::Zilliqa { tx, .. } => {
-                if tx.to_addr.is_zero() && receipt.success {
+                if tx.to_addr.is_zero() && receipt_retrieved.success {
                     Some(zil_contract_address(
                         signed_transaction.signer,
                         signed_transaction
@@ -319,25 +311,25 @@ pub fn get_block_transaction_receipts_inner(
                             .ok_or_else(|| anyhow!("Unable to extract nonce!"))?,
                     ))
                 } else {
-                    receipt.contract_address
+                    receipt_retrieved.contract_address
                 }
             }
-            _ => receipt.contract_address,
+            _ => receipt_retrieved.contract_address,
         };
 
         let mut logs_bloom = [0; 256];
 
         let mut logs = Vec::new();
-        for log in receipt.logs {
+        for log in receipt_retrieved.logs.iter() {
             let log = match log {
-                Log::Evm(log) => log,
-                Log::Scilla(log) => log.into_evm(),
+                Log::Evm(log) => log.clone(),
+                Log::Scilla(log) => log.clone().into_evm(),
             };
             let log = eth::Log::new(
                 log,
                 log_index,
                 transaction_index,
-                *tx_hash,
+                receipt_retrieved.tx_hash,
                 block.number(),
                 block.hash(),
             );
@@ -353,20 +345,20 @@ pub fn get_block_transaction_receipts_inner(
         let transaction = signed_transaction.tx.into_transaction();
 
         let receipt = eth::TransactionReceipt {
-            transaction_hash: (*tx_hash).into(),
+            transaction_hash: (receipt_retrieved.tx_hash).into(),
             transaction_index: transaction_index as u64,
             block_hash: block.hash().into(),
             block_number: block.number(),
             from,
             to: transaction.to_addr(),
-            cumulative_gas_used: receipt.cumulative_gas_used,
+            cumulative_gas_used: receipt_retrieved.cumulative_gas_used,
             effective_gas_price: transaction.max_fee_per_gas(),
-            gas_used: receipt.gas_used,
+            gas_used: receipt_retrieved.gas_used,
             contract_address,
             logs,
             logs_bloom,
             ty: 0,
-            status: receipt.success,
+            status: receipt_retrieved.success,
             v,
             r,
             s,
@@ -501,32 +493,12 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
 
 pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u8; 256]> {
     let mut logs_bloom = [0; 256];
-    for txn_hash in &block.transactions {
-        let txn_receipt = node
-            .get_transaction_receipt(*txn_hash)?
-            .ok_or_else(|| anyhow!("missing receipt"))?;
+    let receipts = get_block_transaction_receipts_inner(node, block.header.hash)?;
+    for txn_receipt in receipts {
         // Ideally we'd implement a full blown bloom filter type but this'll do for now
-        txn_receipt
-            .logs
-            .clone()
-            .into_iter()
-            .map(|log| match log {
-                Log::Evm(log) => log,
-                Log::Scilla(log) => log.into_evm(),
-            })
-            .enumerate()
-            .for_each(|(log_index, log)| {
-                let log = eth::Log::new(
-                    log,
-                    log_index,
-                    txn_receipt.index as usize,
-                    txn_receipt.tx_hash,
-                    block.number(),
-                    block.hash(),
-                );
-
-                log.bloom(&mut logs_bloom);
-            });
+        txn_receipt.logs.iter().for_each(|log| {
+            log.bloom(&mut logs_bloom);
+        });
     }
     Ok(logs_bloom)
 }
