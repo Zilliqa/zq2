@@ -193,7 +193,8 @@ fn accounts(params: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
 
 fn block_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    Ok(node.lock().unwrap().number().to_hex())
+    let node = node.lock().unwrap();
+    Ok(node.consensus.get_highest_canonical_block_number().to_hex())
 }
 
 fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
