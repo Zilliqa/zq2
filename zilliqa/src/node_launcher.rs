@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use http::{Method, header};
+use jsonrpsee::server::PingConfig;
 use libp2p::{PeerId, futures::StreamExt};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -142,6 +143,7 @@ impl NodeLauncher {
             let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
             let rpc_middleware = jsonrpsee::server::RpcServiceBuilder::new().rpc_logger(1000);
             let server = jsonrpsee::server::ServerBuilder::new()
+                .enable_ws_ping(PingConfig::new())
                 .max_response_body_size(config.max_rpc_response_size)
                 .set_http_middleware(middleware)
                 .set_rpc_middleware(rpc_middleware)
