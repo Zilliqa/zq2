@@ -147,7 +147,7 @@ pub struct Consensus {
     pub votes: BTreeMap<Hash, BlockVotes>,
     /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
-    pub buffered_votes: BTreeMap<Hash, Vec<Vote>>,
+    pub buffered_votes: BTreeMap<Hash, Vec<(PeerId, Vote)>>,
     pub new_views: BTreeMap<u64, NewViewVote>,
     network_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
@@ -535,11 +535,12 @@ impl Consensus {
         }
 
         trace!(
-            "Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}",
+            "Considering view change: view: {} time since: {} timeout: {} last known view: {}, last height: {}, last hash: {}",
             view,
             milliseconds_since_last_view_change,
             exponential_backoff_timeout,
             self.high_qc.view,
+            self.head_block().number(),
             self.head_block().hash()
         );
 
@@ -735,9 +736,9 @@ impl Consensus {
             if let Some(buffered_votes) = self.buffered_votes.remove(&block.hash()) {
                 // If we've buffered votes for this block, process them now.
                 let count = buffered_votes.len();
-                for (i, vote) in buffered_votes.into_iter().enumerate() {
+                for (i, (from, vote)) in buffered_votes.into_iter().enumerate() {
                     trace!("applying buffered vote {} of {count}", i + 1);
-                    if let Some(network_message) = self.vote(vote)? {
+                    if let Some(network_message) = self.vote(from, vote)? {
                         // If we reached the supermajority while processing this vote, send the next block proposal.
                         // Further votes are ignored (including our own).
                         // TODO(#720): We should prioritise our own vote.
@@ -992,11 +993,11 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn vote(&mut self, vote: Vote) -> Result<Option<NetworkMessage>> {
+    pub fn vote(&mut self, peer_id: PeerId, vote: Vote) -> Result<Option<NetworkMessage>> {
         let block_hash = vote.block_hash;
         let block_view = vote.view;
         let current_view = self.get_view()?;
-        trace!(block_view, current_view, %block_hash, "handling vote");
+        info!(block_view, current_view, %block_hash, "handling vote from: {:?}", peer_id);
 
         // if the vote is too old and does not count anymore
         if block_view + 1 < current_view {
@@ -1019,7 +1020,7 @@ impl Consensus {
             self.buffered_votes
                 .entry(block_hash)
                 .or_default()
-                .push(vote);
+                .push((peer_id, vote));
             return Ok(None);
         };
 
@@ -1065,7 +1066,7 @@ impl Consensus {
             });
 
         if supermajority_reached {
-            trace!(
+            info!(
                 "(vote) supermajority already reached in this view {}",
                 current_view
             );
@@ -1685,6 +1686,9 @@ impl Consensus {
         let Ok(verified) = txn.verify() else {
             return Ok(TxAddResult::CannotVerifySignature);
         };
+
+        info!(?verified, "seen new txn");
+
         let inserted = self.new_transaction(verified)?;
         if inserted.was_added()
             && self.create_next_block_on_timeout
@@ -1755,11 +1759,14 @@ impl Consensus {
         Ok(committee)
     }
 
-    pub fn new_view(&mut self, new_view: NewView) -> Result<Option<NetworkMessage>> {
-        trace!("Received new view for view: {:?}", new_view.view);
+    pub fn new_view(&mut self, from: PeerId, new_view: NewView) -> Result<Option<NetworkMessage>> {
+        info!(
+            "Received new view for view: {:?} from: {:?}",
+            new_view.view, from
+        );
 
         if self.get_block(&new_view.qc.block_hash)?.is_none() {
-            trace!("high_qc block does not exist for NewView. Attemping to fetch block via sync");
+            trace!("high_qc block does not exist for NewView. Attempting to fetch block via sync");
             self.sync.sync_from_probe()?;
             return Ok(None);
         }
@@ -1881,7 +1888,7 @@ impl Consensus {
                     let agg =
                         self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, cosigned)?;
 
-                    trace!(
+                    info!(
                         view = current_view,
                         "######### creating proposal block from new view"
                     );

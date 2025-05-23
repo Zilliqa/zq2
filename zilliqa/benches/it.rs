@@ -681,7 +681,7 @@ fn full_transaction_benchmark(
 
 fn a_big_process_vote(big: &mut Consensus, vote: Vote, txns_per_block: usize) -> Proposal {
     let proposal = big
-        .vote(black_box(vote))
+        .vote(PeerId::random(), black_box(vote))
         .unwrap()
         .map(|(_, t)| t.into_proposal().unwrap());
     // The first vote should immediately result in a proposal. Subsequent views require a timeout before
