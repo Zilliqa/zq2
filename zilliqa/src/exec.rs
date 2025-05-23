@@ -706,11 +706,12 @@ impl State {
     ) -> Result<TransactionApplyResult> {
         let hash = txn.hash;
         let from_addr = txn.signer;
-        info!(?txn, "executing txn");
+        let txn = txn.tx.into_transaction();
+
+        info!(?hash, from = ?from_addr, to = ?txn.to_addr(), ?txn, "executing txn");
 
         let blessed = BLESSED_TRANSACTIONS.iter().any(|elem| elem.hash == hash);
 
-        let txn = txn.tx.into_transaction();
         if let Transaction::Zilliqa(txn) = txn {
             let (result, state) =
                 self.apply_transaction_scilla(from_addr, txn, current_block, inspector)?;
@@ -985,7 +986,7 @@ impl State {
         )?;
         let committee = ensure_success(result)?;
         let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
-        info!("committee: {committee:?}");
+        debug!("committee: {committee:?}");
 
         Ok(())
     }
@@ -1773,7 +1774,7 @@ fn scilla_create(
             }
         };
 
-    info!(?check_output);
+    debug!(?check_output);
 
     let gas = gas.min(check_output.gas_remaining);
 
@@ -1854,7 +1855,7 @@ fn scilla_create(
         }
     };
 
-    info!(?create_output);
+    debug!(?create_output);
 
     let gas = gas.min(create_output.gas_remaining);
 
@@ -2022,7 +2023,7 @@ pub fn scilla_call(
                 }
             };
 
-            info!(?output);
+            debug!(?output);
 
             gas = gas.min(output.gas_remaining);
 

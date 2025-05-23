@@ -356,7 +356,6 @@ impl Scilla {
         fork: &Fork,
         current_block: u64,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
-        trace!("scilla addr : {}", self.state_server_addr());
         let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
             .ipc_address(self.state_server_addr())
             .init(init.to_string())

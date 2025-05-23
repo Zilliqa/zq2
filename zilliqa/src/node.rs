@@ -253,7 +253,7 @@ impl Node {
             }
             // Repeated `NewView`s might get broadcast.
             ExternalMessage::NewView(m) => {
-                if let Some(network_message) = self.consensus.new_view(*m)? {
+                if let Some(network_message) = self.consensus.new_view(from, *m)? {
                     self.handle_network_message_response(network_message)?;
                 }
             }
@@ -280,7 +280,7 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
 
-                if let Some(network_message) = self.consensus.vote(*m)? {
+                if let Some(network_message) = self.consensus.vote(from, *m)? {
                     self.handle_network_message_response(network_message)?;
                 }
             }
@@ -289,7 +289,7 @@ impl Node {
                 self.request_responses
                     .send((response_channel, ExternalMessage::Acknowledgement))?;
 
-                if let Some(network_message) = self.consensus.new_view(*m)? {
+                if let Some(network_message) = self.consensus.new_view(from, *m)? {
                     self.handle_network_message_response(network_message)?;
                 }
             }
@@ -467,8 +467,6 @@ impl Node {
 
     pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
         let hash = txn.calculate_hash();
-
-        info!(?hash, "seen new txn {:?}", txn);
 
         let result = self.consensus.handle_new_transaction(txn.clone())?;
         if result.was_added() {
