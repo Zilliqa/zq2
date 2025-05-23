@@ -716,7 +716,16 @@ impl Consensus {
             // It is possible to source Proposals from own storage during sync, which alters the source of the Proposal.
             // Only allow from == self, for fast-forwarding, in normal case but not during sync
             let from = (self.peer_id() != from || !during_sync).then_some(from);
-            self.execute_block(from, &block, transactions, &stakers)?;
+
+            // Use explicit DB locking - https://github.com/Zilliqa/zq2/issues/2766
+            self.db.begin()?;
+            match self.execute_block(from, &block, transactions, &stakers) {
+                Ok(()) => self.db.commit()?, // success, commit
+                Err(e) => {
+                    self.db.rollback()?; // rollback
+                    return Err(e);
+                }
+            }
 
             if view != proposal_view + 1 {
                 view = proposal_view + 1;
@@ -1458,15 +1467,16 @@ impl Consensus {
                 applied_txs.push(tx);
             }
         }
-        let (_, applied_txs, _, _, _) = self.early_proposal.as_ref().unwrap();
-        self.db.with_sqlite_tx(|sqlite_tx| {
-            for tx in applied_txs {
-                self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
-            }
-            Ok(())
-        })?;
-
+        {
+            let (_, applied_txs, _, _, _) = self.early_proposal.as_ref().unwrap();
+            let db = &self.db;
+            self.db.with_sqlite_tx(move |sqlite_tx| {
+                for tx in applied_txs {
+                    db.insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
+                }
+                Ok(())
+            })?;
+        }
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
             let (proposal, applied_txs, transactions_trie, receipts_trie, _) =
@@ -2902,7 +2912,16 @@ impl Consensus {
                 .state
                 .at_root(parent.state_root_hash().into())
                 .get_stakers(block_pointer.header)?;
-            self.execute_block(None, &block_pointer, transactions, &committee)?;
+
+            // Use explicit DB locking - https://github.com/Zilliqa/zq2/issues/2766
+            self.db.begin()?;
+            match self.execute_block(None, &block_pointer, transactions, &committee) {
+                Ok(()) => self.db.commit()?, // success, commit
+                Err(e) => {
+                    self.db.rollback()?; // rollback
+                    return Err(e);
+                }
+            }
         }
 
         Ok(())
@@ -3047,17 +3066,19 @@ impl Consensus {
             debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
-        self.db.with_sqlite_tx(|sqlite_tx| {
-            for txn in &verified_txns {
-                self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, &txn.tx)?;
-            }
-            for (addr, txn_hash) in touched_addresses {
-                self.db
-                    .add_touched_address_with_db_tx(sqlite_tx, addr, txn_hash)?;
-            }
-            Ok(())
-        })?;
+        {
+            // Converted to explicit DB transaction - reduce unnecessary mutex locking
+            let db = &self.db;
+            self.db.with_sqlite_raw(move |db_tx| {
+                for txn in &verified_txns {
+                    db.insert_transaction_with_db_tx(db_tx, &txn.hash, &txn.tx)?;
+                }
+                for (addr, txn_hash) in touched_addresses {
+                    db.add_touched_address_with_db_tx(db_tx, addr, txn_hash)?;
+                }
+                Ok(())
+            })?;
+        }
 
         if cumulative_gas_used != block.gas_used() {
             warn!(
@@ -3194,17 +3215,15 @@ impl Consensus {
             self.add_block(from, block.clone())?;
         }
         {
-            // helper scope to shadow db, to avoid moving it into the closure
-            // closure has to be move to take ownership of block_receipts
+            // Converted to explicit DB transaction - reduce unnecessary mutex locking
             let db = &self.db;
-            self.db.with_sqlite_tx(move |sqlite_tx| {
+            self.db.with_sqlite_raw(move |db_tx| {
                 for (receipt, _) in block_receipts {
-                    db.insert_transaction_receipt_with_db_tx(sqlite_tx, receipt)?;
+                    db.insert_transaction_receipt_with_db_tx(db_tx, receipt)?;
                 }
                 Ok(())
             })?;
         }
-
         self.db.mark_block_as_canonical(block.hash())?;
 
         Ok(())
