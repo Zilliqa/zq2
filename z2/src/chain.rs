@@ -214,7 +214,8 @@ impl Chain {
                 "transfer_gas_fee_to_zero_account": false,
                 "apply_state_changes_only_if_transaction_succeeds": false,
                 "apply_scilla_delta_when_evm_succeeded" : false,
-                "scilla_deduct_funds_from_actual_sender": false
+                "scilla_deduct_funds_from_actual_sender": false,
+                "fund_accounts_from_zero_account": []
             })),
             _ => None,
         }
@@ -255,6 +256,8 @@ impl Chain {
                 json!({ "at_height": 12931200, "scilla_maps_are_encoded_correctly": true }),
                 // estimated: 2025-04-24T20:13:22Z
                 json!({ "at_height": 14767200, "transfer_gas_fee_to_zero_account": true, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded": true, "scilla_deduct_funds_from_actual_sender": true }),
+                // estimated: 2025-05-22T13:30:00Z
+                json!({ "at_height": 15900000, "fund_accounts_from_zero_account": [("0xB4492C468Fe97CB73Ea70a9A712cdd5B5aB621c3", "10000000000000000000000000")] }),
             ]),
             Chain::Zq2ProtoMainnet => Some(vec![
                 json!({ "at_height": 4277188, "executable_blocks": true }),

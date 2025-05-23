@@ -21,7 +21,7 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
-    cfg::{ConsensusConfig, NodeConfig},
+    cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
@@ -1194,7 +1194,7 @@ impl Consensus {
         )?;
 
         // ZIP-9: Sink gas to zero account
-        let fork = state.forks.get(proposal.header.number);
+        let fork = self.state.forks.get(proposal.header.number);
         let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
             cumulative_gas_fee
         } else {
@@ -1208,6 +1208,33 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
+
+        if !fork.fund_accounts_from_zero_account.is_empty() {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
+            {
+                if fork_height == proposal.header.number {
+                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
+                        state.mutate_account(Address::ZERO, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_sub(*address_amount_pair.1)
+                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
+                            Ok(())
+                        })?;
+                        state.mutate_account(address_amount_pair.0, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_add(*address_amount_pair.1)
+                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
+                            Ok(())
+                        })?;
+                    }
+                }
+            };
+        }
 
         if self.block_is_first_in_epoch(proposal.header.number) {
             // Update state with any contract upgrades for this block
@@ -3083,7 +3110,8 @@ impl Consensus {
             block.gas_used().0 as u128
         };
 
-        self.state.mutate_account(Address::ZERO, |a| {
+        let mut state = self.state.clone();
+        state.mutate_account(Address::ZERO, |a| {
             a.balance = a
                 .balance
                 .checked_add(gas_fee_amount)
@@ -3091,13 +3119,38 @@ impl Consensus {
             Ok(())
         })?;
 
+        if !fork.fund_accounts_from_zero_account.is_empty() {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
+            {
+                if fork_height == block.header.number {
+                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
+                        state.mutate_account(Address::ZERO, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_sub(*address_amount_pair.1)
+                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
+                            Ok(())
+                        })?;
+                        state.mutate_account(address_amount_pair.0, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_add(*address_amount_pair.1)
+                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
+                            Ok(())
+                        })?;
+                    }
+                }
+            };
+        }
+
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
-            let mut state_clone = self.state.clone();
-            state_clone
-                .contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
-            self.state = state_clone;
+            state.contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
         }
+        self.state = state;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
