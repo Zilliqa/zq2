@@ -490,7 +490,8 @@ impl Node {
 
             BlockNumberOrTag::Earliest => self.consensus.get_canonical_block_by_number(0),
             BlockNumberOrTag::Latest => Ok(Some(self.consensus.head_block())),
-            BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
+            // BlockNumberOrTag::Pending => self.consensus.get_pending_block(),
+            BlockNumberOrTag::Pending => Ok(Some(Block::genesis(Hash::ZERO))),
             BlockNumberOrTag::Finalized => {
                 let Some(view) = self.db.get_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
