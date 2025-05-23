@@ -1674,10 +1674,7 @@ impl Consensus {
     }
 
     /// Insert transaction and add to early_proposal if possible.
-    pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<TxAddResult> {
-        let Ok(verified) = txn.verify() else {
-            return Ok(TxAddResult::CannotVerifySignature);
-        };
+    pub fn handle_new_transaction(&mut self, verified: VerifiedTransaction) -> Result<TxAddResult> {
         let inserted = self.new_transaction(verified)?;
         if inserted.was_added()
             && self.create_next_block_on_timeout

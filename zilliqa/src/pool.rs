@@ -21,8 +21,6 @@ pub enum TxAddResult {
     AddedToMempool,
     /// Transaction was a duplicate
     Duplicate(Hash),
-    /// Bad signature
-    CannotVerifySignature,
     /// Transaction failed to validate
     ValidationFailed(ValidationOutcome),
     /// Nonce was too low at the point we tried to actually add the txn to the pool - (got, expected)

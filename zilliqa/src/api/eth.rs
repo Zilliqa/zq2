@@ -752,18 +752,21 @@ fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<Strin
         .strip_prefix("0x")
         .ok_or_else(|| anyhow!("no 0x prefix"))?;
     let transaction = hex::decode(transaction)?;
-    let transaction = parse_transaction(&transaction)?;
+    let signed = parse_transaction(&transaction)?;
 
-    let (hash, result) = node.lock().unwrap().create_transaction(transaction)?;
+    let Ok(verified) = signed.clone().verify() else {
+        Err(ErrorObject::owned::<String>(
+            ErrorCode::TransactionRejected as i32,
+            "Cannot verify signature".to_string(),
+            None,
+        ))?
+    };
+
+    let (hash, result) = node.lock().unwrap().create_transaction(signed, verified)?;
     match result {
         TxAddResult::AddedToMempool
         | TxAddResult::Duplicate(_)
         | TxAddResult::SameNonceButLowerGasPrice => Ok(()),
-        TxAddResult::CannotVerifySignature => Err(ErrorObject::owned::<String>(
-            ErrorCode::TransactionRejected as i32,
-            "Cannot verify signature".to_string(),
-            None,
-        )),
         TxAddResult::ValidationFailed(reason) => Err(ErrorObject::owned::<String>(
             ErrorCode::InvalidParams as i32,
             reason.to_msg_string(),

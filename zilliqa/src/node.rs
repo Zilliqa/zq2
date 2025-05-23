@@ -248,7 +248,7 @@ impl Node {
             ExternalMessage::NewTransaction(t) => {
                 // Don't process again txn sent by this node (it's already in the mempool)
                 if self.peer_id != from {
-                    self.consensus.handle_new_transaction(t)?;
+                    self.consensus.handle_new_transaction(t.verify()?)?;
                 }
             }
             // Repeated `NewView`s might get broadcast.
@@ -465,16 +465,15 @@ impl Node {
         Ok(false)
     }
 
-    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
-        let hash = txn.calculate_hash();
+    pub fn create_transaction(&mut self, signed: SignedTransaction, verified: VerifiedTransaction) -> Result<(Hash, TxAddResult)> {
+        let hash = verified.hash;
+        info!(?hash, "seen new txn {:?}", verified);
 
-        info!(?hash, "seen new txn {:?}", txn);
-
-        let result = self.consensus.handle_new_transaction(txn.clone())?;
+        let result = self.consensus.handle_new_transaction(verified)?;
         if result.was_added() {
             // TODO: Avoid redundant self-broadcast
             self.message_sender
-                .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
+                .broadcast_external_message(ExternalMessage::NewTransaction(signed))?;
         }
 
         Ok((hash, result))
