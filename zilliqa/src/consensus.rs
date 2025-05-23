@@ -420,6 +420,13 @@ impl Consensus {
             .unwrap()
     }
 
+    pub fn get_highest_canonical_block_number(&self) -> u64 {
+        self.db
+            .get_highest_canonical_block_number()
+            .unwrap()
+            .unwrap()
+    }
+
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
         let view = self.get_view()?;
         // We never want to timeout while on view 1
