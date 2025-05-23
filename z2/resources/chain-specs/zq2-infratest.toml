@@ -1,7 +1,7 @@
 p2p_port = 3333
 
 bootstrap_address = [
-  "12D3KooWSe8gG2PYGg9qemHNZDsuZcFjkvcU2Fr49bomHGZD2k8x",
+  "12D3KooWRrAzKCUEq1SSMDgwfxQbnmS6ZfhsR6HP8Kf8QKeFCko6",
   "/dns/bootstrap.zq2-infratest.zilstg.dev/tcp/3333"
 ]
 
@@ -9,35 +9,35 @@ bootstrap_address = [
 eth_chain_id = 33103
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [ ["0x5e1f6f14a75f12e055599a137229cfa012554695", "900_000_000_000_000_000_000_000_000" ] ]
+consensus.genesis_accounts = [ ["0x9AaC92079288AF8fbE1efcFEAAe8Cc2FEc6384aB", "900_000_000_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = [
   [
-    "ac86018ebbf1a2d43404b78e899bd9ab1849788343b4c3c2310f54743d59ed9c1be3eb5f7ea85c3f6d7ef21b3f2a0edd",
-    "12D3KooWQP73gxrQFygc5LNKriH7PEGgDLfJzsSjnEy9quFvM4w1",
+    "ab37e6fd687bb5346f2b821c07416eabe231b8eb7ed9c1004dc2a023982efbb8803b3b36ccbc1ceb9bbd9e1e47e6cbd2",
+    "12D3KooWFmPxu1QT4tRbNKrQ5w95XWRKAqnRM1EoEQiJR6Mkv1Sz",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0x5e1f6f14a75f12e055599a137229cfa012554695"
+    "0x9AaC92079288AF8fbE1efcFEAAe8Cc2FEc6384aB"
   ],
   [
-    "b429dc1638e87307b51129e5f0d7b7f235a9f0c4568e64bb7bb1cae0deb427110405b225e697a48bd1b72117cb16a86e",
-    "12D3KooWE4v1DEabS7GroFWVrhxKLb78resRg2T6GNYzChBmsUyi",
+    "995c5ceb08f297e8c4772752d0ddd05b1946037045b6678db61de569308b98155b1d7978c2d53962e118755a621ba64e",
+    "12D3KooWF56qEV5sHdbuTpXMqc2NcXp46654YxshTvfD6Zi85jbM",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0x5e1f6f14a75f12e055599a137229cfa012554695"
+    "0x9AaC92079288AF8fbE1efcFEAAe8Cc2FEc6384aB"
   ],
   [
-    "8864235715d70863b5081f405705b2d5ff4436383896a707b94c572f50c28e931f17d7a1e11dabd32aa8241ef8d05c4e",
-    "12D3KooWEFs2RfcMqDF2XELuv4y3LB8rz2bxjcLtkEG8jLxPnuxm",
+    "accdde90736344e5f815965279c398f641e50437072fdc42712ce7053886c6103ce81a1f4309fee70eca41a846c03f30",
+    "12D3KooWHVt2cAiMmNGEVhNWhVqmVfCAWQzhbgzZfm96YtdFwXwn",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0x5e1f6f14a75f12e055599a137229cfa012554695"
+    "0x9AaC92079288AF8fbE1efcFEAAe8Cc2FEc6384aB"
   ],
   [
-    "85bff2233c7934f5a5d637182a1903268afad2bf60bad0a7fe9b8eb45c87954ceb13db8f1c1029e5ef4d3fceabc6aa30",
-    "12D3KooWRzmLvdMFUHfia8x9Ng8by6t7AyrkowSA5Gn8hNZjU5Mh",
+    "85021c16f25c9d0800493dbf8e8e4beddc63f441369e18a3c92c4217576c9756eb4c6cdbae4f42a4ba3a757e4b58d5c0",
+    "12D3KooWPTpJsucYnsSb967YPRbb8RgokaSbLjNcyW4JRZYonMKU",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0x5e1f6f14a75f12e055599a137229cfa012554695"
+    "0x9AaC92079288AF8fbE1efcFEAAe8Cc2FEc6384aB"
   ]
 ]
 
@@ -48,6 +48,6 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-consensus.scilla_call_gas_exempt_addrs = []
+consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } } }
 
 api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]

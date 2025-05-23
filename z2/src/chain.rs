@@ -293,6 +293,8 @@ impl Chain {
                 json!({ "at_height": 9010800, "scilla_call_respects_evm_state_changes": true, "only_mutated_accounts_update_state": true, "scilla_block_number_returns_current_block": true, "scilla_maps_are_encoded_correctly": true }),
                 // estimated: 2025-04-28T08:05:32Z
                 json!({ "at_height": 9896400, "transfer_gas_fee_to_zero_account": true, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded": true, "scilla_deduct_funds_from_actual_sender": true }),
+                // estimated: 2025-05-27T12:00:00Z
+                json!({ "at_height": 10884800, "fund_accounts_from_zero_account": [("0x6F5d14cBe74547124321f34eA14016f96372c4aE", "100000000000000000000000000")] }),
             ]),
             _ => None,
         }
