@@ -856,7 +856,7 @@ impl Node {
     }
 
     pub fn call_contract(
-        &mut self,
+        &self,
         block: &Block,
         from_addr: Address,
         to_addr: Option<Address>,
@@ -905,7 +905,7 @@ impl Node {
 
     #[allow(clippy::too_many_arguments)]
     pub fn estimate_gas(
-        &mut self,
+        &self,
         block_number: BlockNumberOrTag,
         from_addr: Address,
         to_addr: Option<Address>,

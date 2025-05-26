@@ -2247,7 +2247,7 @@ impl Consensus {
 
     /// Trigger a checkpoint, for debugging.
     /// Returns (file_name, block_hash). At some time after you call this function, hopefully a checkpoint will end up in the file
-    pub fn checkpoint_at(&mut self, block_number: u64) -> Result<(String, String)> {
+    pub fn checkpoint_at(&self, block_number: u64) -> Result<(String, String)> {
         let block = self
             .get_canonical_block_by_number(block_number)?
             .ok_or(anyhow!("No such block number {block_number}"))?;
