@@ -1015,11 +1015,11 @@ fn get_account(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 fn get_filter_changes(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_json::Value> {
     let filter_id: u128 = params.one()?;
 
-    let mut node_lock = node.write();
+    let node = node.read();
 
-    let filter = node_lock
+    let mut filter = node
         .filters
-        .get_mut(&filter_id)
+        .get(filter_id)
         .ok_or(anyhow!("filter not found"))?;
 
     match &mut filter.kind {
@@ -1054,16 +1054,9 @@ fn get_filter_changes(params: Params, node: &Arc<RwLock<Node>>) -> Result<serde_
                 (Some(x), None) => adjusted_criteria.from_block(x + 1),
                 (Some(x), Some(y)) => adjusted_criteria.from_block(std::cmp::max(x + 1, y)),
             };
-            std::mem::drop(node_lock);
 
             // Get the logs
-            let logs = get_logs_inner(&adjusted_criteria, &node.read())?;
-            // Re-acquire the write lock.
-            let mut node_lock = node.write();
-            let log_filter = node_lock.filters.get_mut(&filter_id).unwrap();
-            let FilterKind::Log(log_filter) = &mut log_filter.kind else {
-                unreachable!()
-            };
+            let logs = get_logs_inner(&adjusted_criteria, &node)?;
 
             // Set the last recorded block in the filter to the most recent block in the returned logs
             let last_block = logs.iter().fold(None, |acc, x| {
@@ -1121,12 +1114,12 @@ fn max_priority_fee_per_gas(_params: Params, _node: &Arc<RwLock<Node>>) -> Resul
 fn new_block_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
 
-    let mut node = node.write();
+    let node = node.read();
 
     let filter = BlockFilter {
         block_receiver: node.subscribe_to_new_blocks(),
     };
-    let id = node.filters.add_filter(FilterKind::Block(filter));
+    let id = node.filters.add(FilterKind::Block(filter));
     Ok(id)
 }
 
@@ -1134,9 +1127,9 @@ fn new_block_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
 fn new_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
     let criteria: alloy::rpc::types::Filter = params.one()?;
-    let mut node = node.write();
+    let node = node.read();
 
-    let id = node.filters.add_filter(FilterKind::Log(LogFilter {
+    let id = node.filters.add(FilterKind::Log(LogFilter {
         criteria: Box::new(criteria),
         last_block_number: None,
     }));
@@ -1147,12 +1140,12 @@ fn new_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
 /// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
 fn new_pending_transaction_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    let mut node = node.write();
+    let node = node.read();
 
     let filter = PendingTxFilter {
         pending_txn_receiver: node.subscribe_to_new_transactions(),
     };
-    let id = node.filters.add_filter(FilterKind::PendingTx(filter));
+    let id = node.filters.add(FilterKind::PendingTx(filter));
     Ok(id)
 }
 
@@ -1181,7 +1174,7 @@ fn submit_work(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 fn uninstall_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<bool> {
     let filter_id: u128 = params.one()?;
 
-    let mut node = node.write();
+    let node = node.read();
 
-    Ok(node.filters.remove_filter(filter_id))
+    Ok(node.filters.remove(filter_id))
 }
