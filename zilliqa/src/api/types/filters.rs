@@ -152,6 +152,6 @@ impl Filters {
         }
         let mut filter = MutexGuard::map(filters, |fs| fs.get_mut(&id).unwrap());
         filter.touch();
-        return Some(filter);
+        Some(filter)
     }
 }
