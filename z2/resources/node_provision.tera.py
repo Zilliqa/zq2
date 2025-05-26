@@ -252,7 +252,7 @@ start() {
     PRIVATE_KEY=""" + PRIVATE_KEY_CMD + """
     docker run -td -p 3333:3333/udp -p 4201:4201 -p 4202:4202 --net=host --name zilliqa-""" + VERSIONS.get('zilliqa') + """ \
         -v /config.toml:/config.toml -v /zilliqa.log:/zilliqa.log -v /data:/data \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 --memory=6g \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 --memory=6g \
         -e RUST_LOG='""" + LOG_LEVEL + """' -e RUST_BACKTRACE=1 \
         --restart=unless-stopped \
     """ + mount_checkpoint_file() + """ ${ZQ2_IMAGE} """ + SCILLA_SERVER_PORT + """ "${PRIVATE_KEY}" --log-json
@@ -295,7 +295,7 @@ OTTERSCAN_IMAGE="{{ otterscan_image }}"
 start() {
     docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
     docker run -td -p 80:80 --name otterscan-""" + VERSIONS.get('otterscan') + """ \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
         -e ERIGON_URL=https://api.""" + SUBDOMAIN + """ \
         --restart=unless-stopped --pull=always \
         ${OTTERSCAN_IMAGE} &> /dev/null &
@@ -338,7 +338,7 @@ start() {
     docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
     GENESIS_KEY=""" + GENESIS_KEY_CMD + """
     docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
         -e RPC_URL=https://api.""" + SUBDOMAIN + """ \
         -e NATIVE_TOKEN_SYMBOL="ZIL" \
         -e PRIVATE_KEY="${GENESIS_KEY}" \
@@ -387,7 +387,7 @@ start() {
     docker rm stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ &> /dev/null || echo 0
     STATS_DASHBOARD_KEY=""" + STATS_DASHBOARD_KEY_CMD + """
     docker run -td -p 3000:3000 --name stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
         -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
         --restart=unless-stopped --pull=always \
         ${STATS_DASHBOARD_IMAGE}
@@ -430,10 +430,12 @@ start() {
     docker rm stats-agent-""" + VERSIONS.get('stats_agent') + """ &> /dev/null || echo 0
     STATS_DASHBOARD_KEY=""" + STATS_DASHBOARD_KEY_CMD + """
     docker run -td --name stats-agent-""" + VERSIONS.get('stats_agent') + """ \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=30 \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
         --net=host \
+        --cpus=".5" \
         -e RPC_HOST="localhost" \
         -e RPC_PORT="4202" \
+        -e WS_PORT="4202" \
         -e LISTENING_PORT="3333" \
         -e INSTANCE_NAME=""" + os.uname().nodename + """ \
         -e CONTACT_DETAILS="devops@zilliqa.com" \
