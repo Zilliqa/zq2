@@ -308,8 +308,7 @@ impl TransactionPool {
             return TxAddResult::NonceTooLow(txn.tx.nonce().unwrap(), account_nonce);
         }
 
-        let is_replacement = if let Some(existing_txn) = self.transactions.get(&txn.mempool_index())
-        {
+        if let Some(existing_txn) = self.transactions.get(&txn.mempool_index()) {
             // Only proceed if the new transaction is better. Note that if they are
             // equally good, we prioritise the existing transaction to avoid the need
             // to broadcast a new transaction to the network.
@@ -333,13 +332,8 @@ impl TransactionPool {
             self.hash_to_index.remove(&existing_txn.hash);
             // Decrease the count of transactions tracked by this sender
             self.decrease_counter_for_user(existing_txn.signer);
-            true
         } else {
-            false
-        };
-
-        // If it's a transaction that will increase the count in the pool
-        if !is_replacement {
+            // If it's a transaction that will increase the count in the pool
             // Check global counter
             if self.transactions.len() + 1 > self.config.maximum_global_size as usize {
                 return ValidationFailed(ValidationOutcome::GlobalTransactionCountExceeded);

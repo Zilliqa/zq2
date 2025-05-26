@@ -295,8 +295,6 @@ impl Consensus {
             peers.clone(),
         )?;
 
-        let prune_interval = config.sync.prune_interval;
-
         let txn_pool_config = config.txn_pool.clone();
         let mut consensus = Consensus {
             secret_key,
