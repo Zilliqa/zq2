@@ -136,6 +136,8 @@ impl P2pNode {
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
                             .duplicate_cache_time(Duration::from_secs(3600))
+                            // Increase connection_handler_queue_len to mitigate missing messages
+                            .connection_handler_queue_len(50000)
                             .build()
                             .map_err(|e| anyhow!(e))?,
                     )
