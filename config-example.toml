@@ -58,7 +58,3 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 # Gas parameters
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
-
-txn_pool.maximum_global_size = 100000
-txn_pool.maximum_txn_count_per_sender = 20
-txn_pool.total_slots_for_all_senders = 50000

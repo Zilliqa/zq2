@@ -156,6 +156,7 @@ pub struct NodeConfig {
     /// Consensus-specific data.
     pub consensus: ConsensusConfig,
     /// Transaction pool config
+    #[serde(default)]
     pub txn_pool: TxnPoolConfig,
     /// The maximum duration between a recieved block's timestamp and the current time. Defaults to 10 seconds.
     #[serde(default = "allowed_timestamp_skew_default")]
