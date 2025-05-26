@@ -1,7 +1,7 @@
 use std::{
     net::Ipv4Addr,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicPtr, AtomicUsize},
     },
     time::{Duration, SystemTime},
@@ -18,6 +18,7 @@ use opentelemetry_semantic_conventions::{
     },
     metric::MESSAGING_PROCESS_DURATION,
 };
+use parking_lot::RwLock;
 use tokio::{
     select,
     sync::mpsc::{self, UnboundedSender},
@@ -39,7 +40,7 @@ use crate::{
 };
 
 pub struct NodeLauncher {
-    pub node: Arc<Mutex<Node>>,
+    pub node: Arc<RwLock<Node>>,
     pub config: NodeConfig,
     pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
     pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
@@ -130,7 +131,7 @@ impl NodeLauncher {
             swarm_peers.clone(),
         )?;
 
-        let node = Arc::new(Mutex::new(node));
+        let node = Arc::new(RwLock::new(node));
 
         for api_server in &config.api_servers {
             let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
@@ -212,7 +213,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.lock().unwrap().handle_broadcast(source, message) {
+                    if let Err(e) = self.node.write().handle_broadcast(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process broadcast message: {e}");
                     }
@@ -230,7 +231,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.lock().unwrap().handle_request(source, &id, message, response_channel) {
+                    if let Err(e) = self.node.write().handle_request(source, &id, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process request message: {e}");
                     }
@@ -248,7 +249,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.lock().unwrap().handle_request_failure(source, message) {
+                    if let Err(e) = self.node.write().handle_request_failure(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process request failure message: {e}");
                     }
@@ -266,7 +267,7 @@ impl NodeLauncher {
                     ];
 
                     let start = SystemTime::now();
-                    if let Err(e) = self.node.lock().unwrap().handle_response(source, message) {
+                    if let Err(e) = self.node.write().handle_response(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
                         error!("Failed to process response message: {e}");
                     }
@@ -288,7 +289,7 @@ impl NodeLauncher {
 
                     let start = SystemTime::now();
                     // No messages for a while, so check if consensus wants to timeout
-                    self.node.lock().unwrap().handle_timeout().unwrap();
+                    self.node.write().handle_timeout().unwrap();
                     sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),

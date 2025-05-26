@@ -1,7 +1,7 @@
 use std::{
     fmt::Debug,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicPtr, AtomicUsize},
     },
     time::Duration,
@@ -168,7 +168,7 @@ pub struct Node {
     pub consensus: Consensus,
     peer_num: Arc<AtomicUsize>,
     pub chain_id: ChainId,
-    pub filters: Arc<Mutex<Filters>>,
+    pub filters: Filters,
     swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
 }
 
@@ -235,7 +235,7 @@ impl Node {
                 sync_peers,
             )?,
             peer_num,
-            filters: Arc::new(Mutex::new(Filters::new())),
+            filters: Filters::new(),
             swarm_peers,
         };
         Ok(node)

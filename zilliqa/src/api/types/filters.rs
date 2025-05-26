@@ -149,6 +149,10 @@ impl Filters {
         result
     }
 
+    pub fn get(&self, id: u128) -> Option<&Filter> {
+        self.filters.get(&id)
+    }
+
     pub fn get_mut(&mut self, id: &u128) -> Option<&mut Filter> {
         self.touch(id);
         self.cleanup();

@@ -66,7 +66,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
 
     let node = network.remove_node(index);
 
-    let inner = node.inner.lock().unwrap();
+    let inner = node.inner.read();
     let last_number = inner.number() - 2;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
     let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
@@ -81,7 +81,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
 
     // drop and re-create the node using the same datadir:
     drop(inner);
-    let config = node.inner.lock().unwrap().config.clone();
+    let config = node.inner.read().config.clone();
     #[allow(clippy::redundant_closure_call)]
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
     let mut rng = network.rng.lock().unwrap();
@@ -105,7 +105,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         );
         return;
     };
-    let inner = newnode.inner.lock().unwrap();
+    let inner = newnode.inner.read();
 
     // ensure all blocks created were saved up till the last one
     let loaded_last_block = inner.get_block(last_number).unwrap();

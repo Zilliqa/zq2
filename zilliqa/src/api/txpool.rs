@@ -1,19 +1,17 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use alloy::primitives::Address;
 use anyhow::Result;
 use jsonrpsee::{RpcModule, types::Params};
+use parking_lot::RwLock;
 
 use super::types;
 use crate::{api::types::eth::Transaction, cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
-    node: Arc<Mutex<Node>>,
+    node: Arc<RwLock<Node>>,
     enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Mutex<Node>>> {
+) -> RpcModule<Arc<RwLock<Node>>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -29,9 +27,9 @@ pub fn rpc_module(
 /// txpool_content
 fn txpool_content(
     _params: Params,
-    node: &Arc<Mutex<Node>>,
+    node: &Arc<RwLock<Node>>,
 ) -> Result<Option<types::txpool::TxPoolContent>> {
-    let node = node.lock().unwrap();
+    let node = node.read();
     let content = node.txpool_content()?;
 
     let mut result = types::txpool::TxPoolContent {
@@ -61,11 +59,11 @@ fn txpool_content(
 /// txpool_contentFrom
 fn txpool_content_from(
     params: Params,
-    node: &Arc<Mutex<Node>>,
+    node: &Arc<RwLock<Node>>,
 ) -> Result<types::txpool::TxPoolContent> {
     let address: super::zilliqa::ZilAddress = params.one()?;
     let address: Address = address.into();
-    let node = node.lock().unwrap();
+    let node = node.read();
     let content = node.txpool_content()?;
 
     let mut result = types::txpool::TxPoolContent {
@@ -99,9 +97,9 @@ fn txpool_content_from(
 /// txpool_inspect
 fn txpool_inspect(
     _params: Params,
-    node: &Arc<Mutex<Node>>,
+    node: &Arc<RwLock<Node>>,
 ) -> Result<types::txpool::TxPoolInspect> {
-    let node = node.lock().unwrap();
+    let node = node.read();
     let content = node.txpool_content()?;
 
     let mut result = types::txpool::TxPoolInspect {
@@ -139,8 +137,8 @@ fn txpool_inspect(
 }
 
 /// txpool_status
-fn txpool_status(_params: Params, node: &Arc<Mutex<Node>>) -> Result<types::txpool::TxPoolStatus> {
-    let node = node.lock().unwrap();
+fn txpool_status(_params: Params, node: &Arc<RwLock<Node>>) -> Result<types::txpool::TxPoolStatus> {
+    let node = node.read();
     let content = node.txpool_content()?;
 
     Ok(types::txpool::TxPoolStatus {
