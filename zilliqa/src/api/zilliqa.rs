@@ -50,7 +50,7 @@ use crate::{
     state::Code,
     time::SystemTime,
     transaction::{
-        EVM_GAS_PER_SCILLA_GAS, ScillaGas, SignedTransaction, TxZilliqa, ValidationOutcome,
+        EVM_GAS_PER_SCILLA_GAS, EvmGas, ScillaGas, SignedTransaction, TxZilliqa, ValidationOutcome,
         ZilAmount,
     },
 };
@@ -757,17 +757,11 @@ fn get_tx_block(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<zil::T
     Ok(Some(block))
 }
 
-fn get_txn_fees_for_block(node: &Node, hash: Hash) -> Result<u128> {
+fn get_txn_fees_for_block(node: &Node, hash: Hash) -> Result<EvmGas> {
     Ok(node
         .get_transaction_receipts_in_block(hash)?
         .iter()
-        .fold(0, |acc, txnrcpt| {
-            let txn = node
-                .get_transaction_by_hash(txnrcpt.tx_hash)
-                .unwrap()
-                .unwrap();
-            acc + ((txnrcpt.gas_used.0 as u128) * txn.tx.gas_price_per_evm_gas())
-        }))
+        .fold(EvmGas(0), |acc, txnrcpt| acc + txnrcpt.gas_used))
 }
 
 // GetTxBlockVerbose

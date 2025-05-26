@@ -339,6 +339,7 @@ pub async fn run_deployer_generate_stats_key(config_file: &str, force: bool) -> 
 pub async fn run_deployer_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
     println!("🦆 Running generate-genesis-key for {config_file} .. ");
     deployer::run_generate_genesis_key(config_file, force).await?;
+    deployer::run_generate_genesis_address(config_file, force).await?;
     Ok(())
 }
 
@@ -418,7 +419,7 @@ pub async fn run_persistence_converter(
     zq1_pers_dir: &str,
     zq2_data_dir: &str,
     zq2_config: &str,
-    secret_key: SecretKey,
+    secret_keys: Vec<SecretKey>,
 ) -> Result<()> {
     println!("🐼 Converting {zq1_pers_dir} into {zq2_data_dir}.. ");
     let zq1_dir = PathBuf::from_str(zq1_pers_dir)?;
@@ -431,9 +432,11 @@ pub async fn run_persistence_converter(
         Some(zq2_dir),
         node_config.eth_chain_id,
         node_config.state_cache_size,
+        // This is None because it makes no difference to the conversion: var is required for fetching ZQ1 blocks and setting their state root hash to zero
+        None,
     )?;
     let zq1_db = zq1::Db::new(zq1_dir)?;
-    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_key).await?;
+    converter::convert_persistence(zq1_db, zq2_db, zq2_config, secret_keys).await?;
     Ok(())
 }
 

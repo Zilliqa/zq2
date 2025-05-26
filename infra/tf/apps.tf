@@ -46,9 +46,12 @@ resource "google_compute_instance_group" "apps" {
     port = "80"
   }
 
-  named_port {
-    name = "spout"
-    port = "8080"
+  dynamic "named_port" {
+    for_each = var.apps.enable_faucet ? [1] : []
+    content {
+      name = "spout"
+      port = "8080"
+    }
   }
 
   named_port {
@@ -68,7 +71,8 @@ resource "google_compute_health_check" "otterscan" {
 }
 
 resource "google_compute_health_check" "spout" {
-  name = "${var.chain_name}-spout"
+  count = var.apps.enable_faucet ? 1 : 0
+  name  = "${var.chain_name}-spout"
 
   http_health_check {
     port_name          = "spout"
@@ -106,8 +110,9 @@ resource "google_compute_backend_service" "otterscan" {
 }
 
 resource "google_compute_backend_service" "spout" {
+  count                 = var.apps.enable_faucet ? 1 : 0
   name                  = "${var.chain_name}-apps-spout"
-  health_checks         = [google_compute_health_check.spout.id]
+  health_checks         = [google_compute_health_check.spout[0].id]
   port_name             = "spout"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   enable_cdn            = false
@@ -123,7 +128,7 @@ resource "google_compute_backend_service" "spout" {
   }
 
   ## Attach Cloud Armor policy to the backend service
-  security_policy = module.spout_security_policies.policy.self_link
+  security_policy = var.apps.enable_faucet ? module.spout_security_policies[0].policy.self_link : null
 }
 
 resource "google_compute_backend_service" "stats" {
@@ -153,9 +158,12 @@ resource "google_compute_url_map" "apps" {
     path_matcher = "otterscan"
   }
 
-  host_rule {
-    hosts        = ["faucet.${var.subdomain}"]
-    path_matcher = "faucet"
+  dynamic "host_rule" {
+    for_each = var.apps.enable_faucet ? [1] : []
+    content {
+      hosts        = ["faucet.${var.subdomain}"]
+      path_matcher = "faucet"
+    }
   }
 
   host_rule {
@@ -168,9 +176,12 @@ resource "google_compute_url_map" "apps" {
     default_service = google_compute_backend_service.otterscan.id
   }
 
-  path_matcher {
-    name            = "faucet"
-    default_service = google_compute_backend_service.spout.id
+  dynamic "path_matcher" {
+    for_each = var.apps.enable_faucet ? [1] : []
+    content {
+      name            = "faucet"
+      default_service = google_compute_backend_service.spout[0].id
+    }
   }
 
   path_matcher {
@@ -183,7 +194,11 @@ resource "google_compute_managed_ssl_certificate" "apps" {
   name = "${var.chain_name}-apps"
 
   managed {
-    domains = ["otterscan.${var.subdomain}", "faucet.${var.subdomain}", "stats.${var.subdomain}"]
+    domains = concat(
+      ["otterscan.${var.subdomain}"],
+      var.apps.enable_faucet ? ["faucet.${var.subdomain}"] : [],
+      ["stats.${var.subdomain}"]
+    )
   }
 }
 
@@ -203,7 +218,8 @@ data "google_compute_global_address" "otterscan" {
 }
 
 data "google_compute_global_address" "faucet" {
-  name = "faucet-${replace(var.subdomain, ".", "-")}"
+  count = var.apps.enable_faucet ? 1 : 0
+  name  = "faucet-${replace(var.subdomain, ".", "-")}"
 }
 
 data "google_compute_global_address" "stats" {
@@ -229,21 +245,23 @@ resource "google_compute_global_forwarding_rule" "otterscan_https" {
 }
 
 resource "google_compute_global_forwarding_rule" "faucet_http" {
+  count                 = var.apps.enable_faucet ? 1 : 0
   name                  = "${var.chain_name}-faucet-forwarding-rule-http"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "80"
   target                = google_compute_target_http_proxy.apps.id
-  ip_address            = data.google_compute_global_address.faucet.address
+  ip_address            = data.google_compute_global_address.faucet[0].address
 }
 
 resource "google_compute_global_forwarding_rule" "faucet_https" {
+  count                 = var.apps.enable_faucet ? 1 : 0
   name                  = "${var.chain_name}-faucet-forwarding-rule-https"
   ip_protocol           = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "443"
   target                = google_compute_target_https_proxy.apps.id
-  ip_address            = data.google_compute_global_address.faucet.address
+  ip_address            = data.google_compute_global_address.faucet[0].address
 }
 
 resource "google_compute_global_forwarding_rule" "stats_http" {
@@ -265,6 +283,7 @@ resource "google_compute_global_forwarding_rule" "stats_https" {
 }
 
 module "spout_security_policies" {
+  count  = var.apps.enable_faucet ? 1 : 0
   source = "./modules/google-cloud-armor"
 
   project_id          = var.project_id

@@ -190,10 +190,18 @@ pub struct Db {
     db: Arc<Mutex<Connection>>,
     state_cache: Arc<Mutex<LruCache<Vec<u8>, Vec<u8>>>>,
     path: Option<Box<Path>>,
+    /// The block height at which ZQ2 blocks begin.
+    /// This value should be required only for proto networks to distinguise between ZQ1 and ZQ2 blocks.
+    executable_blocks_height: Option<u64>,
 }
 
 impl Db {
-    pub fn new<P>(data_dir: Option<P>, shard_id: u64, state_cache_size: usize) -> Result<Self>
+    pub fn new<P>(
+        data_dir: Option<P>,
+        shard_id: u64,
+        state_cache_size: usize,
+        executable_blocks_height: Option<u64>,
+    ) -> Result<Self>
     where
         P: AsRef<Path>,
     {
@@ -291,6 +299,7 @@ impl Db {
             db: Arc::new(Mutex::new(connection)),
             state_cache: Arc::new(Mutex::new(LruCache::new(state_cache_size))),
             path,
+            executable_blocks_height,
         })
     }
 
@@ -428,9 +437,20 @@ impl Db {
     /// Returns the lowest and highest block numbers of stored blocks
     pub fn available_range(&self) -> Result<RangeInclusive<u64>> {
         let db = self.db.lock().unwrap();
-        let (min, max) = db
-            .prepare_cached("SELECT MIN(height), MAX(height) FROM blocks")?
-            .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        // Doing it together is slow
+        // sqlite> EXPLAIN QUERY PLAN SELECT MIN(height), MAX(height) FROM blocks;
+        // QUERY PLAN
+        // `--SCAN blocks USING COVERING INDEX idx_blocks_height
+        let min = db
+            .prepare_cached("SELECT MIN(height) FROM blocks")?
+            .query_row([], |row| row.get::<_, u64>(0))
+            .optional()?
+            .unwrap_or_default();
+        let max = db
+            .prepare_cached("SELECT MAX(height) FROM blocks")?
+            .query_row([], |row| row.get::<_, u64>(0))
+            .optional()?
+            .unwrap_or_default();
         Ok(min..=max)
     }
 
@@ -934,6 +954,67 @@ impl Db {
         Ok(())
     }
 
+    /// Delete the block and its related transactions and receipts
+    pub fn prune_block(&self, block: &Block, is_canonical: bool) -> Result<()> {
+        let hash = block.hash();
+        self.with_sqlite_tx(|db| {
+            // get a list of transactions
+            let txns = db
+                .prepare_cached("SELECT tx_hash FROM receipts WHERE block_hash = ?1")?
+                .query_map([hash], |row| row.get(0))?
+                .collect::<Result<Vec<Hash>, _>>()?;
+
+            // Delete child row, before deleting parents
+            // https://github.com/Zilliqa/zq2/issues/2216#issuecomment-2812501876
+            db.prepare_cached("DELETE FROM receipts WHERE block_hash = ?1")?
+                .execute([hash])?;
+
+            // Delete the block after all references are deleted
+            db.prepare_cached("DELETE FROM blocks WHERE block_hash = ?1")?
+                .execute([hash])?;
+
+            // Delete all other references to this list of txns
+            if is_canonical {
+                for tx in txns {
+                    // Deletes all other references to this txn; txn can only exist in one canonical block.
+                    db.prepare_cached("DELETE FROM receipts WHERE tx_hash = ?1")?
+                        .execute([tx])?;
+                    // Delete the txn itself after all references are deleted
+                    db.prepare_cached("DELETE FROM transactions WHERE tx_hash = ?1")?
+                        .execute([tx])?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub fn get_blocks_by_height(&self, height: u64) -> Result<Vec<Block>> {
+        let rows = self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1")?
+            .query_map([height], |row| Ok(Block {
+                header: BlockHeader {
+                    hash: row.get(0)?,
+                    view: row.get(1)?,
+                    number: row.get(2)?,
+                    qc: row.get(3)?,
+                    signature: row.get(4)?,
+                    state_root_hash: row.get(5)?,
+                    transactions_root_hash: row.get(6)?,
+                    receipts_root_hash: row.get(7)?,
+                    timestamp: row.get::<_, SystemTimeSqlable>(8)?.into(),
+                    gas_used: row.get(9)?,
+                    gas_limit: row.get(10)?,
+                },
+                agg: row.get(11)?,
+                transactions: vec![],
+            })
+        )?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
@@ -985,6 +1066,12 @@ impl Db {
         let Some(mut block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
+        if self.executable_blocks_height.is_some()
+            && block.header.number < self.executable_blocks_height.unwrap()
+        {
+            debug!("fetched ZQ1 block so setting state root hash to zeros");
+            block.header.state_root_hash = Hash::ZERO;
+        }
         let transaction_hashes = self
             .db
             .lock()
@@ -1058,9 +1145,9 @@ impl Db {
         sqlite_tx: &Connection,
         receipt: TransactionReceipt,
     ) -> Result<()> {
-        sqlite_tx.prepare_cached("INSERT INTO receipts
+        sqlite_tx.prepare_cached("INSERT OR IGNORE INTO receipts
                 (tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions)
-            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)",)?.execute(            
+            VALUES (:tx_hash, :block_hash, :tx_index, :success, :gas_used, :cumulative_gas_used, :contract_address, :logs, :transitions, :accepted, :errors, :exceptions)",)?.execute(
             named_params! {
                 ":tx_hash": receipt.tx_hash,
                 ":block_hash": receipt.block_hash,
@@ -1091,7 +1178,7 @@ impl Db {
         &self,
         block_hash: &Hash,
     ) -> Result<Vec<TransactionReceipt>> {
-        Ok(self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
+        Ok(self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index")?.query_map([block_hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn get_total_transaction_count(&self) -> Result<usize> {
@@ -1336,7 +1423,7 @@ mod tests {
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
-        let db = Db::new(Some(base_path), 0, 1024).unwrap();
+        let db = Db::new(Some(base_path), 0, 1024, None).unwrap();
 
         // Seed db with data
         let mut rng = ChaCha8Rng::seed_from_u64(0);

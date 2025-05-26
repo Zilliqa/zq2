@@ -261,9 +261,11 @@ fn run_scilla_docker() -> Result<Child> {
         .arg("host")
         .arg("--init")
         .arg("--rm")
-        .arg("-v")
-        .arg("/tmp:/scilla_ext_libs")
-        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72")
+        .arg("--volume")
+        .arg("/tmp/scilla_ext_libs:/scilla_ext_libs")
+        .arg("--volume")
+        .arg("/tmp/scilla-state-server:/tmp/scilla-state-server")
+        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:abdb24b1")
         .arg("/scilla/0/bin/scilla-server-http")
         .spawn()?;
 
@@ -302,7 +304,11 @@ fn stop_scilla_docker(child: &mut Child) -> Result<ExitStatus> {
         .or(Err(anyhow!("Unable to stop docker container!")))
 }
 
-fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Result<()> {
+fn deduct_funds_from_zero_account(
+    state: &mut State,
+    config: &NodeConfig,
+    zq2_zero_acc_nonce: u64,
+) -> Result<()> {
     let total_requested_amount = 0_u128
         .checked_add(
             config
@@ -322,6 +328,7 @@ fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Res
         .expect("Genesis accounts + genesis deposits sum to more than max value of u128");
     state.mutate_account(Address::ZERO, |acc| {
         acc.balance = acc.balance.checked_sub(total_requested_amount).expect("Sum of funds in genesis.deposit and genesis.accounts exceeds funds in ZeroAccount from zq1!");
+        acc.nonce = zq2_zero_acc_nonce;
         Ok(())
     })?;
 
@@ -334,7 +341,7 @@ pub async fn convert_persistence(
     zq1_db: zq1::Db,
     zq2_db: Db,
     zq2_config: Config,
-    secret_key: SecretKey,
+    secret_keys: Vec<SecretKey>,
 ) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
@@ -382,6 +389,8 @@ pub async fn convert_persistence(
         .with_message("convert accounts")
         .with_finish(ProgressFinish::AndLeave);
 
+    let zq2_zero_acc_nonce = state.must_get_account(Address::ZERO).nonce;
+
     for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
         let zq1_account = zq1::Account::from_proto(zq1_account)?;
 
@@ -424,7 +433,7 @@ pub async fn convert_persistence(
 
     stop_scilla_docker(&mut scilla_docker)?;
 
-    deduct_funds_from_zero_account(&mut state, node_config)?;
+    deduct_funds_from_zero_account(&mut state, node_config, zq2_zero_acc_nonce)?;
 
     let max_block = zq1_db
         .get_tx_blocks_aux("MaxTxBlockNumber")?
@@ -454,6 +463,8 @@ pub async fn convert_persistence(
         .skip_while(|(n, _)| *n <= current_block);
 
     let mut parent_hash = Hash::ZERO;
+
+    let secret_key = secret_keys[0];
 
     for (block_number, block) in tx_blocks_iter {
         let mut transactions = Vec::new();
@@ -534,7 +545,7 @@ pub async fn convert_persistence(
             zq1_block.block_num,
             qc,
             None,
-            state.root_hash()?,
+            Hash::ZERO,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             txn_hashes.iter().map(|h| Hash(h.0)).collect(),
@@ -584,13 +595,22 @@ pub async fn convert_persistence(
     }
 
     // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
-    let highest_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
-    let highest_block = zq2_db.get_block_by_view(highest_block)?.unwrap();
+    let highest_zq1_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
+    let highest_zq1_block = zq2_db.get_block_by_view(highest_zq1_block)?.unwrap();
+    let state_root_hash = state.root_hash()?;
 
     zq2_db.with_sqlite_tx(|sqlite_tx| {
-        let empty_high_qc_block = create_empty_block_from_parent(&highest_block, secret_key);
-        zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
-        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.header.qc)?;
+        // Insert finalized zq2_block_1 with empty qc
+        let empty_block =
+            create_empty_block_from_parent(&highest_zq1_block, &secret_keys, state_root_hash);
+        zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_block)?;
+        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_block.header.qc)?;
+        zq2_db.set_finalized_view_with_db_tx(sqlite_tx, empty_block.view())?;
+
+        // Insert qc which points to zq2_block_1
+        let qc = get_qc_for_block(&empty_block, &secret_keys);
+        zq2_db.set_high_qc_with_db_tx(sqlite_tx, qc)?;
+
         Ok(())
     })?;
 
@@ -602,28 +622,33 @@ pub async fn convert_persistence(
     Ok(())
 }
 
-fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -> Block {
-    let vote = Vote::new(
-        secret_key,
-        parent_block.hash(),
-        secret_key.node_public_key(),
-        parent_block.number(),
-    );
+fn get_qc_for_block(block: &Block, keys: &[SecretKey]) -> QuorumCertificate {
+    let mut cosigned = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
+    let mut votes = Vec::new();
 
-    let qc = QuorumCertificate::new(
-        &[vote.signature()],
-        bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
-        parent_block.hash(),
-        parent_block.number(),
-    );
+    for (index, key) in keys.iter().enumerate() {
+        cosigned.set(index, true);
+        let vote = Vote::new(*key, block.hash(), key.node_public_key(), block.number());
+        votes.push(vote.signature());
+    }
+
+    QuorumCertificate::new(&votes, cosigned, block.hash(), block.number())
+}
+
+fn create_empty_block_from_parent(
+    parent_block: &Block,
+    secret_keys: &[SecretKey],
+    state_root_hash: Hash,
+) -> Block {
+    let qc = get_qc_for_block(parent_block, secret_keys);
 
     Block::from_qc(
-        secret_key,
+        secret_keys[0],
         parent_block.header.view + 1,
         parent_block.header.number + 1,
         qc,
         None,
-        parent_block.header.state_root_hash,
+        state_root_hash,
         parent_block.transactions_root_hash(),
         parent_block.header.receipts_root_hash,
         vec![],

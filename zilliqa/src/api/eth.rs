@@ -13,7 +13,7 @@ use alloy::{
 };
 use anyhow::{Result, anyhow};
 use http::Extensions;
-use itertools::{Either, Itertools};
+use itertools::Either;
 use jsonrpsee::{
     PendingSubscriptionSink, RpcModule, SubscriptionMessage,
     core::StringError,
@@ -23,14 +23,14 @@ use jsonrpsee::{
         params::ParamsSequence,
     },
 };
-use serde::Deserialize;
+use serde_json::json;
 use tracing::*;
 
 use super::{
     to_hex::ToHex,
-    types::eth::{
-        self, CallParams, ErrorCode, HashOrTransaction, OneOrMany, SyncingResult,
-        TransactionReceipt,
+    types::{
+        eth::{self, CallParams, ErrorCode, HashOrTransaction, SyncingResult, TransactionReceipt},
+        filters::{BlockFilter, FilterKind, LogFilter, PendingTxFilter},
     },
 };
 use crate::{
@@ -38,6 +38,7 @@ use crate::{
     cfg::EnabledApi,
     crypto::Hash,
     error::ensure_success,
+    exec::zil_contract_address,
     message::Block,
     node::Node,
     pool::TxAddResult,
@@ -192,11 +193,11 @@ fn accounts(params: Params, _: &Arc<Mutex<Node>>) -> Result<[(); 0]> {
 
 fn block_number(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
-    Ok(node.lock().unwrap().number().to_hex())
+    let node = node.lock().unwrap();
+    Ok(node.consensus.get_highest_canonical_block_number().to_hex())
 }
 
 fn call(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("call: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
@@ -230,7 +231,6 @@ fn chain_id(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn estimate_gas(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("estimate_gas: params: {:?}", params);
     let mut params = params.sequence();
     let call_params: CallParams = params.next()?;
     let block_number: BlockNumberOrTag = params.optional_next()?.unwrap_or_default();
@@ -284,41 +284,51 @@ pub fn get_block_transaction_receipts_inner(
     let mut log_index = 0;
     let mut receipts = Vec::new();
 
-    for (transaction_index, tx_hash) in block.transactions.iter().enumerate() {
-        let Some(signed_transaction) = node.get_transaction_by_hash(*tx_hash)? else {
+    let receipts_retrieved = node.get_transaction_receipts_in_block(block.header.hash)?;
+
+    for (transaction_index, receipt_retrieved) in receipts_retrieved.iter().enumerate() {
+        // This could maybe be a bit faster if we had a db function that queried transactions by
+        // block hash, joined on receipts, but this would be quite a bit of new code.
+        let Some(signed_transaction) = node.get_transaction_by_hash(receipt_retrieved.tx_hash)?
+        else {
             warn!(
                 "Failed to get TX by hash when getting TX receipt! {}",
-                tx_hash
+                receipt_retrieved.tx_hash
             );
             continue;
         };
 
-        let Some(receipt) = node.get_transaction_receipt(*tx_hash)? else {
-            debug!(
-                "Failed to get TX receipt when getting TX receipt! {}",
-                tx_hash
-            );
-            continue;
+        // Required workaround for incorrectly converted nonces for zq1 scilla transactions
+        let contract_address = match &signed_transaction.tx {
+            SignedTransaction::Zilliqa { tx, .. } => {
+                if tx.to_addr.is_zero() && receipt_retrieved.success {
+                    Some(zil_contract_address(
+                        signed_transaction.signer,
+                        signed_transaction
+                            .tx
+                            .nonce()
+                            .ok_or_else(|| anyhow!("Unable to extract nonce!"))?,
+                    ))
+                } else {
+                    receipt_retrieved.contract_address
+                }
+            }
+            _ => receipt_retrieved.contract_address,
         };
-
-        debug!(
-            "get_block_transaction_receipts: hash: {:?} result: {:?}",
-            tx_hash, receipt
-        );
 
         let mut logs_bloom = [0; 256];
 
         let mut logs = Vec::new();
-        for log in receipt.logs {
+        for log in receipt_retrieved.logs.iter() {
             let log = match log {
-                Log::Evm(log) => log,
-                Log::Scilla(log) => log.into_evm(),
+                Log::Evm(log) => log.clone(),
+                Log::Scilla(log) => log.clone().into_evm(),
             };
             let log = eth::Log::new(
                 log,
                 log_index,
                 transaction_index,
-                *tx_hash,
+                receipt_retrieved.tx_hash,
                 block.number(),
                 block.hash(),
             );
@@ -334,20 +344,20 @@ pub fn get_block_transaction_receipts_inner(
         let transaction = signed_transaction.tx.into_transaction();
 
         let receipt = eth::TransactionReceipt {
-            transaction_hash: (*tx_hash).into(),
+            transaction_hash: (receipt_retrieved.tx_hash).into(),
             transaction_index: transaction_index as u64,
             block_hash: block.hash().into(),
             block_number: block.number(),
             from,
             to: transaction.to_addr(),
-            cumulative_gas_used: receipt.cumulative_gas_used,
+            cumulative_gas_used: receipt_retrieved.cumulative_gas_used,
             effective_gas_price: transaction.max_fee_per_gas(),
-            gas_used: receipt.gas_used,
-            contract_address: receipt.contract_address,
+            gas_used: receipt_retrieved.gas_used,
+            contract_address,
             logs,
             logs_bloom,
             ty: 0,
-            status: receipt.success,
+            status: receipt_retrieved.success,
             v,
             r,
             s,
@@ -407,7 +417,6 @@ fn get_code(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("get_storage_at: params: {:?}", params);
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let position: U256 = params.next()?;
@@ -427,7 +436,6 @@ fn get_storage_at(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
 }
 
 fn get_transaction_count(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("get_transaction_count: params: {:?}", params);
     let mut params = params.sequence();
     let address: Address = params.next()?;
     let block_id: BlockId = params.next()?;
@@ -480,43 +488,20 @@ fn get_block_by_hash(params: Params, node: &Arc<Mutex<Node>>) -> Result<Option<e
     Ok(block)
 }
 
-pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block_hash: Hash) -> Result<[u8; 256]> {
+pub fn get_block_logs_bloom(node: &MutexGuard<Node>, block: &Block) -> Result<[u8; 256]> {
     let mut logs_bloom = [0; 256];
-    let block = node
-        .get_block(block_hash)?
-        .ok_or_else(|| anyhow!("block not found"))?;
-    for txn_receipt in node.get_transaction_receipts_in_block(block_hash)?.iter() {
+    let receipts = get_block_transaction_receipts_inner(node, block.header.hash)?;
+    for txn_receipt in receipts {
         // Ideally we'd implement a full blown bloom filter type but this'll do for now
-        txn_receipt
-            .logs
-            .clone()
-            .into_iter()
-            .map(|log| match log {
-                Log::Evm(log) => log,
-                Log::Scilla(log) => log.into_evm(),
-            })
-            .enumerate()
-            .map(|(log_index, log)| {
-                let log = eth::Log::new(
-                    log,
-                    log_index,
-                    txn_receipt.index as usize,
-                    txn_receipt.tx_hash,
-                    block.number(),
-                    block.hash(),
-                );
-
-                log.bloom(&mut logs_bloom);
-
-                log
-            })
-            .collect_vec();
+        txn_receipt.logs.iter().for_each(|log| {
+            log.bloom(&mut logs_bloom);
+        });
     }
     Ok(logs_bloom)
 }
 
 fn convert_block(node: &MutexGuard<Node>, block: &Block, full: bool) -> Result<eth::Block> {
-    let logs_bloom = get_block_logs_bloom(node, block.header.hash)?;
+    let logs_bloom = get_block_logs_bloom(node, block)?;
     if !full {
         let miner = node.get_proposer_reward_address(block.header)?;
         let block_gas_limit = block.gas_limit();
@@ -582,40 +567,33 @@ fn get_block_transaction_count_by_number(
     ))
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct GetLogsParams {
-    from_block: Option<BlockNumberOrTag>,
-    to_block: Option<BlockNumberOrTag>,
-    address: Option<OneOrMany<Address>>,
-
-    /// elements represent an alternative that matches any of the contained topics.
-    ///
-    /// Examples (from Erigon):
-    /// * `[]`                          matches any topic list
-    /// * `[[A]]`                       matches topic A in first position
-    /// * `[[], [B]]` or `[None, [B]]`  matches any topic in first position AND B in second position
-    /// * `[[A], [B]]`                  matches topic A in first position AND B in second position
-    /// * `[[A, B], [C, D]]`            matches topic (A OR B) in first position AND (C OR D) in second position
-    topics: Vec<OneOrMany<B256>>,
-    block_hash: Option<B256>,
-}
-
 fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
     let mut seq = params.sequence();
-    let params: GetLogsParams = seq.next()?;
+    let params: alloy::rpc::types::Filter = seq.next()?;
     expect_end_of_params(&mut seq, 1, 1)?;
-
     let node = node.lock().unwrap();
+    get_logs_inner(&params, &node)
+}
+
+fn get_logs_inner(
+    params: &alloy::rpc::types::Filter,
+    node: &MutexGuard<Node>,
+) -> Result<Vec<eth::Log>> {
+    let filter_params = FilteredParams::new(Some(params.clone()));
 
     // Find the range of blocks we care about. This is an iterator of blocks.
-    let blocks = match (params.block_hash, params.from_block, params.to_block) {
-        (Some(block_hash), None, None) => Either::Left(std::iter::once(Ok(node
-            .get_block(block_hash)?
-            .ok_or_else(|| anyhow!("block not found"))?))),
-        (None, from, to) => {
+    let blocks = match params.block_option {
+        alloy::rpc::types::FilterBlockOption::AtBlockHash(block_hash) => {
+            Either::Left(std::iter::once(Ok(node
+                .get_block(block_hash)?
+                .ok_or_else(|| anyhow!("block not found"))?)))
+        }
+        alloy::rpc::types::FilterBlockOption::Range {
+            from_block,
+            to_block,
+        } => {
             let Some(from) = node
-                .resolve_block_number(from.unwrap_or(BlockNumberOrTag::Latest))?
+                .resolve_block_number(from_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
                 .map(Block::number)
             else {
@@ -623,7 +601,7 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
             };
 
             let to = match node
-                .resolve_block_number(to.unwrap_or(BlockNumberOrTag::Latest))?
+                .resolve_block_number(to_block.unwrap_or(BlockNumberOrTag::Latest))?
                 .as_ref()
             {
                 Some(block) => block.number(),
@@ -642,78 +620,45 @@ fn get_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<Vec<eth::Log>> {
                     .ok_or_else(|| anyhow!("missing block: {number}"))
             }))
         }
-        _ => {
-            return Err(anyhow!(
-                "only one of `blockHash` or (`fromBlock` and/or `toBlock`) are allowed"
-            ));
-        }
     };
 
-    // Get the receipts for each transaction. This is an iterator of (receipt, txn_index, txn_hash, block_number, block_hash).
-    let receipts = blocks
-        .map(|block: Result<_>| {
-            let block = block?;
-            let block_number = block.number();
-            let block_hash = block.hash();
-            let receipts = node.get_transaction_receipts_in_block(block_hash)?;
+    let mut logs = vec![];
 
-            Ok(block
-                .transactions
-                .into_iter()
-                .enumerate()
-                .zip(receipts)
-                .map(move |((txn_index, txn_hash), receipt)| {
-                    (receipt, txn_index, txn_hash, block_number, block_hash)
-                }))
-        })
-        .flatten_ok();
+    for block in blocks {
+        let block = block?;
 
-    // Get the logs from each receipt and filter them based on the provided parameters. This is an iterator of (log, log_index, txn_index, txn_hash, block_number, block_hash).
-    let logs = receipts
-        .map(|r: Result<_>| {
-            let (receipt, txn_index, txn_hash, block_number, block_hash) = r?;
-            Ok(receipt
-                .logs
-                .into_iter()
-                .map(|log| match log {
-                    Log::Evm(log) => log,
-                    Log::Scilla(log) => log.into_evm(),
-                })
-                .enumerate()
-                .map(move |(i, l)| (l, i, txn_index, txn_hash, block_number, block_hash)))
-        })
-        .flatten_ok()
-        .filter_ok(|(log, _, _, _, _, _)| {
-            params
-                .address
-                .as_ref()
-                .map(|a| a.contains(&log.address))
-                .unwrap_or(true)
-        })
-        .filter_ok(|(log, _, _, _, _, _)| {
-            params
-                .topics
-                .iter()
-                .zip(log.topics.iter())
-                .all(|(filter_topic, log_topic)| {
-                    filter_topic.is_empty() || filter_topic.contains(log_topic)
-                })
-        });
+        for (txn_index, txn_hash) in block.transactions.iter().enumerate() {
+            let receipt = node
+                .get_transaction_receipt(*txn_hash)?
+                .ok_or(anyhow!("missing receipt"))?;
 
-    // Finally convert the iterator to our response format.
-    let logs = logs.map(|l: Result<_>| {
-        let (log, log_index, txn_index, txn_hash, block_number, block_hash) = l?;
-        Ok(eth::Log::new(
-            log,
-            log_index,
-            txn_index,
-            txn_hash,
-            block_number,
-            block_hash,
-        ))
-    });
+            for (log_index, log) in receipt.logs.into_iter().enumerate() {
+                let log = match log {
+                    Log::Evm(l) => l,
+                    Log::Scilla(l) => l.into_evm(),
+                };
 
-    logs.collect()
+                if !filter_params.filter_address(&log.address) {
+                    continue;
+                }
+
+                if !filter_params.filter_topics(&log.topics) {
+                    continue;
+                }
+
+                logs.push(eth::Log::new(
+                    log,
+                    log_index,
+                    txn_index,
+                    *txn_hash,
+                    block.number(),
+                    block.hash(),
+                ));
+            }
+        }
+    }
+
+    Ok(logs)
 }
 
 fn get_transaction_by_block_hash_and_index(
@@ -761,7 +706,6 @@ fn get_transaction_by_hash(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<eth::Transaction>> {
-    trace!("get_transaction_by_hash: params: {:?}", params);
     let hash: B256 = params.one()?;
     let hash: Hash = Hash(hash.0);
     let node = node.lock().unwrap();
@@ -793,7 +737,6 @@ fn get_transaction_receipt(
     params: Params,
     node: &Arc<Mutex<Node>>,
 ) -> Result<Option<eth::TransactionReceipt>> {
-    trace!("get_transaction_receipt: params: {:?}", params);
     let hash: B256 = params.one()?;
     let hash: Hash = hash.into();
     let node = node.lock().unwrap();
@@ -805,7 +748,6 @@ fn get_transaction_receipt(
 }
 
 fn send_raw_transaction(params: Params, node: &Arc<Mutex<Node>>) -> Result<String> {
-    trace!("send_raw_transaction: params: {:?}", params);
     let transaction: String = params.one()?;
     let transaction = transaction
         .strip_prefix("0x")
@@ -916,7 +858,12 @@ async fn subscribe(
             while let Ok(header) = new_blocks.recv().await {
                 let miner = node.lock().unwrap().get_proposer_reward_address(header)?;
                 let block_gas_limit = node.lock().unwrap().config.consensus.eth_block_gas_limit;
-                let logs_bloom = get_block_logs_bloom(&node.lock().unwrap(), header.hash)?;
+                let block = node
+                    .lock()
+                    .unwrap()
+                    .get_block(header.hash)?
+                    .ok_or_else(|| anyhow!("missing block"))?;
+                let logs_bloom = get_block_logs_bloom(&node.lock().unwrap(), &block)?;
                 let header = eth::Header::from_header(
                     header,
                     miner.unwrap_or_default(),
@@ -1057,18 +1004,83 @@ fn get_account(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 
 /// eth_getFilterChanges
 /// Polling method for a filter, which returns an array of events that have occurred since the last poll.
-fn get_filter_changes(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!(
-        "API method eth_getFilterChanges is not implemented yet"
-    ))
+fn get_filter_changes(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+    let filter_id: u128 = params.one()?;
+
+    let node = node.lock().unwrap();
+
+    let mut filters = node.filters.lock().unwrap();
+
+    let filter = filters
+        .get_mut(&filter_id)
+        .ok_or(anyhow!("filter not found"))?;
+
+    match &mut filter.kind {
+        FilterKind::Block(block_filter) => {
+            let headers = block_filter.poll()?;
+
+            let results: Vec<_> = headers
+                .into_iter()
+                .map(|header| B256::from(header.hash).to_hex())
+                .collect();
+
+            Ok(json!(results))
+        }
+
+        FilterKind::PendingTx(pending_tx_filter) => {
+            let pending_txns = pending_tx_filter.poll()?;
+            let result: Vec<_> = pending_txns
+                .into_iter()
+                .map(|txn| B256::from(txn.hash).to_hex())
+                .collect();
+            Ok(json!(result))
+        }
+
+        FilterKind::Log(log_filter) => {
+            // If necessary, adjust the filter so it ignores already returned blocks
+            let last_block = log_filter.last_block_number; // exclusive
+            let criteria_last_block = log_filter.criteria.get_from_block(); // inclusive
+            let adjusted_criteria = *log_filter.criteria.clone();
+            let adjusted_criteria = match (last_block, criteria_last_block) {
+                (None, None) => adjusted_criteria,
+                (None, Some(y)) => adjusted_criteria.from_block(y),
+                (Some(x), None) => adjusted_criteria.from_block(x + 1),
+                (Some(x), Some(y)) => adjusted_criteria.from_block(std::cmp::max(x + 1, y)),
+            };
+
+            // Get the logs
+            let logs = get_logs_inner(&adjusted_criteria, &node)?;
+
+            // Set the last recorded block in the filter to the most recent block in the returned logs
+            let last_block = logs.iter().fold(None, |acc, x| {
+                Some(std::cmp::max(x.block_number, acc.unwrap_or(0)))
+            });
+            log_filter.last_block_number = last_block;
+
+            Ok(json!(logs))
+        }
+    }
 }
 
 /// eth_getFilterLogs
 /// Returns an array of all logs matching filter with given id.
-fn get_filter_logs(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!(
-        "API method eth_getFilterLogs is not implemented yet"
-    ))
+fn get_filter_logs(params: Params, node: &Arc<Mutex<Node>>) -> Result<serde_json::Value> {
+    let filter_id: u128 = params.one()?;
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
+
+    if let Some(filter) = filters.get_mut(&filter_id) {
+        match &mut filter.kind {
+            FilterKind::Block(_) => Err(anyhow!("pending tx filter not supported")),
+            FilterKind::PendingTx(_) => Err(anyhow!("pending tx filter not supported")),
+            FilterKind::Log(log_filter) => {
+                let result = get_logs_inner(&log_filter.criteria, &node)?;
+                Ok(json!(result))
+            }
+        }
+    } else {
+        Err(anyhow!("filter not found"))
+    }
 }
 
 /// eth_getProof
@@ -1093,24 +1105,45 @@ fn max_priority_fee_per_gas(_params: Params, _node: &Arc<Mutex<Node>>) -> Result
 
 /// eth_newBlockFilter
 /// Creates a filter in the node, to notify when a new block arrives. To check if the state has changed, call eth_getFilterChanges
-fn new_block_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!(
-        "API method eth_newBlockFilter is not implemented yet"
-    ))
+fn new_block_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
+    expect_end_of_params(&mut params.sequence(), 0, 0)?;
+
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
+
+    let filter = BlockFilter {
+        block_receiver: node.subscribe_to_new_blocks(),
+    };
+    let id = filters.add_filter(FilterKind::Block(filter));
+    Ok(id)
 }
 
 /// eth_newFilter
 /// Creates a filter object, based on filter options, to notify when the state changes (logs). To check if the state has changed, call eth_getFilterChanges.
-fn new_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!("API method eth_newFilter is not implemented yet"))
+fn new_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
+    let criteria: alloy::rpc::types::Filter = params.one()?;
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
+
+    let id = filters.add_filter(FilterKind::Log(LogFilter {
+        criteria: Box::new(criteria),
+        last_block_number: None,
+    }));
+    Ok(id)
 }
 
 /// eth_newPendingTransactionFilter
 /// Creates a filter in the node to notify when new pending transactions arrive. To check if the state has changed, call eth_getFilterChanges.
-fn new_pending_transaction_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!(
-        "API method eth_newPendingTransactionFilter is not implemented yet"
-    ))
+fn new_pending_transaction_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<u128> {
+    expect_end_of_params(&mut params.sequence(), 0, 0)?;
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
+
+    let filter = PendingTxFilter {
+        pending_txn_receiver: node.subscribe_to_new_transactions(),
+    };
+    let id = filters.add_filter(FilterKind::PendingTx(filter));
+    Ok(id)
 }
 
 /// eth_signTransaction
@@ -1135,8 +1168,11 @@ fn submit_work(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
 
 /// eth_uninstallFilter
 /// It uninstalls a filter with the given filter id.
-fn uninstall_filter(_params: Params, _node: &Arc<Mutex<Node>>) -> Result<()> {
-    Err(anyhow!(
-        "API method eth_uninstallFilter is not implemented yet"
-    ))
+fn uninstall_filter(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+    let filter_id: u128 = params.one()?;
+
+    let node = node.lock().unwrap();
+    let mut filters = node.filters.lock().unwrap();
+
+    Ok(filters.remove_filter(filter_id))
 }

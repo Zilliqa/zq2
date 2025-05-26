@@ -22,19 +22,19 @@ fake_response_channel = []
 fake_time = []
 
 [build-dependencies]
-anyhow = { version = "1.0.97", features = ["backtrace"] }
+anyhow = { version = "1.0.98", features = ["backtrace"] }
 vergen = { version = "8.3.2", features = ["git", "git2"] }
 
 [dependencies]
 alloy = { version = "0.12.4", default-features = false, features = ["consensus", "eips", "json-abi", "dyn-abi", "k256", "rlp", "rpc-types", "rpc-types-trace", "serde", "sol-types"] }
-anyhow = { version = "1.0.97", features = ["backtrace"] }
+anyhow = { version = "1.0.98", features = ["backtrace"] }
 async-trait = "0.1.88"
 base64 = "0.22.1"
 bincode = "1.3.3"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bs58 = "0.5.1"
 bytes = "1.10.0"
-clap = { version = "4.5.32", features = ["derive"] }
+clap = { version = "4.5.37", features = ["derive"] }
 eth_trie = {path =  "../eth-trie.rs"}
 ethabi = "18.0.0"
 futures = "0.3.31"
@@ -56,17 +56,17 @@ rand = "0.8.5"
 rand_chacha = "0.3.1"
 revm = { version = "19.6.0", features = ["optional_no_base_fee"] }
 revm-inspectors = { version = "0.16.0", features = ["js-tracer"] }
-rusqlite = { version = "0.34.0", features = ["bundled", "trace"] }
+rusqlite = { version = "0.35.0", features = ["bundled", "trace"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 serde_bytes = "0.11.17"
 serde_json = { version = "1.0.140", features = ["raw_value","arbitrary_precision"] }
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-tempfile = "3.19.0"
+tempfile = "3.19.1"
 time = { version = "0.3.37", features = ["formatting", "macros"] }
-tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1.44.2", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.17"
-toml = "0.8.20"
+toml = "0.8.21"
 tower = "0.4.13"
 tower-http = { version = "0.6.1", features = ["cors"] }
 tracing = "0.1.41"
@@ -82,7 +82,8 @@ thiserror = "2.0.12"
 lru-mem = "0.3.0"
 opentelemetry-semantic-conventions = { version = "0.28.0", features = ["semconv_experimental"] }
 semver = "1.0.23"
-foundry-compilers = { version = "0.13.5", features = ["svm-solc"] }
+foundry-compilers = { version = "0.14.1", features = ["svm-solc"] }
+reth-ipc = { git = "https://github.com/paradigmxyz/reth", version = "1.3.12" }
 
 [dev-dependencies]
 alloy = { version = "0.12.4", default-features = false, features = ["network", "rand", "signers", "signer-local"] }
@@ -93,7 +94,7 @@ fs_extra = "1.3.0"
 indicatif = "0.17.11"
 pprof = { version = "0.14.0", default-features = false, features = ["criterion", "flamegraph"] }
 primitive-types = { version = "0.12.2" }
-ureq = "3.0.9"
+ureq = "3.0.11"
 zilliqa = { path = ".", default-features = false, features = ["fake_response_channel", "fake_time"] }
 zilliqa-macros = { path = "../zilliqa-macros" }
 

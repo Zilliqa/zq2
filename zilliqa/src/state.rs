@@ -46,7 +46,7 @@ pub struct State {
     /// tests which don't invoke Scilla, don't spawn the Scilla communication threads or TCP listeners.
     scilla: Arc<OnceLock<Mutex<Scilla>>>,
     scilla_address: String,
-    local_address: String,
+    socket_dir: String,
     scilla_lib_dir: String,
     pub scilla_ext_libs_path: ScillaExtLibsPath,
     pub block_gas_limit: EvmGas,
@@ -64,7 +64,7 @@ impl State {
             accounts: PatriciaTrie::new(db),
             scilla: Arc::new(OnceLock::new()),
             scilla_address: consensus_config.scilla_address.clone(),
-            local_address: consensus_config.local_address.clone(),
+            socket_dir: consensus_config.scilla_server_socket_directory.clone(),
             scilla_lib_dir: consensus_config.scilla_stdlib_dir.clone(),
             scilla_ext_libs_path: consensus_config.scilla_ext_libs_path.clone(),
             block_gas_limit: consensus_config.eth_block_gas_limit,
@@ -80,7 +80,7 @@ impl State {
             .get_or_init(|| {
                 Mutex::new(Scilla::new(
                     self.scilla_address.clone(),
-                    self.local_address.clone(),
+                    self.socket_dir.clone(),
                     self.scilla_lib_dir.clone(),
                 ))
             })
@@ -322,7 +322,7 @@ impl State {
             accounts: self.accounts.at_root(root_hash),
             scilla: self.scilla.clone(),
             scilla_address: self.scilla_address.clone(),
-            local_address: self.local_address.clone(),
+            socket_dir: self.socket_dir.clone(),
             scilla_lib_dir: self.scilla_lib_dir.clone(),
             scilla_ext_libs_path: self.scilla_ext_libs_path.clone(),
             block_gas_limit: self.block_gas_limit,
@@ -435,6 +435,10 @@ impl State {
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {
         self.sql.get_highest_canonical_block_number()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.accounts.iter().next().is_none()
     }
 }
 
@@ -638,7 +642,7 @@ mod tests {
 
     #[test]
     fn deposit_contract_updateability() {
-        let db = Db::new::<PathBuf>(None, 0, 0).unwrap();
+        let db = Db::new::<PathBuf>(None, 0, 0, None).unwrap();
         let db = Arc::new(db);
         let config = NodeConfig::default();
 

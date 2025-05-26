@@ -483,6 +483,12 @@ impl TransactionPool {
     pub fn has_txn_ready(&self) -> bool {
         !self.gas_index.is_empty()
     }
+
+    pub fn clear(&mut self) {
+        self.transactions.clear();
+        self.hash_to_index.clear();
+        self.gas_index.clear();
+    }
 }
 
 #[cfg(test)]
@@ -558,7 +564,7 @@ mod tests {
     fn get_in_memory_state() -> Result<State> {
         let node_config = NodeConfig::default();
 
-        let db = Db::new::<PathBuf>(None, 0, 0)?;
+        let db = Db::new::<PathBuf>(None, 0, 0, None)?;
         let db = Arc::new(db);
 
         State::new_with_genesis(db.state_trie()?, node_config, db.clone())

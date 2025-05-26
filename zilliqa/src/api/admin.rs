@@ -7,10 +7,12 @@ use std::{
 
 use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
+use itertools::Itertools;
 use jsonrpsee::{RpcModule, types::Params};
+use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 
-use super::types::{eth::QuorumCertificate, hex};
+use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
 use crate::{api::to_hex::ToHex, cfg::EnabledApi, node::Node};
 
 pub fn rpc_module(
@@ -25,6 +27,9 @@ pub fn rpc_module(
             ("admin_generateCheckpoint", checkpoint),
             ("admin_blockRange", admin_block_range),
             ("admin_forceView", force_view),
+            ("admin_getPeers", get_peers),
+            ("admin_votesReceived", votes_received),
+            ("admin_clearMempool", clear_mempool),
         ]
     )
 }
@@ -94,4 +99,46 @@ fn force_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
     let mut node = node.lock().unwrap();
     node.consensus.force_view(view.to::<u64>(), timeout_at)?;
     Ok(true)
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PeerInfo {
+    pub swarm_peers: Vec<PeerId>,
+    pub sync_peers: Vec<PeerId>,
+}
+
+fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<PeerInfo> {
+    let node = node.lock().unwrap();
+    let (swarm_peers, sync_peers) = node.get_peer_ids()?;
+    Ok(PeerInfo {
+        swarm_peers,
+        sync_peers,
+    })
+}
+
+/// Returns information about votes
+fn votes_received(_params: Params, node: &Arc<Mutex<Node>>) -> Result<VotesReceivedReturnee> {
+    let node = node.lock().unwrap();
+
+    let new_views = node.consensus.new_views.clone().into_iter().collect_vec();
+    let votes = node.consensus.votes.clone().into_iter().collect_vec();
+    let buffered_votes = node
+        .consensus
+        .buffered_votes
+        .clone()
+        .into_iter()
+        .collect_vec();
+    let returnee = VotesReceivedReturnee {
+        new_views,
+        votes,
+        buffered_votes,
+    };
+    Ok(returnee)
+}
+
+fn clear_mempool(_params: Params, node: &Arc<Mutex<Node>>) -> Result<()> {
+    let mut node = node.lock().unwrap();
+
+    node.consensus.clear_mempool();
+    Ok(())
 }

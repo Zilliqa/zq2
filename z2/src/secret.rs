@@ -5,6 +5,8 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
+use crate::kms::KmsService;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Secret {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -14,7 +16,8 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub fn add_version(&self, value: &str) -> Result<()> {
+    pub fn add_version(&self, value: Option<String>, encrypted: bool) -> Result<String> {
+        let value = value.unwrap_or(Self::generate_random_secret());
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
             self.name
@@ -22,7 +25,36 @@ impl Secret {
 
         // Create a new named temporary file with the secret
         let mut temp_file = NamedTempFile::new()?;
-        writeln!(temp_file, "{}", value)?;
+
+        if encrypted {
+            // Check if we have the required labels to generate the KMS keyring and key
+            let chain_name = self.labels.get("zq2-network").ok_or_else(|| {
+                anyhow!("Cannot encrypt: missing 'zq2-network' label for KMS keyring")
+            })?;
+            let key_name = if let Some(node_name) = self.labels.get("node-name") {
+                node_name.to_string()
+            } else if let Some(role) = self.labels.get("role") {
+                format!("{}-{}", chain_name, role)
+            } else {
+                return Err(anyhow!(
+                    "Cannot encrypt: missing both 'node-name' and 'role' labels for KMS key"
+                ));
+            };
+
+            // Encrypt using KmsService
+            let ciphertext_base64 = KmsService::encrypt(
+                project_id,
+                &value,
+                &format!("kms-{}", chain_name),
+                &key_name,
+            )?;
+
+            // Write base64 encrypted content to file
+            writeln!(temp_file, "{}", ciphertext_base64)?;
+        } else {
+            // Write plaintext directly if not encrypted
+            writeln!(temp_file, "{}", value)?;
+        }
 
         let output = Command::new("gcloud")
             .args([
@@ -44,7 +76,7 @@ impl Secret {
             ));
         }
 
-        Ok(())
+        Ok(value)
     }
 
     pub fn create(project_id: &str, name: &str, labels: BTreeMap<String, String>) -> Result<Self> {
@@ -81,6 +113,68 @@ impl Secret {
             name: name.to_owned(),
             labels,
         })
+    }
+
+    fn generate_random_secret() -> String {
+        let mut data = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut data);
+        hex::encode(data)
+    }
+
+    pub fn delete(&self) -> Result<()> {
+        let project_id = &self.project_id.clone().context(format!(
+            "Error retrieving the project ID of the secret {}",
+            self.name
+        ))?;
+
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "secrets",
+                "delete",
+                &self.name,
+                "--quiet",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!("listing secrets failed"));
+        }
+
+        Ok(())
+    }
+
+    pub fn grant_service_account(
+        secret_name: &str,
+        project_id: &str,
+        service_account_name: &str,
+    ) -> Result<String> {
+        let output = Command::new("gcloud")
+            .args([
+                "secrets",
+                "add-iam-policy-binding",
+                secret_name,
+                "--project",
+                project_id,
+                "--member",
+                &format!("serviceAccount:{}", service_account_name),
+                "--role",
+                "roles/secretmanager.secretAccessor",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Error granting the service account '{}' access to the secret '{}' in the project {}: {}",
+                service_account_name,
+                secret_name,
+                project_id,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
     }
 
     pub fn value(&self) -> Result<String> {
@@ -142,35 +236,5 @@ impl Secret {
         }
 
         Ok(secrets)
-    }
-
-    pub fn generate_random_secret() -> String {
-        let mut data = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut data);
-        hex::encode(data)
-    }
-
-    pub fn delete(&self) -> Result<()> {
-        let project_id = &self.project_id.clone().context(format!(
-            "Error retrieving the project ID of the secret {}",
-            self.name
-        ))?;
-
-        let output = Command::new("gcloud")
-            .args([
-                "--project",
-                project_id,
-                "secrets",
-                "delete",
-                &self.name,
-                "--quiet",
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            return Err(anyhow!("listing secrets failed"));
-        }
-
-        Ok(())
     }
 }

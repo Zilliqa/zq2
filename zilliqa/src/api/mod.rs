@@ -94,7 +94,7 @@ macro_rules! declare_module {
                 .build();
             module
                 .register_method($name, move |params, context, _| {
-                    tracing::trace!("{}: params: {:?}", $name, params);
+                    tracing::debug!("{}: params: {:?}", $name, params);
                     if !enabled {
                         return Err(jsonrpsee::types::ErrorObject::owned(
                             jsonrpsee::types::error::ErrorCode::InvalidRequest.code(),

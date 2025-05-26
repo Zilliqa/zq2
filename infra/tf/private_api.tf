@@ -100,7 +100,7 @@ resource "google_compute_backend_service" "private_api" {
   session_affinity      = "CLIENT_IP"
 
   dynamic "backend" {
-    for_each = each.value.config.detach_load_balancer ? {} : { "${each.key}" = google_compute_instance_group.private_api[each.key] }
+    for_each = each.value.config.detach_load_balancer ? {} : { format("%s", each.key) = google_compute_instance_group.private_api[each.key] }
     content {
       group           = backend.value.self_link
       balancing_mode  = "UTILIZATION"
@@ -166,7 +166,7 @@ resource "google_compute_target_https_proxy" "private_api" {
 data "google_compute_global_address" "private_api" {
   for_each = local.private_api_instances
 
-  name = "${each.value.dns_name}-${replace(var.subdomain, ".", "-")}"
+  name = "${replace(each.value.dns_name, ".", "-")}-${replace(var.subdomain, ".", "-")}"
 }
 
 resource "google_compute_global_forwarding_rule" "private_api_http" {

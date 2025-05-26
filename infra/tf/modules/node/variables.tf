@@ -1,18 +1,3 @@
-variable "node_role_mappings" {
-  description = "(Optional) The node role short names"
-  type        = map(string)
-  default = {
-    apps        = "app",
-    api         = "api",
-    bootstrap   = "boo",
-    validator   = "val",
-    checkpoint  = "che",
-    persistence = "per",
-    private-api = "pap",
-    sentry      = "sen",
-  }
-}
-
 variable "region_mappings" {
   description = "(Optional) The regions short names"
   type        = map(string)

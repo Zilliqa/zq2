@@ -19,6 +19,7 @@ use ethers::{
 use futures::{StreamExt, future::join_all};
 use primitive_types::{H160, H256};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::{LocalRpcClient, Network, Wallet, deploy_contract};
 
@@ -1541,4 +1542,287 @@ async fn get_block_receipts(mut network: Network) {
         .unwrap();
 
     assert!(receipts.contains(&individual1));
+}
+
+#[zilliqa_macros::test]
+async fn test_block_filter(mut network: Network) {
+    println!("Starting block filter test");
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new block filter
+    println!("Creating new block filter");
+    let filter_id: u128 = provider.request("eth_newBlockFilter", ()).await.unwrap();
+    println!("Created filter with ID: {}", filter_id);
+
+    // Generate some blocks
+    println!("Generating blocks");
+    network.run_until_block(&wallet, 3.into(), 50).await;
+    println!("Generated blocks");
+
+    // Get filter changes - should return the new block hashes
+    println!("Getting filter changes");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes", changes.len());
+
+    // We should have at least 2 new blocks (not counting the block at which we created the filter)
+    assert!(!changes.is_empty());
+    assert!(changes.len() >= 2);
+
+    // Changes should be valid block hashes
+    println!("Verifying block hashes");
+    for hash in &changes {
+        println!("Checking block hash: {}", hash);
+        let block = provider
+            .get_block(BlockId::Hash(*hash))
+            .await
+            .unwrap()
+            .unwrap();
+        block.number.unwrap();
+    }
+
+    // Calling get_filter_changes again should return empty as we've already retrieved the changes
+    println!("Getting filter changes second time");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes on second call", changes.len());
+    dbg!(&changes);
+    assert!(changes.is_empty());
+
+    println!("Removing filter");
+    let filter_removed_successfully: bool = provider
+        .request("eth_uninstallFilter", [filter_id])
+        .await
+        .unwrap();
+    println!("Filter removed: {}", filter_removed_successfully);
+    assert!(filter_removed_successfully);
+}
+
+#[zilliqa_macros::test]
+async fn test_pending_transaction_filter(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new pending transaction filter
+    println!("Creating new pending transaction filter");
+    let filter_id: u128 = provider
+        .request("eth_newPendingTransactionFilter", ())
+        .await
+        .unwrap();
+    println!("Created filter with ID: {}", filter_id);
+
+    // Send a transaction.
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Get filter changes - should return the pending transaction hashes
+    println!("Getting filter changes");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes", changes.len());
+
+    assert!(changes.contains(&hash));
+
+    // Calling get_filter_changes again should return empty
+    println!("Getting filter changes second time");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<H256> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes on second call", changes.len());
+    assert!(changes.is_empty());
+}
+
+#[zilliqa_macros::test]
+async fn test_log_filter(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    let (hash, contract) = deploy_contract(
+        "tests/it/contracts/EmitEvents.sol",
+        "EmitEvents",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    // Create a filter for contract events
+    println!("Creating event filter");
+    let filter = json!({
+        "fromBlock": "latest",
+        "address": contract_address,
+    });
+    let filter_id: u128 = provider.request("eth_newFilter", [filter]).await.unwrap();
+    println!("Created filter with ID: {}", filter_id);
+
+    let emit_events = contract.function("emitEvents").unwrap();
+    let call_tx = TransactionRequest::new()
+        .to(contract_address)
+        .data(emit_events.encode_input(&[]).unwrap());
+
+    let call_tx_hash = wallet
+        .send_transaction(call_tx, None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, call_tx_hash, 50).await;
+
+    // Get filter changes
+    println!("Getting filter changes");
+    let logs_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    dbg!(&logs_result);
+    let logs: Vec<serde_json::Value> = serde_json::from_value(logs_result).unwrap();
+    println!("Got {} logs", logs.len());
+
+    assert_eq!(logs.len(), 2);
+
+    // Test get_filter_logs
+    println!("Testing get_filter_logs");
+    let logs_via_get_result: serde_json::Value = provider
+        .request("eth_getFilterLogs", [filter_id])
+        .await
+        .unwrap();
+    let logs_via_get: Vec<serde_json::Value> = serde_json::from_value(logs_via_get_result).unwrap();
+    assert_eq!(logs, logs_via_get);
+
+    // Calling get_filter_changes again should return empty
+    println!("Getting filter changes second time");
+    let changes_result: serde_json::Value = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    let changes: Vec<serde_json::Value> = serde_json::from_value(changes_result).unwrap();
+    println!("Got {} changes on second call", changes.len());
+    assert!(changes.is_empty());
+
+    println!("Removing filter");
+    let filter_removed_successfully: bool = provider
+        .request("eth_uninstallFilter", [filter_id])
+        .await
+        .unwrap();
+    println!("Filter removed: {}", filter_removed_successfully);
+    assert!(filter_removed_successfully);
+}
+
+#[zilliqa_macros::test]
+async fn test_invalid_filter_id(mut network: Network) {
+    println!("Starting invalid filter ID test");
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Try to get changes for non-existent filter
+    println!("Attempting to get changes for invalid filter ID");
+    let result = provider
+        .request::<_, Value>("eth_getFilterChanges", ["0x123"])
+        .await;
+    assert!(result.is_err());
+}
+
+#[zilliqa_macros::test]
+async fn test_uninstall_filter(mut network: Network) {
+    println!("Starting uninstall filter test");
+    let wallet = network.random_wallet().await;
+    let provider = wallet.provider();
+
+    // Create a new filter
+    println!("Creating new block filter");
+    let filter_id: u128 = provider.request("eth_newBlockFilter", ()).await.unwrap();
+    println!("Created filter with ID: {}", filter_id);
+
+    // Verify filter exists by using it
+    println!("Verifying filter exists");
+    let _changes: Vec<H256> = provider
+        .request("eth_getFilterChanges", [filter_id])
+        .await
+        .unwrap();
+    println!("Filter verified");
+
+    // Successfully uninstall the filter
+    println!("Uninstalling filter");
+    let filter_removed: bool = provider
+        .request("eth_uninstallFilter", [filter_id])
+        .await
+        .unwrap();
+    println!("Filter removed: {}", filter_removed);
+    assert!(filter_removed);
+
+    // Verify filter no longer exists
+    println!("Verifying filter no longer exists");
+    let result = provider
+        .request::<_, Value>("eth_getFilterChanges", [filter_id])
+        .await;
+    assert!(result.is_err());
+}
+
+#[zilliqa_macros::test]
+async fn get_block_by_number(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Make sure there's at least one block to retrieve
+    network.run_until_block(&wallet, 2u64.into(), 50).await;
+
+    // Get the latest block number
+    let latest_number = provider.get_block_number().await.unwrap();
+
+    // Query eth_getBlockByNumber with 'latest', full transactions requested
+    let block = provider
+        .request::<_, serde_json::Value>("eth_getBlockByNumber", (latest_number, true))
+        .await
+        .unwrap();
+
+    // Some block fields should always be present
+    assert_eq!(
+        block["number"],
+        serde_json::json!(format!("0x{:x}", latest_number.as_u64()))
+    );
+    assert!(block["hash"].as_str().unwrap().starts_with("0x"));
+    assert!(block["parentHash"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(block["uncles"], serde_json::json!([])); // No uncles in ZQ2
+
+    // Specific required fields
+    // difficulty: 0x0
+    assert_eq!(block["difficulty"], serde_json::json!("0x0"));
+
+    // sha3Uncles: RLP( [] ), 0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347
+    assert_eq!(
+        block["sha3Uncles"],
+        serde_json::json!("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
+    );
+
+    // miner is a proper address, not "None"
+    let miner = block["miner"].as_str().unwrap();
+    assert!(
+        miner.starts_with("0x") && miner.len() == 42,
+        "Miner field is not a 20-byte address: {miner}"
+    );
+
+    // Some other typical fields
+    assert!(block["transactions"].is_array());
+
+    // Block gasLimit/gasUsed, timestamp, size are all nonzero/zero
+    assert!(block["gasLimit"].as_str().unwrap().starts_with("0x"));
+    assert!(block["gasUsed"].as_str().unwrap().starts_with("0x"));
+    assert!(block["timestamp"].as_str().unwrap().starts_with("0x"));
+    assert!(u64::from_str_radix(&block["size"].as_str().unwrap()[2..], 16).unwrap() > 0);
 }

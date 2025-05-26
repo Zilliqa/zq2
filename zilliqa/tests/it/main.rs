@@ -18,6 +18,7 @@ mod eth;
 mod ots;
 mod persistence;
 mod staking;
+mod sync;
 mod trace;
 mod txpool;
 mod unreliable;
@@ -35,7 +36,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex, MutexGuard,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -74,12 +75,12 @@ use zilliqa::{
     api,
     cfg::{
         Amount, ApiServer, Checkpoint, ConsensusConfig, ContractUpgradeConfig, ContractUpgrades,
-        Fork, GenesisDeposit, NodeConfig, SyncConfig, TxnPoolConfig,
-        allowed_timestamp_skew_default, block_request_batch_size_default,
-        block_request_limit_default, eth_chain_id_default, failed_request_sleep_duration_default,
-        genesis_fork_default, max_blocks_in_flight_default, max_rpc_response_size_default,
-        scilla_ext_libs_path_default, state_cache_size_default, state_rpc_limit_default,
-        total_native_token_supply_default, u64_max,
+        Fork, GenesisDeposit, NodeConfig, SyncConfig, allowed_timestamp_skew_default,
+        block_request_batch_size_default, block_request_limit_default, consensus_timeout_default,
+        eth_chain_id_default, failed_request_sleep_duration_default, genesis_fork_default,
+        max_blocks_in_flight_default, max_rpc_response_size_default, scilla_ext_libs_path_default,
+        state_cache_size_default, state_rpc_limit_default, total_native_token_supply_default,
+        u64_max,
     },
     crypto::{SecretKey, TransactionPublicKey},
     db,
@@ -97,7 +98,7 @@ pub struct NewNodeOptions {
     onchain_key: Option<SigningKey>,
     checkpoint: Option<Checkpoint>,
     prune_interval: Option<u64>,
-    sync_base_height: Option<u64>,
+    base_height: Option<u64>,
 }
 
 impl NewNodeOptions {
@@ -178,7 +179,8 @@ fn node(
     std::mem::forget(reset_timeout_receiver);
 
     let peer_id = secret_key.to_libp2p_keypair().public().to_peer_id();
-    let peers = Arc::new(SyncPeers::new(peer_id));
+    let sync_peers = Arc::new(SyncPeers::new(peer_id));
+    let swarm_peers = Arc::new(AtomicPtr::new(Box::into_raw(Box::new(Vec::new()))));
 
     let node = Node::new(
         NodeConfig {
@@ -193,7 +195,8 @@ fn node(
         request_responses_sender,
         reset_timeout_sender,
         Arc::new(AtomicUsize::new(0)),
-        peers.clone(),
+        sync_peers.clone(),
+        swarm_peers,
     )?;
     let node = Arc::new(Mutex::new(node));
     let rpc_module: RpcModule<Arc<Mutex<Node>>> =
@@ -208,7 +211,7 @@ fn node(
             inner: node,
             dir: datadir,
             rpc_module,
-            peers,
+            peers: sync_peers,
         },
         message_receiver,
         local_message_receiver,
@@ -260,6 +263,7 @@ struct Network {
     do_checkpoints: bool,
     blocks_per_epoch: u64,
     deposit_v3_upgrade_block_height: Option<u64>,
+    scilla_server_socket_directory: String,
 }
 
 impl Network {
@@ -276,6 +280,7 @@ impl Network {
         do_checkpoints: bool,
         blocks_per_epoch: u64,
         deposit_v3_upgrade_block_height: Option<u64>,
+        scilla_server_socket_directory: String,
     ) -> Network {
         Self::new_shard(
             rng,
@@ -289,6 +294,7 @@ impl Network {
             do_checkpoints,
             blocks_per_epoch,
             deposit_v3_upgrade_block_height,
+            scilla_server_socket_directory,
         )
     }
 
@@ -305,6 +311,7 @@ impl Network {
         do_checkpoints: bool,
         blocks_per_epoch: u64,
         deposit_v3_upgrade_block_height: Option<u64>,
+        scilla_server_socket_directory: String,
     ) -> Network {
         let mut signing_keys = keys.unwrap_or_else(|| {
             (0..nodes)
@@ -356,14 +363,14 @@ impl Network {
             consensus: ConsensusConfig {
                 genesis_deposits: genesis_deposits.clone(),
                 is_main: send_to_parent.is_none(),
-                consensus_timeout: Duration::from_secs(5),
+                consensus_timeout: consensus_timeout_default(),
                 // Give a genesis account 1 billion ZIL.
                 genesis_accounts: Self::genesis_accounts(&genesis_key),
                 block_time: Duration::from_millis(25),
                 scilla_address: scilla_address.clone(),
                 scilla_stdlib_dir: scilla_stdlib_dir.clone(),
                 scilla_ext_libs_path: scilla_ext_libs_path_default(),
-                local_address: "host.docker.internal".to_owned(),
+                scilla_server_socket_directory: scilla_server_socket_directory.clone(),
                 rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
                 minimum_stake: 32_000_000_000_000_000_000u128.into(),
@@ -401,7 +408,8 @@ impl Network {
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
                 prune_interval: u64_max(),
-                sync_base_height: u64_max(),
+                base_height: u64_max(),
+                ignore_passive: false,
             },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
@@ -471,6 +479,7 @@ impl Network {
             blocks_per_epoch,
             scilla_stdlib_dir,
             deposit_v3_upgrade_block_height,
+            scilla_server_socket_directory,
         }
     }
 
@@ -518,10 +527,10 @@ impl Network {
             consensus: ConsensusConfig {
                 genesis_deposits: self.genesis_deposits.clone(),
                 is_main: self.is_main(),
-                consensus_timeout: Duration::from_secs(5),
+                consensus_timeout: consensus_timeout_default(),
                 genesis_accounts: Self::genesis_accounts(&self.genesis_key),
                 block_time: Duration::from_millis(25),
-                local_address: "host.docker.internal".to_owned(),
+                scilla_server_socket_directory: self.scilla_server_socket_directory.clone(),
                 rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
                 blocks_per_hour: 3600 * 40,
                 minimum_stake: 32_000_000_000_000_000_000u128.into(),
@@ -553,7 +562,8 @@ impl Network {
                 max_blocks_in_flight: max_blocks_in_flight_default(),
                 block_request_batch_size: block_request_batch_size_default(),
                 prune_interval: options.prune_interval.unwrap_or(u64_max()),
-                sync_base_height: options.sync_base_height.unwrap_or(u64_max()),
+                base_height: options.base_height.unwrap_or(u64_max()),
+                ignore_passive: false,
             },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
@@ -943,6 +953,7 @@ impl Network {
                                     self.do_checkpoints,
                                     self.blocks_per_epoch,
                                     self.deposit_v3_upgrade_block_height,
+                                    self.scilla_server_socket_directory.clone(),
                                 ),
                             );
                         }
@@ -1008,6 +1019,12 @@ impl Network {
                             output,
                         )
                         .unwrap();
+                    }
+                    InternalMessage::SubscribeToGossipSubTopic(topic) => {
+                        debug!("subscribing to topic {:?}", topic);
+                    }
+                    InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
+                        debug!("unsubscribing from topic {:?}", topic);
                     }
                 }
             }

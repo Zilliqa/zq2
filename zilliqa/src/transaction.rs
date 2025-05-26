@@ -983,6 +983,14 @@ impl Sub for EvmGas {
     }
 }
 
+impl Add for EvmGas {
+    type Output = EvmGas;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        EvmGas(self.0.checked_add(rhs.0).expect("evm gas overflow"))
+    }
+}
+
 impl From<ScillaGas> for EvmGas {
     fn from(gas: ScillaGas) -> Self {
         EvmGas(gas.0 * EVM_GAS_PER_SCILLA_GAS)

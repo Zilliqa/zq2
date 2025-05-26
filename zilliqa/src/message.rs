@@ -17,7 +17,7 @@ use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::TrieStorage,
     time::SystemTime,
-    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
+    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
@@ -242,14 +242,6 @@ pub struct InjectedProposal {
     pub block: Proposal,
 }
 
-/// TODO: Remove. Unused in RFC161 algorithm
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessProposal {
-    // An encoded PeerId
-    pub from: Vec<u8>,
-    pub block: Proposal,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntershardCall {
     pub source_address: Address,
@@ -269,7 +261,7 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    ProcessProposal(ProcessProposal),
+    ProcessProposal, // deprecated since 0.7.0
     NewTransaction(SignedTransaction),
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
@@ -278,11 +270,15 @@ pub enum ExternalMessage {
     InjectedProposal(InjectedProposal),
     /// 0.6.0
     MetaDataRequest(RequestBlocksByHeight),
-    MetaDataResponse(Vec<BlockHeader>),
+    MetaDataResponse, // deprecated since 0.9.0
     MultiBlockRequest(Vec<Hash>),
     MultiBlockResponse(Vec<Proposal>),
     /// 0.7.0
     SyncBlockHeaders(Vec<SyncBlockHeader>),
+    /// 0.8.0
+    PassiveSyncRequest(RequestBlocksByHash),
+    PassiveSyncResponse(Vec<BlockTransactionsReceipts>),
+    PassiveSyncResponseLZ(Vec<u8>), // compressed block
 }
 
 impl ExternalMessage {
@@ -298,6 +294,15 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::PassiveSyncResponseLZ(r) => {
+                write!(f, "PassiveSyncResponseLZ({})", r.len())
+            }
+            ExternalMessage::PassiveSyncResponse(r) => {
+                write!(f, "PassiveSyncResponse({})", r.len())
+            }
+            ExternalMessage::PassiveSyncRequest(r) => {
+                write!(f, "PassiveSyncRequest({})", r.hash)
+            }
             ExternalMessage::SyncBlockHeaders(r) => {
                 write!(f, "SyncBlockHeaders({})", r.len())
             }
@@ -307,15 +312,8 @@ impl Display for ExternalMessage {
             ExternalMessage::MultiBlockResponse(r) => {
                 write!(f, "MultiBlockResponse({})", r.len())
             }
-            ExternalMessage::MetaDataResponse(r) => {
-                write!(f, "MetaDataResponse({})", r.len())
-            }
             ExternalMessage::MetaDataRequest(r) => {
-                write!(
-                    f,
-                    "MetaDataRequest(from={}, to={})",
-                    r.from_height, r.to_height
-                )
+                write!(f, "MetaDataRequest({:?})", r.from_height..=r.to_height)
             }
             ExternalMessage::InjectedProposal(p) => {
                 write!(f, "InjectedProposal {}", p.block.number())
@@ -326,20 +324,10 @@ impl Display for ExternalMessage {
             ExternalMessage::BlockRequest(r) => {
                 write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
             }
-            ExternalMessage::ProcessProposal(r) => {
-                write!(
-                    f,
-                    "ProcessProposal({}, view={} num={})",
-                    PeerId::from_bytes(&r.from)
-                        .map_or("(undecodable)".to_string(), |x| x.to_base58()),
-                    r.block.header.view,
-                    r.block.header.number
-                )
-            }
             ExternalMessage::BlockResponse(r) => {
                 let mut views = r.proposals.iter().map(|p| p.view());
                 let first = views.next();
-                let last = views.last();
+                let last = views.next_back();
                 match (first, last) {
                     (None, None) => write!(f, "BlockResponse([])"),
                     (Some(first), None) => {
@@ -366,6 +354,9 @@ impl Display for ExternalMessage {
                 }
             },
             ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
+            ExternalMessage::ProcessProposal | ExternalMessage::MetaDataResponse => {
+                unimplemented!("deprecated")
+            }
         }
     }
 }
@@ -390,6 +381,18 @@ pub enum InternalMessage {
         TrieStorage,
         Box<Path>,
     ),
+    /// Notify p2p cordinator to subscribe to a particular gossipsub topic
+    SubscribeToGossipSubTopic(GossipSubTopic),
+    /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
+    UnsubscribeFromGossipSubTopic(GossipSubTopic),
+}
+
+#[derive(Debug, Clone)]
+pub enum GossipSubTopic {
+    /// General topic for all nodes. Includes Proposal messages
+    General(u64),
+    /// Topic for Validators only. Includes NewView messages
+    Validator(u64),
 }
 
 /// Returns a terse, human-readable summary of a message.
@@ -401,6 +404,12 @@ impl Display for InternalMessage {
             InternalMessage::IntershardCall(_) => write!(f, "IntershardCall"),
             InternalMessage::ExportBlockCheckpoint(block, ..) => {
                 write!(f, "ExportCheckpoint({})", block.number())
+            }
+            InternalMessage::SubscribeToGossipSubTopic(topic) => {
+                write!(f, "SubscribeToGossipSubTopic({:?})", topic)
+            }
+            InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
+                write!(f, "UnsubscribeFromGossipSubTopic({:?})", topic)
             }
         }
     }
@@ -540,7 +549,18 @@ pub struct SyncBlockHeader {
     pub header: BlockHeader,
     pub size_estimate: usize,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBlocksByHash {
+    pub hash: Hash,
+    pub count: usize,
+    pub request_at: SystemTime,
+}
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockTransactionsReceipts {
+    pub block: Block,
+    pub transaction_receipts: Vec<(SignedTransaction, TransactionReceipt)>,
+}
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockHeader {

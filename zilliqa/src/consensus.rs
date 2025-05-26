@@ -21,7 +21,7 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
-    cfg::{ConsensusConfig, NodeConfig},
+    cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
@@ -29,8 +29,8 @@ use crate::{
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
         AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
-        ExternalMessage, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal, QuorumCertificate,
-        Vote,
+        ExternalMessage, GossipSubTopic, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal,
+        QuorumCertificate, Vote,
     },
     node::{MessageSender, NetworkMessage},
     pool::{PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent},
@@ -40,8 +40,8 @@ use crate::{
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
-#[derive(Debug)]
-struct NewViewVote {
+#[derive(Clone, Debug, Serialize)]
+pub struct NewViewVote {
     signatures: Vec<BlsSignature>,
     cosigned: BitArray,
     cosigned_weight: u128,
@@ -97,7 +97,7 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-type BlockVotes = (Vec<BlsSignature>, BitArray, u128, bool);
+pub type BlockVotes = (Vec<BlsSignature>, BitArray, u128, bool);
 
 type EarlyProposal = (
     Block,
@@ -131,7 +131,7 @@ type EarlyProposal = (
 /// - In this case, the view will time out with no leader successfully proposing a block.
 /// - From this point forward, block view =/= block number
 /// - The view will increment on all or some nodes. The timeout for view increments doubles each time,
-///    which guarantees all nodes eventually are on the same view
+///   which guarantees all nodes eventually are on the same view
 /// - Nodes send a NewView message, which is a signature over the view, and their highQC
 /// - This is collected to form an aggQC
 /// - This aggQC is used to propose a block
@@ -144,12 +144,12 @@ pub struct Consensus {
     message_sender: MessageSender,
     reset_timeout: UnboundedSender<Duration>,
     pub sync: Sync,
-    votes: BTreeMap<Hash, BlockVotes>,
+    pub votes: BTreeMap<Hash, BlockVotes>,
     /// Votes for a block we don't have stored. They are retained in case we receive the block later.
     // TODO(#719): Consider how to limit the size of this.
-    buffered_votes: BTreeMap<Hash, Vec<Vote>>,
-    new_views: BTreeMap<u64, NewViewVote>,
-    new_view_message_cache: Option<NetworkMessage>,
+    pub buffered_votes: BTreeMap<Hash, Vec<(PeerId, Vote)>>,
+    pub new_views: BTreeMap<u64, NewViewVote>,
+    network_message_cache: Option<NetworkMessage>,
     pub high_qc: QuorumCertificate,
     /// The account store.
     state: State,
@@ -170,10 +170,10 @@ pub struct Consensus {
     pub new_receipts: broadcast::Sender<(TransactionReceipt, usize)>,
     pub new_transactions: broadcast::Sender<VerifiedTransaction>,
     pub new_transaction_hashes: broadcast::Sender<Hash>,
-    /// Pruning interval i.e. how many blocks to keep in the database.
-    prune_interval: u64,
     /// Used for testing and test network recovery
     force_view: Option<(u64, DateTime)>,
+    /// Mark if this node is in the committee at it's current head block height
+    in_committee: bool,
 }
 
 impl Consensus {
@@ -307,7 +307,7 @@ impl Consensus {
             votes: BTreeMap::new(),
             buffered_votes: BTreeMap::new(),
             new_views: BTreeMap::new(),
-            new_view_message_cache: None,
+            network_message_cache: None,
             high_qc,
             state,
             db,
@@ -321,8 +321,8 @@ impl Consensus {
             new_receipts: broadcast::Sender::new(128),
             new_transactions: broadcast::Sender::new(128),
             new_transaction_hashes: broadcast::Sender::new(128),
-            prune_interval,
             force_view: None,
+            in_committee: true,
         };
 
         // If we're at genesis, add the genesis block and return
@@ -350,8 +350,6 @@ impl Consensus {
                     .at_root(parent.state_root_hash().into())
                     .get_stakers(block.header)?,
             )?;
-
-            consensus.sync.set_checkpoint(&block);
         }
 
         // If timestamp of when current high_qc was written exists then use it to estimate the minimum number of blocks the network has moved on since shut down
@@ -375,9 +373,13 @@ impl Consensus {
             }
         }
 
-        // If we haven't already sent a `Vote` in our current view, we can build a `NewView` in case the network is
-        // stuck.
-        if !consensus.db.get_voted_in_view()? {
+        // Set self.network_message_cache incase the network is stuck
+        if consensus.db.get_voted_in_view()? {
+            let block = consensus.head_block();
+            if let Some(leader) = consensus.leader_at_block(&block, consensus.get_view()?) {
+                consensus.build_vote(leader.peer_id, consensus.vote_from_block(&block));
+            }
+        } else {
             consensus.build_new_view()?;
         }
 
@@ -401,7 +403,7 @@ impl Consensus {
             ))),
         );
 
-        self.new_view_message_cache = Some(new_view_message.clone());
+        self.network_message_cache = Some(new_view_message.clone());
         Ok(new_view_message)
     }
 
@@ -417,6 +419,13 @@ impl Consensus {
             .unwrap();
         self.db
             .get_canonical_block_by_number(highest_block_number)
+            .unwrap()
+            .unwrap()
+    }
+
+    pub fn get_highest_canonical_block_number(&self) -> u64 {
+        self.db
+            .get_highest_canonical_block_number()
             .unwrap()
             .unwrap()
     }
@@ -444,10 +453,8 @@ impl Consensus {
                 );
                 let leader = self.leader_at_block(&block, view).unwrap();
                 let vote = self.vote_from_block(&block);
-                return Ok(Some((
-                    Some(leader.peer_id),
-                    ExternalMessage::Vote(Box::new(vote)),
-                )));
+                let network_msg = self.build_vote(leader.peer_id, vote);
+                return Ok(Some(network_msg));
             } else {
                 info!(
                     "We are on view: {:?} but we are not a validator, so we are waiting.",
@@ -509,16 +516,21 @@ impl Consensus {
                     % self.config.consensus.new_view_broadcast_interval.as_secs())
                     == 0
             {
-                if let Some((_, ExternalMessage::NewView(new_view))) =
-                    self.new_view_message_cache.as_ref()
-                {
-                    if new_view.view == self.get_view()? {
-                        // When re-sending new view messages we broadcast them, rather than only sending them to the
-                        // view leader. This speeds up network recovery when many nodes have different high QCs.
-                        return Ok(Some((None, ExternalMessage::NewView(new_view.clone()))));
+                match self.network_message_cache.take() {
+                    Some((_, ExternalMessage::NewView(new_view))) => {
+                        // If new_view message is not for this view then it must be outdated
+                        if new_view.view == self.get_view()? {
+                            // When re-sending new view messages we broadcast them, rather than only sending them to the
+                            // view leader. This speeds up network recovery when many nodes have different high QCs.
+                            return Ok(Some((None, ExternalMessage::NewView(new_view))));
+                        }
                     }
-                    // If new_view message is not for this view then it must be outdated
-                    self.new_view_message_cache = None;
+                    Some((peer, ExternalMessage::Vote(vote))) => {
+                        if vote.view + 1 == self.get_view()? {
+                            return Ok(Some((peer, ExternalMessage::Vote(vote))));
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -526,11 +538,12 @@ impl Consensus {
         }
 
         trace!(
-            "Considering view change: view: {} time since: {} timeout: {} last known view: {} last hash: {}",
+            "Considering view change: view: {} time since: {} timeout: {} last known view: {}, last height: {}, last hash: {}",
             view,
             milliseconds_since_last_view_change,
             exponential_backoff_timeout,
             self.high_qc.view,
+            self.head_block().number(),
             self.head_block().hash()
         );
 
@@ -626,8 +639,6 @@ impl Consensus {
             "handling block proposal {}",
             block.hash()
         );
-
-        // FIXME: Cleanup
 
         if self.db.contains_block(&block.hash())? {
             trace!("ignoring block proposal, block store contains this block already");
@@ -728,9 +739,9 @@ impl Consensus {
             if let Some(buffered_votes) = self.buffered_votes.remove(&block.hash()) {
                 // If we've buffered votes for this block, process them now.
                 let count = buffered_votes.len();
-                for (i, vote) in buffered_votes.into_iter().enumerate() {
+                for (i, (from, vote)) in buffered_votes.into_iter().enumerate() {
                     trace!("applying buffered vote {} of {count}", i + 1);
-                    if let Some(network_message) = self.vote(vote)? {
+                    if let Some(network_message) = self.vote(from, vote)? {
                         // If we reached the supermajority while processing this vote, send the next block proposal.
                         // Further votes are ignored (including our own).
                         // TODO(#720): We should prioritise our own vote.
@@ -759,12 +770,14 @@ impl Consensus {
             let stakers = self.state.get_stakers(next_block_header)?;
 
             if !stakers.iter().any(|v| *v == self.public_key()) {
+                self.in_committee(false)?;
                 debug!(
                     "can't vote for block proposal, we aren't in the committee of length {:?}",
                     stakers.len()
                 );
                 return Ok(None);
             } else {
+                self.in_committee(true)?;
                 let vote = self.vote_from_block(&block);
                 let next_leader = self.leader_at_block(&block, view);
 
@@ -788,10 +801,8 @@ impl Consensus {
 
                 if !during_sync {
                     trace!(proposal_view, ?next_leader, "voting for block");
-                    return Ok(Some((
-                        Some(next_leader.peer_id),
-                        ExternalMessage::Vote(Box::new(vote)),
-                    )));
+                    let network_message = self.build_vote(next_leader.peer_id, vote);
+                    return Ok(Some(network_message));
                 }
             }
         } else {
@@ -799,6 +810,12 @@ impl Consensus {
         }
 
         Ok(None)
+    }
+
+    fn build_vote(&mut self, peer_id: PeerId, vote: Vote) -> NetworkMessage {
+        let network_msg = (Some(peer_id), ExternalMessage::Vote(Box::new(vote)));
+        self.network_message_cache = Some(network_msg.clone());
+        network_msg
     }
 
     /// Apply the rewards at the tail-end of the Proposal.
@@ -979,11 +996,11 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn vote(&mut self, vote: Vote) -> Result<Option<NetworkMessage>> {
+    pub fn vote(&mut self, peer_id: PeerId, vote: Vote) -> Result<Option<NetworkMessage>> {
         let block_hash = vote.block_hash;
         let block_view = vote.view;
         let current_view = self.get_view()?;
-        trace!(block_view, current_view, %block_hash, "handling vote");
+        info!(block_view, current_view, %block_hash, "handling vote from: {:?}", peer_id);
 
         // if the vote is too old and does not count anymore
         if block_view + 1 < current_view {
@@ -1006,7 +1023,7 @@ impl Consensus {
             self.buffered_votes
                 .entry(block_hash)
                 .or_default()
-                .push(vote);
+                .push((peer_id, vote));
             return Ok(None);
         };
 
@@ -1052,7 +1069,7 @@ impl Consensus {
             });
 
         if supermajority_reached {
-            trace!(
+            info!(
                 "(vote) supermajority already reached in this view {}",
                 current_view
             );
@@ -1092,7 +1109,7 @@ impl Consensus {
             );
             // if we are already in the round in which the vote counts and have reached supermajority
             if supermajority_reached {
-                // We propose new block immediately if there's something in mempool or it's the first view
+                // We propose new block immediately if it is the first view
                 // Otherwise the block will be proposed on timeout
                 if current_view == 1 {
                     return self.propose_new_block();
@@ -1100,7 +1117,12 @@ impl Consensus {
 
                 self.early_proposal_assemble_at(None)?;
 
-                return self.ready_for_block_proposal();
+                // It is possible that we have collected votes for a forked block. Do not propose in that case.
+                if let Some(early_proposal) = &self.early_proposal {
+                    if early_proposal.0.parent_hash() == block_hash {
+                        return self.ready_for_block_proposal();
+                    }
+                }
             }
         } else {
             self.votes.insert(
@@ -1183,7 +1205,7 @@ impl Consensus {
         )?;
 
         // ZIP-9: Sink gas to zero account
-        let fork = state.forks.get(proposal.header.number);
+        let fork = self.state.forks.get(proposal.header.number);
         let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
             cumulative_gas_fee
         } else {
@@ -1197,6 +1219,33 @@ impl Consensus {
                 .ok_or(anyhow!("Overflow occured in zero account balance"))?;
             Ok(())
         })?;
+
+        if !fork.fund_accounts_from_zero_account.is_empty() {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
+            {
+                if fork_height == proposal.header.number {
+                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
+                        state.mutate_account(Address::ZERO, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_sub(*address_amount_pair.1)
+                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
+                            Ok(())
+                        })?;
+                        state.mutate_account(address_amount_pair.0, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_add(*address_amount_pair.1)
+                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
+                            Ok(())
+                        })?;
+                    }
+                }
+            };
+        }
 
         if self.block_is_first_in_epoch(proposal.header.number) {
             // Update state with any contract upgrades for this block
@@ -1640,6 +1689,9 @@ impl Consensus {
         let Ok(verified) = txn.verify() else {
             return Ok(TxAddResult::CannotVerifySignature);
         };
+
+        info!(?verified, "seen new txn");
+
         let inserted = self.new_transaction(verified)?;
         if inserted.was_added()
             && self.create_next_block_on_timeout
@@ -1710,32 +1762,15 @@ impl Consensus {
         Ok(committee)
     }
 
-    pub fn new_view(&mut self, new_view: NewView) -> Result<Option<NetworkMessage>> {
-        trace!("Received new view for view: {:?}", new_view.view);
-
-        let mut current_view = self.get_view()?;
-        // if the vote is too old and does not count anymore
-        if new_view.view < current_view {
-            trace!(
-                new_view.view,
-                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
-                current_view,
-                new_view.view
-            );
-            return Ok(None);
-        }
+    pub fn new_view(&mut self, from: PeerId, new_view: NewView) -> Result<Option<NetworkMessage>> {
+        info!(
+            "Received new view for view: {:?} from: {:?}",
+            new_view.view, from
+        );
 
         if self.get_block(&new_view.qc.block_hash)?.is_none() {
-            trace!("high_qc block does not exist for NewView. Attemping to fetch block via sync");
+            trace!("high_qc block does not exist for NewView. Attempting to fetch block via sync");
             self.sync.sync_from_probe()?;
-            return Ok(None);
-        }
-
-        // The leader for this view should be chosen according to the parent of the highest QC
-        // What happens when there are multiple QCs with different parents?
-        // if we are not the leader of the round in which the vote counts
-        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
-            trace!(new_view.view, "skipping new view, not the leader");
             return Ok(None);
         }
 
@@ -1760,6 +1795,26 @@ impl Consensus {
 
         // Update our high QC and view, even if we are not the leader of this view.
         self.update_high_qc_and_view(false, new_view.qc)?;
+
+        let mut current_view = self.get_view()?;
+        // if the vote is too old and does not count anymore
+        if new_view.view < current_view {
+            trace!(
+                new_view.view,
+                "Received a NewView which is too old for us, discarding. Our view is: {} and new_view is: {}",
+                current_view,
+                new_view.view
+            );
+            return Ok(None);
+        }
+
+        // The leader for this view should be chosen according to the parent of the highest QC
+        // What happens when there are multiple QCs with different parents?
+        // if we are not the leader of the round in which the vote counts
+        if !self.are_we_leader_for_view(new_view.qc.block_hash, new_view.view) {
+            trace!(new_view.view, "skipping new view, not the leader");
+            return Ok(None);
+        }
 
         let NewViewVote {
             mut signatures,
@@ -1836,7 +1891,7 @@ impl Consensus {
                     let agg =
                         self.aggregate_qc_from_indexes(new_view.view, qcs, &signatures, cosigned)?;
 
-                    trace!(
+                    info!(
                         view = current_view,
                         "######### creating proposal block from new view"
                     );
@@ -2507,7 +2562,8 @@ impl Consensus {
         // in other words, the current view is always at least 2 views ahead of the highQC's view
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
         let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as f32;
-        (consensus_timeout * (1.5f32).powi(view_difference.saturating_sub(2) as i32)).floor() as u64
+        (consensus_timeout * (1.25f32).powi(view_difference.saturating_sub(2) as i32)).floor()
+            as u64
     }
 
     /// Find minimum number of views which could have passed by in the given time difference.
@@ -2684,8 +2740,13 @@ impl Consensus {
             number: block.header.number + 1,
             ..Default::default()
         };
-        let public_key = state_at.leader(view, executed_block).unwrap();
-        let peer_id = state_at.get_peer_id(public_key).unwrap().unwrap();
+        let Ok(public_key) = state_at.leader(view, executed_block) else {
+            return None;
+        };
+
+        let Ok(Some(peer_id)) = state_at.get_peer_id(public_key) else {
+            return None;
+        };
 
         Some(Validator {
             public_key,
@@ -2747,10 +2808,10 @@ impl Consensus {
             proposed_block = self.get_block(&proposed_block.parent_hash())?.unwrap();
         }
         trace!(
-            "common ancestor found: {}, view: {}, height: {}",
-            head.hash(),
+            "common ancestor found: block number: {}, view: {}, hash: {}",
+            head.number(),
             head.view(),
-            head.number()
+            head.hash()
         );
 
         // Now, we want to revert the blocks until the head block is the common ancestor
@@ -2767,13 +2828,21 @@ impl Consensus {
                 panic!("genesis block is not supposed to be reverted");
             }
 
-            trace!("Reverting block {head_block:?}");
+            trace!(
+                "Reverting block number: {}, view: {}, hash: {}",
+                head_block.number(),
+                head_block.view(),
+                head_block.hash()
+            );
             // block store doesn't require anything, it will just hold blocks that may now be invalid
 
             // State is easily set - must be to the parent block, though
             trace!(
-                "Setting state to: {} aka block: {parent_block:?}",
-                parent_block.state_root_hash()
+                "Setting state to: {} aka block: number: {}, view: {}, hash: {}",
+                parent_block.state_root_hash(),
+                parent_block.number(),
+                parent_block.view(),
+                parent_block.hash()
             );
             self.state
                 .set_to_root(parent_block.state_root_hash().into());
@@ -2800,7 +2869,13 @@ impl Consensus {
         let mut last_block = block.hash();
         while self.head_block().hash() != block.parent_hash() {
             trace!("Advancing the head block to prepare for proposed block fork.");
-            trace!("Head block: {:?}", self.head_block());
+            let head_block_for_log = self.head_block();
+            trace!(
+                "Head block number: {}, view: {}, hash: {}",
+                head_block_for_log.number(),
+                head_block_for_log.view(),
+                head_block_for_log.hash()
+            );
             trace!("desired block hash: {}", block.parent_hash());
 
             let desired_block_height = self.head_block().number() + 1;
@@ -2826,7 +2901,12 @@ impl Consensus {
             last_block = block_pointer.hash();
 
             // We now have the block pointer at the desired height, we can apply it.
-            trace!("Fork execution of block: {block_pointer:?}");
+            trace!(
+                "Fork execution of block number: {}, view: {}, hash: {}",
+                block_pointer.number(),
+                block_pointer.view(),
+                block_pointer.hash()
+            );
             let transactions = block_pointer.transactions.clone();
             let transactions = transactions
                 .iter()
@@ -3047,7 +3127,8 @@ impl Consensus {
             block.gas_used().0 as u128
         };
 
-        self.state.mutate_account(Address::ZERO, |a| {
+        let mut state = self.state.clone();
+        state.mutate_account(Address::ZERO, |a| {
             a.balance = a
                 .balance
                 .checked_add(gas_fee_amount)
@@ -3055,13 +3136,38 @@ impl Consensus {
             Ok(())
         })?;
 
+        if !fork.fund_accounts_from_zero_account.is_empty() {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
+            {
+                if fork_height == block.header.number {
+                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
+                        state.mutate_account(Address::ZERO, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_sub(*address_amount_pair.1)
+                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
+                            Ok(())
+                        })?;
+                        state.mutate_account(address_amount_pair.0, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_add(*address_amount_pair.1)
+                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
+                            Ok(())
+                        })?;
+                    }
+                }
+            };
+        }
+
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
-            let mut state_clone = self.state.clone();
-            state_clone
-                .contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
-            self.state = state_clone;
+            state.contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
         }
+        self.state = state;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
@@ -3077,31 +3183,7 @@ impl Consensus {
             ));
         }
 
-        self.prune_history(block.header.number)?;
         self.broadcast_commit_receipts(from, block, block_receipts)
-    }
-
-    /// Prune the history
-    ///
-    /// Performs pruning of 1000-blocks at a time. If the prune_interval is unset (u64::MAX by default), pruning is disabled.
-    fn prune_history(&mut self, number: u64) -> Result<()> {
-        if self.prune_interval == u64::MAX {
-            return Ok(()); // pruning is disabled
-        }
-        let range = self.db.available_range()?;
-        let prune_at = number
-            .saturating_sub(self.prune_interval.saturating_sub(1)) // off-by-one
-            .min(range.start().saturating_add(1000)); // gradually prune 1000-blocks at a time
-        if range.contains(&prune_at) {
-            for n in *range.start()..prune_at {
-                let block: Option<Block> = self.db.get_canonical_block_by_number(n)?;
-                if let Some(block) = block {
-                    tracing::trace!(number = %block.number(), hash=%block.hash(), "Prune block");
-                    self.db.remove_block(&block)?;
-                }
-            }
-        }
-        Ok(())
     }
 
     fn broadcast_commit_receipts(
@@ -3207,6 +3289,30 @@ impl Consensus {
             self.build_new_view()?;
         }
         Ok(())
+    }
+
+    fn in_committee(&mut self, val: bool) -> Result<()> {
+        if val && !self.in_committee {
+            self.in_committee = true;
+            self.message_sender.send_message_to_coordinator(
+                InternalMessage::SubscribeToGossipSubTopic(GossipSubTopic::Validator(
+                    self.config.eth_chain_id,
+                )),
+            )?;
+        }
+        if !val && self.in_committee {
+            self.in_committee = false;
+            self.message_sender.send_message_to_coordinator(
+                InternalMessage::UnsubscribeFromGossipSubTopic(GossipSubTopic::Validator(
+                    self.config.eth_chain_id,
+                )),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_mempool(&mut self) {
+        self.transaction_pool.clear();
     }
 }
 
