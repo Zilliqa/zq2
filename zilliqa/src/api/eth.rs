@@ -204,7 +204,7 @@ fn call(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     let block_id: BlockId = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
-    let mut node = node.write();
+    let node = node.read();
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
@@ -237,7 +237,7 @@ fn estimate_gas(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     let block_number: BlockNumberOrTag = params.optional_next()?.unwrap_or_default();
     expect_end_of_params(&mut params, 1, 2)?;
 
-    let return_value = node.write().estimate_gas(
+    let return_value = node.read().estimate_gas(
         block_number,
         call_params.from,
         call_params.to,

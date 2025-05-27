@@ -76,7 +76,7 @@ pub struct CheckpointResponse {
 fn checkpoint(params: Params, node: &Arc<RwLock<Node>>) -> Result<CheckpointResponse> {
     let mut params = params.sequence();
     let block_id: BlockId = params.next()?;
-    let mut node = node.write();
+    let node = node.read();
     let block = node
         .get_block(block_id)?
         .ok_or(anyhow!("Block {block_id} does not exist"))?;
