@@ -227,7 +227,7 @@ impl NodeLauncher {
                             let txn = txn.verify()?;
                             verified.push(txn);
                         }
-                        self.node.lock().unwrap().handle_broadcasted_transactions(verified)?;
+                        self.node.write().handle_broadcasted_transactions(verified)?;
                     }
                     else if let Err(e) = self.node.write().handle_broadcast(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
@@ -306,7 +306,7 @@ impl NodeLauncher {
                     let start = SystemTime::now();
                     // No messages for a while, so check if consensus wants to timeout
                     self.node.write().handle_timeout().unwrap();
-                    sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
+                    consensus_sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
                         &attributes,

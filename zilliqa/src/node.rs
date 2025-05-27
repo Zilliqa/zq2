@@ -472,7 +472,9 @@ impl Node {
         let hash = txn.hash;
 
         let from_broadcast = false;
-        let result = self.consensus.handle_new_transaction(txn.clone(), from_broadcast)?;
+        let result = self
+            .consensus
+            .handle_new_transaction(txn.clone(), from_broadcast)?;
         if !result.was_added() {
             debug!(?result, "Transaction cannot be added to mempool");
         }

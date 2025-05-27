@@ -666,8 +666,7 @@ impl Network {
         loop {
             for node in &self.nodes {
                 node.inner
-                    .lock()
-                    .unwrap()
+                    .write()
                     .process_transactions_to_broadcast()
                     .unwrap();
                 // Trigger a tick so that block fetching can operate.
@@ -845,7 +844,8 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
-                    node.inner.write()
+                    node.inner
+                        .write()
                         .process_transactions_to_broadcast()
                         .unwrap();
                     node.inner.write().handle_timeout().unwrap();

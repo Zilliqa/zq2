@@ -649,9 +649,9 @@ fn full_transaction_benchmark(
                 });
 
                 for txn in &txns {
-                    let result = big.new_transaction(txn.clone()).unwrap();
+                    let result = big.new_transaction(txn.clone(), false).unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
-                    let result = tiny.new_transaction(txn.clone()).unwrap();
+                    let result = tiny.new_transaction(txn.clone(), false).unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
                 }
 
