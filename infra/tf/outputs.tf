@@ -41,3 +41,20 @@ output "private_api_external_ip" {
     for private_api in module.private_apis : private_api.external_ip
   ])...)
 }
+
+output "instances_map" {
+  description = "Merged map of all instances from bootstraps, validators, apis, checkpoints, persistences, and private_apis modules"
+  value = merge(
+    module.bootstraps.instances,
+    module.validators.instances,
+    module.apis.instances,
+    module.checkpoints.instances,
+    module.persistences.instances,
+    merge([for private_api in module.private_apis : private_api.instances]...)
+  )
+}
+
+output "instances_apps" {
+  description = "Map of app instances from the apps module"
+  value = module.apps.instances
+}

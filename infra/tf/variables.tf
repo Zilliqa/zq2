@@ -307,24 +307,6 @@ variable "gcp_docker_registry_project_id" {
   default     = "prj-p-devops-services-tvwmrf63"
 }
 
-variable "gcp_d_kms_project_id" {
-  description = "(Optional) Non production KMS project id"
-  type        = string
-  default     = "prj-d-kms-tw1xyxbh"
-}
-
-variable "gcp_p_kms_project_id" {
-  description = "(Optional) KMS production project id"
-  type        = string
-  default     = "prj-p-kms-2vduab0g"
-}
-
-variable "kms_keys_group_access" {
-  description = "(Optional) List of groups to grant access to the KMS keys"
-  type        = list(string)
-  default     = []
-}
-
 variable "persistence_bucket_force_destroy" {
   description = "(Optional) Whether force destroying the persistence bucket deprovisioning the infrastructure."
   type        = bool
