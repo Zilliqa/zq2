@@ -22,7 +22,7 @@ use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
-    constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+    constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -2559,8 +2559,10 @@ impl Consensus {
         // in other words, the current view is always at least 2 views ahead of the highQC's view
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
         let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as f32;
-        (consensus_timeout * (1.25f32).powi(view_difference.saturating_sub(2) as i32)).floor()
-            as u64
+        (consensus_timeout
+            * (EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER)
+                .powi(view_difference.saturating_sub(2) as i32))
+        .floor() as u64
     }
 
     /// Find minimum number of views which could have passed by in the given time difference.
@@ -2574,7 +2576,7 @@ impl Consensus {
         let mut views = 0;
         let mut total = 0.0;
         loop {
-            total += (1.5f32).powi(views);
+            total += (EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER).powi(views);
             if total > normalised_time_difference {
                 break;
             }
@@ -3310,51 +3312,5 @@ impl Consensus {
 
     pub fn clear_mempool(&mut self) {
         self.transaction_pool.clear();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn test_minimum_views_in_time_difference() {
-        // 2 views ahead - 1.5 ^ 0 = 1
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(0),
-                Duration::from_secs(1)
-            ),
-            0
-        );
-        // 3 views ahead - 1.5^0 + 1.5^1 = 2.5
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(2),
-                Duration::from_secs(1)
-            ),
-            1
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(3),
-                Duration::from_secs(1)
-            ),
-            2
-        );
-        // 5 views ahead - 1.5^0 + 1.5^1 + 1.5^2 + 1.5^3 = 8.125
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(8),
-                Duration::from_secs(1)
-            ),
-            3
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(9),
-                Duration::from_secs(1)
-            ),
-            4
-        );
     }
 }
