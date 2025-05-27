@@ -228,7 +228,7 @@ fn create_transaction(
 ) -> Result<CreateTransactionResponse> {
     let transaction: TransactionParams = params.one()?;
 
-    let mut node = node.write();
+    let node = node.read();
 
     let version = transaction.version & 0xffff;
     let chain_id = transaction.version >> 16;
