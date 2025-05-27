@@ -287,6 +287,23 @@ StandardOutput=append:/zilliqa.log
 WantedBy=multi-user.target
 """
 
+PERSISTENCE_BACKUP_SERVICE_DESC="""
+[Unit]
+Description=Zilliqa Persistence Backup Service
+After=network.target zilliqa.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/persistence_backup.py
+KillMode=process
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target 
+"""
+
 OTTERSCAN_SCRIPT="""#!/bin/bash
 echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
 
@@ -806,6 +823,12 @@ YT90qFF93M3v01BbxP+EIY2/9tiIPbrd
 
 INSTALL_PKGS = [ "python3-pip", "pigz" ]
 
+# Add required Python packages for persistence backup
+PYTHON_PKGS = [
+    "google-cloud-storage",
+    "requests",
+    "filelock"
+]
 
 def log(val):
     with open("/tmp/startup-log.txt", 'w+') as f:
@@ -856,7 +879,7 @@ def go(role):
             start_zq2()
             start_healthcheck()
             start_stats_agent()
-        case "checkpoint" | "persistence" | "private-api" :
+        case "checkpoint" | "private-api" :
             log("Configuring a not validator node")
             stop_healthcheck()
             install_healthcheck()
@@ -896,6 +919,20 @@ def go(role):
                 stop_spout()
                 install_spout()                
                 start_spout()
+        case "persistence":
+            log("Configuring a persistence node")
+            stop_healthcheck()
+            install_healthcheck()
+            configure_logrotate()
+            pull_zq2_image()
+            stop_zq2()
+            install_zilliqa()
+            download_persistence()
+            stop_persistence_backup()
+            install_persistence_backup()
+            start_zq2()
+            start_healthcheck()
+            start_persistence_backup()
         case _:
             log(f"Invalide role {role}")
             log("Provisioning aborted")
@@ -1199,6 +1236,31 @@ def stop_healthcheck():
     if os.path.exists("/etc/systemd/system/healthcheck.service"):
         run_or_die(["sudo", "systemctl", "stop", "healthcheck"])
     pass
+
+def install_persistence_backup():
+    # Install required Python packages
+    for pkg in PYTHON_PKGS:
+        run_or_die(["sudo", "pip3", "install", "--upgrade", pkg])
+
+    # Copy the backup script
+    run_or_die(["sudo", "cp", "/tmp/persistence_backup.py", "/usr/local/bin/persistence_backup.py"])
+    run_or_die(["sudo", "chmod", "+x", "/usr/local/bin/persistence_backup.py"])
+
+    # Install the service
+    with open("/tmp/persistence_backup.service", "w") as f:
+        f.write(PERSISTENCE_BACKUP_SERVICE_DESC)
+    run_or_die(["sudo", "cp", "/tmp/persistence_backup.service", "/etc/systemd/system/persistence_backup.service"])
+    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/persistence_backup.service"])
+    run_or_die(["sudo", "systemctl", "daemon-reload"])
+    run_or_die(["sudo", "systemctl", "enable", "persistence_backup.service"])
+
+def stop_persistence_backup():
+    if os.path.exists("/etc/systemd/system/persistence_backup.service"):
+        run_or_die(["sudo", "systemctl", "stop", "persistence_backup.service"])
+
+def start_persistence_backup():
+    if os.path.exists("/etc/systemd/system/persistence_backup.service"):
+        run_or_die(["sudo", "systemctl", "start", "persistence_backup.service"])
 
 if __name__ == "__main__":
     go(role="{{ role }}")

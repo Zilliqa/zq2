@@ -682,17 +682,17 @@ impl ChainNode {
         }
 
         if self.role == NodeRole::Persistence {
-            let temp_persistence_export_cron_job = NamedTempFile::new()?;
-            let persistence_export_cron_job = &self
-                .create_persistence_export_cron_job(
-                    temp_persistence_export_cron_job.path().to_str().unwrap(),
+            let temp_persistence_backup_script = NamedTempFile::new()?;
+            let persistence_backup_script = &self
+                .create_persistence_backup_script(
+                    temp_persistence_backup_script.path().to_str().unwrap(),
                 )
                 .await?;
 
             self.machine
                 .copy(
-                    &[persistence_export_cron_job],
-                    "/tmp/persistence_export_cron_job.sh",
+                    &[persistence_backup_script],
+                    "/tmp/persistence_backup.py",
                 )
                 .await?;
         }
@@ -720,7 +720,7 @@ impl ChainNode {
         }
 
         if self.role == NodeRole::Persistence {
-            let cmd = "sudo rm -f /tmp/persistence_export_cron_job.sh";
+            let cmd = "sudo rm -f /tmp/persistence_backup.py";
             let output = self.machine.run(cmd, true)?;
             if !output.status.success() {
                 println!("{}", String::from_utf8_lossy(&output.stderr));
@@ -756,19 +756,6 @@ impl ChainNode {
             }
         }
 
-        if self.role == NodeRole::Persistence {
-            let cmd = r#"
-                sudo chmod 777 /tmp/persistence_export_cron_job.sh && \
-                sudo mv /tmp/persistence_export_cron_job.sh /persistence_export_cron_job.sh && \
-                echo '0 */2 * * * /persistence_export_cron_job.sh' | sudo crontab -"#;
-
-            let output = self.machine.run(cmd, true)?;
-            if !output.status.success() {
-                println!("{}", String::from_utf8_lossy(&output.stderr));
-                return Err(anyhow!("Error creating the persistence export cronjob"));
-            }
-        }
-
         println!(
             "Provisioning script run successfully on {}",
             self.name().bold()
@@ -798,8 +785,8 @@ impl ChainNode {
         Ok(filename.to_owned())
     }
 
-    async fn create_persistence_export_cron_job(&self, filename: &str) -> Result<String> {
-        let spec_config = include_str!("../../resources/persistence_export.tera.sh");
+    async fn create_persistence_backup_script(&self, filename: &str) -> Result<String> {
+        let spec_config = include_str!("../../resources/persistence_backup.tera.py");
 
         let chain_name = self.chain.name();
         let eth_chain_id = self.eth_chain_id.to_string();
