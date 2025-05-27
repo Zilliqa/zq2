@@ -136,6 +136,10 @@ impl P2pNode {
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
                             .duplicate_cache_time(Duration::from_secs(3600))
+                            // Increase the queue duration to reduce the likelihood of dropped messages.
+                            // https://github.com/Zilliqa/zq2/issues/2823
+                            .publish_queue_duration(Duration::from_secs(50))
+                            .forward_queue_duration(Duration::from_secs(10)) // might be helpful too
                             .build()
                             .map_err(|e| anyhow!(e))?,
                     )
