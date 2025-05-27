@@ -41,3 +41,11 @@ license-files = [
 
 [sources.allow-org]
 github = [ "zilliqa" ]
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2025-0009", reason = "downstream dependency of ethers-rs which is only used in tests" },
+    { id = "RUSTSEC-2025-0010", reason = "downstream dependency of ethers-rs which is only used in tests" },
+    { id = "RUSTSEC-2024-0384", reason = "downstream dependency of ethers-rs which is only used in tests" },
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained, we'll upgrade eventually" },
+]
