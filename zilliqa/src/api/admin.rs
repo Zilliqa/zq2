@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
-use crate::{api::to_hex::ToHex, cfg::EnabledApi, node::Node};
+use crate::{api::to_hex::ToHex, cfg::EnabledApi, consensus::Validator, node::Node};
 
 pub fn rpc_module(
     node: Arc<RwLock<Node>>,
@@ -28,6 +28,7 @@ pub fn rpc_module(
             ("admin_getPeers", get_peers),
             ("admin_votesReceived", votes_received),
             ("admin_clearMempool", clear_mempool),
+            ("admin_getLeaders", get_leaders),
         ]
     )
 }
@@ -138,4 +139,23 @@ fn clear_mempool(_params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
 
     node.consensus.clear_mempool();
     Ok(())
+}
+
+fn get_leaders(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<(u64, Validator)>> {
+    let mut params = params.sequence();
+    let mut view = params.next::<U64>()?.to::<u64>();
+    let count = params.next::<U64>()?.to::<usize>().min(100);
+
+    let node = node.read();
+    let head_block = node.consensus.head_block();
+    let mut leaders = vec![];
+
+    while leaders.len() <= count {
+        leaders.push((
+            view,
+            node.consensus.leader_at_block(&head_block, view).unwrap(),
+        ));
+        view += 1;
+    }
+    Ok(leaders)
 }
