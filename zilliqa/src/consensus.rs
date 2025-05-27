@@ -1661,7 +1661,7 @@ impl Consensus {
         for tx in opaque_transactions {
             let account_nonce = self.state.get_account(tx.signer)?.nonce;
             self.transaction_pool
-                .insert_transaction(tx, account_nonce, false);
+                .insert_transaction(tx, account_nonce, true);
         }
 
         // finalise the proposal

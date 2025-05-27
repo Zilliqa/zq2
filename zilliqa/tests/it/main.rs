@@ -1098,7 +1098,7 @@ impl Network {
                                                 verified.push(tx);
                                             }
                                             inner
-                                                .handle_broadcasted_transactions(verified)
+                                                .handle_broadcast_transactions(verified)
                                                 .unwrap();
                                         }
                                         _ => inner

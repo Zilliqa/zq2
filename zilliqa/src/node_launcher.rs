@@ -227,7 +227,7 @@ impl NodeLauncher {
                             let txn = txn.verify()?;
                             verified.push(txn);
                         }
-                        self.node.write().handle_broadcasted_transactions(verified)?;
+                        self.node.write().handle_broadcast_transactions(verified)?;
                     }
                     else if let Err(e) = self.node.write().handle_broadcast(source, message) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));

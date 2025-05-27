@@ -258,7 +258,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn handle_broadcasted_transactions(
+    pub fn handle_broadcast_transactions(
         &mut self,
         transactions: Vec<VerifiedTransaction>,
     ) -> Result<()> {
