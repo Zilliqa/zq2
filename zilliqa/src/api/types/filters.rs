@@ -1,12 +1,12 @@
 use std::{collections::HashMap, time::Duration};
 
 use anyhow::anyhow;
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
 use crate::{message::BlockHeader, time::SystemTime, transaction::VerifiedTransaction};
 
 #[derive(Debug)]
 pub struct Filter {
-    pub created_at: SystemTime,
     pub last_poll: SystemTime,
     pub kind: FilterKind,
 }
@@ -102,10 +102,8 @@ pub struct LogFilter {
 
 impl Filter {
     pub fn new(kind: FilterKind) -> Self {
-        let now = SystemTime::now();
         Self {
-            created_at: now,
-            last_poll: now,
+            last_poll: SystemTime::now(),
             kind,
         }
     }
@@ -113,73 +111,47 @@ impl Filter {
     pub fn touch(&mut self) {
         self.last_poll = SystemTime::now();
     }
-
-    pub fn is_expired(&self, timeout: Duration) -> bool {
-        SystemTime::now()
-            .duration_since(self.last_poll)
-            .unwrap_or_default()
-            > timeout
-    }
 }
 
 #[derive(Debug, Default)]
 pub struct Filters {
-    filters: HashMap<u128, Filter>,
-    actions_since_cleanup: usize,
+    filters: Mutex<HashMap<u128, Filter>>,
 }
 
 impl Filters {
     pub fn new() -> Self {
         Self {
-            filters: HashMap::new(),
-            actions_since_cleanup: 0,
+            filters: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn add_filter(&mut self, kind: FilterKind) -> u128 {
-        self.cleanup_forced();
-        let id = rand::random::<u128>();
-        self.filters.insert(id, Filter::new(kind));
-        id
-    }
+    pub fn add(&self, kind: FilterKind) -> u128 {
+        let mut filters = self.filters.lock();
 
-    pub fn remove_filter(&mut self, id: u128) -> bool {
-        let result = self.filters.remove(&id).is_some();
-        self.cleanup();
-        result
-    }
-
-    pub fn get(&self, id: u128) -> Option<&Filter> {
-        self.filters.get(&id)
-    }
-
-    pub fn get_mut(&mut self, id: &u128) -> Option<&mut Filter> {
-        self.touch(id);
-        self.cleanup();
-        self.filters.get_mut(id)
-    }
-
-    pub fn touch(&mut self, id: &u128) {
-        if let Some(filter) = self.filters.get_mut(id) {
-            filter.touch();
-        }
-        self.cleanup();
-    }
-
-    pub fn cleanup(&mut self) {
-        self.actions_since_cleanup += 1;
-        if self.actions_since_cleanup > 100 {
-            self.cleanup_forced();
-            self.actions_since_cleanup = 0;
-        }
-    }
-
-    pub fn cleanup_forced(&mut self) {
-        self.filters.retain(|_, filter| {
+        // Clean expired filters
+        filters.retain(|_, filter| {
             SystemTime::now()
                 .duration_since(filter.last_poll)
                 .unwrap_or_default()
-                > Duration::from_secs(300)
+                > Duration::from_secs(5 * 60)
         });
+
+        let id = rand::random::<u128>();
+        filters.insert(id, Filter::new(kind));
+        id
+    }
+
+    pub fn remove(&self, id: u128) -> bool {
+        self.filters.lock().remove(&id).is_some()
+    }
+
+    pub fn get(&self, id: u128) -> Option<MappedMutexGuard<'_, Filter>> {
+        let filters = self.filters.lock();
+        if !filters.contains_key(&id) {
+            return None;
+        }
+        let mut filter = MutexGuard::map(filters, |fs| fs.get_mut(&id).unwrap());
+        filter.touch();
+        Some(filter)
     }
 }
