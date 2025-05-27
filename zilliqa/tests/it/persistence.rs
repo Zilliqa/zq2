@@ -48,6 +48,28 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         .await
         .unwrap();
 
+    let latest_block_number = network
+        .get_node(index)
+        .get_block(BlockId::latest())
+        .unwrap()
+        .map_or(0, |b| b.number());
+
+    // make one block without txs
+    network
+        .run_until(
+            |n| {
+                let block = n
+                    .get_node(index)
+                    .get_block(BlockId::latest())
+                    .unwrap()
+                    .map_or(0, |b| b.number());
+                block > latest_block_number
+            },
+            450,
+        )
+        .await
+        .unwrap();
+
     let receipt = wallet
         .provider()
         .get_transaction_receipt(hash.0)
