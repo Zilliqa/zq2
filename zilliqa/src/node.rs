@@ -262,8 +262,8 @@ impl Node {
         &mut self,
         transactions: Vec<VerifiedTransaction>,
     ) -> Result<()> {
+        let from_broadcast = true;
         for txn in transactions {
-            let from_broadcast = true;
             self.consensus.handle_new_transaction(txn, from_broadcast)?;
         }
         Ok(())
@@ -433,7 +433,7 @@ impl Node {
         };
         let verified_tx = tx.verify()?;
         trace!("Injecting intershard transaction {}", verified_tx.hash);
-        self.consensus.new_transaction(verified_tx, false)?;
+        self.consensus.new_transaction(verified_tx, true)?;
         Ok(())
     }
 

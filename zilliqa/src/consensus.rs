@@ -2857,7 +2857,7 @@ impl Consensus {
                 // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
                 self.transaction_pool
-                    .insert_transaction(orig_tx, account_nonce, false);
+                    .insert_transaction(orig_tx, account_nonce, true);
             }
 
             // this block is no longer in the main chain
@@ -3020,7 +3020,7 @@ impl Consensus {
 
         let mut touched_addresses = vec![];
         for (tx_index, txn) in verified_txns.iter().enumerate() {
-            self.new_transaction(txn.clone(), false)?;
+            self.new_transaction(txn.clone(), true)?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self
