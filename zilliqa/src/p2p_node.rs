@@ -383,15 +383,13 @@ impl P2pNode {
                                     let _id = format!("{}", _request_id);
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
-                                            if !matches!(_external_message,
-                                                    ExternalMessage::MultiBlockRequest(_)|
-                                                    ExternalMessage::PassiveSyncRequest(_)|
-                                                    ExternalMessage::MetaDataRequest(_)|
-                                                    ExternalMessage::BlockRequest(_)
-                                                ) {
-                                                self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
-                                            } else {
-                                                self.send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?;
+                                            match _external_message {
+                                                ExternalMessage::MetaDataRequest(_)
+                                                | ExternalMessage::MultiBlockRequest(_)
+                                                | ExternalMessage::BlockRequest(_)
+                                                | ExternalMessage::PassiveSyncRequest(_) => self
+                                                    .send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?,
+                                                _ => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?,
                                             }
                                         } else {
                                             panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
