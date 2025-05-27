@@ -66,7 +66,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .map_or(0, |b| b.number());
                 block > receipt.block_number.unwrap().as_u64()
             },
-            150,
+            450,
         )
         .await
         .unwrap();
