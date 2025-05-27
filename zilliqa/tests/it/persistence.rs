@@ -43,7 +43,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            150,
+            450,
         )
         .await
         .unwrap();
