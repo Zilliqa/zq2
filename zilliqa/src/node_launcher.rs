@@ -42,7 +42,7 @@ use crate::{
 pub struct NodeLauncher {
     pub node: Arc<RwLock<Node>>,
     pub config: NodeConfig,
-    pub broadcasts: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
+    pub broadcasts: UnboundedReceiverStream<(PeerId, ExternalMessage, ResponseChannel)>,
     pub requests: UnboundedReceiverStream<(PeerId, String, ExternalMessage, ResponseChannel)>,
     pub request_failures: UnboundedReceiverStream<(PeerId, OutgoingMessageFailure)>,
     pub responses: UnboundedReceiverStream<(PeerId, ExternalMessage)>,
@@ -81,7 +81,7 @@ impl ResponseChannel {
 /// The collection of channels used to send messages to a [NodeLauncher].
 pub struct NodeInputChannels {
     /// Send broadcast messages (received via gossipsub) down this channel.
-    pub broadcasts: UnboundedSender<(PeerId, String, ExternalMessage, ResponseChannel)>,
+    pub broadcasts: UnboundedSender<(PeerId, ExternalMessage, ResponseChannel)>,
     /// Send direct requests down this channel. The `ResponseChannel` must be used by the receiver to respond to this
     /// request.
     pub requests: UnboundedSender<(PeerId, String, ExternalMessage, ResponseChannel)>,
@@ -208,7 +208,7 @@ impl NodeLauncher {
         loop {
             select! {
                 message = self.broadcasts.next() => {
-                    let (source, _id, message, response_channel) = message.expect("message stream should be infinite");
+                    let (source, message, response_channel) = message.expect("message stream should be infinite");
                     let mut attributes = vec![
                         KeyValue::new(MESSAGING_OPERATION_NAME, "handle"),
                         KeyValue::new(MESSAGING_SYSTEM, "tokio_channel"),

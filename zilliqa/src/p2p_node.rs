@@ -369,7 +369,7 @@ impl P2pNode {
                                     self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
                                 },
                                 _ => {
-                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, "faux_id".to_string(), message, ResponseChannel::Local)))?;
+                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message, ResponseChannel::Local)))?;
                                 }
                             }
                         }
@@ -391,7 +391,7 @@ impl P2pNode {
                                                 ) {
                                                 self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
                                             } else {
-                                                self.send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
+                                                self.send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?;
                                             }
                                         } else {
                                             panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
@@ -497,7 +497,7 @@ impl P2pNode {
                                             self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
                                         }
                                         _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
+                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message, ResponseChannel::Local)))?;
                                         }
                                     }
                                 },
@@ -508,7 +508,7 @@ impl P2pNode {
                                             self.send_to(&topic.hash(), |c| c.requests.send((from, "faux-id".to_string(), message, ResponseChannel::Local)))?;
                                         }
                                         _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, "faux_id".to_string(), message, ResponseChannel::Local)))?;
+                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message, ResponseChannel::Local)))?;
                                         }
                                     }
                                 }
