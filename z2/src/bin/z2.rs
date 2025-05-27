@@ -5,16 +5,18 @@ use std::{
 };
 
 use alloy::primitives::B256;
-use anyhow::{anyhow, Context, Result};
-use clap::{builder::ArgAction, Args, Parser, Subcommand};
+use anyhow::{Context, Result, anyhow};
+use clap::{Args, Parser, Subcommand, builder::ArgAction};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use libp2p::PeerId;
 use z2lib::{
-    chain,
+    chain::{self, node::NodePort},
     components::Component,
+    deployer::{ApiOperation, Metrics},
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
-use zilliqa::crypto::SecretKey;
+use zilliqa::crypto::{BlsSignature, NodePublicKey, SecretKey};
 
 #[derive(Parser, Debug)]
 #[clap(about)]
@@ -33,8 +35,6 @@ enum Commands {
     Run(RunStruct),
     /// Run only some components of Zilliqa 2
     Only(OnlyStruct),
-    /// Test
-    Perf(PerfStruct),
     #[clap(subcommand)]
     /// Group of subcommands to deploy and configure a Zilliqa 2 network
     Deployer(DeployerCommands),
@@ -48,8 +48,14 @@ enum Commands {
     Depends(DependsCommands),
     /// Join a ZQ2 network
     Join(JoinStruct),
-    /// Deposit stake amount to validators
+    /// Deposit stake amount to a validator
     Deposit(DepositStruct),
+    /// Top up stake
+    DepositTopUp(DepositTopUpStruct),
+    /// Unstake funds
+    Unstake(UnstakeStruct),
+    /// Withdraw unstaked funds
+    Withdraw(WithdrawStruct),
     Kpi(KpiStruct),
     /// Print out the ports in use (otherwise they scroll off the top too fast)
     Ports(RunStruct),
@@ -86,37 +92,50 @@ enum DeployerCommands {
     GetConfigFile(DeployerConfigArgs),
     /// Generate in output the commands to deposit stake amount to all the validators
     GetDepositCommands(DeployerActionsArgs),
-    /// Deposit the stake amounts to all the validators
+    /// Deposit stake amounts to the internal validators
     Deposit(DeployerActionsArgs),
+    /// Top up stake to the internal validators
+    DepositTopUp(DeployerStakingArgs),
+    /// Unstake funds of the internal validators
+    Unstake(DeployerStakingArgs),
+    /// Withdraw unstaked funds to the internal validators
+    Withdraw(DeployerActionsArgs),
+    /// Show network stake information
+    Stakers(DeployerStakersArgs),
     /// Run RPC calls over the internal network nodes
     Rpc(DeployerRpcArgs),
-    /// Backup locally a node data dir
+    /// Run command over SSH in the internal network nodes
+    Ssh(DeployerSshArgs),
+    /// Backup a node data dir in the persistence bucket
     Backup(DeployerBackupArgs),
-    /// Restore a node data dir from a local backup
+    /// Restore a node data dir from a backup in the persistence bucket
     Restore(DeployerRestoreArgs),
     /// Reset a network stopping all the nodes and cleaning the /data folder
     Reset(DeployerActionsArgs),
     /// Restart a network stopping all the nodes and starting the service again
     Restart(DeployerActionsArgs),
+    /// Monitor the network nodes specified metrics
+    Monitor(DeployerMonitorArgs),
+    /// Perform operation over the network API nodes
+    Api(DeployerApiArgs),
     /// Generate the node private keys. --force to replace if already existing
     GeneratePrivateKeys(DeployerGenerateActionsArgs),
     /// Generate the genesis key. --force to replace if already existing
     GenerateGenesisKey(DeployerGenerateGenesisArgs),
+    /// Generate the Stats Dashboard key. --force to replace if already existing
+    GenerateStatsKey(DeployerGenerateStatsArgs),
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerNewArgs {
-    #[clap(long)]
     /// ZQ2 network name
+    #[clap(long)]
     network_name: Option<String>,
-    #[clap(long)]
     /// ZQ2 EVM chain ID
-    eth_chain_id: Option<u64>,
     #[clap(long)]
-    /// GCP project-id where the network is running
-    project_id: Option<String>,
-    #[clap(long, value_enum, value_delimiter = ',')]
+    eth_chain_id: Option<u64>,
     /// Virtual Machine roles
+    #[clap(long, value_enum, value_delimiter = ',')]
     roles: Option<Vec<chain::node::NodeRole>>,
 }
 
@@ -127,6 +146,9 @@ pub struct DeployerConfigArgs {
     /// Node role. Default: validator
     #[clap(long, value_enum)]
     role: Option<chain::node::NodeRole>,
+    /// File to output to.
+    #[clap(long)]
+    out: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -139,9 +161,12 @@ pub struct DeployerInstallArgs {
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
-    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-file
+    /// gsutil URI of the persistence file. Ie. gs://my-bucket/my-folder
     #[clap(long)]
     persistence_url: Option<String>,
+    /// gsutil URI of the checkpoint file. Ie. gs://my-bucket/my-file. By enabling this option the install will be performed only on the validator nodes
+    #[clap(long)]
+    checkpoint_url: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -166,6 +191,39 @@ pub struct DeployerActionsArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct DeployerStakingArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// Specify the amount in millions
+    #[clap(long)]
+    amount: u8,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerStakersArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerMonitorArgs {
+    /// The metric to display. Default: block-number
+    #[clap(long)]
+    metric: Option<Metrics>,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// After showing the metrics, watch for changes
+    #[clap(long)]
+    follow: bool,
+    /// The network deployer config file
+    config_file: Option<String>,
+}
+
+#[derive(Args, Debug)]
 pub struct DeployerRpcArgs {
     /// Specifies the maximum time (in seconds) allowed for the entire request. Default: 30
     #[clap(long)]
@@ -173,27 +231,52 @@ pub struct DeployerRpcArgs {
     /// Method to run
     #[clap(long, short, about)]
     method: String,
-    /// List of parameters for the method. ie "["string_value", true]"
-    #[clap(long, short, about)]
+    /// List of parameters for the method. ie "[\"string_value\",true]"
+    #[clap(long)]
     params: Option<String>,
     /// The network deployer config file
     config_file: String,
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// The port where to run the rpc call on
+    #[clap(long, short, about)]
+    port: Option<NodePort>,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerSshArgs {
+    /// Enable nodes selection
+    #[clap(long)]
+    select: bool,
+    /// The network deployer config file
+    config_file: String,
+    /// Method to run
+    // #[clap(long, short, about, allow_hyphen_values = true, num_args = 1..)]
+    #[arg(trailing_var_arg = true)]
+    command: Vec<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerBackupArgs {
-    /// The path of the backup file
+    /// The name of the backup folder. If zip is specified, it represents the name of the zip file.
     #[clap(long, short)]
-    file: String,
+    name: Option<String>,
+    /// If specified, create a zip file containing the backup
+    #[clap(long)]
+    zip: bool,
     /// The network deployer config file
     config_file: Option<String>,
 }
 
 #[derive(Args, Debug)]
 pub struct DeployerRestoreArgs {
-    /// The path of the backup file
+    /// The name of the backup folder. If zip is specified, it represents the name of the zip file.
     #[clap(long, short)]
-    file: String,
+    name: Option<String>,
+    /// If specified, restore the persistence from a zip file
+    #[clap(long)]
+    zip: bool,
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
@@ -222,6 +305,24 @@ pub struct DeployerGenerateGenesisArgs {
     force: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct DeployerGenerateStatsArgs {
+    /// The network deployer config file
+    config_file: Option<String>,
+    /// Generate and replace the existing key
+    #[clap(long)]
+    force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct DeployerApiArgs {
+    /// The operation to perform over the API nodes
+    #[clap(long, short)]
+    operation: ApiOperation,
+    /// The network deployer config file
+    config_file: Option<String>,
+}
+
 #[derive(Subcommand, Debug)]
 enum ConverterCommands {
     /// Convert Zilliqa 1 to Zilliqa 2 persistence format.
@@ -232,13 +333,28 @@ enum ConverterCommands {
     PrintTransactionConverter(ConverterPrintTransactionConfigStruct),
 }
 
+#[derive(Clone, Debug)]
+struct SecretKeys(Vec<SecretKey>);
+
+impl FromStr for SecretKeys {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut v = Vec::new();
+        for part in s.split(',') {
+            let key = SecretKey::from_hex(part.trim())
+                .map_err(|e| format!("invalid key ‘{}’: {}", part, e))?;
+            v.push(key);
+        }
+        Ok(SecretKeys(v))
+    }
+}
+
 #[derive(Args, Debug)]
 struct ConvertConfigStruct {
     zq1_persistence_directory: String,
     zq2_data_dir: String,
     zq2_config_file: String,
-    #[arg(value_parser = SecretKey::from_hex)]
-    secret_key: SecretKey,
+    secret_keys: SecretKeys,
 }
 #[derive(Args, Debug)]
 struct ConverterPrintTransactionConfigStruct {
@@ -404,9 +520,12 @@ struct JoinStruct {
     /// Specify the ZQ2 chain you want join
     #[clap(long = "chain")]
     chain_name: chain::Chain,
-    /// Specify the container label to run
-    #[clap(long = "container")]
-    container: Option<String>,
+    /// Specify the tag of the image to run
+    #[clap(long)]
+    image_tag: Option<String>,
+    /// Endpoint of OTLP collector
+    #[clap(long)]
+    otlp_endpoint: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -414,24 +533,75 @@ struct DepositStruct {
     /// Specify the ZQ2 deposit chain
     #[clap(long = "chain")]
     chain_name: chain::Chain,
+    /// Specify the private_key to fund the deposit
+    #[clap(long, short)]
+    private_key: String,
     /// Specify the Validator Public Key
     #[clap(long)]
     public_key: String,
     /// Specify the Validator PeerId
     #[clap(long)]
     peer_id: String,
-    /// Specify the private_key to fund the deposit
-    #[clap(long, short)]
-    private_key: String,
-    /// Specify the stake amount you want provide
+    /// Specify the Validator deposit signature
+    #[clap(long)]
+    deposit_auth_signature: String,
+    /// Specify the stake amount in millions you want provide
     #[clap(long, short)]
     amount: u8,
     /// Specify the staking reward address
     #[clap(long, short)]
     reward_address: String,
-    /// Specify the Validator Proof-of-Possession
+    /// Specify the signing address
+    #[clap(long, short)]
+    signing_address: String,
+}
+
+#[derive(Args, Debug)]
+struct DepositTopUpStruct {
+    /// Specify the ZQ2 deposit chain
+    #[clap(long = "chain")]
+    chain_name: chain::Chain,
+    /// Specify the private_key to fund the deposit
+    #[clap(long, short)]
+    private_key: String,
+    /// Specify the Validator Public Key
     #[clap(long)]
-    pop_signature: String,
+    public_key: String,
+    /// Specify the stake amount in millions you want provide
+    #[clap(long, short)]
+    amount: u8,
+}
+
+#[derive(Args, Debug)]
+struct UnstakeStruct {
+    /// Specify the ZQ2 deposit chain
+    #[clap(long = "chain")]
+    chain_name: chain::Chain,
+    /// Specify the private_key that submitted the deposit transaction
+    #[clap(long, short)]
+    private_key: String,
+    /// Specify the Validator Public Key
+    #[clap(long)]
+    public_key: String,
+    /// Specify the amount in millions you want to unstake
+    #[clap(long, short)]
+    amount: u8,
+}
+
+#[derive(Args, Debug)]
+struct WithdrawStruct {
+    /// Specify the ZQ2 deposit chain
+    #[clap(long = "chain")]
+    chain_name: chain::Chain,
+    /// Specify the private_key that submitted the deposit transaction
+    #[clap(long, short)]
+    private_key: String,
+    /// Specify the Validator Public Key
+    #[clap(long)]
+    public_key: String,
+    /// Specify the number of withdrawals
+    #[clap(long, short)]
+    count: u8,
 }
 
 #[derive(Args, Debug)]
@@ -571,12 +741,12 @@ async fn main() -> Result<()> {
     let base_dir = match env::var("ZQ2_BASE") {
         Ok(val) => {
             let canon = tokio::fs::canonicalize(val).await?;
-            zqutils::utils::string_from_path(&canon)?
+            canon.into_os_string().into_string().unwrap()
         }
         _ => {
             return Err(anyhow!(
                 "Please run scripts/z2 from the checked out zq2 repository which sets ZQ2_BASE"
-            ))
+            ));
         }
     };
     let cli = Cli::parse();
@@ -587,7 +757,7 @@ async fn main() -> Result<()> {
         .init();
 
     match &cli.command {
-        Commands::Only(ref arg) => {
+        Commands::Only(arg) => {
             let mut to_run: HashSet<Component> = HashSet::new();
 
             if arg.otterscan {
@@ -634,11 +804,11 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Ports(ref arg) => {
+        Commands::Ports(arg) => {
             plumbing::print_ports(arg.base_port, &base_dir, &arg.config_dir).await?;
             Ok(())
         }
-        Commands::Run(ref arg) => {
+        Commands::Run(arg) => {
             let mut to_run: HashSet<Component> = HashSet::new();
 
             if arg.otterscan {
@@ -685,24 +855,16 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Perf(ref arg) => {
-            plumbing::run_perf_file(&arg.config_dir, &arg.perf_file).await?;
-            Ok(())
-        }
-        Commands::Kpi(ref arg) => {
+        Commands::Kpi(arg) => {
             plumbing::run_kpi_collector(&arg.config_file).await?;
             Ok(())
         }
         Commands::Deployer(deployer_command) => match &deployer_command {
-            DeployerCommands::New(ref arg) => {
+            DeployerCommands::New(arg) => {
                 let network_name = arg
                     .network_name
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("--network-name is a mandatory argument"))?;
-                let project_id = arg
-                    .project_id
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("--project-id is a mandatory argument"))?;
                 let roles = arg
                     .roles
                     .clone()
@@ -710,24 +872,31 @@ async fn main() -> Result<()> {
                 let eth_chain_id = arg
                     .eth_chain_id
                     .ok_or_else(|| anyhow::anyhow!("--eth-chain-id is a mandatory argument"))?;
-                plumbing::run_deployer_new(&network_name, eth_chain_id, &project_id, roles)
+                plumbing::run_deployer_new(&network_name, eth_chain_id, roles)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer new command: {}", err)
                     })?;
                 Ok(())
             }
-            DeployerCommands::Install(ref arg) => {
+            DeployerCommands::Install(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
+
+                if arg.persistence_url.is_some() && arg.checkpoint_url.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "Provide only one of [--persistence-url] and [--checkpoint-url]"
+                    ));
+                }
                 plumbing::run_deployer_install(
                     &config_file,
                     arg.select,
                     arg.max_parallel,
                     arg.persistence_url.clone(),
+                    arg.checkpoint_url.clone(),
                 )
                 .await
                 .map_err(|err| {
@@ -735,7 +904,7 @@ async fn main() -> Result<()> {
                 })?;
                 Ok(())
             }
-            DeployerCommands::Upgrade(ref arg) => {
+            DeployerCommands::Upgrade(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -748,21 +917,21 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::GetConfigFile(ref arg) => {
+            DeployerCommands::GetConfigFile(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
                 let role = arg.role.clone().unwrap_or(chain::node::NodeRole::Validator);
-                plumbing::run_deployer_get_config_file(&config_file, role)
+                plumbing::run_deployer_get_config_file(&config_file, role, arg.out.as_deref())
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer get-config-file command: {}", err)
                     })?;
                 Ok(())
             }
-            DeployerCommands::GetDepositCommands(ref arg) => {
+            DeployerCommands::GetDepositCommands(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -778,7 +947,20 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Deposit(ref arg) => {
+            DeployerCommands::Stakers(arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_stakers(&config_file)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer stakers command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Deposit(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -791,44 +973,98 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Rpc(ref args) => {
-                plumbing::run_rpc_call(
-                    &args.method,
-                    &args.params,
-                    &args.config_file,
-                    &args.timeout,
-                )
-                .await
-                .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
-                Ok(())
-            }
-            DeployerCommands::Backup(ref arg) => {
+            DeployerCommands::DepositTopUp(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_backup(&config_file, &arg.file)
+                plumbing::run_deployer_deposit_top_up(&config_file, arg.select, arg.amount)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer deposit-top-up command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Unstake(arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_unstake(&config_file, arg.select, arg.amount)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer unstake command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Withdraw(arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_withdraw(&config_file, arg.select)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer withdraw command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Rpc(args) => {
+                plumbing::run_deployer_rpc(
+                    &args.method,
+                    &args.params,
+                    &args.config_file,
+                    &args.timeout,
+                    args.select,
+                    args.port.clone().unwrap_or_default(),
+                )
+                .await
+                .map_err(|err| anyhow::anyhow!("Failed to run deployer rpc command: {}", err))?;
+                Ok(())
+            }
+            DeployerCommands::Ssh(args) => {
+                plumbing::run_deployer_ssh(args.command.clone(), &args.config_file, args.select)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!("Failed to run deployer ssh command: {}", err)
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Backup(arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_backup(&config_file, arg.name.clone(), arg.zip)
                     .await
                     .map_err(|err| {
                         anyhow::anyhow!("Failed to run deployer backup command: {}", err)
                     })?;
                 Ok(())
             }
-            DeployerCommands::Restore(ref arg) => {
+            DeployerCommands::Restore(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
                     )
                 })?;
-                plumbing::run_deployer_restore(&config_file, &arg.file, arg.max_parallel)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer restore command: {}", err)
-                    })?;
+                plumbing::run_deployer_restore(
+                    &config_file,
+                    arg.max_parallel,
+                    arg.name.clone(),
+                    arg.zip,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer restore command: {}", err)
+                })?;
                 Ok(())
             }
-            DeployerCommands::Reset(ref arg) => {
+            DeployerCommands::Reset(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -841,7 +1077,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::Restart(ref arg) => {
+            DeployerCommands::Restart(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -854,7 +1090,25 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::GenerateGenesisKey(ref arg) => {
+            DeployerCommands::Monitor(arg) => {
+                let config_file: String = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_monitor(
+                    &config_file,
+                    arg.metric.clone().unwrap_or_default(),
+                    arg.select,
+                    arg.follow,
+                )
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("Failed to run deployer monitor command: {}", err)
+                })?;
+                Ok(())
+            }
+            DeployerCommands::GenerateGenesisKey(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -870,7 +1124,7 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
-            DeployerCommands::GeneratePrivateKeys(ref arg) => {
+            DeployerCommands::GeneratePrivateKeys(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
                         "Provide a configuration file. [--config-file] mandatory argument"
@@ -886,28 +1140,55 @@ async fn main() -> Result<()> {
                     })?;
                 Ok(())
             }
+            DeployerCommands::GenerateStatsKey(arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_generate_stats_key(&config_file, arg.force)
+                    .await
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to run deployer generate-stats-key command: {}",
+                            err
+                        )
+                    })?;
+                Ok(())
+            }
+            DeployerCommands::Api(arg) => {
+                let config_file = arg.config_file.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Provide a configuration file. [--config-file] mandatory argument"
+                    )
+                })?;
+                plumbing::run_deployer_api_operation(&config_file, arg.operation.clone())
+                    .await
+                    .map_err(|err| anyhow::anyhow!("Failed to run API operation: {}", err))?;
+                Ok(())
+            }
         },
         Commands::Converter(converter_command) => match &converter_command {
-            ConverterCommands::Convert(ref arg) => {
+            ConverterCommands::Convert(arg) => {
                 plumbing::run_persistence_converter(
                     &arg.zq1_persistence_directory,
                     &arg.zq2_data_dir,
                     &arg.zq2_config_file,
-                    arg.secret_key,
+                    arg.secret_keys.0.clone(),
                 )
                 .await?;
                 Ok(())
             }
-            ConverterCommands::PrintTransactionsInBlock(ref arg) => {
+            ConverterCommands::PrintTransactionsInBlock(arg) => {
                 plumbing::run_print_txs_in_block(&arg.zq1_persistence_directory, arg.block_number)
                     .await?;
                 Ok(())
             }
-            ConverterCommands::PrintTransactionConverter(ref _arg) => {
+            ConverterCommands::PrintTransactionConverter(_arg) => {
                 unimplemented!();
             }
         },
-        Commands::DocGen(ref arg) => {
+        Commands::DocGen(arg) => {
             plumbing::generate_docs(
                 &base_dir,
                 &arg.target_dir,
@@ -920,30 +1201,73 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Depends(ref rs) => match rs {
+        Commands::Depends(rs) => match rs {
             DependsCommands::Print => plumbing::print_depends(&base_dir).await,
-            DependsCommands::Update(ref opts) => {
+            DependsCommands::Update(opts) => {
                 plumbing::update_depends(&base_dir, opts.with_ssh).await
             }
         },
-        Commands::Join(ref args) => {
-            let chain = validators::ChainConfig::new(&args.chain_name).await?;
-            validators::gen_validator_startup_script(&chain, &args.container).await?;
+        Commands::Join(args) => {
+            let mut chain = validators::ChainConfig::new(&args.chain_name).await?;
+            validators::gen_validator_startup_script(
+                &mut chain,
+                &args.image_tag,
+                &args.otlp_endpoint,
+            )
+            .await?;
             Ok(())
         }
-        Commands::Deposit(ref args) => {
-            let node =
-                validators::Validator::new(&args.peer_id, &args.public_key, &args.pop_signature)?;
-            let stake = validators::StakeDeposit::new(
-                node,
-                args.amount,
-                args.chain_name.clone(),
-                &args.private_key,
-                &args.reward_address,
+        Commands::Deposit(args) => {
+            let node = validators::Validator::new(
+                PeerId::from_str(&args.peer_id).unwrap(),
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap(),
+                BlsSignature::from_string(&args.deposit_auth_signature).unwrap(),
             )?;
-            validators::deposit_stake(&stake).await
+            let signer_client = validators::SignerClient::new(
+                &args.chain_name.get_api_endpoint()?,
+                &args.private_key,
+            )?;
+            let deposit_params = validators::DepositParams::new(
+                args.amount,
+                &args.reward_address,
+                &args.signing_address,
+            )?;
+            signer_client.deposit(&node, &deposit_params).await
         }
-        Commands::Nodes(ref args) => {
+        Commands::DepositTopUp(args) => {
+            let bls_public_key =
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap();
+            let signer_client = validators::SignerClient::new(
+                &args.chain_name.get_api_endpoint()?,
+                &args.private_key,
+            )?;
+            signer_client
+                .deposit_top_up(&bls_public_key, args.amount)
+                .await
+        }
+        Commands::Unstake(args) => {
+            let bls_public_key =
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap();
+            let signer_client = validators::SignerClient::new(
+                &args.chain_name.get_api_endpoint()?,
+                &args.private_key,
+            )?;
+            signer_client.unstake(&bls_public_key, args.amount).await
+        }
+        Commands::Withdraw(args) => {
+            let bls_public_key =
+                NodePublicKey::from_bytes(hex::decode(&args.public_key).unwrap().as_slice())
+                    .unwrap();
+            let signer_client = validators::SignerClient::new(
+                &args.chain_name.get_api_endpoint()?,
+                &args.private_key,
+            )?;
+            signer_client.withdraw(&bls_public_key, args.count).await
+        }
+        Commands::Nodes(args) => {
             let spec = Composition::parse(&args.nodes)?;
             let log_spec = utils::compute_log_string(
                 &args.log_level.to_string(),
@@ -979,7 +1303,7 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::JoinNode(ref arg) => {
+        Commands::JoinNode(arg) => {
             let secret_key_hex = std::env::var("PRIVATE_KEY").context("Please set PRIVATE_KEY to the hex representation of the key for the node you want to join")?;
             let mut to_run: HashSet<Component> = HashSet::new();
 

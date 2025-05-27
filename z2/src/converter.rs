@@ -1,56 +1,32 @@
-#![allow(unused_imports)]
-
 use std::{
     collections::BTreeMap,
-    fs,
-    path::PathBuf,
     process::{self, Child, ExitStatus, Stdio},
-    str::FromStr,
     sync::Arc,
-    thread::sleep,
     time::Duration,
 };
 
 use alloy::{
-    consensus::{TxEip1559, TxEip2930, TxLegacy, EMPTY_ROOT_HASH},
-    primitives::{Address, Parity, PrimitiveSignature, TxKind, B256, U256},
+    consensus::{EMPTY_ROOT_HASH, TxEip1559, TxEip2930, TxLegacy},
+    primitives::{Address, B256, PrimitiveSignature, TxKind, U256},
 };
-use anyhow::{anyhow, Context, Result};
-use bitvec::{bitarr, bitvec, order::Msb0};
-use clap::{Parser, Subcommand};
+use anyhow::{Context, Result, anyhow};
+use bitvec::{bitarr, order::Msb0};
 use eth_trie::{EthTrie, MemoryDB, Trie};
-use ethabi::Token;
-use git2::Repository;
 use indicatif::{ProgressBar, ProgressFinish, ProgressIterator, ProgressStyle};
 use itertools::Itertools;
-use libp2p::PeerId;
-use revm::primitives::ResultAndState;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use sha3::Keccak256;
-use tempfile::TempDir;
-use tokio::sync::mpsc;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 use zilliqa::{
-    block_store::BlockStore,
-    cfg::{scilla_ext_libs_path_default, Amount, Config, NodeConfig},
-    consensus::Validator,
-    constants::SCILLA_INVOKE_CHECKER,
-    contracts,
-    crypto::{self, Hash, SecretKey},
+    cfg::{Amount, Config, NodeConfig, scilla_ext_libs_path_default},
+    crypto::{Hash, SecretKey},
     db::Db,
-    exec::{store_external_libraries, BaseFeeCheck, ScillaError, ScillaException},
-    inspector,
-    message::{Block, BlockHeader, QuorumCertificate, Vote, MAX_COMMITTEE_SIZE},
-    node::{MessageSender, RequestId},
+    exec::store_external_libraries,
+    message::{Block, MAX_COMMITTEE_SIZE, QuorumCertificate, Vote},
     schnorr,
-    scilla::{storage_key, CheckOutput, ParamValue, Transition, TransitionParam},
-    state::{contract_addr, Account, Code, ContractInit, State},
+    scilla::{CheckOutput, ParamValue, Transition, storage_key},
+    state::{Account, Code, ContractInit, State},
     time::SystemTime,
-    transaction::{
-        EvmGas, EvmLog, Log, ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount,
-    },
+    transaction::{ScillaGas, SignedTransaction, TransactionReceipt, TxZilliqa, ZilAmount},
 };
 
 use crate::{zq1, zq1::Transaction};
@@ -285,9 +261,11 @@ fn run_scilla_docker() -> Result<Child> {
         .arg("host")
         .arg("--init")
         .arg("--rm")
-        .arg("-v")
-        .arg("/tmp:/scilla_ext_libs")
-        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72")
+        .arg("--volume")
+        .arg("/tmp/scilla_ext_libs:/scilla_ext_libs")
+        .arg("--volume")
+        .arg("/tmp/scilla-state-server:/tmp/scilla-state-server")
+        .arg("asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:abdb24b1")
         .arg("/scilla/0/bin/scilla-server-http")
         .spawn()?;
 
@@ -326,14 +304,18 @@ fn stop_scilla_docker(child: &mut Child) -> Result<ExitStatus> {
         .or(Err(anyhow!("Unable to stop docker container!")))
 }
 
-fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Result<()> {
+fn deduct_funds_from_zero_account(
+    state: &mut State,
+    config: &NodeConfig,
+    zq2_zero_acc_nonce: u64,
+) -> Result<()> {
     let total_requested_amount = 0_u128
         .checked_add(
             config
                 .consensus
                 .genesis_accounts
                 .iter()
-                .fold(0, |acc, item: &(Address, Amount)| acc + item.1 .0),
+                .fold(0, |acc, item: &(Address, Amount)| acc + item.1.0),
         )
         .expect("Genesis accounts sum to more than max value of u128")
         .checked_add(
@@ -346,6 +328,7 @@ fn deduct_funds_from_zero_account(state: &mut State, config: &NodeConfig) -> Res
         .expect("Genesis accounts + genesis deposits sum to more than max value of u128");
     state.mutate_account(Address::ZERO, |acc| {
         acc.balance = acc.balance.checked_sub(total_requested_amount).expect("Sum of funds in genesis.deposit and genesis.accounts exceeds funds in ZeroAccount from zq1!");
+        acc.nonce = zq2_zero_acc_nonce;
         Ok(())
     })?;
 
@@ -358,33 +341,21 @@ pub async fn convert_persistence(
     zq1_db: zq1::Db,
     zq2_db: Db,
     zq2_config: Config,
-    secret_key: SecretKey,
+    secret_keys: Vec<SecretKey>,
 ) -> Result<()> {
     let style = ProgressStyle::with_template(
         "{msg} {wide_bar} [{per_sec}] {human_pos}/~{human_len} ({elapsed}/~{duration})",
     )?;
 
-    let (outbound_message_sender, _a) = mpsc::unbounded_channel();
-    let (local_message_sender, _b) = mpsc::unbounded_channel();
-    let message_sender = MessageSender {
-        our_shard: 0,
-        our_peer_id: PeerId::random(),
-        outbound_channel: outbound_message_sender,
-        local_channel: local_message_sender,
-        request_id: RequestId::default(),
-    };
+    // let (outbound_message_sender, _a) = mpsc::unbounded_channel();
+    // let (local_message_sender, _b) = mpsc::unbounded_channel();
 
     let zq2_db = Arc::new(zq2_db);
     let node_config = &zq2_config.nodes[0];
-    let block_store = Arc::new(BlockStore::new(
-        node_config,
-        zq2_db.clone(),
-        message_sender.clone(),
-    )?);
     let mut state = State::new_with_genesis(
         zq2_db.clone().state_trie()?,
         node_config.clone(),
-        block_store,
+        zq2_db.clone(),
     )?;
 
     let mut scilla_docker = run_scilla_docker()?;
@@ -417,6 +388,8 @@ pub async fn convert_persistence(
         .with_style(style.clone())
         .with_message("convert accounts")
         .with_finish(ProgressFinish::AndLeave);
+
+    let zq2_zero_acc_nonce = state.must_get_account(Address::ZERO).nonce;
 
     for (address, zq1_account) in accounts.into_iter().progress_with(progress) {
         let zq1_account = zq1::Account::from_proto(zq1_account)?;
@@ -460,7 +433,7 @@ pub async fn convert_persistence(
 
     stop_scilla_docker(&mut scilla_docker)?;
 
-    deduct_funds_from_zero_account(&mut state, node_config)?;
+    deduct_funds_from_zero_account(&mut state, node_config, zq2_zero_acc_nonce)?;
 
     let max_block = zq1_db
         .get_tx_blocks_aux("MaxTxBlockNumber")?
@@ -490,6 +463,8 @@ pub async fn convert_persistence(
         .skip_while(|(n, _)| *n <= current_block);
 
     let mut parent_hash = Hash::ZERO;
+
+    let secret_key = secret_keys[0];
 
     for (block_number, block) in tx_blocks_iter {
         let mut transactions = Vec::new();
@@ -570,7 +545,7 @@ pub async fn convert_persistence(
             zq1_block.block_num,
             qc,
             None,
-            state.root_hash()?,
+            Hash::ZERO,
             Hash(transactions_trie.root_hash()?.into()),
             Hash(receipts_trie.root_hash()?.into()),
             txn_hashes.iter().map(|h| Hash(h.0)).collect(),
@@ -620,13 +595,22 @@ pub async fn convert_persistence(
     }
 
     // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
-    let highest_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
-    let highest_block = zq2_db.get_block_by_view(highest_block)?.unwrap();
+    let highest_zq1_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
+    let highest_zq1_block = zq2_db.get_block_by_view(highest_zq1_block)?.unwrap();
+    let state_root_hash = state.root_hash()?;
 
     zq2_db.with_sqlite_tx(|sqlite_tx| {
-        let empty_high_qc_block = create_empty_block_from_parent(&highest_block, secret_key);
-        zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_high_qc_block)?;
-        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_high_qc_block.header.qc)?;
+        // Insert finalized zq2_block_1 with empty qc
+        let empty_block =
+            create_empty_block_from_parent(&highest_zq1_block, &secret_keys, state_root_hash);
+        zq2_db.insert_block_with_db_tx(sqlite_tx, &empty_block)?;
+        zq2_db.set_high_qc_with_db_tx(sqlite_tx, empty_block.header.qc)?;
+        zq2_db.set_finalized_view_with_db_tx(sqlite_tx, empty_block.view())?;
+
+        // Insert qc which points to zq2_block_1
+        let qc = get_qc_for_block(&empty_block, &secret_keys);
+        zq2_db.set_high_qc_with_db_tx(sqlite_tx, qc)?;
+
         Ok(())
     })?;
 
@@ -638,28 +622,33 @@ pub async fn convert_persistence(
     Ok(())
 }
 
-fn create_empty_block_from_parent(parent_block: &Block, secret_key: SecretKey) -> Block {
-    let vote = Vote::new(
-        secret_key,
-        parent_block.hash(),
-        secret_key.node_public_key(),
-        parent_block.number(),
-    );
+fn get_qc_for_block(block: &Block, keys: &[SecretKey]) -> QuorumCertificate {
+    let mut cosigned = bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE];
+    let mut votes = Vec::new();
 
-    let qc = QuorumCertificate::new(
-        &[vote.signature()],
-        bitarr![u8, Msb0; 1; MAX_COMMITTEE_SIZE],
-        parent_block.hash(),
-        parent_block.number(),
-    );
+    for (index, key) in keys.iter().enumerate() {
+        cosigned.set(index, true);
+        let vote = Vote::new(*key, block.hash(), key.node_public_key(), block.number());
+        votes.push(vote.signature());
+    }
+
+    QuorumCertificate::new(&votes, cosigned, block.hash(), block.number())
+}
+
+fn create_empty_block_from_parent(
+    parent_block: &Block,
+    secret_keys: &[SecretKey],
+    state_root_hash: Hash,
+) -> Block {
+    let qc = get_qc_for_block(parent_block, secret_keys);
 
     Block::from_qc(
-        secret_key,
+        secret_keys[0],
         parent_block.header.view + 1,
         parent_block.header.number + 1,
         qc,
         None,
-        parent_block.header.state_root_hash,
+        state_root_hash,
         parent_block.transactions_root_hash(),
         parent_block.header.receipts_root_hash,
         vec![],
@@ -696,7 +685,7 @@ fn try_with_zil_transaction(
     let contract_address = transaction.to_addr.is_zero().then(|| {
         let mut hasher = Sha256::new();
         hasher.update(from_addr.as_slice());
-        hasher.update(transaction.nonce.to_be_bytes());
+        hasher.update((transaction.nonce - 1).to_be_bytes());
         let hashed = hasher.finalize();
         Address::from_slice(&hashed[12..])
     });
@@ -728,15 +717,7 @@ fn try_with_zil_transaction(
             .receipt
             .event_logs
             .iter()
-            .map(|log| {
-                let log = log.to_eth_log()?;
-
-                Ok(Log::Evm(EvmLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                }))
-            })
+            .map(|log| log.to_zq2_log())
             .collect::<Result<_>>()?,
         transitions: transaction
             .receipt
@@ -795,22 +776,14 @@ fn try_with_evm_transaction(
         block_hash: Hash::ZERO,
         index: index as u64,
         success: transaction.receipt.success,
-        gas_used: EvmGas(transaction.receipt.cumulative_gas),
-        cumulative_gas_used: EvmGas(transaction.receipt.cumulative_gas),
+        gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
+        cumulative_gas_used: ScillaGas(transaction.receipt.cumulative_gas).into(),
         contract_address,
         logs: transaction
             .receipt
             .event_logs
             .iter()
-            .map(|log| {
-                let log = log.to_eth_log()?;
-
-                Ok(Log::Evm(EvmLog {
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data,
-                }))
-            })
+            .map(|log| log.to_zq2_log())
             .collect::<Result<_>>()?,
         transitions: vec![],
         accepted: None,

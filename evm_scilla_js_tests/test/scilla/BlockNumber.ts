@@ -1,4 +1,4 @@
-const {expect} = require("chai");
+import { expect } from "chai";
 import {ScillaContract} from "hardhat-scilla-plugin";
 import hre from "hardhat";
 import {Account} from "@zilliqa-js/zilliqa";

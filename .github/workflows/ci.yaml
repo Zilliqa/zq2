@@ -11,10 +11,15 @@ on:
     types:
       - checks_requested
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
-  # Run a decent number of samples for our randomized tests
-  ZQ_TEST_SAMPLES: 20
+  RUST_TEST_THREADS: 4
+  ZQ_TEST_TEMP_DIR: ${{ github.workspace }}/tmp
+  ZQ_TEST_SAMPLES: 5
 
 jobs:
   format:
@@ -25,10 +30,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "16"
-      - run: cd evm_scilla_js_tests
-      - run: npm install --save-dev prettier prettier-plugin-solidity
-      - run: npx prettier --write --plugin=prettier-plugin-solidity '../**/*.sol'
+          node-version: "22"
+      - run: npm install --save-dev prettier prettier-plugin-solidity solhint@5.0.4
+      - run: npx prettier --write --plugin=prettier-plugin-solidity './**/*.sol'
+      - run: npx solhint 'zilliqa/src/contracts/**/*.sol' --fix --noPrompt
       - name: Commit changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
@@ -42,13 +47,17 @@ jobs:
     steps:
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Install nightly
-        run: rustup toolchain install nightly
+      - run: rustup show active-toolchain
       - name: Install dependencies
         run: sudo add-apt-repository ppa:ethereum/ethereum && sudo apt update && sudo apt install -y solc build-essential pkg-config libssl-dev cmake protobuf-compiler
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+      - name: Install default toolchain
+        run: rustup toolchain install
+      - name: Install nightly toolchain (for cargo fmt)
+        run: rustup toolchain install nightly
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --all-targets --all-features
@@ -64,22 +73,26 @@ jobs:
   e2e_test:
     services:
       scilla:
-        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:a5a81f72
-        options: --init --add-host host.docker.internal:host-gateway --entrypoint "/scilla/0/bin/scilla-server-http"
+        image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/scilla:abdb24b1
+        options: --init --entrypoint "/scilla/0/bin/scilla-server-http"
         ports:
           - 3000:3000
         volumes:
-          - /tmp:/scilla_ext_libs
-
+          - /tmp/scilla_ext_libs:/scilla_ext_libs
+          - /tmp/scilla-state-server:/tmp/scilla-state-server
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Fix mounted directory permissions
+        run: sudo chmod 777 /tmp/scilla_ext_libs && sudo chmod 777 /tmp/scilla-state-server
       - name: Test connection to Scilla server
         run: curl http://localhost:3000
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install default toolchain
+        run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: JS test framework
         run: export PATH="/scilla/0/bin:$PATH" && ./scripts/js_test.sh

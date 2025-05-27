@@ -1,8 +1,11 @@
-use std::{collections::BTreeMap, io::Write};
+use std::{collections::BTreeMap, io::Write, process::Command};
 
-use anyhow::{anyhow, Context, Ok, Result};
+use anyhow::{Context, Ok, Result, anyhow};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
+
+use crate::kms::KmsService;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Secret {
@@ -13,7 +16,8 @@ pub struct Secret {
 }
 
 impl Secret {
-    pub async fn add_version(&self, value: &str) -> Result<()> {
+    pub fn add_version(&self, value: Option<String>, encrypted: bool) -> Result<String> {
+        let value = value.unwrap_or(Self::generate_random_secret());
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
             self.name
@@ -21,26 +25,50 @@ impl Secret {
 
         // Create a new named temporary file with the secret
         let mut temp_file = NamedTempFile::new()?;
-        writeln!(temp_file, "{}", value)?;
 
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "--project",
-                    project_id,
-                    "secrets",
-                    "versions",
-                    "add",
-                    &self.name,
-                    &format!("--data-file={}", temp_file.path().to_str().unwrap()),
-                ],
-            )
-            .run()
-            .await?;
+        if encrypted {
+            // Check if we have the required labels to generate the KMS keyring and key
+            let chain_name = self.labels.get("zq2-network").ok_or_else(|| {
+                anyhow!("Cannot encrypt: missing 'zq2-network' label for KMS keyring")
+            })?;
+            let key_name = if let Some(node_name) = self.labels.get("node-name") {
+                node_name.to_string()
+            } else if let Some(role) = self.labels.get("role") {
+                format!("{}-{}", chain_name, role)
+            } else {
+                return Err(anyhow!(
+                    "Cannot encrypt: missing both 'node-name' and 'role' labels for KMS key"
+                ));
+            };
 
-        if !output.success {
+            // Encrypt using KmsService
+            let ciphertext_base64 = KmsService::encrypt(
+                project_id,
+                &value,
+                &format!("kms-{}", chain_name),
+                &key_name,
+            )?;
+
+            // Write base64 encrypted content to file
+            writeln!(temp_file, "{}", ciphertext_base64)?;
+        } else {
+            // Write plaintext directly if not encrypted
+            writeln!(temp_file, "{}", value)?;
+        }
+
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "secrets",
+                "versions",
+                "add",
+                &self.name,
+                &format!("--data-file={}", temp_file.path().to_str().unwrap()),
+            ])
+            .output()?;
+
+        if !output.status.success() {
             return Err(anyhow!(
                 "Error adding a new version to the secret '{}' in the project {}",
                 self.name,
@@ -48,40 +76,31 @@ impl Secret {
             ));
         }
 
-        Ok(())
+        Ok(value)
     }
 
-    pub async fn create(
-        project_id: &str,
-        name: &str,
-        labels: BTreeMap<String, String>,
-    ) -> Result<Self> {
+    pub fn create(project_id: &str, name: &str, labels: BTreeMap<String, String>) -> Result<Self> {
         let mut labels_to_add = Vec::<String>::new();
 
         for (k, v) in labels.clone() {
             labels_to_add.push(format!("{}={}", k, v));
         }
 
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "--project",
-                    project_id,
-                    "secrets",
-                    "create",
-                    name,
-                    "--replication-policy",
-                    "automatic",
-                    "--labels",
-                    &labels_to_add.join(","),
-                ],
-            )
-            .run()
-            .await?;
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "secrets",
+                "create",
+                name,
+                "--replication-policy",
+                "automatic",
+                "--labels",
+                &labels_to_add.join(","),
+            ])
+            .output()?;
 
-        if !output.success {
+        if !output.status.success() {
             return Err(anyhow!(
                 "Error creating the secret '{}' in the project {}",
                 name,
@@ -96,31 +115,88 @@ impl Secret {
         })
     }
 
-    pub async fn value(&self) -> Result<String> {
+    fn generate_random_secret() -> String {
+        let mut data = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut data);
+        hex::encode(data)
+    }
+
+    pub fn delete(&self) -> Result<()> {
         let project_id = &self.project_id.clone().context(format!(
             "Error retrieving the project ID of the secret {}",
             self.name
         ))?;
 
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "--project",
-                    project_id,
-                    "secrets",
-                    "versions",
-                    "access",
-                    "latest",
-                    "--secret",
-                    &self.name,
-                ],
-            )
-            .run()
-            .await?;
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "secrets",
+                "delete",
+                &self.name,
+                "--quiet",
+            ])
+            .output()?;
 
-        if !output.success {
+        if !output.status.success() {
+            return Err(anyhow!("listing secrets failed"));
+        }
+
+        Ok(())
+    }
+
+    pub fn grant_service_account(
+        secret_name: &str,
+        project_id: &str,
+        service_account_name: &str,
+    ) -> Result<String> {
+        let output = Command::new("gcloud")
+            .args([
+                "secrets",
+                "add-iam-policy-binding",
+                secret_name,
+                "--project",
+                project_id,
+                "--member",
+                &format!("serviceAccount:{}", service_account_name),
+                "--role",
+                "roles/secretmanager.secretAccessor",
+            ])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Error granting the service account '{}' access to the secret '{}' in the project {}: {}",
+                service_account_name,
+                secret_name,
+                project_id,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+    }
+
+    pub fn value(&self) -> Result<String> {
+        let project_id = &self.project_id.clone().context(format!(
+            "Error retrieving the project ID of the secret {}",
+            self.name
+        ))?;
+
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "secrets",
+                "versions",
+                "access",
+                "latest",
+                "--secret",
+                &self.name,
+            ])
+            .output()?;
+
+        if !output.status.success() {
             return Err(anyhow!(
                 "Error retrieving the latest version of the secret '{}' in the project {}",
                 self.name,
@@ -131,26 +207,20 @@ impl Secret {
         Ok(std::str::from_utf8(&output.stdout)?.trim().to_string())
     }
 
-    pub async fn get_secrets(project_id: &str, filter: &str) -> Result<Vec<Secret>> {
-        // List secrets with gcloud command
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "secrets",
-                    "list",
-                    "--project",
-                    project_id,
-                    "--format=json",
-                    "--filter",
-                    filter,
-                ],
-            )
-            .run()
-            .await?;
+    pub fn get_secrets(project_id: &str, filter: &str) -> Result<Vec<Secret>> {
+        let output = Command::new("gcloud")
+            .args([
+                "secrets",
+                "list",
+                "--project",
+                project_id,
+                "--format=json",
+                "--filter",
+                filter,
+            ])
+            .output()?;
 
-        if !output.success {
+        if !output.status.success() {
             return Err(anyhow!("listing secrets failed"));
         }
 
@@ -166,48 +236,5 @@ impl Secret {
         }
 
         Ok(secrets)
-    }
-
-    pub async fn generate_random_secret() -> Result<String> {
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd("openssl", &["rand", "-hex", "32"])
-            .run()
-            .await?;
-
-        if !output.success {
-            return Err(anyhow!("Error generating a random secret"));
-        }
-
-        Ok(std::str::from_utf8(&output.stdout)?.trim().to_string())
-    }
-
-    pub async fn delete(&self) -> Result<()> {
-        let project_id = &self.project_id.clone().context(format!(
-            "Error retrieving the project ID of the secret {}",
-            self.name
-        ))?;
-
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "--project",
-                    project_id,
-                    "secrets",
-                    "delete",
-                    &self.name,
-                    "--quiet",
-                ],
-            )
-            .run()
-            .await?;
-
-        if !output.success {
-            return Err(anyhow!("listing secrets failed"));
-        }
-
-        Ok(())
     }
 }

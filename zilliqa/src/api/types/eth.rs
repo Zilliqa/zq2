@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use alloy::{
     consensus::TxEip1559,
-    primitives::{Address, B256, U128, U256, U64},
+    primitives::{Address, B256, U64, U128, U256},
     rpc::types::TransactionInput,
 };
 use serde::{Deserialize, Serialize};
@@ -25,11 +25,11 @@ pub enum HashOrTransaction {
     Transaction(Transaction),
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct QuorumCertificate {
     #[serde(serialize_with = "hex")]
     pub signature: Vec<u8>,
-    #[serde(serialize_with = "ser_display")]
+    #[serde(serialize_with = "hex")]
     pub cosigned: BitArray,
     #[serde(serialize_with = "hex")]
     pub view: u64,
@@ -104,16 +104,21 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
+    pub fn from_block(
+        block: &message::Block,
+        miner: Address,
+        block_gas_limit: EvmGas,
+        logs_bloom: [u8; 256],
+    ) -> Self {
         Block {
-            header: Header::from_header(block.header, miner, block_gas_limit),
+            header: Header::from_header(block.header, miner, block_gas_limit, logs_bloom),
             size: block.size() as u64,
             transactions: block
                 .transactions
                 .iter()
                 .map(|h| HashOrTransaction::Hash((*h).into()))
                 .collect(),
-            uncles: vec![],
+            uncles: vec![], // Uncles do not exist in ZQ2
             quorum_certificate: QuorumCertificate::from_qc(&block.header.qc),
             aggregate_quorum_certificate: AggregateQc::from_agg(&block.agg),
         }
@@ -134,9 +139,7 @@ pub struct Header {
     #[serde(serialize_with = "hex")]
     pub nonce: [u8; 8],
     #[serde(serialize_with = "hex")]
-    pub sha_3_uncles: B256,
-    #[serde(serialize_with = "hex")]
-    pub logs_bloom: [u8; 256],
+    pub sha_3_uncles: B256, // Uncles do not exist in ZQ2
     #[serde(serialize_with = "hex")]
     pub transactions_root: B256,
     #[serde(serialize_with = "hex")]
@@ -146,9 +149,9 @@ pub struct Header {
     #[serde(serialize_with = "hex")]
     pub miner: Address,
     #[serde(serialize_with = "hex")]
-    pub difficulty: u64,
+    pub difficulty: u64, // Difficulty does not exist in ZQ2
     #[serde(serialize_with = "hex")]
-    pub total_difficulty: u64,
+    pub total_difficulty: u64, // Difficulty does not exist in ZQ2
     #[serde(serialize_with = "hex")]
     pub extra_data: Vec<u8>,
     #[serde(serialize_with = "hex")]
@@ -159,6 +162,8 @@ pub struct Header {
     pub timestamp: u64,
     #[serde(serialize_with = "hex")]
     pub mix_hash: B256,
+    #[serde(serialize_with = "hex")]
+    pub logs_bloom: [u8; 256],
 }
 
 impl Header {
@@ -166,6 +171,7 @@ impl Header {
         header: message::BlockHeader,
         miner: Address,
         block_gas_limit: EvmGas,
+        logs_bloom: [u8; 256],
     ) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
@@ -175,14 +181,15 @@ impl Header {
             parent_hash: header.qc.block_hash.into(),
             mix_hash: B256::ZERO,
             nonce: [0; 8],
-            sha_3_uncles: B256::ZERO,
-            logs_bloom: [0; 256],
+            sha_3_uncles: "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"
+                .parse::<B256>()
+                .unwrap(), // Uncles do not exist in ZQ2
             transactions_root: header.transactions_root_hash.into(),
             state_root: header.state_root_hash.into(),
             receipts_root: header.receipts_root_hash.into(),
             miner,
-            difficulty: 0,
-            total_difficulty: 0,
+            difficulty: 0,       // Difficulty does not exist in ZQ2
+            total_difficulty: 0, // Difficulty does not exist in ZQ2
             extra_data: vec![],
             gas_limit: block_gas_limit,
             gas_used: header.gas_used,
@@ -191,12 +198,13 @@ impl Header {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            logs_bloom,
         }
     }
 }
 
 /// A transaction object, returned by the Ethereum API.
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
     #[serde(serialize_with = "option_hex")]
@@ -340,7 +348,7 @@ pub struct TransactionReceipt {
 }
 
 /// A transaction receipt object, returned by the Ethereum API.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Log {
     pub removed: bool,
@@ -407,7 +415,7 @@ fn m3_2048(bloom: &mut [u8; 256], data: &[u8]) {
 }
 
 /// A type for representing null, a single item or an array of items.
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum OneOrMany<T> {
     Null,
@@ -456,10 +464,36 @@ pub struct TxPoolContent {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SyncingMeta {
+    pub current_phase: String,
+    #[serde(serialize_with = "hex")]
+    pub peer_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub header_downloads: usize,
+    #[serde(serialize_with = "hex")]
+    pub block_downloads: usize,
+    #[serde(serialize_with = "hex")]
+    pub buffered_blocks: usize,
+    #[serde(serialize_with = "hex")]
+    pub empty_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub retry_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub error_count: usize,
+    #[serde(serialize_with = "hex")]
+    pub active_sync_count: usize,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncingStruct {
+    #[serde(serialize_with = "hex")]
     pub starting_block: u64,
+    #[serde(serialize_with = "hex")]
     pub current_block: u64,
+    #[serde(serialize_with = "hex")]
     pub highest_block: u64,
+    pub stats: SyncingMeta,
 }
 
 #[derive(Clone, Serialize)]

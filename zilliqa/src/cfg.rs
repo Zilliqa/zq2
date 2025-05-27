@@ -1,9 +1,11 @@
 use std::{ops::Deref, str::FromStr, time::Duration};
 
-use alloy::primitives::Address;
+use alloy::{primitives::Address, rlp::Encodable};
+use anyhow::{Result, anyhow};
 use libp2p::{Multiaddr, PeerId};
-use rand::{distributions::Alphanumeric, Rng};
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use rand::{Rng, distributions::Alphanumeric};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde_json::json;
 
 use crate::{
     crypto::{Hash, NodePublicKey},
@@ -30,21 +32,124 @@ pub struct Config {
     /// The address of another node to dial when this node starts. To join the network, a node must know about at least
     /// one other existing node in the network.
     #[serde(default)]
-    pub bootstrap_address: Option<(PeerId, Multiaddr)>,
+    pub bootstrap_address: OneOrMany<(PeerId, Multiaddr)>,
     /// The base address of the OTLP collector. If not set, metrics will not be exported.
     #[serde(default)]
     pub otlp_collector_endpoint: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct OneOrMany<T>(pub Vec<T>);
+
+impl<T> Default for OneOrMany<T> {
+    fn default() -> Self {
+        Self(vec![])
+    }
+}
+
+impl<T: Serialize> Serialize for OneOrMany<T> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self.0.len() == 1 {
+            self.0[0].serialize(serializer)
+        } else {
+            self.0.serialize(serializer)
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for OneOrMany<T> {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Inner<T> {
+            One(T),
+            Many(Vec<T>),
+        }
+
+        match Inner::deserialize(deserializer)? {
+            Inner::One(t) => Ok(OneOrMany(vec![t])),
+            Inner::Many(t) => Ok(OneOrMany(t)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnabledApi {
+    EnableAll(String),
+    Enabled {
+        namespace: String,
+        apis: Vec<String>,
+    },
+}
+
+impl EnabledApi {
+    pub fn enabled(&self, api: &str) -> bool {
+        // APIs with no namespace default to the 'zilliqa' namespace.
+        let (ns, method) = api.split_once('_').unwrap_or(("zilliqa", api));
+        match self {
+            EnabledApi::EnableAll(namespace) => namespace == ns,
+            EnabledApi::Enabled { namespace, apis } => {
+                namespace == ns && apis.iter().any(|m| m == method)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiServer {
+    /// The port to listen for JSON-RPC requests on.
+    pub port: u16,
+    /// RPC APIs to enable.
+    pub enabled_apis: Vec<EnabledApi>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncConfig {
+    /// The maximum number of blocks to have outstanding requests for at a time when syncing.
+    #[serde(default = "max_blocks_in_flight_default")]
+    pub max_blocks_in_flight: usize,
+    /// The maximum number of blocks to request in a single message when syncing.
+    #[serde(default = "block_request_batch_size_default")]
+    pub block_request_batch_size: usize,
+    /// The N number of historical blocks to be kept in the DB during pruning. N >= 300.
+    #[serde(default = "u64_max")]
+    pub prune_interval: u64,
+    /// Lowest block to sync from, during passive-sync.
+    /// Cannot be set if prune_interval is set.
+    #[serde(default = "u64_max")]
+    pub base_height: u64,
+    /// Service passive-sync flag
+    #[serde(default)]
+    pub ignore_passive: bool,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            max_blocks_in_flight: max_blocks_in_flight_default(),
+            block_request_batch_size: block_request_batch_size_default(),
+            prune_interval: u64_max(),
+            base_height: u64_max(),
+            ignore_passive: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeConfig {
-    /// The port to listen for JSON-RPC requests on. Defaults to 4201.
-    #[serde(default = "json_rpc_port_default")]
-    pub json_rpc_port: u16,
-    /// If true, the JSON-RPC server is not started. Defaults to false.
-    #[serde(default = "disable_rpc_default")]
-    pub disable_rpc: bool,
+    /// RPC API endpoints to expose.
+    #[serde(default)]
+    pub api_servers: Vec<ApiServer>,
     /// Chain identifier. Doubles as shard_id internally.
     #[serde(default = "eth_chain_id_default")]
     pub eth_chain_id: u64,
@@ -68,12 +173,6 @@ pub struct NodeConfig {
     /// The maximum number of blocks we will send to another node in a single message.
     #[serde(default = "block_request_limit_default")]
     pub block_request_limit: usize,
-    /// The maximum number of blocks to have outstanding requests for at a time when syncing.
-    #[serde(default = "max_blocks_in_flight_default")]
-    pub max_blocks_in_flight: u64,
-    /// The maximum number of blocks to request in a single message when syncing.
-    #[serde(default = "block_request_batch_size_default")]
-    pub block_request_batch_size: u64,
     /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC. Defaults to no limit.
     #[serde(default = "state_rpc_limit_default")]
     pub state_rpc_limit: usize,
@@ -81,13 +180,21 @@ pub struct NodeConfig {
     /// Defaults to 10 seconds.
     #[serde(default = "failed_request_sleep_duration_default")]
     pub failed_request_sleep_duration: Duration,
+    /// Enable additional indices used by some Otterscan APIs. Enabling this will use more disk space and block processing will take longer.
+    #[serde(default)]
+    pub enable_ots_indices: bool,
+    /// Maximum allowed RPC response size
+    #[serde(default = "max_rpc_response_size_default")]
+    pub max_rpc_response_size: u32,
+    /// Sync configuration
+    #[serde(default)]
+    pub sync: SyncConfig,
 }
 
 impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
-            json_rpc_port: json_rpc_port_default(),
-            disable_rpc: disable_rpc_default(),
+            api_servers: vec![],
             eth_chain_id: eth_chain_id_default(),
             consensus: ConsensusConfig::default(),
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
@@ -96,11 +203,59 @@ impl Default for NodeConfig {
             load_checkpoint: None,
             do_checkpoints: false,
             block_request_limit: block_request_limit_default(),
-            max_blocks_in_flight: max_blocks_in_flight_default(),
-            block_request_batch_size: block_request_batch_size_default(),
+            sync: SyncConfig {
+                max_blocks_in_flight: max_blocks_in_flight_default(),
+                block_request_batch_size: block_request_batch_size_default(),
+                base_height: u64_max(),
+                prune_interval: u64_max(),
+                ignore_passive: false,
+            },
             state_rpc_limit: state_rpc_limit_default(),
             failed_request_sleep_duration: failed_request_sleep_duration_default(),
+            enable_ots_indices: false,
+            max_rpc_response_size: max_rpc_response_size_default(),
         }
+    }
+}
+
+impl NodeConfig {
+    pub fn validate(&self) -> Result<()> {
+        if let serde_json::Value::Object(map) =
+            serde_json::to_value(self.consensus.contract_upgrades.clone())?
+        {
+            for (contract, block_height) in map {
+                if block_height.as_u64().unwrap_or(0) % self.consensus.blocks_per_epoch != 0 {
+                    return Err(anyhow!(
+                        "Contract upgrades must be configured to occur at epoch boundaries. blocks_per_epoch: {}, contract {} configured to be upgraded block: {}",
+                        self.consensus.blocks_per_epoch,
+                        contract,
+                        block_height
+                    ));
+                }
+            }
+        }
+        if self.sync.base_height != u64_max() && self.sync.prune_interval != u64_max() {
+            return Err(anyhow!(
+                "base_height and prune_interval cannot be set at the same time"
+            ));
+        }
+
+        // when set, >> 15 to avoid pruning forks; > 256 to be EVM-safe; arbitrarily picked.
+        if self.sync.prune_interval < crate::sync::MIN_PRUNE_INTERVAL {
+            return Err(anyhow!(
+                "prune_interval must be at least {}",
+                crate::sync::MIN_PRUNE_INTERVAL
+            ));
+        }
+        // 100 is a reasonable minimum for a node to be useful.
+        if self.sync.block_request_batch_size < 100 {
+            return Err(anyhow!("block_request_batch_size must be at least 100"));
+        }
+        // 1000 would saturate a typical node.
+        if self.sync.max_blocks_in_flight > 1000 {
+            return Err(anyhow!("max_blocks_in_flight must be at most 1000"));
+        }
+        Ok(())
     }
 }
 
@@ -135,6 +290,10 @@ where
     })
 }
 
+pub fn u64_max() -> u64 {
+    u64::MAX
+}
+
 pub fn allowed_timestamp_skew_default() -> Duration {
     Duration::from_secs(60)
 }
@@ -143,28 +302,24 @@ pub fn state_cache_size_default() -> usize {
     256 * 1024 * 1024 // 256 MiB
 }
 
-pub fn json_rpc_port_default() -> u16 {
-    4201
-}
-
 pub fn eth_chain_id_default() -> u64 {
     700 + 0x8000
-}
-
-pub fn disable_rpc_default() -> bool {
-    false
 }
 
 pub fn block_request_limit_default() -> usize {
     100
 }
 
-pub fn max_blocks_in_flight_default() -> u64 {
+pub fn max_blocks_in_flight_default() -> usize {
     1000
 }
 
-pub fn block_request_batch_size_default() -> u64 {
+pub fn block_request_batch_size_default() -> usize {
     100
+}
+
+pub fn max_rpc_response_size_default() -> u32 {
+    10 * 1024 * 1024 // 10 MB
 }
 
 pub fn state_rpc_limit_default() -> usize {
@@ -265,14 +420,10 @@ pub struct ConsensusConfig {
     /// Accounts that will be pre-funded at genesis.
     #[serde(default)]
     pub genesis_accounts: Vec<(Address, Amount)>,
-    /// Minimum time to wait for consensus to propose new block if there are no transactions. This therefore acts also as the minimum block time.
-    #[serde(default = "empty_block_timeout_default")]
-    pub empty_block_timeout: Duration,
-    /// Minimum remaining time before end of round in which Proposer has the opportunity to broadcast empty block proposal.
-    /// If there is less time than this value left in a round then the view will likely move on before a proposal has time to be finalised.
-    #[serde(default = "minimum_time_left_for_empty_block_default")]
-    pub minimum_time_left_for_empty_block: Duration,
-    /// Address of the Scilla server. Defaults to "http://localhost:3000".
+    /// The expected time between blocks when no views are missed.
+    #[serde(default = "block_time_default")]
+    pub block_time: Duration,
+    /// Address of the Scilla server. Defaults to "http://localhost:62831".
     #[serde(default = "scilla_address_default")]
     pub scilla_address: String,
     /// Where (in the Scilla server's filesystem) is the library directory containing Scilla library functions?
@@ -281,11 +432,11 @@ pub struct ConsensusConfig {
     /// Where are the external libraries are stored on zq2 and scilla server's filesystem so that scilla server can find them?
     #[serde(default = "scilla_ext_libs_path_default")]
     pub scilla_ext_libs_path: ScillaExtLibsPath,
-    /// Hostname at which this process is accessible by the Scilla process. Defaults to "localhost". If running the
-    /// Scilla process in Docker and this process on the host, you probably want to pass
-    /// `--add-host host.docker.internal:host-gateway` to Docker and set this to `host.docker.internal`.
-    #[serde(default = "local_address_default")]
-    pub local_address: String,
+    /// Directory in which the Unix domain socket used by the Scilla state server is created. If the Scilla process is
+    /// running in Docker, this directory should be mounted inside the container too. Defaults to
+    /// "/tmp/scilla-state-server".
+    #[serde(default = "scilla_server_socket_directory_default")]
+    pub scilla_server_socket_directory: String,
     /// Reward amount issued per hour, in Wei.
     pub rewards_per_hour: Amount,
     /// Number of blocks per hour. The reward per block is set at (rewards_per_hour/blocks_per_hour) Wei.
@@ -307,13 +458,47 @@ pub struct ConsensusConfig {
     /// The total supply of native token in the network in Wei. Any funds which are not immediately assigned to an account (via genesis_accounts and genesis_deposits env vars) will be assigned to the zero account (0x0).
     #[serde(default = "total_native_token_supply_default")]
     pub total_native_token_supply: Amount,
-    /// Calls to the `scilla_call` precompile from these addresses cost a different amount of gas. If the provided gas
-    /// limit is not enough, the call will still succeed and we will charge as much gas as we can. This hack exists due
-    /// to important contracts deployed on Zilliqa 1's mainnet that pass the incorrect gas limit to `scilla_call`.
-    /// Zilliqa 1's implementation was broken and accepted these calls and these contracts are now widely used and
-    /// bridged to other chains.
+    /// The block heights at which we perform EIP-1967 contract upgrades
+    /// Contract upgrades occur only at epoch boundaries, ie at block heights which are a multiple of blocks_per_epoch
     #[serde(default)]
-    pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    pub contract_upgrades: ContractUpgrades,
+    /// The initial fork configuration at genesis block. This provides a complete description of the execution behavior
+    /// at the genesis block.
+    #[serde(default = "genesis_fork_default")]
+    pub genesis_fork: Fork,
+    /// Forks in block execution logic. Each entry describes the difference in logic and the block height at which that
+    /// difference applies.
+    #[serde(default)]
+    pub forks: Vec<ForkDelta>,
+    /// Interval at which NewView messages are broadcast when node is in timeout
+    /// Defaut of 0 means never broadcast
+    #[serde(default = "new_view_broadcast_interval_default")]
+    pub new_view_broadcast_interval: Duration,
+}
+
+impl ConsensusConfig {
+    /// Generates a list of forks by applying the delta forks initially to the genesis fork and then to the previous one.
+    /// The genesis fork is the initial fork configuration at the genesis block.
+    pub fn get_forks(&self) -> Result<Forks> {
+        if self.genesis_fork.at_height != 0 {
+            return Err(anyhow!("first fork must start at height 0"));
+        }
+
+        let mut delta_forks = self.forks.clone();
+        delta_forks.sort_unstable_by_key(|f| f.at_height);
+
+        let forks =
+            delta_forks
+                .into_iter()
+                .fold(vec![self.genesis_fork.clone()], |mut forks, delta| {
+                    let last_fork = forks.last().unwrap(); // Safe to call unwrap because we always have genesis_fork
+                    let new_fork = last_fork.apply_delta_fork(&delta);
+                    forks.push(new_fork);
+                    forks
+                });
+
+        Ok(Forks(forks))
+    }
 }
 
 impl Default for ConsensusConfig {
@@ -324,12 +509,11 @@ impl Default for ConsensusConfig {
             consensus_timeout: consensus_timeout_default(),
             genesis_deposits: vec![],
             genesis_accounts: vec![],
-            empty_block_timeout: empty_block_timeout_default(),
-            minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
+            block_time: block_time_default(),
             scilla_address: scilla_address_default(),
             scilla_stdlib_dir: scilla_stdlib_dir_default(),
             scilla_ext_libs_path: scilla_ext_libs_path_default(),
-            local_address: local_address_default(),
+            scilla_server_socket_directory: scilla_server_socket_directory_default(),
             rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
             blocks_per_hour: 3600 * 40,
             minimum_stake: 32_000_000_000_000_000_000u128.into(),
@@ -338,7 +522,232 @@ impl Default for ConsensusConfig {
             epochs_per_checkpoint: epochs_per_checkpoint_default(),
             gas_price: 4_761_904_800_000u128.into(),
             total_native_token_supply: total_native_token_supply_default(),
-            scilla_call_gas_exempt_addrs: vec![],
+            contract_upgrades: ContractUpgrades::default(),
+            forks: vec![],
+            genesis_fork: genesis_fork_default(),
+            new_view_broadcast_interval: new_view_broadcast_interval_default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Forks(Vec<Fork>);
+
+impl Forks {
+    pub fn get(&self, height: u64) -> &Fork {
+        // Binary search to find the fork at the specified height. If an entry was not found at exactly the specified
+        // height, the `Err` returned from `binary_search_by_key` will contain the index where an element with this
+        // height could be inserted. By subtracting one from this, we get the maximum entry with a height less than the
+        // searched height.
+        let index = self
+            .0
+            .binary_search_by_key(&height, |f| f.at_height)
+            .unwrap_or_else(|i| i - 1);
+        &self.0[index]
+    }
+
+    pub fn find_height_fork_first_activated(&self, fork_name: ForkName) -> Option<u64> {
+        let mut sorted_fork = self.0.clone();
+        sorted_fork.sort_by_key(|item| item.at_height);
+        for fork in sorted_fork.iter() {
+            if match fork_name {
+                ForkName::ExecutableBlocks => fork.executable_blocks,
+                ForkName::FailedScillaCallFromGasExemptCallerCausesRevert => {
+                    fork.failed_scilla_call_from_gas_exempt_caller_causes_revert
+                }
+                ForkName::CallMode1SetsCallerToParentCaller => {
+                    fork.call_mode_1_sets_caller_to_parent_caller
+                }
+                ForkName::ScillaMessagesCanCallEvmContracts => {
+                    fork.scilla_messages_can_call_evm_contracts
+                }
+                ForkName::ScillaContractCreationIncrementsAccountBalance => {
+                    fork.scilla_contract_creation_increments_account_balance
+                }
+                ForkName::ScillaJsonPreserveOrder => fork.scilla_json_preserve_order,
+                ForkName::ScillaCallRespectsEvmStateChanges => {
+                    fork.scilla_call_respects_evm_state_changes
+                }
+                ForkName::OnlyMutatedAccountsUpdateState => fork.only_mutated_accounts_update_state,
+                ForkName::ScillaCallGasExemptAddrs => {
+                    fork.scilla_call_gas_exempt_addrs.length() != 0
+                }
+                ForkName::ScillaBlockNumberReturnsCurrentBlock => {
+                    fork.scilla_block_number_returns_current_block
+                }
+                ForkName::ScillaMapsAreEncodedCorrectly => fork.scilla_maps_are_encoded_correctly,
+                ForkName::FundAccountsFromZeroAccount => {
+                    !fork.fund_accounts_from_zero_account.is_empty()
+                }
+            } {
+                return Some(fork.at_height);
+            }
+        }
+        None
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Fork {
+    pub at_height: u64,
+    pub executable_blocks: bool,
+    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: bool,
+    pub call_mode_1_sets_caller_to_parent_caller: bool,
+    pub scilla_messages_can_call_evm_contracts: bool,
+    pub scilla_contract_creation_increments_account_balance: bool,
+    pub scilla_json_preserve_order: bool,
+    pub scilla_call_respects_evm_state_changes: bool,
+    pub only_mutated_accounts_update_state: bool,
+    pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    pub scilla_block_number_returns_current_block: bool,
+    pub scilla_maps_are_encoded_correctly: bool,
+    pub transfer_gas_fee_to_zero_account: bool,
+    pub apply_scilla_delta_when_evm_succeeded: bool,
+    pub apply_state_changes_only_if_transaction_succeeds: bool,
+    pub scilla_deduct_funds_from_actual_sender: bool,
+    pub fund_accounts_from_zero_account: Vec<(Address, Amount)>,
+}
+
+pub enum ForkName {
+    ExecutableBlocks,
+    FailedScillaCallFromGasExemptCallerCausesRevert,
+    CallMode1SetsCallerToParentCaller,
+    ScillaMessagesCanCallEvmContracts,
+    ScillaContractCreationIncrementsAccountBalance,
+    ScillaJsonPreserveOrder,
+    ScillaCallRespectsEvmStateChanges,
+    OnlyMutatedAccountsUpdateState,
+    ScillaCallGasExemptAddrs,
+    ScillaBlockNumberReturnsCurrentBlock,
+    ScillaMapsAreEncodedCorrectly,
+    FundAccountsFromZeroAccount,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ForkDelta {
+    pub at_height: u64,
+    /// If true then transactions can be executed against blocks.
+    /// Currently used to mark the height at which ZQ1 blocks end and ZQ2 blocks begin in converted persistence networks. This is required because their state root hashes are set to Hash::ZERO.
+    pub executable_blocks: Option<bool>,
+    /// If true, if a caller who is in the `scilla_call_gas_exempt_addrs` list makes a call to the `scilla_call`
+    /// precompile and the inner Scilla call fails, the entire transaction will revert. If false, the normal EVM
+    /// semantics apply where the caller can decide how to act based on the success of the inner call.
+    pub failed_scilla_call_from_gas_exempt_caller_causes_revert: Option<bool>,
+    /// If true, if a call is made to the `scilla_call` precompile with `call_mode` / `keep_origin` set to `1`, the
+    /// `_sender` of the inner Scilla call will be set to the caller of the current call-stack. If false, the `_sender`
+    /// will be set to the original transaction signer.
+    ///
+    /// For example:
+    /// A (EOA) -> B (EVM) -> C (EVM) -> D (Scilla)
+    ///
+    /// When this flag is true, `D` will see the `_sender` as `B`. When this flag is false, `D` will see the `_sender`
+    /// as `A`.
+    pub call_mode_1_sets_caller_to_parent_caller: Option<bool>,
+    /// If true, when a Scilla message is sent to an EVM contract, the EVM contract will be treated as if it was an
+    /// EOA (i.e. any ZIL passed will be transferred to the contract and execution will continue). If false, sending a
+    /// Scilla message to an EVM contract will cause the Scilla transaction to fail.
+    pub scilla_messages_can_call_evm_contracts: Option<bool>,
+    /// If true, when a contract is deployed, if the contract address is already funded,
+    /// the contract balance will be sum of the existing balance and the amount sent in the deployment transaction.
+    /// If false, the contract balance will be the amount sent in the deployment transaction.
+    pub scilla_contract_creation_increments_account_balance: Option<bool>,
+    /// If true, JSON maps that are passed to Scilla will be in their original order. If false, the entries will be
+    /// sorted by their keys.
+    pub scilla_json_preserve_order: Option<bool>,
+    /// If true, interop calls to the `scilla_call` precompile will correctly see state changes already made by the EVM
+    /// before that point in the transaction's execution. Also both Scilla and EVM will be able to update the same
+    /// accounts without state changes being lost. If false, state changes can be lost if Scilla and EVM attempt to
+    /// update the same account. This can sometimes lead to mined transactions which don't increase the caller's nonce.
+    pub scilla_call_respects_evm_state_changes: Option<bool>,
+    // If true, when an account is accessed but not mutated as part of transaction execution, we will not change the
+    // state of that account in the state trie. If false, we will always update state to the read value of the account.
+    // Most of the time this does not make a difference, because we would just be writing back the same value we read.
+    // However, in some edge cases (e.g. precompiles) setting this value to `false` results in spurious writes of
+    // default accounts to the state trie.
+    pub only_mutated_accounts_update_state: Option<bool>,
+    /// Calls to the `scilla_call` precompile from these addresses cost a different amount of gas. If the provided gas
+    /// limit is not enough, the call will still succeed and we will charge as much gas as we can. This hack exists due
+    /// to important contracts deployed on Zilliqa 1's mainnet that pass the incorrect gas limit to `scilla_call`.
+    /// Zilliqa 1's implementation was broken and accepted these calls and these contracts are now widely used and
+    /// bridged to other chains. Adding a value to this list in a [ForkDelta] will append it to the total list of
+    /// exempt addresses.
+    #[serde(default)]
+    pub scilla_call_gas_exempt_addrs: Vec<Address>,
+    /// If true, querying the `BLOCKNUMBER` from Scilla will correctly return the current block number (i.e. the one
+    /// the transaction is about to be included in). If false, it will return the previous block number.
+    pub scilla_block_number_returns_current_block: Option<bool>,
+    /// If true, nested Scilla maps are returned to the Scilla intepreter in the correct format and keys are encoded
+    /// properly. If false, Scilla transactions will work but they will be incorrect in undetermined ways.
+    pub scilla_maps_are_encoded_correctly: Option<bool>,
+    /// If true, the total gas paid by all transactions in a block is transferred to the zero address.
+    /// This keeps the total supply of the network constant. If false, we still transfer funds to the zero address,
+    /// but with an incorrect gas price of 1 Wei per gas.
+    pub transfer_gas_fee_to_zero_account: Option<bool>,
+    /// If true, when there are successful interop calls and in the end EVM transaction fails,
+    /// no state changes are applied for affected accounts by interop calls
+    pub apply_scilla_delta_when_evm_succeeded: Option<bool>,
+    /// If true, only apply state changes if the transaction succeeds. If false, apply state changes even if the
+    /// transaction fails.
+    pub apply_state_changes_only_if_transaction_succeeds: Option<bool>,
+    /// if true, funds are deducted from the sender of scilla message rather than the origin
+    pub scilla_deduct_funds_from_actual_sender: Option<bool>,
+    /// Send funds from zero account to faucet account
+    pub fund_accounts_from_zero_account: Option<Vec<(Address, Amount)>>,
+}
+
+impl Fork {
+    pub fn apply_delta_fork(&self, delta: &ForkDelta) -> Fork {
+        Fork {
+            at_height: delta.at_height,
+            executable_blocks: delta.executable_blocks.unwrap_or(self.executable_blocks),
+            failed_scilla_call_from_gas_exempt_caller_causes_revert: delta
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+                .unwrap_or(self.failed_scilla_call_from_gas_exempt_caller_causes_revert),
+            call_mode_1_sets_caller_to_parent_caller: delta
+                .call_mode_1_sets_caller_to_parent_caller
+                .unwrap_or(self.call_mode_1_sets_caller_to_parent_caller),
+            scilla_messages_can_call_evm_contracts: delta
+                .scilla_messages_can_call_evm_contracts
+                .unwrap_or(self.scilla_messages_can_call_evm_contracts),
+            scilla_contract_creation_increments_account_balance: delta
+                .scilla_contract_creation_increments_account_balance
+                .unwrap_or(self.scilla_contract_creation_increments_account_balance),
+            scilla_json_preserve_order: delta
+                .scilla_json_preserve_order
+                .unwrap_or(self.scilla_json_preserve_order),
+            scilla_call_respects_evm_state_changes: delta
+                .scilla_call_respects_evm_state_changes
+                .unwrap_or(self.scilla_call_respects_evm_state_changes),
+            only_mutated_accounts_update_state: delta
+                .only_mutated_accounts_update_state
+                .unwrap_or(self.only_mutated_accounts_update_state),
+            scilla_call_gas_exempt_addrs: {
+                let mut addrs = self.scilla_call_gas_exempt_addrs.clone();
+                addrs.extend_from_slice(&delta.scilla_call_gas_exempt_addrs);
+                addrs
+            },
+            scilla_block_number_returns_current_block: delta
+                .scilla_block_number_returns_current_block
+                .unwrap_or(self.scilla_block_number_returns_current_block),
+            scilla_maps_are_encoded_correctly: delta
+                .scilla_maps_are_encoded_correctly
+                .unwrap_or(self.scilla_maps_are_encoded_correctly),
+            transfer_gas_fee_to_zero_account: delta
+                .transfer_gas_fee_to_zero_account
+                .unwrap_or(self.transfer_gas_fee_to_zero_account),
+            apply_scilla_delta_when_evm_succeeded: delta
+                .apply_scilla_delta_when_evm_succeeded
+                .unwrap_or(self.apply_scilla_delta_when_evm_succeeded),
+            apply_state_changes_only_if_transaction_succeeds: delta
+                .apply_state_changes_only_if_transaction_succeeds
+                .unwrap_or(self.apply_state_changes_only_if_transaction_succeeds),
+            scilla_deduct_funds_from_actual_sender: delta
+                .scilla_deduct_funds_from_actual_sender
+                .unwrap_or(self.scilla_deduct_funds_from_actual_sender),
+            fund_accounts_from_zero_account: delta
+                .fund_accounts_from_zero_account
+                .clone()
+                .unwrap_or_default(),
         }
     }
 }
@@ -354,19 +763,15 @@ pub struct GenesisDeposit {
 }
 
 pub fn consensus_timeout_default() -> Duration {
-    Duration::from_secs(5)
+    Duration::from_secs(15)
 }
 
-pub fn empty_block_timeout_default() -> Duration {
+pub fn block_time_default() -> Duration {
     Duration::from_millis(1000)
 }
 
-pub fn minimum_time_left_for_empty_block_default() -> Duration {
-    Duration::from_millis(3000)
-}
-
 pub fn scilla_address_default() -> String {
-    String::from("http://localhost:3000")
+    String::from("http://localhost:62831")
 }
 
 // This path is as viewed from Scilla, not zq2.
@@ -376,13 +781,13 @@ pub fn scilla_stdlib_dir_default() -> String {
 
 pub fn scilla_ext_libs_path_default() -> ScillaExtLibsPath {
     ScillaExtLibsPath {
-        zq2: ScillaExtLibsPathInZq2(String::from("/tmp")),
+        zq2: ScillaExtLibsPathInZq2(String::from("/tmp/scilla_ext_libs")),
         scilla: ScillaExtLibsPathInScilla(String::from("/scilla_ext_libs")),
     }
 }
 
-pub fn local_address_default() -> String {
-    String::from("localhost")
+pub fn scilla_server_socket_directory_default() -> String {
+    String::from("/tmp/scilla-state-server")
 }
 
 pub fn blocks_per_epoch_default() -> u64 {
@@ -399,4 +804,405 @@ fn default_true() -> bool {
 
 pub fn total_native_token_supply_default() -> Amount {
     Amount::from(21_000_000_000_000_000_000_000_000_000)
+}
+
+pub fn withdrawal_period_default() -> u64 {
+    // 2 weeks worth of blocks with 1 second block time
+    2 * 7 * 24 * 60 * 60
+}
+
+/// The default implementation returns a single fork at the genesis block, with the most up-to-date
+/// execution logic.
+pub fn genesis_fork_default() -> Fork {
+    Fork {
+        at_height: 0,
+        executable_blocks: true,
+        failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+        call_mode_1_sets_caller_to_parent_caller: true,
+        scilla_messages_can_call_evm_contracts: true,
+        scilla_contract_creation_increments_account_balance: true,
+        scilla_json_preserve_order: true,
+        scilla_call_respects_evm_state_changes: true,
+        only_mutated_accounts_update_state: true,
+        scilla_call_gas_exempt_addrs: vec![],
+        scilla_block_number_returns_current_block: true,
+        scilla_maps_are_encoded_correctly: true,
+        transfer_gas_fee_to_zero_account: true,
+        apply_scilla_delta_when_evm_succeeded: true,
+        apply_state_changes_only_if_transaction_succeeds: true,
+        scilla_deduct_funds_from_actual_sender: true,
+        fund_accounts_from_zero_account: vec![],
+    }
+}
+
+pub fn new_view_broadcast_interval_default() -> Duration {
+    Duration::from_secs(300)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReinitialiseParams {
+    /// The minimum number of blocks a staker must wait before being able to withdraw unstaked funds
+    pub withdrawal_period: u64,
+}
+
+impl Default for ReinitialiseParams {
+    fn default() -> Self {
+        Self {
+            withdrawal_period: withdrawal_period_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractUpgradeConfig {
+    pub height: u64,
+    pub reinitialise_params: Option<ReinitialiseParams>,
+}
+
+impl ContractUpgradeConfig {
+    pub fn from_height(height: u64) -> Self {
+        Self {
+            height,
+            reinitialise_params: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractUpgrades {
+    pub deposit_v3: Option<ContractUpgradeConfig>,
+    pub deposit_v4: Option<ContractUpgradeConfig>,
+    pub deposit_v5: Option<ContractUpgradeConfig>,
+}
+
+impl ContractUpgrades {
+    pub fn new(
+        deposit_v3: Option<ContractUpgradeConfig>,
+        deposit_v4: Option<ContractUpgradeConfig>,
+        deposit_v5: Option<ContractUpgradeConfig>,
+    ) -> ContractUpgrades {
+        Self {
+            deposit_v3,
+            deposit_v4,
+            deposit_v5,
+        }
+    }
+    pub fn to_toml(&self) -> toml::Value {
+        // toml doesn't like Option types. We need to manually map items in struct removing keys for None values as we go
+        // ContractUpgrades's values are only either u64, None or a json object
+        fn serde_value_to_toml_value(input: serde_json::Value) -> toml::Value {
+            toml::Value::Table(
+                input
+                    .as_object()
+                    .unwrap()
+                    .clone()
+                    .into_iter()
+                    .filter_map(|(k, v)| {
+                        if v.is_null() {
+                            // Ignore None values
+                            None
+                        } else if v.is_u64() {
+                            // Parse ints
+                            Some((k, toml::Value::Integer(v.as_u64().unwrap() as i64)))
+                        } else {
+                            // Recursively parse objects
+                            Some((k, serde_value_to_toml_value(v)))
+                        }
+                    })
+                    .collect(),
+            )
+        }
+        serde_value_to_toml_value(json!(self))
+    }
+}
+
+impl Default for ContractUpgrades {
+    fn default() -> Self {
+        Self {
+            deposit_v3: None,
+            deposit_v4: None,
+            deposit_v5: Some(ContractUpgradeConfig {
+                height: 0,
+                reinitialise_params: Some(ReinitialiseParams::default()),
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_forks_with_no_forks() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 1);
+        assert_eq!(forks.get(0).at_height, 0);
+    }
+
+    #[test]
+    fn test_get_forks_with_one_fork() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![ForkDelta {
+                at_height: 10,
+                executable_blocks: None,
+                failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                call_mode_1_sets_caller_to_parent_caller: Some(false),
+                scilla_messages_can_call_evm_contracts: None,
+                scilla_contract_creation_increments_account_balance: Some(false),
+                scilla_json_preserve_order: None,
+                scilla_call_respects_evm_state_changes: None,
+                only_mutated_accounts_update_state: None,
+                scilla_call_gas_exempt_addrs: vec![],
+                scilla_block_number_returns_current_block: None,
+                scilla_maps_are_encoded_correctly: None,
+                transfer_gas_fee_to_zero_account: None,
+                apply_scilla_delta_when_evm_succeeded: None,
+                apply_state_changes_only_if_transaction_succeeds: None,
+                scilla_deduct_funds_from_actual_sender: None,
+                fund_accounts_from_zero_account: None,
+            }],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 2);
+        assert_eq!(forks.get(0).at_height, 0);
+        assert_eq!(forks.get(11).at_height, 10);
+        assert!(!forks.get(10).call_mode_1_sets_caller_to_parent_caller);
+        assert!(
+            !forks
+                .get(10)
+                .scilla_contract_creation_increments_account_balance
+        );
+    }
+
+    #[test]
+    fn test_get_forks_with_multiple_forks() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![
+                ForkDelta {
+                    at_height: 10,
+                    executable_blocks: Some(true),
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(true),
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: Some(true),
+                    scilla_contract_creation_increments_account_balance: None,
+                    scilla_json_preserve_order: Some(true),
+                    scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
+                },
+                ForkDelta {
+                    at_height: 20,
+                    executable_blocks: Some(true),
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
+                    call_mode_1_sets_caller_to_parent_caller: Some(true),
+                    scilla_messages_can_call_evm_contracts: Some(false),
+                    scilla_contract_creation_increments_account_balance: Some(true),
+                    scilla_json_preserve_order: Some(true),
+                    scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 3);
+        assert_eq!(forks.get(0).at_height, 0);
+        assert_eq!(forks.get(11).at_height, 10);
+        assert_eq!(forks.get(21).at_height, 20);
+        assert!(
+            forks
+                .get(10)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+        assert!(forks.get(11).scilla_messages_can_call_evm_contracts);
+        assert!(
+            !forks
+                .get(20)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+        assert!(forks.get(20).call_mode_1_sets_caller_to_parent_caller);
+        assert!(!forks.get(20).scilla_messages_can_call_evm_contracts);
+        assert!(
+            forks
+                .get(20)
+                .scilla_contract_creation_increments_account_balance
+        );
+    }
+
+    #[test]
+    fn test_get_forks_with_unsorted_forks() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![
+                ForkDelta {
+                    at_height: 20,
+                    executable_blocks: Some(true),
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: Some(false),
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                    scilla_json_preserve_order: None,
+                    scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
+                },
+                ForkDelta {
+                    at_height: 10,
+                    executable_blocks: Some(true),
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                    scilla_json_preserve_order: None,
+                    scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.0.len(), 3);
+        assert_eq!(forks.get(0).at_height, 0);
+        assert_eq!(forks.get(12).at_height, 10);
+        assert_eq!(forks.get(22).at_height, 20);
+
+        assert!(
+            forks
+                .get(10)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+        assert!(
+            !forks
+                .get(20)
+                .failed_scilla_call_from_gas_exempt_caller_causes_revert
+        );
+    }
+
+    #[test]
+    fn test_get_forks_with_missing_genesis_fork() {
+        let config = ConsensusConfig {
+            genesis_fork: Fork {
+                at_height: 1,
+                executable_blocks: true,
+                failed_scilla_call_from_gas_exempt_caller_causes_revert: true,
+                call_mode_1_sets_caller_to_parent_caller: true,
+                scilla_messages_can_call_evm_contracts: true,
+                scilla_contract_creation_increments_account_balance: true,
+                scilla_json_preserve_order: true,
+                scilla_call_respects_evm_state_changes: true,
+                only_mutated_accounts_update_state: true,
+                scilla_call_gas_exempt_addrs: vec![],
+                scilla_block_number_returns_current_block: true,
+                scilla_maps_are_encoded_correctly: true,
+                transfer_gas_fee_to_zero_account: true,
+                apply_scilla_delta_when_evm_succeeded: true,
+                apply_state_changes_only_if_transaction_succeeds: true,
+                scilla_deduct_funds_from_actual_sender: true,
+                fund_accounts_from_zero_account: vec![],
+            },
+            forks: vec![],
+            ..Default::default()
+        };
+
+        let result = config.get_forks();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_forks_boundary_cases() {
+        let config = ConsensusConfig {
+            genesis_fork: genesis_fork_default(),
+            forks: vec![
+                ForkDelta {
+                    at_height: 10,
+                    executable_blocks: None,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                    scilla_json_preserve_order: None,
+                    scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
+                },
+                ForkDelta {
+                    at_height: 20,
+                    executable_blocks: None,
+                    failed_scilla_call_from_gas_exempt_caller_causes_revert: None,
+                    call_mode_1_sets_caller_to_parent_caller: None,
+                    scilla_messages_can_call_evm_contracts: None,
+                    scilla_contract_creation_increments_account_balance: None,
+                    scilla_json_preserve_order: None,
+                    scilla_call_respects_evm_state_changes: None,
+                    only_mutated_accounts_update_state: None,
+                    scilla_call_gas_exempt_addrs: vec![],
+                    scilla_block_number_returns_current_block: None,
+                    scilla_maps_are_encoded_correctly: None,
+                    transfer_gas_fee_to_zero_account: None,
+                    apply_scilla_delta_when_evm_succeeded: None,
+                    apply_state_changes_only_if_transaction_succeeds: None,
+                    scilla_deduct_funds_from_actual_sender: None,
+                    fund_accounts_from_zero_account: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let forks = config.get_forks().unwrap();
+        assert_eq!(forks.get(9).at_height, 0);
+        assert_eq!(forks.get(10).at_height, 10);
+        assert_eq!(forks.get(19).at_height, 10);
+        assert_eq!(forks.get(20).at_height, 20);
+        assert_eq!(forks.get(22).at_height, 20);
+    }
 }

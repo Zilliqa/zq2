@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tracing::debug;
 
 use crate::{
@@ -29,6 +29,12 @@ pub enum TxAddResult {
     NonceTooLow(u64, u64),
     /// This txn has same nonce, lower gas price as one already in the mempool
     SameNonceButLowerGasPrice,
+}
+
+/// For transaction status returns
+pub enum PendingOrQueued {
+    Pending,
+    Queued,
 }
 
 impl TxAddResult {
@@ -165,6 +171,22 @@ impl TransactionPool {
         Ok(None)
     }
 
+    /// Returns whether the transaction is pending or queued
+    pub fn get_pending_or_queued(
+        &self,
+        state: &State,
+        txn: &VerifiedTransaction,
+    ) -> Result<Option<PendingOrQueued>> {
+        if txn.tx.nonce() == Some(state.get_account(txn.signer)?.nonce) || txn.tx.nonce().is_none()
+        {
+            Ok(Some(PendingOrQueued::Pending))
+        } else if self.hash_to_index.contains_key(&txn.hash) {
+            Ok(Some(PendingOrQueued::Queued))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Returns a list of txns that are pending for inclusion in the next block
     pub fn pending_transactions(&self, state: &State) -> Result<Vec<&VerifiedTransaction>> {
         // Keeps track of [account, cumulative_txns_cost]
@@ -261,7 +283,12 @@ impl TransactionPool {
         from_broadcast: bool,
     ) -> TxAddResult {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
-            debug!("Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
+            debug!(
+                "Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}",
+                txn.hash,
+                txn.signer,
+                txn.tx.nonce()
+            );
             // This transaction is permanently invalid, so there is nothing to do.
             // unwrap() is safe because we checked above that it was some().
             return TxAddResult::NonceTooLow(txn.tx.nonce().unwrap(), account_nonce);
@@ -276,7 +303,13 @@ impl TransactionPool {
             // keeping the same nonce. So for those, it will always discard the new (identical)
             // one.
             if ReadyItem::from(existing_txn) >= ReadyItem::from(&txn) {
-                debug!("Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}", txn.hash, txn.signer, txn.tx.nonce(), txn.tx.gas_price_per_evm_gas());
+                debug!(
+                    "Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}",
+                    txn.hash,
+                    txn.signer,
+                    txn.tx.nonce(),
+                    txn.tx.gas_price_per_evm_gas()
+                );
                 return TxAddResult::SameNonceButLowerGasPrice;
             }
 
@@ -297,7 +330,12 @@ impl TransactionPool {
             self.store_broadcast_txn(txn.tx.clone());
         }
 
-        debug!("Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}", txn.hash, txn.signer, txn.tx.nonce());
+        debug!(
+            "Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}",
+            txn.hash,
+            txn.signer,
+            txn.tx.nonce()
+        );
 
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
@@ -411,38 +449,34 @@ impl TransactionPool {
         }
     }
 
-    /// Clear the transaction pool, returning all remaining transactions in an unspecified order.
-    pub fn drain(&mut self) -> impl Iterator<Item = VerifiedTransaction> {
-        self.hash_to_index.clear();
-        self.gas_index.clear();
-        std::mem::take(&mut self.transactions).into_values()
-    }
-
     /// Check the ready transactions in arbitrary order, for one that is Ready
     pub fn has_txn_ready(&self) -> bool {
         !self.gas_index.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.transactions.clear();
+        self.hash_to_index.clear();
+        self.gas_index.clear();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use std::{path::PathBuf, sync::Arc};
 
     use alloy::{
         consensus::TxLegacy,
         primitives::{Address, Bytes, PrimitiveSignature, TxKind, U256},
     };
     use anyhow::Result;
-    use libp2p::PeerId;
     use rand::{seq::SliceRandom, thread_rng};
 
     use super::TransactionPool;
     use crate::{
-        block_store::BlockStore,
-        cfg::{ConsensusConfig, NodeConfig, *},
+        cfg::NodeConfig,
         crypto::Hash,
         db::Db,
-        node::{MessageSender, RequestId},
         state::State,
         transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
     };
@@ -496,62 +530,12 @@ mod tests {
     }
 
     fn get_in_memory_state() -> Result<State> {
-        let node_config = NodeConfig {
-            eth_chain_id: 0,
-            allowed_timestamp_skew: allowed_timestamp_skew_default(),
-            data_dir: None,
-            state_cache_size: state_cache_size_default(),
-            load_checkpoint: None,
-            do_checkpoints: false,
-            disable_rpc: disable_rpc_default(),
-            json_rpc_port: json_rpc_port_default(),
-            consensus: ConsensusConfig {
-                genesis_deposits: vec![],
-                is_main: true,
-                consensus_timeout: Duration::from_secs(5),
-                // Give a genesis account 1 billion ZIL.
-                genesis_accounts: vec![],
-                empty_block_timeout: Duration::from_millis(25),
-                rewards_per_hour: 204_000_000_000_000_000_000_000u128.into(),
-                blocks_per_hour: 3600 * 40,
-                minimum_stake: 32_000_000_000_000_000_000u128.into(),
-                eth_block_gas_limit: EvmGas(84000000),
-                gas_price: 4_761_904_800_000u128.into(),
-                local_address: local_address_default(),
-                main_shard_id: None,
-                minimum_time_left_for_empty_block: minimum_time_left_for_empty_block_default(),
-                scilla_address: scilla_address_default(),
-                blocks_per_epoch: 10,
-                epochs_per_checkpoint: 1,
-                scilla_stdlib_dir: scilla_stdlib_dir_default(),
-                scilla_ext_libs_path: scilla_ext_libs_path_default(),
-                total_native_token_supply: total_native_token_supply_default(),
-                scilla_call_gas_exempt_addrs: vec![],
-            },
-            block_request_limit: block_request_limit_default(),
-            max_blocks_in_flight: max_blocks_in_flight_default(),
-            block_request_batch_size: block_request_batch_size_default(),
-            state_rpc_limit: state_rpc_limit_default(),
-            failed_request_sleep_duration: failed_request_sleep_duration_default(),
-        };
+        let node_config = NodeConfig::default();
 
-        let (s1, _) = tokio::sync::mpsc::unbounded_channel();
-        let (s2, _) = tokio::sync::mpsc::unbounded_channel();
-
-        let message_sender = MessageSender {
-            our_shard: 0,
-            our_peer_id: PeerId::random(),
-            outbound_channel: s1,
-            local_channel: s2,
-            request_id: RequestId::default(),
-        };
-
-        let db = Db::new::<PathBuf>(None, 0, 0)?;
+        let db = Db::new::<PathBuf>(None, 0, 0, None)?;
         let db = Arc::new(db);
 
-        let block_store = BlockStore::new(&node_config, db.clone(), message_sender.clone())?;
-
-        State::new_with_genesis(db.state_trie()?, node_config, Arc::new(block_store))
+        State::new_with_genesis(db.state_trie()?, node_config, db.clone())
     }
 
     fn create_acc(state: &mut State, address: Address, balance: u128, nonce: u64) -> Result<()> {

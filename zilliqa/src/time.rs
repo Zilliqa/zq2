@@ -14,6 +14,7 @@ mod time_impl {
     use std::{error::Error, fmt, ops::Add, sync::Mutex, time::Duration};
 
     use futures::Future;
+    use k256::pkcs8::der::DateTime;
     use serde::{Deserialize, Serialize};
 
     /// A fake implementation of [std::time::SystemTime]. The value of `SystemTime::now` can be controlled with [advance_time].
@@ -58,6 +59,12 @@ mod time_impl {
         }
     }
 
+    impl From<DateTime> for SystemTime {
+        fn from(datetime: DateTime) -> Self {
+            SystemTime(datetime.to_system_time())
+        }
+    }
+
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
     pub struct SystemTimeError(Duration);
 
@@ -87,7 +94,7 @@ mod time_impl {
         CURRENT_TIME.scope(Mutex::new(Duration::ZERO), f)
     }
 
-    pub fn sync_with_fake_time(f: impl FnOnce()) {
+    pub fn sync_with_fake_time<R>(f: impl FnOnce() -> R) -> R {
         CURRENT_TIME.sync_scope(Mutex::new(Duration::ZERO), f)
     }
 

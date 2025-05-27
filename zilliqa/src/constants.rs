@@ -30,7 +30,7 @@ pub const ZIL_CONTRACT_CREATE_GAS: usize = 50;
 pub const ZIL_NORMAL_TXN_GAS: usize = 50;
 
 // Maximum rate at which to send availability requests
-pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE: Duration = Duration::from_millis(1000);
+pub const REQUEST_PEER_VIEW_AVAILABILITY_NOT_BEFORE: Duration = Duration::from_secs(300);
 
 // We assume that every node has the last ALWAYS_RETAIN_LAST_N_BLOCKS blocks, otherwise
 // it's hard ever to catch up. Set this too large and syncing will be hard because we will
@@ -68,3 +68,7 @@ pub const EXAMINE_BLOCKS_PER_FORK_COUNT: usize = 16;
 pub const SCILLA_TRANSFER: ScillaGas = ScillaGas(50);
 pub const SCILLA_INVOKE_CHECKER: ScillaGas = ScillaGas(100);
 pub const SCILLA_INVOKE_RUNNER: ScillaGas = ScillaGas(300);
+
+// Consensus
+// Roughly how long to allow between finish propocessing of a Proposal and it being received by peers
+pub const TIME_TO_ALLOW_PROPOSAL_BROADCAST: Duration = Duration::from_millis(100);

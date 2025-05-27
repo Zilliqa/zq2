@@ -1,16 +1,3 @@
-variable "node_role_mappings" {
-  description = "(Optional) The node role short names"
-  type        = map(string)
-  default = {
-    apps       = "app",
-    api        = "api",
-    bootstrap  = "boo",
-    validator  = "val",
-    checkpoint = "che",
-    sentry     = "sen",
-  }
-}
-
 variable "region_mappings" {
   description = "(Optional) The regions short names"
   type        = map(string)
@@ -69,8 +56,8 @@ variable "role" {
   description = "VM role"
   type        = string
   validation {
-    condition     = contains(["bootstrap", "api", "validator", "apps", "checkpoint", "sentry"], var.role)
-    error_message = "The role value must be one of:  'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'sentry'."
+    condition     = contains(["bootstrap", "api", "validator", "apps", "checkpoint", "persistence", "private-api", "sentry"], var.role)
+    error_message = "The role value must be one of: 'bootstrap', 'api', 'validator', 'apps', 'checkpoint', 'persistence', 'private-api', 'sentry'."
   }
 }
 
@@ -91,18 +78,6 @@ variable "network_tags" {
   description = "The network tags"
   type        = list(string)
   default     = []
-  nullable    = false
-}
-
-variable "node_dns_subdomain" {
-  description = "Nodes DNS zone name (ie. zq2.dev)"
-  type        = string
-  nullable    = false
-}
-
-variable "node_dns_zone_project_id" {
-  description = "The id of the Google project that hosts the DNS zone."
-  type        = string
   nullable    = false
 }
 

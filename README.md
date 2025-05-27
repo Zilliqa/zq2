@@ -46,6 +46,18 @@ Pass the path to configuration files on the command line with `-c` or `--config-
 If multiple configuration files are provided, they will be merged together.
 If a configuration key occurs in more than one configuration file, the process will exit with an error.
 
+By default, a node will not expose the JSON-RPC API.
+To enable APIs, you must set `api_servers` under the [[nodes]] object in the configuration file.
+Each item must be an object with keys `port` and `enabled_apis`.
+Each item in `enabled_apis` must either be:
+
+* A string such as `"eth"`, which enables all API methods under the `eth_` namespace.
+* An object of the form `{ namespace = "eth", apis = ["blockNumber"] }`, which enables specific API methods.
+
+Zilliqa APIs which don't have a namespace are implicitly grouped under the `zilliqa` namespace.
+
+See `config-example.toml` for a configuration example.
+
 ## Testing
 
 The tests can be run with `cargo test`.
@@ -66,6 +78,22 @@ Then you can install a suitable Solc version by executing:
 svm install <solc version>
 ```
 
+### Tests with JMeter
+
+JMeter for performance and load tests is integrated in the Github Action pipelines in `.github/workflows/test_performance.yaml` and can be manually executed from the Github console with custom and default parameters. The test executions are restricted to users of the Zilliqa organization.
+
+## Running benchmarks
+
+Benchmarks can be run with `cargo bench --package zilliqa --bench it`.
+To run a specific benchmark, append ` -- <benchmark-name>` to the command.
+
+It can also be helpful to generate flamegraphs from benchmarks to see where time is being spent.
+Append `--profile-time <time in seconds>` to the command to continue running the benchmark for the specified period of time, rather than stopping when enough samples have been gathered.
+You should select `profile-time` to be long enough to gather a representative set of samples.
+150 seconds has been a reasonable value in testing.
+After running this, a flamegraph should exist in `target/criterion/<benchmark-name>/<benchmark-name>/profile/flamegraph.svg`.
+Make sure to open the `.svg` in a web browser - the embedded JS provides some useful features for exploring the graph (such as being able to click on functions and CTRL+F).
+
 ## Logging
 
 You can get log output globally via
@@ -79,6 +107,24 @@ Or via individual modules using eg.
 ```unset
 RUST_LOG=debug,sled=info,zilliqa::scilla=trace
 ```
+
+## Observability
+
+### OpenTelemetry
+
+OpenTelemetry metrics from the Zilliqa nodes container are available when the OTLP collector endpoint is defined in the configuration.
+
+```yaml
+otlp_collector_endpoint = "http://otel-collector:4317"
+```
+
+There is a docker-compose project that includes the OpenTelemetry configuration and tech stack that can be run in local environment for testing purposes:
+
+```bash
+docker-compose -f infra/opentelemetry/compose.yaml up -d
+```
+
+After the services are running, a sample dashboard could be obtained from the (Grafana)[http://localhost:9010] local service.
 
 ## `rustfmt`
 

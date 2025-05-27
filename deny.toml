@@ -11,10 +11,12 @@ all-features = true
 
 [licenses]
 allow = [
+    "0BSD",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BSL-1.0",
     "CC0-1.0",
     "ISC",
     "MIT",
@@ -42,7 +44,8 @@ github = [ "zilliqa" ]
 
 [advisories]
 ignore = [
-    { id = "RUSTSEC-2024-0379", reason = "no upgrade to boa_engine@v0.19.0 is yet available (https://github.com/boa-dev/boa/issues/4033)" },
-    { id = "RUSTSEC-2024-0384", reason = "no upgrade to boa_engine@v0.19.0 is yet available (https://github.com/boa-dev/boa/issues/4035)" },
-    { id = "RUSTSEC-2024-0388", reason = "no upgrade to foundry-compilers@v0.11.6 is yet available" },
+    { id = "RUSTSEC-2025-0009", reason = "downstream dependency of ethers-rs which is only used in tests" },
+    { id = "RUSTSEC-2025-0010", reason = "downstream dependency of ethers-rs which is only used in tests" },
+    { id = "RUSTSEC-2024-0384", reason = "downstream dependency of ethers-rs which is only used in tests" },
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained, we'll upgrade eventually" },
 ]

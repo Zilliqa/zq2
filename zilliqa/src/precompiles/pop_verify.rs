@@ -1,19 +1,19 @@
 use blsful::Bls12381G2Impl;
-use ethabi::{decode, encode, short_signature, ParamType, Token};
+use ethabi::{ParamType, Token, decode, encode, short_signature};
 use revm::{
+    ContextStatefulPrecompile, InnerEvmContext,
     precompile::PrecompileError,
     primitives::{
-        alloy_primitives::private::alloy_rlp::Encodable, Bytes, PrecompileErrors, PrecompileOutput,
-        PrecompileResult,
+        Bytes, PrecompileErrors, PrecompileOutput, PrecompileResult,
+        alloy_primitives::private::alloy_rlp::Encodable,
     },
-    ContextStatefulPrecompile, InnerEvmContext,
 };
 
 use crate::exec::PendingState;
 
 pub struct PopVerify;
 
-// keep in-sync with zilliqa/src/contracts/deposit.sol
+// keep in-sync with zilliqa/src/contracts/deposit_v2.sol
 impl PopVerify {
     const POP_VERIFY_GAS_PRICE: u64 = 1_000_000u64; // FIXME: Gas Price?
     fn pop_verify(

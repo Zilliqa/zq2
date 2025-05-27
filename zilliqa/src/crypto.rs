@@ -7,34 +7,34 @@
 use std::fmt::Display;
 
 use alloy::primitives::{Address, B256};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use blsful::{
-    inner_types::Group, vsss_rs::ShareIdentifier, AggregateSignature, Bls12381G2, Bls12381G2Impl,
-    MultiPublicKey, MultiSignature, PublicKey, Signature,
+    AggregateSignature, Bls12381G2, Bls12381G2Impl, MultiPublicKey, MultiSignature, PublicKey,
+    Signature, inner_types::Group, vsss_rs::ShareIdentifier,
 };
 use itertools::Itertools;
-use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature as EcdsaSignature, VerifyingKey};
+use k256::ecdsa::{Signature as EcdsaSignature, VerifyingKey, signature::hazmat::PrehashVerifier};
 use serde::{
-    de::{self, Unexpected},
     Deserialize, Serialize,
+    de::{self, Unexpected},
 };
 use sha3::{Digest, Keccak256};
 
 /// The signature type used internally in consensus, to e.g. sign block proposals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NodeSignature(Signature<Bls12381G2Impl>);
+pub struct BlsSignature(Signature<Bls12381G2Impl>);
 
-impl NodeSignature {
-    pub fn identity() -> NodeSignature {
+impl BlsSignature {
+    pub fn identity() -> BlsSignature {
         // Default to Basic signatures - it's the normal signature.
-        NodeSignature(Signature::<Bls12381G2Impl>::Basic(
+        BlsSignature(Signature::<Bls12381G2Impl>::Basic(
             blsful::inner_types::G2Projective::identity(),
         ))
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<NodeSignature> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<BlsSignature> {
         // Default to Basic signatures - it's the normal signature.
-        Ok(NodeSignature(Signature::<Bls12381G2Impl>::Basic(
+        Ok(BlsSignature(Signature::<Bls12381G2Impl>::Basic(
             // Underlying type is compressed G2Affine
             blsful::inner_types::G2Projective::from_compressed(bytes.try_into()?)
                 .into_option()
@@ -42,19 +42,19 @@ impl NodeSignature {
         )))
     }
 
-    pub fn aggregate(signatures: &[NodeSignature]) -> Result<NodeSignature> {
+    pub fn aggregate(signatures: &[BlsSignature]) -> Result<BlsSignature> {
         // IETF standards say N >= 1
         // Handles single case where N == 1, as AggregateSignature::from_signatures() only handles N > 1.
         // Reported upstream https://github.com/hyperledger-labs/agora-blsful/issues/10
         if signatures.len() < 2 {
-            return Ok(NodeSignature(
+            return Ok(BlsSignature(
                 signatures.first().context("zero signatures")?.0,
             ));
         }
 
-        let signatures = signatures.iter().map(|s: &NodeSignature| s.0).collect_vec();
+        let signatures = signatures.iter().map(|s: &BlsSignature| s.0).collect_vec();
         let asig = AggregateSignature::<Bls12381G2Impl>::from_signatures(signatures)?;
-        Ok(NodeSignature(match asig {
+        Ok(BlsSignature(match asig {
             AggregateSignature::Basic(s) => Signature::Basic(s),
             AggregateSignature::MessageAugmentation(s) => Signature::MessageAugmentation(s),
             AggregateSignature::ProofOfPossession(s) => Signature::ProofOfPossession(s),
@@ -65,7 +65,7 @@ impl NodeSignature {
     // That is, each public key has signed the message, and the aggregated signature is the
     // aggregation of those signatures.
     pub fn verify_aggregate(
-        signature: &NodeSignature,
+        signature: &BlsSignature,
         message: &[u8],
         public_keys: Vec<NodePublicKey>,
     ) -> Result<()> {
@@ -85,10 +85,20 @@ impl NodeSignature {
     pub fn to_bytes(self) -> Vec<u8> {
         self.0.as_raw_value().to_compressed().to_vec()
     }
+
+    pub fn from_string(str: &str) -> Result<Self> {
+        Self::from_bytes(&hex::decode(str)?)
+    }
+}
+
+impl Display for BlsSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.to_bytes()))
+    }
 }
 
 pub fn verify_messages(
-    signature: NodeSignature,
+    signature: BlsSignature,
     messages: &[&[u8]],
     public_keys: &[NodePublicKey],
 ) -> Result<()> {
@@ -108,7 +118,7 @@ pub fn verify_messages(
     Ok(())
 }
 
-impl serde::Serialize for NodeSignature {
+impl serde::Serialize for BlsSignature {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -117,13 +127,13 @@ impl serde::Serialize for NodeSignature {
     }
 }
 
-impl<'de> Deserialize<'de> for NodeSignature {
+impl<'de> Deserialize<'de> for BlsSignature {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let bytes = <Vec<u8>>::deserialize(deserializer)?;
-        NodeSignature::from_bytes(&bytes)
+        BlsSignature::from_bytes(&bytes)
             .map_err(|_| de::Error::invalid_value(Unexpected::Bytes(&bytes), &"a signature"))
     }
 }
@@ -144,10 +154,10 @@ impl NodePublicKey {
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
-        self.0 .0.to_compressed().to_vec()
+        self.0.0.to_compressed().to_vec()
     }
 
-    pub fn verify(&self, message: &[u8], signature: NodeSignature) -> Result<()> {
+    pub fn verify(&self, message: &[u8], signature: BlsSignature) -> Result<()> {
         if signature.0.verify(&self.0, message).is_err() {
             return Err(anyhow!("invalid signature"));
         }
@@ -216,7 +226,7 @@ impl TransactionPublicKey {
 /// The secret key type used as the basis of all cryptography in the node.
 /// Any of the `NodePublicKey` or `TransactionPublicKey`s, or a libp2p identity, can be derived
 /// from this.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy)]
 pub struct SecretKey {
     bytes: [u8; 32],
 }
@@ -252,9 +262,21 @@ impl SecretKey {
         blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes)
     }
 
+    // Used in deposit_v2
     pub fn pop_prove(&self) -> blsful::ProofOfPossession<Bls12381G2Impl> {
         let sk = blsful::SecretKey::<Bls12381G2Impl>::from_hash(self.bytes);
         sk.proof_of_possession().expect("sk != 0")
+    }
+
+    /// Sigature for staking deposit contract authorisation.
+    /// Sign over message made up of validator node's bls public key, chain_id and evm address.
+    // Used in deposit_v3
+    pub fn deposit_auth_signature(&self, chain_id: u64, address: Address) -> BlsSignature {
+        let mut message = [0u8; 76];
+        message[..48].copy_from_slice(&self.as_bls().public_key().0.to_compressed());
+        message[48..56].copy_from_slice(&chain_id.to_be_bytes());
+        message[56..].copy_from_slice(&address.0.to_vec());
+        self.sign(&message)
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -265,8 +287,8 @@ impl SecretKey {
         hex::encode(self.bytes)
     }
 
-    pub fn sign(&self, message: &[u8]) -> NodeSignature {
-        NodeSignature(
+    pub fn sign(&self, message: &[u8]) -> BlsSignature {
+        BlsSignature(
             self.as_bls()
                 .sign(blsful::SignatureSchemes::Basic, message)
                 .expect("sk != 0"),
@@ -282,6 +304,13 @@ impl SecretKey {
             .expect("`SecretKey::from_bytes` returns an `Err` only when the length is not 32, we know the length is 32")
             .into();
         keypair.into()
+    }
+
+    pub fn to_evm_address(&self) -> Address {
+        let ecdsa_key = k256::ecdsa::SigningKey::from_slice(&self.bytes).unwrap();
+        let tx_pubkey =
+            TransactionPublicKey::Ecdsa(k256::ecdsa::VerifyingKey::from(&ecdsa_key), true);
+        tx_pubkey.into_addr()
     }
 }
 

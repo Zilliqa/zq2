@@ -1,31 +1,40 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, process::Command, str::FromStr};
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Ok, Result, anyhow};
 use serde_json::value::Value;
 
 use super::{
+    Chain,
     config::NetworkConfig,
-    node::{retrieve_secret_by_role, ChainNode, Machine, NodeRole},
+    node::{ChainNode, Machine, NodeRole},
 };
+use crate::{kms::KmsService, secret::Secret};
 
 #[derive(Clone, Debug)]
 pub struct ChainInstance {
     config: NetworkConfig,
     machines: Vec<Machine>,
     persistence_url: Option<String>,
+    checkpoint_url: Option<String>,
 }
 
 impl ChainInstance {
     pub async fn new(config: NetworkConfig) -> Result<Self> {
+        let chain = Chain::from_str(&config.name.clone())?;
         Ok(Self {
             config: config.clone(),
-            machines: Self::import_machines(&config.name, &config.project_id).await?,
+            machines: Self::import_machines(&config.name, chain.get_project_id()?)?,
             persistence_url: None,
+            checkpoint_url: None,
         })
     }
 
     pub fn name(&self) -> String {
         self.config.name.clone()
+    }
+
+    pub fn chain(&self) -> Result<Chain> {
+        Ok(Chain::from_str(&self.name())?)
     }
 
     pub fn persistence_url(&self) -> Option<String> {
@@ -34,6 +43,14 @@ impl ChainInstance {
 
     pub fn set_persistence_url(&mut self, persistence_url: Option<String>) {
         self.persistence_url = persistence_url;
+    }
+
+    pub fn checkpoint_url(&self) -> Option<String> {
+        self.checkpoint_url.clone()
+    }
+
+    pub fn set_checkpoint_url(&mut self, checkpoint_url: Option<String>) {
+        self.checkpoint_url = checkpoint_url;
     }
 
     pub fn machines(&self) -> Vec<Machine> {
@@ -63,28 +80,23 @@ impl ChainInstance {
         version.to_owned()
     }
 
-    async fn import_machines(chain_name: &str, project_id: &str) -> Result<Vec<Machine>> {
+    fn import_machines(chain_name: &str, project_id: &str) -> Result<Vec<Machine>> {
         println!("Create the instance list for {chain_name}");
 
-        let output = zqutils::commands::CommandBuilder::new()
-            .silent()
-            .cmd(
-                "gcloud",
-                &[
-                    "--project",
-                    project_id,
-                    "compute",
-                    "instances",
-                    "list",
-                    "--format=json",
-                    "--filter",
-                    &format!("labels.zq2-network={chain_name}"),
-                ],
-            )
-            .run()
-            .await?;
+        let output = Command::new("gcloud")
+            .args([
+                "--project",
+                project_id,
+                "compute",
+                "instances",
+                "list",
+                "--format=json",
+                "--filter",
+                &format!("labels.zq2-network={chain_name}"),
+            ])
+            .output()?;
 
-        if !output.success {
+        if !output.status.success() {
             return Err(anyhow!("Listing {chain_name} instances failed"));
         }
 
@@ -107,9 +119,11 @@ impl ChainInstance {
                     .get("name")
                     .and_then(|n| n.as_str())
                     .ok_or_else(|| anyhow!("name is missing or not a string"))?;
+                // Zone is often reported as a URL. get only the last element..
                 let zone = i
                     .get("zone")
                     .and_then(|z| z.as_str())
+                    .map(|z| z.rsplit_once('/').map_or(z, |(_, y)| y))
                     .ok_or_else(|| anyhow!("zone is missing or not a string"))?;
                 let labels: BTreeMap<String, String> = i
                     .get("labels")
@@ -164,17 +178,88 @@ impl ChainInstance {
         Ok(nodes)
     }
 
-    pub async fn genesis_private_key(&self) -> Result<String> {
-        let private_keys =
-            retrieve_secret_by_role(&self.config.name, &self.config.project_id, "genesis").await?;
+    pub fn genesis_private_key(&self) -> Result<String> {
+        let mut filter = format!(
+            "labels.zq2-network={} AND labels.role=genesis",
+            &self.config.name
+        );
+        if self.chain()?.get_enable_kms()? {
+            filter.push_str(" AND labels.encrypted=true");
+        }
+        let private_keys = Secret::get_secrets(self.chain()?.get_project_id()?, filter.as_str())?;
 
         if let Some(private_key) = private_keys.first() {
-            Ok(private_key.value().await?)
+            let value = private_key.value()?;
+
+            // Decrypt the key if KMS is enabled
+            if self.chain()?.get_enable_kms()? {
+                let decrypted_value = KmsService::decrypt(
+                    self.chain()?.get_project_id()?,
+                    &value,
+                    &format!("kms-{}", self.name()),
+                    &format!("{}-genesis", self.name()),
+                    None,
+                )?;
+                Ok(decrypted_value)
+            } else {
+                Ok(value)
+            }
         } else {
             Err(anyhow!(
                 "No secrets with role genesis found in the network {}",
                 &self.name()
             ))
         }
+    }
+
+    pub async fn genesis_address(&self) -> Result<String> {
+        let nodes = self.nodes().await?;
+
+        if let Some(node) = nodes.first() {
+            node.get_genesis_address()
+        } else {
+            Err(anyhow!(
+                "Error retrieving at least one node in the network {}",
+                &self.name()
+            ))
+        }
+    }
+
+    pub fn run_rpc_call(
+        &self,
+        method: &str,
+        params: &Option<String>,
+        timeout: usize,
+    ) -> Result<String> {
+        let endpoint = self.chain()?.get_api_endpoint()?;
+        let body = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"{}\",\"params\":{}}}",
+            method,
+            params.clone().unwrap_or("[]".to_string()),
+        );
+
+        let output = Command::new("curl")
+            .args([
+                "--max-time",
+                &timeout.to_string(),
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type:application/json",
+                "-H",
+                "accept:application/json,*/*;q=0.5",
+                "--data",
+                &body,
+                &endpoint,
+            ])
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "getting local block number failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
     }
 }

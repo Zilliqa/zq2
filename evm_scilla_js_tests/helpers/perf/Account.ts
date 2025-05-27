@@ -1,7 +1,5 @@
-import {BN, bytes, getAddressFromPrivateKey, units, Zilliqa} from "@zilliqa-js/zilliqa";
+import {BN, bytes, getAddressFromPrivateKey, units, Zilliqa, Long} from "@zilliqa-js/zilliqa";
 import {ethers} from "ethers";
-import Long from "long";
-
 export interface Account {
   privateKey: string;
   ethAddress: string;
@@ -43,9 +41,4 @@ export async function fundAccount(zilliqa: Zilliqa, address: string, amount: BN,
       gasLimit: Long.fromNumber(2100)
     })
   );
-}
-
-export async function getNonce(zilliqa: Zilliqa, address: string): Promise<number> {
-  const balance = await zilliqa.blockchain.getBalance(address);
-  return balance.result.nonce as number;
 }

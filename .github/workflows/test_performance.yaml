@@ -1,0 +1,144 @@
+name: "Jmeter tests"
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Network"
+        type: choice
+        options:
+          - "devnet"
+          - "infratest"
+          - "perftest"
+          - "protomainnet"
+          - "prototestnet"
+          - "richard"
+          - "uccbtest"
+        required: false
+        default: "prototestnet"
+      target_host:
+        description: "Target host"
+        type: string
+        required: false
+        default: "api.zq2-prototestnet.zilliqa.com"
+      target_port:
+        description: "Target port"
+        type: string
+        required: false
+        default: "443"
+      protocol:
+        description: "Protocol (http/https)"
+        type: choice
+        options:
+          - "https"
+          - "http"
+        required: false
+        default: "https"
+      rpc_method:
+        description: "RPC method"
+        type: string
+        required: false
+        default: "eth_blockNumber"
+      rpc_params:
+        description: "RPC method params"
+        type: string
+        required: false
+        default: '[]'
+      response_timeout:
+        description: "Response timeout in milliseconds"
+        type: number
+        required: false
+        default: 15000
+      threads:
+        description: "Number of concurrent threads"
+        type: number
+        required: false
+        default: 20
+      ramp_time:
+        description: "Threads ramp up period"
+        type: number
+        required: false
+        default: 10
+      duration:
+        description: "Test duration in seconds"
+        type: number
+        required: false
+        default: 60
+
+jobs:
+  jmeter-test:
+    permissions:
+      id-token: write
+      contents: write
+    name: Jmeter test
+    runs-on: self-hosted
+    container:
+      image: alpine/jmeter:5.6
+    if: github.actor != 'dependabot[bot]'
+    timeout-minutes: 1440
+    env:
+      TARGET_HOST: ${{ github.event.inputs.target_host || 'api.zq2-prototestnet.zilliqa.com' }}
+      TARGET_PORT: ${{ github.event.inputs.target_port || '443' }}
+      PROTOCOL: ${{ github.event.inputs.protocol || 'https' }}
+      RPC_METHOD: ${{ github.event.inputs.rpc_method || 'eth_blockNumber' }}
+      RPC_PARAMS: ${{ github.event.inputs.rpc_params || '[]' }}
+      THREADS: ${{ github.event.inputs.threads || 20 }}
+      RAMP_TIME: ${{ github.event.inputs.ramp_time || 10 }}
+      DURATION: ${{ github.event.inputs.duration || 60 }}
+      RESPONSE_TIMEOUT: ${{ github.event.inputs.response_timeout || 15000 }}
+      RESULTS_FILE: results.jtl
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: apk add --update python3 curl which bash
+
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v2'
+        with:
+          version: '>= 363.0.0'
+
+      - name: Test ID
+        id: build-test-id
+        run: |
+          echo "TEST_ID=jmeter-test-zq2-$(date +"%Y%m%d%H%M")-${TARGET_HOST//./-}-${RPC_METHOD//_/-}-${THREADS}-${DURATION}-${{ github.run_id }}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Run tests
+        working-directory: infra/jmeter
+        run: |
+          jmeter -n -e -Dlog_level.jmeter=DEBUG \
+            -JTARGET_HOST=${{ env.TARGET_HOST }} \
+            -JTARGET_PORT=${{ env.TARGET_PORT }} \
+            -JPROTOCOL=${{ env.PROTOCOL }} \
+            -JRPC_METHOD=${{ env.RPC_METHOD }} \
+            -JRPC_PARAMS='${{ env.RPC_PARAMS }}' \
+            -JTHREADS=${{ env.THREADS }} \
+            -JRAMP_TIME=${{ env.RAMP_TIME }} \
+            -JDURATION=${{ env.DURATION }} \
+            -JRESPONSE_TIMEOUT=${{ env.RESPONSE_TIMEOUT }} \
+            -JRESULTS_FILE=${{ env.RESULTS_FILE }} \
+            -t jmeter-plan-template.jmx \
+            -l ${{ steps.build-test-id.outputs.TEST_ID }}.jtl \
+            -o ${{ steps.build-test-id.outputs.TEST_ID }}
+          echo "Test results for ${{ steps.build-test-id.outputs.TEST_ID }}:"
+          head -n 100 ${{ env.RESULTS_FILE }}
+
+      - name: "Configure GCP Credentials"
+        id: google-auth
+        uses: "google-github-actions/auth@v2"
+        with:
+          token_format: "access_token"
+          workload_identity_provider: ${{ secrets.GCP_PRD_GITHUB_WIF }}
+          service_account: "${{ secrets.GCP_PRD_GITHUB_SA_TESTING }}"
+          create_credentials_file: true
+
+      - name: Upload reports
+        uses: 'google-github-actions/upload-cloud-storage@v2'
+        with:
+          process_gcloudignore: false
+          path: "infra/jmeter/${{ steps.build-test-id.outputs.TEST_ID }}"
+          destination: "zq2-${{ github.event.inputs.network || 'prototestnet' }}-performance-tests"

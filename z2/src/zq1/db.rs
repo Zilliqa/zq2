@@ -1,13 +1,11 @@
-#![allow(dead_code)]
-
 use std::{
     collections::HashMap, convert::Infallible, fs, num::ParseIntError, path::Path,
     string::FromUtf8Error, sync::Arc,
 };
 
 use alloy::primitives::{Address, B256};
-use anyhow::{anyhow, Result};
-use eth_trie::{EthTrie, Trie, DB};
+use anyhow::{Result, anyhow};
+use eth_trie::{DB, EthTrie, Trie};
 use hex::FromHex;
 use leveldb::{
     db::Database,
@@ -223,14 +221,6 @@ impl Db {
         Ok(self
             .contract_init_state_2
             .get_u8(&ReadOptions::new(), format!("{:02x}", account).as_bytes())?)
-    }
-
-    pub(crate) fn put_init_state_2(&self, address: Address, init_data: &[u8]) -> Result<()> {
-        Ok(self.contract_init_state_2.put_u8(
-            &WriteOptions::new(),
-            format!("{:02x}", address).as_bytes(),
-            init_data,
-        )?)
     }
 
     pub fn contract_init_state_2(

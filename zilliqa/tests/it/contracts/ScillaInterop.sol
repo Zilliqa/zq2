@@ -11,10 +11,68 @@ library ScillaConnector {
      * @dev Calls a ZRC2 contract function with two arguments
      * @param target The address of the ZRC2 contract
      * @param tran_name The name of the function to call
+     */
+    function callScilla(address target, string memory tran_name) internal {
+        bytes memory encodedArgs = abi.encode(
+            target,
+            tran_name,
+            CALL_SCILLA_WITH_THE_SAME_SENDER
+        );
+        uint256 argsLength = encodedArgs.length;
+
+        assembly {
+            let ok := call(
+                gas(),
+                SCILLA_CALL_PRECOMPILE_ADDRESS,
+                0,
+                add(encodedArgs, 0x20),
+                argsLength,
+                0x20,
+                0
+            )
+            if iszero(ok) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    function callScilla(
+        address target,
+        string memory tran_name,
+        address arg1
+    ) internal {
+        bytes memory encodedArgs = abi.encode(
+            target,
+            tran_name,
+            CALL_SCILLA_WITH_THE_SAME_SENDER,
+            arg1
+        );
+        uint256 argsLength = encodedArgs.length;
+
+        assembly {
+            let ok := call(
+                gas(),
+                SCILLA_CALL_PRECOMPILE_ADDRESS,
+                0,
+                add(encodedArgs, 0x20),
+                argsLength,
+                0x20,
+                0
+            )
+            if iszero(ok) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    /**
+     * @dev Calls a ZRC2 contract function with two arguments
+     * @param target The address of the ZRC2 contract
+     * @param tran_name The name of the function to call
      * @param arg1 The first argument to the function
      * @param arg2 The second argument to the function
      */
-    function call(
+    function callScilla(
         address target,
         string memory tran_name,
         address arg1,
@@ -52,7 +110,7 @@ library ScillaConnector {
      * @param arg1 The first argument to the function
      * @param arg2 The second argument to the function
      */
-    function callWithBadGas(
+    function callScillaWithBadGas(
         address target,
         string memory tran_name,
         address arg1,
@@ -91,7 +149,7 @@ library ScillaConnector {
      * @param arg2 The second argument to the function
      * @param arg3 The third argument to the function
      */
-    function call(
+    function callScilla(
         address target,
         string memory tran_name,
         address arg1,
@@ -315,6 +373,32 @@ contract ScillaInterop {
         return scillaContract.readNestedMapUint128(varName, key1, key2);
     }
 
+    function callScillaNoArgs(
+        address scillaContract,
+        string memory transitionName
+    ) public {
+        scillaContract.callScilla(transitionName);
+    }
+
+    function sendEtherThenCallScilla(
+        address recipient,
+        address scillaContract,
+        string memory transitionName,
+        address arg1
+    ) public payable {
+        (bool sent, ) = recipient.call{value: msg.value}("");
+        require(sent, "failed");
+        scillaContract.callScilla(transitionName, arg1);
+    }
+
+    function callScillaOneArg(
+        address scillaContract,
+        string memory transitionName,
+        address arg1
+    ) public {
+        scillaContract.callScilla(transitionName, arg1);
+    }
+
     function callScilla(
         address scillaContract,
         string memory transitionName,
@@ -322,7 +406,7 @@ contract ScillaInterop {
         address arg1,
         uint128 arg2
     ) public returns (uint128) {
-        scillaContract.call(transitionName, arg1, arg2);
+        scillaContract.callScilla(transitionName, arg1, arg2);
 
         return readMapUint128(scillaContract, varName, arg1);
     }
@@ -334,8 +418,18 @@ contract ScillaInterop {
         address arg1,
         uint128 arg2
     ) public returns (uint128) {
-        scillaContract.callWithBadGas(transitionName, arg1, arg2);
+        scillaContract.callScillaWithBadGas(transitionName, arg1, arg2);
 
         return readMapUint128(scillaContract, varName, arg1);
+    }
+
+    function callScillaRevert(
+        address scillaContract,
+        string memory transitionName,
+        address arg1,
+        uint128 arg2
+    ) public {
+        scillaContract.callScilla(transitionName, arg1, arg2);
+        revert();
     }
 }

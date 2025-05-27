@@ -1,9 +1,9 @@
-import {BN, Zilliqa, bytes, toChecksumAddress, units} from "@zilliqa-js/zilliqa";
+import {BN, Zilliqa, bytes, toChecksumAddress, units, Long} from "@zilliqa-js/zilliqa";
 import clc from "cli-color";
 import {ethers} from "ethers";
 import {task} from "hardhat/config";
 import {HardhatRuntimeEnvironment} from "hardhat/types";
-import Long from "long";
+import { getZilBalance } from "../helpers/SignersHelper";
 
 task("transfer", "A task to transfer fund")
   .addParam("from", "Sender's private key")
@@ -79,15 +79,4 @@ const fundZil = async (hre: HardhatRuntimeEnvironment, privateKey: string, to: s
 
 const displayError = (error: string) => {
   console.log(clc.red.bold("Error: "), error);
-};
-
-const getZilBalance = async (hre: HardhatRuntimeEnvironment, address: string): Promise<BN> => {
-  let zilliqa = new Zilliqa(hre.getNetworkUrl());
-  const balanceResult = await zilliqa.blockchain.getBalance(address);
-
-  if (balanceResult.error) {
-    return new BN(0);
-  }
-
-  return new BN(balanceResult.result.balance);
 };

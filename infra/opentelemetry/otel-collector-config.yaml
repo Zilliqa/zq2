@@ -1,0 +1,23 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: otel-collector:4317
+
+exporters:
+  prometheusremotewrite:
+    endpoint: "http://mimir:9009/api/v1/push"
+
+processors:
+  batch:
+  resourcedetection/docker:
+    detectors: [env, docker]
+    timeout: 2s
+    override: true
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [resourcedetection/docker, batch]
+      exporters: [prometheusremotewrite]

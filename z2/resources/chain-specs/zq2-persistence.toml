@@ -1,0 +1,95 @@
+p2p_port = 3333
+
+bootstrap_address = [
+  "12D3KooWMhQ6KiaBexSv6sbncmHtAX9CokcaiK7Ez6HcwGTMunQK",
+  "/dns/bootstrap.zq2-persistence.zilstg.dev/tcp/3333"
+]
+
+[[nodes]]
+eth_chain_id = 33469
+allowed_timestamp_skew = { secs = 60, nanos = 0 }
+data_dir = "/data"
+consensus.genesis_accounts = [ ["0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C", "900_000_000_000_000_000_000_000_000" ] ]
+consensus.genesis_deposits = [
+  [
+    "94a8ccfd1d4c69c67370ac560e2bcec4d630ca53ea5096c0c996150e2dc967bbf1a77f50e3ab4b0da06e98ae88fccceb",
+    "12D3KooWD8fPnT1CFDL1Z5EnCgi8HXTH8B9vQW4sXaBbFXaEG6ty",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ],
+  [
+    "b256fb818889386c8b59a735d850432e79448d6ceda4a18ed4d0d797a6afa3ecd0adbeac9969e3e52bf7859d2067aa48",
+    "12D3KooWQZ3zExsM2QdYLUrq95F6nEX8WZhVFkB5nLRjNZmMbPTH",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ],
+  [
+    "965246071636f47aa651890ef004f1885333ae92300ad240eb9c81faa542d0f4bd51f251aed132f180dbd98d7e9d9f3e",
+    "12D3KooWF1npRxWyFPsxGAR4MHvrToLHYjaUV6Fex1UGDT8fS4NZ",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ],
+  [
+    "8732197e0fb24a207b9961875284b97c8e0da0586314543d2c0e140bb0ce9087688818db79283e210d41b32271ee6fe5",
+    "12D3KooWM6dUx2LRMRUYaC6uQc6z3FUiMxESohT8dPhJhCYzemzQ",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ],
+  [
+    "ab501e3632d608bbcfae0ccf1cdff469bb24c2a6a939e6a6b0873462db5de3df8d8dd263e3027d314aa8bb766399997b",
+    "12D3KooWJMwxzP4zPfJeByELosctbUw7tUmNCiCEdxTkRnWarMNp",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ],
+  [
+    "8bb340ac8f33cc27dd5d0a4ded0693887eb28f3b6b70622cf2f77bf7a6a9c56cfba3ad336d8e4626fee4a04a73c0e8c1",
+    "12D3KooWENhcasXFfcj7MeSVM6GZDvujFd81Vn1AXFFhLNLwzAKr",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ],
+  [
+    "af1be209636e31c6713f47c7d291bc8f461f3875b6d5bda478c694391a535bd941a2bdb1b0f9d2cbf2647b10e825fddb",
+    "12D3KooWQK3QDbEHqU9T3WMKrwpP4zkG4DGXcCXW6BYpAVE7p5Et",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ],
+  [
+    "92910238aa7042a228946db371cddc4f4e4dd37e282aa7d1f50c4871502ff7742a0e093ed06467855b0c1c20e35814d3",
+    "12D3KooWACj2YpaTSfLD3GNch2Z86ShZPfTAJLyJfJuwjQf7iVpa",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ],
+  [
+    "ae671a24bbbe31abb4aff7d9dbd945609c82871cb24e58a22394f72a17647eb31131df1d29a24ae210a0eb3bd785a35a",
+    "12D3KooWBzkKgmN5uiTLwHsLiNTViSWBh1PfVKfeg2wcqj35u4yx",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ],
+  [
+    "93d519d1e87d15205f647851e34b1cebee3805e1d93f26551e482fc232e29b168d5e0b78339bdcaefb1060c620e88f21",
+    "12D3KooWSAR4LfwKYRa1ktqjodMjc4qejn6iX3WCCSZZp7LAkdsW",
+    "20_000_000_000_000_000_000_000_000",
+    "0x0000000000000000000000000000000000000000",
+    "0x95111f0ebfCf0658E3D2039352Ac0b35Bce6753C"
+  ]
+]
+
+# Reward parameters
+consensus.rewards_per_hour = "51_000_000_000_000_000_000_000"
+consensus.blocks_per_hour = 3600
+consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
+# Gas parameters
+consensus.eth_block_gas_limit = 84000000
+consensus.gas_price = "4_761_904_800_000"
+consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } } }
+
+api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]

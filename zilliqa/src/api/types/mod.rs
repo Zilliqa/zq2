@@ -1,13 +1,16 @@
 use std::fmt::Display;
 
 use alloy::{eips::BlockId, primitives::B256};
-use serde::{ser::SerializeSeq, Serializer};
+use serde::{Serializer, ser::SerializeSeq};
 
 use super::to_hex::ToHex;
 use crate::crypto;
 
+pub mod admin;
 pub mod eth;
+pub mod filters;
 pub mod ots;
+pub mod txpool;
 pub mod zil;
 pub fn hex<S: Serializer, T: ToHex>(data: T, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&data.to_hex())

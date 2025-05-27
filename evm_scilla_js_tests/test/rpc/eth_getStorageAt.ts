@@ -1,15 +1,17 @@
 import sendJsonRpcRequest from "../../helpers/JsonRpcHelper";
 import {assert} from "chai";
-import hre, {web3} from "hardhat";
+import hre, {ethers} from "hardhat";
 import logDebug from "../../helpers/DebugHelper";
 import {Contract} from "ethers";
 
-var METHOD = "eth_getStorageAt";
+const METHOD = "eth_getStorageAt";
 
 describe(`Calling ${METHOD} #parallel`, function () {
   let contract: Contract;
   before(async function () {
-    contract = await hre.deployContract("Storage");
+    const factory = await hre.ethers.getContractFactory("Storage");
+    contract = await factory.deploy();
+    await contract.deployed();
   });
 
   it("should return proper storage value when the defaultBlock is 'latest' for storage position 0 at address of contract @block-1", async function () {
@@ -20,18 +22,20 @@ describe(`Calling ${METHOD} #parallel`, function () {
       assert.isString(result.result, "is string");
       assert.match(result.result, /^0x/, "should be HEX starting with 0x");
 
-      assert.equal(web3.utils.hexToNumber(result.result), 1024);
+      assert.equal(parseInt(result.result, 16), 1024);
     });
   });
 
   it("should return proper storage value when a value from a map is requested @block-1", async function () {
-    const MAPPING_SLOT = "0000000000000000000000000000000000000000000000000000000000000001";
+    const MAPPING_SLOT = "0x0000000000000000000000000000000000000000000000000000000000000001";
 
     // KEY that we want to read in the mapping
-    const KEY = "0000000000000000000000000000000000000000000000000000000000000010";
+    const KEY = "0x0000000000000000000000000000000000000000000000000000000000000010";
 
     // Compute the actual storage slot of the value associated with the key
-    const balanceSlot = web3.utils.soliditySha3({t: "bytes", v: KEY + MAPPING_SLOT});
+    const paddedKey = ethers.utils.hexZeroPad(KEY, 32);
+    const paddedMappingSlot = ethers.utils.hexZeroPad(MAPPING_SLOT, 32);
+    const balanceSlot = ethers.utils.keccak256(ethers.utils.concat([paddedKey, paddedMappingSlot]));
 
     await sendJsonRpcRequest(METHOD, 1, [contract.address, balanceSlot, "latest"], (result, status) => {
       logDebug("Result:", result);
@@ -40,7 +44,7 @@ describe(`Calling ${METHOD} #parallel`, function () {
       assert.isString(result.result, "is string");
       assert.match(result.result, /^0x/, "should be HEX starting with 0x");
 
-      assert.equal(web3.utils.hexToNumber(result.result), 2048);
+      assert.equal(parseInt(result.result, 16), 2048);
     });
   });
 
@@ -52,7 +56,7 @@ describe(`Calling ${METHOD} #parallel`, function () {
       assert.isString(result.result, "is string");
       assert.match(result.result, /^0x/, "should be HEX starting with 0x");
 
-      assert.equal(web3.utils.hexToNumber(result.result), 1024);
+      assert.equal(parseInt(result.result, 16), 1024);
     });
   });
 

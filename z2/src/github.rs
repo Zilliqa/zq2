@@ -1,52 +1,53 @@
-use anyhow::{anyhow, Result};
-use octocrab::{
-    models::repos::{Release, RepoCommit},
-    Octocrab,
-};
+use anyhow::{Result, anyhow};
+use reqwest::{Client, StatusCode};
+use serde::Deserialize;
 
 static ORGANIZATION: &str = "Zilliqa";
 
 async fn get_release(organization: &str, repository: &str) -> Result<Option<String>> {
-    let client = octocrab::initialise(Octocrab::builder().build()?);
-
-    let page = client
-        .repos(organization, repository)
-        .releases()
-        .list()
-        // Optional Parameters
-        .per_page(100)
-        .page(1u32)
-        // Send the request
+    let response = Client::builder()
+        .user_agent("zilliqa")
+        .build()?
+        .get(format!(
+            "https://api.github.com/repos/{organization}/{repository}/releases/latest"
+        ))
         .send()
         .await?;
 
-    let rel: Vec<Release> = page.items.to_vec();
-    if let Some(r) = rel.first() {
-        Ok(Some(r.tag_name.clone()))
-    } else {
-        Ok(None)
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
     }
+
+    #[derive(Deserialize)]
+    struct Response {
+        tag_name: String,
+    }
+    let response: Response = response.error_for_status()?.json().await?;
+
+    Ok(Some(response.tag_name))
 }
 
 async fn get_commit(organization: &str, repository: &str) -> Result<Option<String>> {
-    let client = octocrab::initialise(Octocrab::builder().build()?);
-
-    let commit = client
-        .repos(organization, repository)
-        .list_commits()
-        // Optional Parameters
-        .per_page(100)
-        .page(1u32)
-        // Send the request
+    let response = Client::builder()
+        .user_agent("zilliqa")
+        .build()?
+        .get(format!(
+            "https://api.github.com/repos/{organization}/{repository}/commits"
+        ))
         .send()
         .await?;
 
-    let rel: Vec<RepoCommit> = commit.items.to_vec();
-    if let Some(r) = rel.first() {
-        Ok(Some(r.sha.chars().take(8).collect()))
-    } else {
-        Ok(None)
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
     }
+
+    #[derive(Deserialize)]
+    struct Commit {
+        sha: String,
+    }
+    let response: Vec<Commit> = response.error_for_status()?.json().await?;
+
+    Ok(response.first().map(|c| c.sha.chars().take(8).collect()))
 }
 
 pub async fn get_release_or_commit(repository: &str) -> Result<String> {

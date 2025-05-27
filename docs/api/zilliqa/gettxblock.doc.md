@@ -6,15 +6,11 @@ GetTxBlock
 
 tx,block,get,number
 
-# Status
-
-PartiallyImplemented
-
 # Description
 
 `GetTxBlock` returns the details of a specified transaction block.
 
-This API is partially implemented - see (<https://github.com/Zilliqa/zq2/issues/79>)
+Note: the `Rewards` field is included for backwards compatibility and will always return `0`.
 
 # Curl
 
@@ -133,4 +129,3 @@ func GetTxBlock(t *testing.T) {
 | `jsonrpc` | string | Required | `"2.0"`                                                   |
 | `method`  | string | Required | `"GetTxBlock"`                                            |
 | `params`  | string | Required | Specified TX block number to return. Example: `"1002353"` |
-

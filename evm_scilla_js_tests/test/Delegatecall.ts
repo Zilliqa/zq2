@@ -1,12 +1,11 @@
-import {SignerWithAddress} from "@nomiclabs/hardhat-ethers/signers";
 import {expect} from "chai";
-import {Contract} from "ethers";
+import {Contract, Wallet} from "ethers";
 import hre, {ethers} from "hardhat";
 
 describe("Delegatecall functionality #parallel", function () {
   let delegateContract: Contract;
   let testDelegateContract: Contract;
-  let signer: SignerWithAddress;
+  let signer: Wallet;
   before(async function () {
     signer = hre.allocateEthSigner();
     delegateContract = await hre.deployContractWithSigner("Delegatecall", signer);

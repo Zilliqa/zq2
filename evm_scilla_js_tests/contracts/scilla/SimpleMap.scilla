@@ -1,0 +1,10 @@
+scilla_version 0
+
+contract SimpleMap
+()
+field welcome_msg : String = "Hello"
+field simple_map: Map Uint32 String = Emp Uint32 String
+
+transition AddToMap(key: Uint32, value: String)
+  simple_map[key] := value
+end

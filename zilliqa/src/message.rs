@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy::primitives::Address;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bitvec::{bitarr, order::Msb0};
 use itertools::Either;
 use libp2p::PeerId;
@@ -14,10 +14,10 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    crypto::{Hash, NodePublicKey, NodeSignature, SecretKey},
+    crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
     db::TrieStorage,
     time::SystemTime,
-    transaction::{EvmGas, SignedTransaction, VerifiedTransaction},
+    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 /// The maximum number of validators in the consensus committee. This is passed to the deposit contract and we expect
@@ -111,7 +111,7 @@ impl Proposal {
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Vote {
     /// A signature on the block_hash and view.
-    signature: NodeSignature,
+    signature: BlsSignature,
     pub block_hash: Hash,
     pub public_key: NodePublicKey,
     pub view: u64,
@@ -137,7 +137,7 @@ impl Vote {
     }
 
     // Make this a getter to force the use of ::new
-    pub fn signature(&self) -> NodeSignature {
+    pub fn signature(&self) -> BlsSignature {
         self.signature
     }
 
@@ -153,7 +153,7 @@ impl Vote {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewView {
     /// A signature on the view, QC hash and validator index.
-    pub signature: NodeSignature,
+    pub signature: BlsSignature,
     pub qc: QuorumCertificate,
     pub view: u64,
     pub public_key: NodePublicKey,
@@ -203,13 +203,13 @@ pub enum BlockStrategy {
     Latest(u64),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct BlockRequest {
     pub from_view: u64,
     pub to_view: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BlockResponse {
     pub proposals: Vec<Proposal>,
     pub from_view: u64,
@@ -218,11 +218,27 @@ pub struct BlockResponse {
     pub availability: Option<Vec<BlockStrategy>>,
 }
 
+impl fmt::Debug for BlockResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BlockResponse")
+            .field("proposals", &self.proposals)
+            .field("from_view", &self.from_view)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBlocksByHeight {
+    pub request_at: SystemTime,
+    pub from_height: u64,
+    pub to_height: u64,
+}
+
 /// Used to convey proposal processing internally, to avoid blocking threads for too long.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessProposal {
+pub struct InjectedProposal {
     // An encoded PeerId
-    pub from: Vec<u8>,
+    pub from: PeerId,
     pub block: Proposal,
 }
 
@@ -245,12 +261,25 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    ProcessProposal(ProcessProposal),
+    ProcessProposal, // deprecated since 0.7.0
     NewTransaction(SignedTransaction),
     BatchedTransactions(Vec<SignedTransaction>),
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
+    /// The following are used for the new sync protocol
+    InjectedProposal(InjectedProposal),
+    /// 0.6.0
+    MetaDataRequest(RequestBlocksByHeight),
+    MetaDataResponse, // deprecated since 0.9.0
+    MultiBlockRequest(Vec<Hash>),
+    MultiBlockResponse(Vec<Proposal>),
+    /// 0.7.0
+    SyncBlockHeaders(Vec<SyncBlockHeader>),
+    /// 0.8.0
+    PassiveSyncRequest(RequestBlocksByHash),
+    PassiveSyncResponse(Vec<BlockTransactionsReceipts>),
+    PassiveSyncResponseLZ(Vec<u8>), // compressed block
 }
 
 impl ExternalMessage {
@@ -266,37 +295,47 @@ impl ExternalMessage {
 impl Display for ExternalMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            ExternalMessage::PassiveSyncResponseLZ(r) => {
+                write!(f, "PassiveSyncResponseLZ({})", r.len())
+            }
+            ExternalMessage::PassiveSyncResponse(r) => {
+                write!(f, "PassiveSyncResponse({})", r.len())
+            }
+            ExternalMessage::PassiveSyncRequest(r) => {
+                write!(f, "PassiveSyncRequest({})", r.hash)
+            }
+            ExternalMessage::SyncBlockHeaders(r) => {
+                write!(f, "SyncBlockHeaders({})", r.len())
+            }
+            ExternalMessage::MultiBlockRequest(r) => {
+                write!(f, "MultiBlockRequest({})", r.len())
+            }
+            ExternalMessage::MultiBlockResponse(r) => {
+                write!(f, "MultiBlockResponse({})", r.len())
+            }
+            ExternalMessage::MetaDataRequest(r) => {
+                write!(f, "MetaDataRequest({:?})", r.from_height..=r.to_height)
+            }
+            ExternalMessage::InjectedProposal(p) => {
+                write!(f, "InjectedProposal {}", p.block.number())
+            }
             ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
             ExternalMessage::Vote(v) => write!(f, "Vote({})", v.view),
             ExternalMessage::NewView(n) => write!(f, "NewView({})", n.view),
             ExternalMessage::BlockRequest(r) => {
                 write!(f, "BlockRequest({}..={})", r.from_view, r.to_view)
             }
-            ExternalMessage::ProcessProposal(r) => {
-                write!(
-                    f,
-                    "ProcessProposal({}, view={} num={})",
-                    PeerId::from_bytes(&r.from)
-                        .map_or("(undecodable)".to_string(), |x| x.to_base58()),
-                    r.block.header.view,
-                    r.block.header.number
-                )
-            }
             ExternalMessage::BlockResponse(r) => {
                 let mut views = r.proposals.iter().map(|p| p.view());
                 let first = views.next();
-                let last = views.last();
+                let last = views.next_back();
                 match (first, last) {
-                    (None, None) => write!(f, "BlockResponse([], avail={:?})", r.availability),
+                    (None, None) => write!(f, "BlockResponse([])"),
                     (Some(first), None) => {
-                        write!(f, "BlockResponse([{first}, avail={:?}])", r.availability)
+                        write!(f, "BlockResponse([{first}])")
                     }
                     (Some(first), Some(last)) => {
-                        write!(
-                            f,
-                            "BlockResponse([{first}, ..., {last}, avail={:?}])",
-                            r.availability
-                        )
+                        write!(f, "BlockResponse([{first}, ..., {last}])")
                     }
                     (None, Some(_)) => unreachable!(),
                 }
@@ -319,6 +358,9 @@ impl Display for ExternalMessage {
                 write!(f, "BatchedTransactions(txns_count: {:?})", txns.len())
             }
             ExternalMessage::Acknowledgement => write!(f, "RequestResponse"),
+            ExternalMessage::ProcessProposal | ExternalMessage::MetaDataResponse => {
+                unimplemented!("deprecated")
+            }
         }
     }
 }
@@ -343,6 +385,18 @@ pub enum InternalMessage {
         TrieStorage,
         Box<Path>,
     ),
+    /// Notify p2p cordinator to subscribe to a particular gossipsub topic
+    SubscribeToGossipSubTopic(GossipSubTopic),
+    /// Notify p2p cordinator to unsubscribe from a particular gossipsub topic
+    UnsubscribeFromGossipSubTopic(GossipSubTopic),
+}
+
+#[derive(Debug, Clone)]
+pub enum GossipSubTopic {
+    /// General topic for all nodes. Includes Proposal messages
+    General(u64),
+    /// Topic for Validators only. Includes NewView messages
+    Validator(u64),
 }
 
 /// Returns a terse, human-readable summary of a message.
@@ -355,6 +409,12 @@ impl Display for InternalMessage {
             InternalMessage::ExportBlockCheckpoint(block, ..) => {
                 write!(f, "ExportCheckpoint({})", block.number())
             }
+            InternalMessage::SubscribeToGossipSubTopic(topic) => {
+                write!(f, "SubscribeToGossipSubTopic({:?})", topic)
+            }
+            InternalMessage::UnsubscribeFromGossipSubTopic(topic) => {
+                write!(f, "UnsubscribeFromGossipSubTopic({:?})", topic)
+            }
         }
     }
 }
@@ -362,7 +422,7 @@ impl Display for InternalMessage {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub struct QuorumCertificate {
     /// An aggregated signature from `n - f` distinct replicas, built by signing a block hash in a specific view.
-    pub signature: NodeSignature,
+    pub signature: BlsSignature,
     pub cosigned: BitArray,
     pub block_hash: Hash,
     pub view: u64,
@@ -371,7 +431,7 @@ pub struct QuorumCertificate {
 impl QuorumCertificate {
     pub fn genesis() -> Self {
         Self {
-            signature: NodeSignature::identity(),
+            signature: BlsSignature::identity(),
             cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
             block_hash: Hash::ZERO,
             view: 0,
@@ -380,7 +440,7 @@ impl QuorumCertificate {
 
     pub fn new_with_identity(block_hash: Hash, view: u64) -> Self {
         QuorumCertificate {
-            signature: NodeSignature::identity(),
+            signature: BlsSignature::identity(),
             cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
             block_hash,
             view,
@@ -388,13 +448,13 @@ impl QuorumCertificate {
     }
 
     pub fn new(
-        signatures: &[NodeSignature],
+        signatures: &[BlsSignature],
         cosigned: BitArray,
         block_hash: Hash,
         view: u64,
     ) -> Self {
         QuorumCertificate {
-            signature: NodeSignature::aggregate(signatures).unwrap(),
+            signature: BlsSignature::aggregate(signatures).unwrap(),
             cosigned,
             block_hash,
             view,
@@ -410,11 +470,7 @@ impl QuorumCertificate {
             .zip(self.cosigned.iter())
             .filter_map(
                 |(public_key, cosigned)| {
-                    if *cosigned {
-                        Some(public_key)
-                    } else {
-                        None
-                    }
+                    if *cosigned { Some(public_key) } else { None }
                 },
             )
             .collect::<Vec<_>>();
@@ -423,7 +479,7 @@ impl QuorumCertificate {
         bytes.extend_from_slice(self.block_hash.as_bytes());
         bytes.extend_from_slice(&self.view.to_be_bytes());
 
-        NodeSignature::verify_aggregate(&self.signature, &bytes, public_keys).is_ok()
+        BlsSignature::verify_aggregate(&self.signature, &bytes, public_keys).is_ok()
     }
 
     pub fn compute_hash(&self) -> Hash {
@@ -455,7 +511,7 @@ impl Display for QuorumCertificate {
 /// A collection of `n - f` [QuorumCertificate]s.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AggregateQc {
-    pub signature: NodeSignature,
+    pub signature: BlsSignature,
     pub cosigned: BitArray,
     pub view: u64,
     pub qcs: Vec<QuorumCertificate>,
@@ -492,6 +548,23 @@ pub enum BlockRef {
     Number(u64),
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SyncBlockHeader {
+    pub header: BlockHeader,
+    pub size_estimate: usize,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBlocksByHash {
+    pub hash: Hash,
+    pub count: usize,
+    pub request_at: SystemTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockTransactionsReceipts {
+    pub block: Block,
+    pub transaction_receipts: Vec<(SignedTransaction, TransactionReceipt)>,
+}
 /// The [Copy]-able subset of a block.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlockHeader {
@@ -501,7 +574,7 @@ pub struct BlockHeader {
     /// A block's quorum certificate (QC) is proof that more than `2n/3` nodes (out of `n`) have voted for this block.
     /// It also includes a pointer to the parent block.
     pub qc: QuorumCertificate,
-    pub signature: NodeSignature,
+    pub signature: BlsSignature,
     pub state_root_hash: Hash,
     pub transactions_root_hash: Hash,
     pub receipts_root_hash: Hash,
@@ -525,7 +598,7 @@ impl BlockHeader {
             number: 0,
             hash: BlockHeader::genesis_hash(),
             qc: QuorumCertificate::genesis(),
-            signature: NodeSignature::identity(),
+            signature: BlsSignature::identity(),
             state_root_hash,
             transactions_root_hash: Hash::ZERO,
             receipts_root_hash: Hash::ZERO,
@@ -558,7 +631,7 @@ impl Default for BlockHeader {
             number: 0,
             hash: Hash::ZERO,
             qc: QuorumCertificate::genesis(),
-            signature: NodeSignature::identity(),
+            signature: BlsSignature::identity(),
             state_root_hash: Hash(Keccak256::digest([alloy::rlp::EMPTY_STRING_CODE]).into()),
             transactions_root_hash: Hash::ZERO,
             receipts_root_hash: Hash::ZERO,
@@ -592,7 +665,7 @@ impl Block {
             SystemTime::UNIX_EPOCH,
             EvmGas(0),
             EvmGas(0),
-            Either::Right(NodeSignature::identity()),
+            Either::Right(BlsSignature::identity()),
         )
     }
 
@@ -640,7 +713,7 @@ impl Block {
         timestamp: SystemTime,
         gas_used: EvmGas,
         gas_limit: EvmGas,
-        secret_key_or_signature: Either<SecretKey, NodeSignature>,
+        secret_key_or_signature: Either<SecretKey, BlsSignature>,
     ) -> Self {
         let block = Block {
             header: BlockHeader {
@@ -648,7 +721,7 @@ impl Block {
                 number,
                 hash: Hash::ZERO,
                 qc,
-                signature: NodeSignature::identity(),
+                signature: BlsSignature::identity(),
                 state_root_hash,
                 transactions_root_hash,
                 receipts_root_hash,
@@ -707,7 +780,7 @@ impl Block {
         self.header.qc.block_hash
     }
 
-    pub fn signature(&self) -> NodeSignature {
+    pub fn signature(&self) -> BlsSignature {
         self.header.signature
     }
 
