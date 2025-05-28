@@ -135,9 +135,7 @@ fn votes_received(_params: Params, node: &Arc<RwLock<Node>>) -> Result<VotesRece
 }
 
 fn clear_mempool(_params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
-    let mut node = node.write();
-
-    node.consensus.clear_mempool();
+    node.read().consensus.clear_mempool();
     Ok(())
 }
 
