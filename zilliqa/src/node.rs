@@ -35,7 +35,7 @@ use tracing::*;
 use crate::{
     api::types::filters::Filters,
     cfg::{ForkName, NodeConfig},
-    consensus::Consensus,
+    consensus::{Consensus, LockedTxPoolContent},
     crypto::{Hash, SecretKey},
     db::Db,
     exec::{PendingState, TransactionApplyResult},
@@ -46,7 +46,7 @@ use crate::{
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
-    pool::{TxAddResult, TxPoolContent},
+    pool::TxAddResult,
     state::State,
     sync::SyncPeers,
     transaction::{
@@ -398,7 +398,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
+    pub fn handle_internal_message(&self, from: u64, message: InternalMessage) -> Result<()> {
         let to = self.chain_id.eth;
         tracing::debug!(%from, %to, %message, "handling message");
         match message {
@@ -418,7 +418,7 @@ impl Node {
         Ok(())
     }
 
-    fn inject_intershard_transaction(&mut self, intershard_call: IntershardCall) -> Result<()> {
+    fn inject_intershard_transaction(&self, intershard_call: IntershardCall) -> Result<()> {
         let tx = SignedTransaction::Intershard {
             tx: TxIntershard {
                 chain_id: self.chain_id.eth,
@@ -433,7 +433,11 @@ impl Node {
         };
         let verified_tx = tx.verify()?;
         trace!("Injecting intershard transaction {}", verified_tx.hash);
-        self.consensus.new_transaction(verified_tx, true)?;
+        self.consensus.new_transaction(
+            verified_tx,
+            true,
+            &mut self.consensus.transaction_pool.write(),
+        )?;
         Ok(())
     }
 
@@ -483,7 +487,11 @@ impl Node {
     }
 
     pub fn process_transactions_to_broadcast(&mut self) -> Result<()> {
-        let txns_to_broadcast = self.consensus.transaction_pool.pull_txns_to_broadcast()?;
+        let txns_to_broadcast = self
+            .consensus
+            .transaction_pool
+            .write()
+            .pull_txns_to_broadcast()?;
         if txns_to_broadcast.is_empty() {
             return Ok(());
         }
@@ -990,7 +998,7 @@ impl Node {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn txpool_content(&self) -> Result<TxPoolContent> {
+    pub fn txpool_content(&self) -> LockedTxPoolContent {
         self.consensus.txpool_content()
     }
 

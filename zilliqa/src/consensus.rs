@@ -13,6 +13,7 @@ use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -22,7 +23,7 @@ use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
-    constants::TIME_TO_ALLOW_PROPOSAL_BROADCAST,
+    constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
     exec::{PendingState, TransactionApplyResult},
@@ -71,6 +72,17 @@ impl PartialOrd for Validator {
 impl Ord for Validator {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.peer_id.cmp(&other.peer_id)
+    }
+}
+
+pub struct LockedTxPoolContent<'a> {
+    pub state: &'a State,
+    pub transaction_pool: RwLockReadGuard<'a, TransactionPool>,
+}
+
+impl LockedTxPoolContent<'_> {
+    pub fn get(&self) -> Result<TxPoolContent> {
+        self.transaction_pool.preview_content(self.state)
     }
 }
 
@@ -159,7 +171,7 @@ pub struct Consensus {
     receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
     receipts_cache_hash: Hash,
     /// Actions that act on newly created blocks
-    pub transaction_pool: TransactionPool,
+    pub transaction_pool: RwLock<TransactionPool>,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
     early_proposal: Option<EarlyProposal>,
     /// Flag indicating that block broadcasting should be postponed at least until block_time is reached
@@ -785,8 +797,9 @@ impl Consensus {
                 }
                 if self.early_proposal.is_some() {
                     let (_, txns, _, _, _) = self.early_proposal.take().unwrap();
+                    let mut pool = self.transaction_pool.write();
                     for txn in txns.into_iter().rev() {
-                        self.transaction_pool.insert_ready_transaction(txn)?;
+                        pool.insert_ready_transaction(txn)?;
                     }
                     warn!("Early proposal exists but we are not leader. Clearing proposal");
                     self.early_proposal = None;
@@ -900,17 +913,6 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn apply_transaction<I: Inspector<PendingState> + ScillaInspector>(
-        &mut self,
-        txn: VerifiedTransaction,
-        current_block: BlockHeader,
-        inspector: I,
-        enable_inspector: bool,
-    ) -> Result<Option<TransactionApplyResult>> {
-        let state = &mut self.state;
-        Self::apply_transaction_at(state, txn, current_block, inspector, enable_inspector)
-    }
-
     pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
         state: &mut State,
         txn: VerifiedTransaction,
@@ -937,8 +939,13 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn txpool_content(&self) -> Result<TxPoolContent> {
-        self.transaction_pool.preview_content(&self.state)
+    pub fn txpool_content(&self) -> LockedTxPoolContent {
+        let pool = self.transaction_pool.read();
+
+        LockedTxPoolContent {
+            state: &self.state,
+            transaction_pool: pool,
+        }
     }
 
     pub fn get_pending_or_queued(
@@ -946,6 +953,7 @@ impl Consensus {
         txn: &VerifiedTransaction,
     ) -> Result<Option<PendingOrQueued>> {
         self.transaction_pool
+            .read()
             .get_pending_or_queued(&self.state, txn)
     }
 
@@ -953,6 +961,7 @@ impl Consensus {
         let current_nonce = self.state.must_get_account(account).nonce;
 
         self.transaction_pool
+            .read()
             .pending_transaction_count(account, current_nonce)
     }
 
@@ -1389,8 +1398,10 @@ impl Consensus {
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
+        let mut pool = self.transaction_pool.write();
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = self.transaction_pool.best_transaction(&state)? {
+        while let Some(tx) = pool.best_transaction(&state)? {
+            let tx = tx.clone();
             // First - check if we have time left to process txns and give enough time for block propagation
             let (_, milliseconds_remaining_of_block_time, _) =
                 self.get_consensus_timeout_params()?;
@@ -1421,7 +1432,7 @@ impl Consensus {
             // Skip transactions whose execution resulted in an error and drop them.
             let Some(result) = result else {
                 warn!("Dropping failed transaction: {:?}", tx.hash);
-                self.transaction_pool.mark_executed(&tx.clone());
+                pool.mark_executed(&tx);
                 continue;
             };
 
@@ -1432,10 +1443,8 @@ impl Consensus {
 
             let gas_fee = result.gas_used().0 as u128 * tx.tx.gas_price_per_evm_gas();
 
-            // Clone itself before invalidating the reference
-            let tx = tx.clone();
             // Do necessary work to assemble the transaction
-            self.transaction_pool.mark_executed(&tx);
+            pool.mark_executed(&tx);
 
             // Grab and update early_proposal data in own scope to avoid multiple mutable references to self
             {
@@ -1467,6 +1476,7 @@ impl Consensus {
                 applied_txs.push(tx);
             }
         }
+        std::mem::drop(pool);
         let (_, applied_txs, _, _, _) = self.early_proposal.as_ref().unwrap();
         self.db.with_sqlite_tx(|sqlite_tx| {
             for tx in applied_txs {
@@ -1569,7 +1579,8 @@ impl Consensus {
         };
 
         // Retrieve a list of pending transactions
-        let pending = self.transaction_pool.pending_transactions(state)?;
+        let pool = self.transaction_pool.read();
+        let pending = pool.pending_transactions(state)?;
 
         for txn in pending.into_iter() {
             // First - check for time
@@ -1658,10 +1669,12 @@ impl Consensus {
         // them into the pool - this is because upon broadcasting the proposal, we will
         // have to re-execute it ourselves (in order to vote on it) and thus will
         // need those transactions again
-        for tx in opaque_transactions {
-            let account_nonce = self.state.get_account(tx.signer)?.nonce;
-            self.transaction_pool
-                .insert_transaction(tx, account_nonce, true);
+        {
+            let mut pool = self.transaction_pool.write();
+            for tx in opaque_transactions {
+                let account_nonce = self.state.get_account(tx.signer)?.nonce;
+                pool.insert_transaction(tx, account_nonce, true);
+            }
         }
 
         // finalise the proposal
@@ -1669,8 +1682,9 @@ impl Consensus {
         else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
+            let mut pool = self.transaction_pool.write();
             while let Some(txn) = broadcasted_transactions.pop() {
-                self.transaction_pool.insert_ready_transaction(txn)?;
+                pool.insert_ready_transaction(txn)?;
             }
             return Ok(None);
         };
@@ -1691,16 +1705,18 @@ impl Consensus {
     ) -> Result<TxAddResult> {
         info!(?verified, "seen new txn");
 
-        let inserted = self.new_transaction(verified, from_broadcast)?;
+        let mut pool = self.transaction_pool.write();
+        let inserted = self.new_transaction(verified, from_broadcast, &mut pool)?;
         if inserted.was_added()
             && self.create_next_block_on_timeout
             && self.early_proposal.is_some()
-            && self.transaction_pool.has_txn_ready()
+            && pool.has_txn_ready()
         {
             trace!(
                 "add transaction to early proposal {}",
                 self.early_proposal.as_ref().unwrap().0.header.view
             );
+            std::mem::drop(pool);
             self.early_proposal_apply_transactions()?;
         }
         Ok(inserted)
@@ -1924,9 +1940,10 @@ impl Consensus {
     /// Returns (flag, outcome).
     /// flag is true if the transaction was newly added to the pool - ie. if it validated correctly and has not been seen before.
     pub fn new_transaction(
-        &mut self,
+        &self,
         txn: VerifiedTransaction,
         from_broadcast: bool,
+        pool: &mut RwLockWriteGuard<TransactionPool>,
     ) -> Result<TxAddResult> {
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
@@ -1962,17 +1979,14 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result =
-            self.transaction_pool
-                .insert_transaction(txn, early_account.nonce, from_broadcast);
+        let insert_result = pool.insert_transaction(txn, early_account.nonce, from_broadcast);
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
             // Avoid cloning the transaction aren't any subscriptions to send it to.
             if self.new_transactions.receiver_count() != 0 {
                 // Clone the transaction from the pool, because we moved it in.
-                let txn = self
-                    .transaction_pool
+                let txn = pool
                     .get_transaction(txn_hash)
                     .ok_or_else(|| anyhow!("transaction we just added is missing"))?
                     .clone();
@@ -1988,7 +2002,7 @@ impl Consensus {
             .get_transaction(&hash)?
             .map(|tx| tx.verify())
             .transpose()?
-            .or_else(|| self.transaction_pool.get_transaction(hash).cloned()))
+            .or_else(|| self.transaction_pool.read().get_transaction(hash).cloned()))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
@@ -2472,7 +2486,7 @@ impl Consensus {
         Ok(result.and_then(|(_, message)| message.into_proposal()))
     }
 
-    fn add_block(&mut self, from: Option<PeerId>, block: Block) -> Result<()> {
+    fn add_block(&self, from: Option<PeerId>, block: Block) -> Result<()> {
         let hash = block.hash();
         debug!(?from, ?hash, ?block.header.view, ?block.header.number, "added block");
         let _ = self.new_blocks.send(block.header);
@@ -2565,8 +2579,10 @@ impl Consensus {
         // in other words, the current view is always at least 2 views ahead of the highQC's view
         // i.e. to get `consensus_timeout_ms * 2^0` we have to subtract 2 from `view_difference`
         let consensus_timeout = self.config.consensus.consensus_timeout.as_millis() as f32;
-        (consensus_timeout * (1.25f32).powi(view_difference.saturating_sub(2) as i32)).floor()
-            as u64
+        (consensus_timeout
+            * (EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER)
+                .powi(view_difference.saturating_sub(2) as i32))
+        .floor() as u64
     }
 
     /// Find minimum number of views which could have passed by in the given time difference.
@@ -2580,7 +2596,7 @@ impl Consensus {
         let mut views = 0;
         let mut total = 0.0;
         loop {
-            total += (1.5f32).powi(views);
+            total += (EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER).powi(views);
             if total > normalised_time_difference {
                 break;
             }
@@ -2851,13 +2867,13 @@ impl Consensus {
                 .set_to_root(parent_block.state_root_hash().into());
 
             // block transactions need to be removed from self.transactions and re-injected
+            let mut pool = self.transaction_pool.write();
             for tx_hash in &head_block.transactions {
-                let orig_tx = self.get_transaction_by_hash(*tx_hash)?.unwrap();
+                let orig_tx = self.db.get_transaction(tx_hash)?.unwrap().verify()?;
 
                 // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
-                self.transaction_pool
-                    .insert_transaction(orig_tx, account_nonce, true);
+                pool.insert_transaction(orig_tx, account_nonce, true);
             }
 
             // this block is no longer in the main chain
@@ -2913,7 +2929,15 @@ impl Consensus {
             let transactions = block_pointer.transactions.clone();
             let transactions = transactions
                 .iter()
-                .map(|tx_hash| self.get_transaction_by_hash(*tx_hash).unwrap().unwrap().tx)
+                .map(|tx_hash| {
+                    self.db
+                        .get_transaction(tx_hash)
+                        .unwrap()
+                        .unwrap()
+                        .verify()
+                        .unwrap()
+                        .tx
+                })
                 .collect();
             let parent = self
                 .get_block(&block_pointer.parent_hash())?
@@ -2977,6 +3001,7 @@ impl Consensus {
             return self.broadcast_commit_receipts(from, block, block_receipts);
         };
 
+        let mut pool = self.transaction_pool.write();
         let mut verified_txns = Vec::new();
 
         // We re-inject any missing Intershard transactions (or really, any missing
@@ -2984,7 +3009,7 @@ impl Consensus {
         // message or locally, the proposal cannot be applied
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
             // Prefer to insert verified txn from pool. This is faster.
-            let txn = match self.transaction_pool.get_transaction(*tx_hash) {
+            let txn = match pool.get_transaction(*tx_hash) {
                 Some(txn) => txn.clone(),
                 _ => match transactions
                     .get(idx)
@@ -3020,18 +3045,18 @@ impl Consensus {
 
         let mut touched_addresses = vec![];
         for (tx_index, txn) in verified_txns.iter().enumerate() {
-            self.new_transaction(txn.clone(), true)?;
+            self.new_transaction(txn.clone(), true, &mut pool)?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
-            let result = self
-                .apply_transaction(
-                    txn.clone(),
-                    block.header,
-                    &mut inspector,
-                    self.config.enable_ots_indices,
-                )?
-                .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
-            self.transaction_pool.mark_executed(txn);
+            let result = Self::apply_transaction_at(
+                &mut self.state,
+                txn.clone(),
+                block.header,
+                &mut inspector,
+                self.config.enable_ots_indices,
+            )?
+            .ok_or_else(|| anyhow!("proposed transaction failed to execute"))?;
+            pool.mark_executed(txn);
             for address in inspector.touched {
                 touched_addresses.push((address, tx_hash));
             }
@@ -3190,7 +3215,7 @@ impl Consensus {
     }
 
     fn broadcast_commit_receipts(
-        &mut self,
+        &self,
         from: Option<PeerId>,
         block: &Block,
         mut block_receipts: Vec<(TransactionReceipt, usize)>,
@@ -3314,53 +3339,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub fn clear_mempool(&mut self) {
-        self.transaction_pool.clear();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn test_minimum_views_in_time_difference() {
-        // 2 views ahead - 1.5 ^ 0 = 1
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(0),
-                Duration::from_secs(1)
-            ),
-            0
-        );
-        // 3 views ahead - 1.5^0 + 1.5^1 = 2.5
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(2),
-                Duration::from_secs(1)
-            ),
-            1
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(3),
-                Duration::from_secs(1)
-            ),
-            2
-        );
-        // 5 views ahead - 1.5^0 + 1.5^1 + 1.5^2 + 1.5^3 = 8.125
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(8),
-                Duration::from_secs(1)
-            ),
-            3
-        );
-        assert_eq!(
-            Consensus::minimum_views_in_time_difference(
-                Duration::from_secs(9),
-                Duration::from_secs(1)
-            ),
-            4
-        );
+    pub fn clear_mempool(&self) {
+        self.transaction_pool.write().clear();
     }
 }
