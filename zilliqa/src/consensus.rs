@@ -159,7 +159,7 @@ pub struct Consensus {
     receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
     receipts_cache_hash: Hash,
     /// Actions that act on newly created blocks
-    transaction_pool: TransactionPool,
+    pub transaction_pool: TransactionPool,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
     early_proposal: Option<EarlyProposal>,
     /// Flag indicating that block broadcasting should be postponed at least until block_time is reached
@@ -630,9 +630,10 @@ impl Consensus {
         let head_block = self.head_block();
         let mut view = self.get_view()?;
 
-        trace!(
+        info!(
             block_view = block.view(),
             block_number = block.number(),
+            txns = transactions.len(),
             "handling block proposal {}",
             block.hash()
         );
@@ -1659,7 +1660,8 @@ impl Consensus {
         // need those transactions again
         for tx in opaque_transactions {
             let account_nonce = self.state.get_account(tx.signer)?.nonce;
-            self.transaction_pool.insert_transaction(tx, account_nonce);
+            self.transaction_pool
+                .insert_transaction(tx, account_nonce, true);
         }
 
         // finalise the proposal
@@ -1682,14 +1684,14 @@ impl Consensus {
     }
 
     /// Insert transaction and add to early_proposal if possible.
-    pub fn handle_new_transaction(&mut self, txn: SignedTransaction) -> Result<TxAddResult> {
-        let Ok(verified) = txn.verify() else {
-            return Ok(TxAddResult::CannotVerifySignature);
-        };
-
+    pub fn handle_new_transaction(
+        &mut self,
+        verified: VerifiedTransaction,
+        from_broadcast: bool,
+    ) -> Result<TxAddResult> {
         info!(?verified, "seen new txn");
 
-        let inserted = self.new_transaction(verified)?;
+        let inserted = self.new_transaction(verified, from_broadcast)?;
         if inserted.was_added()
             && self.create_next_block_on_timeout
             && self.early_proposal.is_some()
@@ -1921,7 +1923,11 @@ impl Consensus {
 
     /// Returns (flag, outcome).
     /// flag is true if the transaction was newly added to the pool - ie. if it validated correctly and has not been seen before.
-    pub fn new_transaction(&mut self, txn: VerifiedTransaction) -> Result<TxAddResult> {
+    pub fn new_transaction(
+        &mut self,
+        txn: VerifiedTransaction,
+        from_broadcast: bool,
+    ) -> Result<TxAddResult> {
         if self.db.contains_transaction(&txn.hash)? {
             debug!("Transaction {:?} already in mempool", txn.hash);
             return Ok(TxAddResult::Duplicate(txn.hash));
@@ -1956,9 +1962,9 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = self
-            .transaction_pool
-            .insert_transaction(txn, early_account.nonce);
+        let insert_result =
+            self.transaction_pool
+                .insert_transaction(txn, early_account.nonce, from_broadcast);
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
@@ -2851,7 +2857,7 @@ impl Consensus {
                 // Insert this unwound transaction back into the transaction pool.
                 let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
                 self.transaction_pool
-                    .insert_transaction(orig_tx, account_nonce);
+                    .insert_transaction(orig_tx, account_nonce, true);
             }
 
             // this block is no longer in the main chain
@@ -3014,7 +3020,7 @@ impl Consensus {
 
         let mut touched_addresses = vec![];
         for (tx_index, txn) in verified_txns.iter().enumerate() {
-            self.new_transaction(txn.clone())?;
+            self.new_transaction(txn.clone(), true)?;
             let tx_hash = txn.hash;
             let mut inspector = TouchedAddressInspector::default();
             let result = self

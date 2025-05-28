@@ -244,13 +244,6 @@ impl Node {
     pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
         match message {
-            // `NewTransaction`s are always broadcasted.
-            ExternalMessage::NewTransaction(t) => {
-                // Don't process again txn sent by this node (it's already in the mempool)
-                if self.peer_id != from {
-                    self.consensus.handle_new_transaction(t)?;
-                }
-            }
             // Repeated `NewView`s might get broadcast.
             ExternalMessage::NewView(m) => {
                 if let Some(network_message) = self.consensus.new_view(from, *m)? {
@@ -262,7 +255,17 @@ impl Node {
                 warn!(%msg, "unexpected message type");
             }
         }
+        Ok(())
+    }
 
+    pub fn handle_broadcast_transactions(
+        &mut self,
+        transactions: Vec<VerifiedTransaction>,
+    ) -> Result<()> {
+        let from_broadcast = true;
+        for txn in transactions {
+            self.consensus.handle_new_transaction(txn, from_broadcast)?;
+        }
         Ok(())
     }
 
@@ -430,7 +433,7 @@ impl Node {
         };
         let verified_tx = tx.verify()?;
         trace!("Injecting intershard transaction {}", verified_tx.hash);
-        self.consensus.new_transaction(verified_tx)?;
+        self.consensus.new_transaction(verified_tx, true)?;
         Ok(())
     }
 
@@ -465,17 +468,27 @@ impl Node {
         Ok(false)
     }
 
-    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
-        let hash = txn.calculate_hash();
+    pub fn create_transaction(&mut self, txn: VerifiedTransaction) -> Result<(Hash, TxAddResult)> {
+        let hash = txn.hash;
 
-        let result = self.consensus.handle_new_transaction(txn.clone())?;
-        if result.was_added() {
-            // TODO: Avoid redundant self-broadcast
-            self.message_sender
-                .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
+        let from_broadcast = false;
+        let result = self
+            .consensus
+            .handle_new_transaction(txn.clone(), from_broadcast)?;
+        if !result.was_added() {
+            debug!(?result, "Transaction cannot be added to mempool");
         }
 
         Ok((hash, result))
+    }
+
+    pub fn process_transactions_to_broadcast(&mut self) -> Result<()> {
+        let txns_to_broadcast = self.consensus.transaction_pool.pull_txns_to_broadcast()?;
+        if txns_to_broadcast.is_empty() {
+            return Ok(());
+        }
+        self.message_sender
+            .broadcast_external_message(ExternalMessage::BatchedTransactions(txns_to_broadcast))
     }
 
     pub fn number(&self) -> u64 {

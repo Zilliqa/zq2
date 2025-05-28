@@ -756,6 +756,8 @@ fn send_raw_transaction(params: Params, node: &Arc<RwLock<Node>>) -> Result<Stri
     let transaction = hex::decode(transaction)?;
     let transaction = parse_transaction(&transaction)?;
 
+    let transaction = transaction.verify()?;
+
     let (hash, result) = node.write().create_transaction(transaction)?;
     match result {
         TxAddResult::AddedToMempool

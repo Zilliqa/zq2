@@ -316,7 +316,14 @@ fn create_transaction(
         sig,
     };
 
-    let (transaction_hash, result) = node.create_transaction(signed_transaction.clone())?;
+    let Ok(transaction) = signed_transaction.verify() else {
+        Err(ErrorObject::owned::<String>(
+            RPCErrorCode::RpcVerifyRejected as i32,
+            "signature",
+            None,
+        ))?
+    };
+    let (transaction_hash, result) = node.create_transaction(transaction)?;
     let info = match result {
         TxAddResult::AddedToMempool => Ok("Txn processed".to_string()),
         TxAddResult::Duplicate(_) => Ok("Txn already present".to_string()),
