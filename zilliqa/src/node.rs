@@ -472,13 +472,11 @@ impl Node {
         Ok(false)
     }
 
-    pub fn create_transaction(&mut self, txn: VerifiedTransaction) -> Result<(Hash, TxAddResult)> {
+    pub fn create_transaction(&self, txn: VerifiedTransaction) -> Result<(Hash, TxAddResult)> {
         let hash = txn.hash;
 
         let from_broadcast = false;
-        let result = self
-            .consensus
-            .handle_new_transaction(txn.clone(), from_broadcast)?;
+        let result = self.consensus.handle_new_transaction(txn, from_broadcast)?;
         if !result.was_added() {
             debug!(?result, "Transaction cannot be added to mempool");
         }
