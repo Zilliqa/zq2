@@ -1092,12 +1092,14 @@ impl Network {
                                             )
                                             .unwrap(),
                                         ExternalMessage::BatchedTransactions(transactions) => {
-                                            let mut verified = Vec::new();
-                                            for tx in transactions {
-                                                let tx = tx.clone().verify().unwrap();
-                                                verified.push(tx);
-                                            }
-                                            inner.handle_broadcast_transactions(verified).unwrap();
+                                            // let mut verified = Vec::new();
+                                            // for tx in transactions {
+                                            //     let tx = tx.clone().verify().unwrap();
+                                            //     verified.push(tx);
+                                            // }
+                                            inner
+                                                .handle_broadcast_transactions(transactions.clone())
+                                                .unwrap();
                                         }
                                         _ => inner
                                             .handle_broadcast(source, external_message.clone())

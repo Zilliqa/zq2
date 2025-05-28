@@ -280,7 +280,7 @@ pub enum ExternalMessage {
     PassiveSyncResponse(Vec<BlockTransactionsReceipts>),
     PassiveSyncResponseLZ(Vec<u8>), // compressed block
     /// 0.9.4
-    BatchedTransactions(Vec<SignedTransaction>),
+    BatchedTransactions(Vec<VerifiedTransaction>),
 }
 
 impl ExternalMessage {

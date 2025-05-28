@@ -96,7 +96,7 @@ pub struct TransactionPool {
     /// These are candidates to be included in the next block
     gas_index: GasCollection,
     /// Keeps transactions created at this node that will be broadcast
-    transactions_to_broadcast: VecDeque<SignedTransaction>,
+    transactions_to_broadcast: VecDeque<VerifiedTransaction>,
 }
 
 /// A wrapper for (gas price, sender, nonce), stored in the `ready` heap of [TransactionPool].
@@ -327,7 +327,7 @@ impl TransactionPool {
 
         // If this is a transaction created at this node, add it to broadcast vector
         if !from_broadcast {
-            self.store_broadcast_txn(txn.tx.clone());
+            self.store_broadcast_txn(txn.clone());
         }
 
         debug!(
@@ -344,11 +344,11 @@ impl TransactionPool {
         TxAddResult::AddedToMempool
     }
 
-    fn store_broadcast_txn(&mut self, txn: SignedTransaction) {
+    fn store_broadcast_txn(&mut self, txn: VerifiedTransaction) {
         self.transactions_to_broadcast.push_back(txn);
     }
 
-    pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<SignedTransaction>> {
+    pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<VerifiedTransaction>> {
         const MAX_BATCH_SIZE: usize = 1000;
 
         if self.transactions_to_broadcast.is_empty() {
