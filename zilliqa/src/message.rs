@@ -261,9 +261,8 @@ pub enum ExternalMessage {
     NewView(Box<NewView>),
     BlockRequest(BlockRequest),
     BlockResponse(BlockResponse),
-    ProcessProposal, // deprecated since 0.7.0
-    NewTransaction(SignedTransaction),
-    BatchedTransactions(Vec<SignedTransaction>),
+    ProcessProposal,                   // deprecated since 0.7.0
+    NewTransaction(SignedTransaction), // deprecated since 0.9.4
     /// An acknowledgement of the receipt of a message. Note this is only used as a response when the caller doesn't
     /// require any data in the response.
     Acknowledgement,
@@ -280,6 +279,8 @@ pub enum ExternalMessage {
     PassiveSyncRequest(RequestBlocksByHash),
     PassiveSyncResponse(Vec<BlockTransactionsReceipts>),
     PassiveSyncResponseLZ(Vec<u8>), // compressed block
+    /// 0.9.4
+    BatchedTransactions(Vec<SignedTransaction>),
 }
 
 impl ExternalMessage {
