@@ -5,12 +5,11 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Result, anyhow};
-use tokio::time::Instant;
 use tracing::debug;
 
 use crate::{
     crypto::Hash,
-    state::{Account, State},
+    state::State,
     transaction::{SignedTransaction, ValidationOutcome, VerifiedTransaction},
 };
 
@@ -195,7 +194,7 @@ impl TransactionPool {
 
         let mut ready = self.gas_index.clone();
 
-        let mut pending_txns = Vec::with_capacity(4000);
+        let mut pending_txns = Vec::new();
 
         // Find a set of transactions that are pending for inclusion in the next block
         while !ready.is_empty() {
