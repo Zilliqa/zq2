@@ -739,11 +739,11 @@ mod tests {
         create_acc(&mut state, from, 100, 0)?;
 
         pool.insert_transaction(intershard_transaction(0, 0, 100), 0, false);
-        pool.insert_transaction(transaction(from, 0, 1), 0, false);
-        pool.insert_transaction(transaction(from, 1, 1), 1, false);
-        pool.insert_transaction(transaction(from, 2, 1), 2, false);
-        pool.insert_transaction(transaction(from, 3, 200), 3, false);
-        pool.insert_transaction(transaction(from, 10, 1), 3, false);
+        pool.insert_transaction(transaction(from, 0, 30), 0, false);
+        pool.insert_transaction(transaction(from, 1, 30), 1, false);
+        pool.insert_transaction(transaction(from, 2, 30), 2, false);
+        pool.insert_transaction(transaction(from, 3, 30), 3, false);
+        pool.insert_transaction(transaction(from, 10, 30), 3, false);
 
         let content = pool.preview_content(&state)?;
 
