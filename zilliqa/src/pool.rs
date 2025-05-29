@@ -222,10 +222,11 @@ impl TransactionPool {
 
             let tx_cost = txn.tx.maximum_validation_cost()?;
 
+            // Save it no matter what
+            tracked_balances.insert(txn.signer, balance.saturating_sub(tx_cost));
+            // While there may be a queued txn that may well fit, this is a good enough approximation
             if tx_cost > balance {
                 continue;
-            } else {
-                tracked_balances.insert(txn.signer, balance.saturating_sub(tx_cost));
             }
 
             pending_txns.push(txn);
