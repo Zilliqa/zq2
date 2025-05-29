@@ -192,6 +192,8 @@ impl TransactionPool {
         // Keeps track of [account, cumulative_txns_cost]
         let mut tracked_accounts = HashMap::new();
 
+        let mut balances = HashMap::new();
+
         let mut ready = self.gas_index.clone();
 
         let mut pending_txns = Vec::new();
@@ -215,7 +217,15 @@ impl TransactionPool {
 
             let tx_cost = txn.tx.maximum_validation_cost()?;
 
-            if cum_cost + tx_cost > state.get_account(txn.signer)?.balance {
+            let balance = if let Some(balance) = balances.get(&txn.signer) {
+                *balance
+            } else {
+                let account = state.get_account(txn.signer)?;
+                balances.insert(txn.signer, account.balance);
+                account.balance
+            };
+
+            if cum_cost + tx_cost > balance {
                 continue;
             }
 
