@@ -5,11 +5,12 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Result, anyhow};
+use tokio::time::Instant;
 use tracing::debug;
 
 use crate::{
     crypto::Hash,
-    state::State,
+    state::{Account, State},
     transaction::{SignedTransaction, ValidationOutcome, VerifiedTransaction},
 };
 
@@ -190,7 +191,7 @@ impl TransactionPool {
     /// Returns a list of txns that are pending for inclusion in the next block
     pub fn pending_transactions(&self, state: &State) -> Result<Vec<&VerifiedTransaction>> {
         // Keeps track of [account, cumulative_txns_cost]
-        let mut tracked_accounts = HashMap::new();
+        let mut tracked_balances = HashMap::new();
 
         let mut ready = self.gas_index.clone();
 
@@ -209,19 +210,25 @@ impl TransactionPool {
 
             Self::remove_from_gas_index(&mut ready, txn);
 
-            let cum_cost = tracked_accounts
-                .get(&txn.signer)
-                .cloned()
-                .unwrap_or(u128::default());
+            let balance = tracked_balances.get(&txn.signer).map_or_else(
+                || {
+                    state
+                        .get_account(txn.signer)
+                        .unwrap_or_else(|_| Account::default())
+                        .balance
+                },
+                |b| *b,
+            );
 
             let tx_cost = txn.tx.maximum_validation_cost()?;
 
-            if cum_cost + tx_cost > state.get_account(txn.signer)?.balance {
+            if tx_cost > balance {
                 continue;
+            } else {
+                tracked_balances.insert(txn.signer, balance.saturating_sub(tx_cost));
             }
 
             pending_txns.push(txn);
-            tracked_accounts.insert(txn.signer, cum_cost + tx_cost);
 
             let Some(next) = tx_index.next() else {
                 continue;
