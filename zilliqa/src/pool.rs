@@ -198,7 +198,8 @@ impl TransactionPool {
         let mut pending_txns = Vec::with_capacity(4000);
 
         // Find a set of transactions that are pending for inclusion in the next block
-        while !ready.is_empty() {
+        let now = Instant::now();
+        while !ready.is_empty() && now.elapsed().as_millis() < 100 && pending_txns.len() < 4000 {
             // It's safe to unwrap since ready must have at least one non-empty same-gas-price set
             let tx_index = *ready.iter().next_back().unwrap().1.iter().next().unwrap();
 
@@ -209,15 +210,11 @@ impl TransactionPool {
 
             Self::remove_from_gas_index(&mut ready, txn);
 
-            let balance = tracked_balances.get(&txn.signer).map_or_else(
-                || {
-                    state
-                        .get_account(txn.signer)
-                        .unwrap_or_else(|_| Account::default())
-                        .balance
-                },
-                |b| *b,
-            );
+            let balance = if let Some(b) = tracked_balances.get(&txn.signer) {
+                *b
+            } else {
+                state.get_account(txn.signer)?.balance
+            };
 
             let tx_cost = txn.tx.maximum_validation_cost()?;
 
