@@ -749,4 +749,71 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn benchmark_preview_content() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let from = "0x0000000000000000000000000000000000001234".parse()?;
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 1_000_000, 0)?;
+
+        // Insert 100 pending transactions
+        for nonce in 0u64..100u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), nonce, false);
+        }
+
+        // Insert 100 queued transactions
+        for nonce in 101u64..201u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), 0, false);
+        }
+
+        // Benchmark the preview_content method
+        let start = std::time::Instant::now();
+        let content = pool.preview_content(&state)?;
+        let duration = start.elapsed();
+
+        // Verify the results
+        assert_eq!(content.pending.len(), 100);
+        assert_eq!(content.queued.len(), 100);
+
+        println!(
+            "Benchmark completed: preview_content took {:?} to execute.",
+            duration
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn benchmark_pending_transactions() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let from = "0x0000000000000000000000000000000000001234".parse()?;
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 1_000_000, 0)?;
+
+        // Insert 100 pending transactions
+        for nonce in 0u64..100u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), nonce, false);
+        }
+
+        // Insert 100 queued transactions
+        for nonce in 101u64..201u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), 0, false);
+        }
+
+        // Benchmark the preview_content method
+        let start = std::time::Instant::now();
+        let _result = pool.pending_transactions(&state)?;
+        let duration = start.elapsed();
+
+        println!(
+            "Benchmark completed: pending_transactions took {:?} to execute.",
+            duration
+        );
+
+        Ok(())
+    }
+
 }
