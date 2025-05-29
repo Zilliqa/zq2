@@ -822,8 +822,6 @@ mod tests {
             "Benchmark completed: pending_transactions took {:?} to execute.",
             duration
         );
-
         Ok(())
     }
-
 }
