@@ -13,7 +13,7 @@ use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -119,6 +119,40 @@ type EarlyProposal = (
     u128, // Cumulative gas fee which will be sent to ZERO account
 );
 
+#[derive(Debug)]
+struct ReceiptsCache {
+    hash: Hash,
+    receipts: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
+}
+
+impl Default for ReceiptsCache {
+    fn default() -> Self {
+        Self {
+            hash: Hash::ZERO,
+            receipts: Default::default(),
+        }
+    }
+}
+
+impl ReceiptsCache {
+    fn insert(&mut self, hash: Hash, receipt: TransactionReceipt, touched_addresses: Vec<Address>) {
+        self.receipts.insert(hash, (receipt, touched_addresses));
+    }
+
+    fn set_hash(&mut self, hash: Hash) {
+        self.hash = hash;
+    }
+
+    fn remove(&mut self, hash: &Hash) -> Option<(TransactionReceipt, Vec<Address>)> {
+        self.receipts.remove(hash)
+    }
+
+    fn clear(&mut self) {
+        self.hash = Hash::ZERO;
+        self.receipts.clear();
+    }
+}
+
 /// The consensus algorithm is pipelined fast-hotstuff, as given in this paper: https://arxiv.org/pdf/2010.11454.pdf
 ///
 /// The algorithm can be condensed down into the following explanation:
@@ -167,13 +201,11 @@ pub struct Consensus {
     state: State,
     /// The persistence database
     db: Arc<Db>,
-    /// Receipts cache
-    receipts_cache: HashMap<Hash, (TransactionReceipt, Vec<Address>)>,
-    receipts_cache_hash: Hash,
+    receipts_cache: Mutex<ReceiptsCache>,
     /// Actions that act on newly created blocks
     pub transaction_pool: RwLock<TransactionPool>,
     /// Pending proposal. Gets created as soon as we become aware that we are leader for this view.
-    early_proposal: Option<EarlyProposal>,
+    early_proposal: RwLock<Option<EarlyProposal>>,
     /// Flag indicating that block broadcasting should be postponed at least until block_time is reached
     create_next_block_on_timeout: bool,
     /// Timestamp of most recent view change
@@ -320,10 +352,9 @@ impl Consensus {
             high_qc,
             state,
             db,
-            receipts_cache: HashMap::new(),
-            receipts_cache_hash: Hash::ZERO,
+            receipts_cache: Default::default(),
             transaction_pool: Default::default(),
-            early_proposal: None,
+            early_proposal: Default::default(),
             create_next_block_on_timeout: false,
             view_updated_at: SystemTime::now(),
             new_blocks: broadcast::Sender::new(4),
@@ -498,7 +529,7 @@ impl Consensus {
                     Ok(None) => {
                         error!("Failed to finalise block proposal.");
                         self.create_next_block_on_timeout = false;
-                        self.early_proposal = None;
+                        *self.early_proposal.write() = None;
                     }
                     Err(e) => error!("Failed to finalise proposal: {e}"),
                 };
@@ -759,9 +790,10 @@ impl Consensus {
                         return Ok(Some(network_message));
                     }
                     // A bit hacky: processing of our buffered votes may have resulted in an early_proposal be created and awaiting empty block timeout for broadcast. In this case we must return now
+                    let early_proposal = self.early_proposal.read();
                     if self.create_next_block_on_timeout
-                        && self.early_proposal.is_some()
-                        && self.early_proposal.as_ref().unwrap().0.view() == proposal_view + 1
+                        && early_proposal.is_some()
+                        && early_proposal.as_ref().unwrap().0.view() == proposal_view + 1
                     {
                         trace!("supermajority reached, early proposal awaiting broadcast");
                         return Ok(None);
@@ -795,14 +827,16 @@ impl Consensus {
                     warn!("Create block on timeout set. Clearing");
                     self.create_next_block_on_timeout = false;
                 }
-                if self.early_proposal.is_some() {
-                    let (_, txns, _, _, _) = self.early_proposal.take().unwrap();
-                    let mut pool = self.transaction_pool.write();
-                    for txn in txns.into_iter().rev() {
-                        pool.insert_ready_transaction(txn)?;
+                {
+                    let mut early_proposal = self.early_proposal.write();
+                    if early_proposal.is_some() {
+                        let (_, txns, _, _, _) = early_proposal.take().unwrap();
+                        let mut pool = self.transaction_pool.write();
+                        for txn in txns.into_iter().rev() {
+                            pool.insert_ready_transaction(txn)?;
+                        }
+                        warn!("Early proposal exists but we are not leader. Clearing proposal");
                     }
-                    warn!("Early proposal exists but we are not leader. Clearing proposal");
-                    self.early_proposal = None;
                 }
 
                 let Some(next_leader) = next_leader else {
@@ -1125,8 +1159,10 @@ impl Consensus {
                 self.early_proposal_assemble_at(None)?;
 
                 // It is possible that we have collected votes for a forked block. Do not propose in that case.
-                if let Some(early_proposal) = &self.early_proposal {
-                    if early_proposal.0.parent_hash() == block_hash {
+                let early_proposal = self.early_proposal.read();
+                if let Some((block, _, _, _, _)) = early_proposal.as_ref() {
+                    if block.parent_hash() == block_hash {
+                        std::mem::drop(early_proposal);
                         return self.ready_for_block_proposal();
                     }
                 }
@@ -1276,7 +1312,9 @@ impl Consensus {
             proposal.header.gas_used,
             proposal.header.gas_limit,
         );
-        self.receipts_cache_hash = proposal.header.receipts_root_hash;
+        self.receipts_cache
+            .lock()
+            .set_hash(proposal.header.receipts_root_hash);
 
         // Restore the state to previous
         state.set_to_root(previous_state_root_hash.into());
@@ -1289,10 +1327,13 @@ impl Consensus {
     /// Assembles the Proposal block early.
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
-    fn early_proposal_assemble_at(&mut self, agg: Option<AggregateQc>) -> Result<()> {
+    fn early_proposal_assemble_at(&self, agg: Option<AggregateQc>) -> Result<()> {
         let view = self.get_view()?;
-        if self.early_proposal.is_some() && self.early_proposal.as_ref().unwrap().0.view() == view {
-            return Ok(());
+        {
+            let early_proposal = self.early_proposal.read();
+            if early_proposal.is_some() && early_proposal.as_ref().unwrap().0.view() == view {
+                return Ok(());
+            }
         }
 
         let (qc, parent) = match agg {
@@ -1336,18 +1377,18 @@ impl Consensus {
         );
 
         // Ensure sane state
-        if self.state.root_hash()? != parent.state_root_hash() {
+        let mut state = self.state.clone();
+        if state.root_hash()? != parent.state_root_hash() {
             warn!(
                 "state root hash mismatch, expected: {:?}, actual: {:?}",
                 parent.state_root_hash(),
-                self.state.root_hash()?
+                state.root_hash()?
             );
         }
 
         // Clear internal receipt cache.
         // Since this is a speed enhancement, we're ignoring scenarios where the receipts cache may hold receipts for more than one proposal.
-        self.receipts_cache.clear();
-        self.receipts_cache_hash = Hash::ZERO;
+        self.receipts_cache.lock().clear();
 
         // Internal states
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -1374,23 +1415,27 @@ impl Consensus {
             executed_block_header.gas_limit,
         );
 
-        self.early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie, 0));
-        self.early_proposal_apply_transactions()?;
+        let mut early_proposal = self.early_proposal.write();
+        *early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie, 0));
+        self.early_proposal_apply_transactions(self.transaction_pool.write(), early_proposal)?;
 
         Ok(())
     }
 
     /// Updates self.early_proposal data (proposal, applied_transactions, transactions_trie, receipts_trie) to include any transactions in the mempool
-    fn early_proposal_apply_transactions(&mut self) -> Result<()> {
-        if self.early_proposal.is_none() {
+    fn early_proposal_apply_transactions(
+        &self,
+        mut pool: RwLockWriteGuard<TransactionPool>,
+        mut early_proposal: RwLockWriteGuard<Option<EarlyProposal>>,
+    ) -> Result<()> {
+        if early_proposal.is_none() {
             error!("could not apply transactions to early_proposal because it does not exist");
             return Ok(());
         }
 
         let mut state = self.state.clone();
-        let previous_state_root_hash = state.root_hash()?;
 
-        let proposal = self.early_proposal.as_ref().unwrap().0.clone();
+        let proposal = early_proposal.as_ref().unwrap().0.clone();
 
         // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
@@ -1398,7 +1443,6 @@ impl Consensus {
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
-        let mut pool = self.transaction_pool.write();
         // Assemble new block with whatever is in the mempool
         while let Some(tx) = pool.best_transaction(&state)? {
             let tx = tx.clone();
@@ -1449,7 +1493,7 @@ impl Consensus {
             // Grab and update early_proposal data in own scope to avoid multiple mutable references to self
             {
                 let (proposal, applied_txs, transactions_trie, receipts_trie, cumulative_gas_fee) =
-                    self.early_proposal.as_mut().unwrap();
+                    early_proposal.as_mut().unwrap();
 
                 *cumulative_gas_fee += gas_fee;
                 transactions_trie.insert(tx.hash.as_bytes(), tx.hash.as_bytes())?;
@@ -1470,14 +1514,16 @@ impl Consensus {
 
                 // Forwarding cache
                 let addresses = inspector.touched.into_iter().collect_vec();
-                self.receipts_cache.insert(tx.hash, (receipt, addresses));
+                self.receipts_cache
+                    .lock()
+                    .insert(tx.hash, receipt, addresses);
 
                 tx_index_in_block += 1;
                 applied_txs.push(tx);
             }
         }
         std::mem::drop(pool);
-        let (_, applied_txs, _, _, _) = self.early_proposal.as_ref().unwrap();
+        let (_, applied_txs, _, _, _) = early_proposal.as_ref().unwrap();
         self.db.with_sqlite_tx(|sqlite_tx| {
             for tx in applied_txs {
                 self.db
@@ -1489,7 +1535,7 @@ impl Consensus {
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
             let (proposal, applied_txs, transactions_trie, receipts_trie, _) =
-                self.early_proposal.as_mut().unwrap();
+                early_proposal.as_mut().unwrap();
 
             let applied_transaction_hashes = applied_txs.iter().map(|tx| tx.hash).collect_vec();
             trace!(
@@ -1505,10 +1551,6 @@ impl Consensus {
             proposal.transactions = applied_transaction_hashes;
             proposal.header.gas_used = proposal.header.gas_limit - gas_left;
         }
-
-        // Restore the state to previous
-        state.set_to_root(previous_state_root_hash.into());
-        self.state = state;
 
         // as a future improvement, process the proposal before broadcasting it
         Ok(())
@@ -1657,8 +1699,9 @@ impl Consensus {
     fn propose_new_block(&mut self) -> Result<Option<NetworkMessage>> {
         // We expect early_proposal to exist already but try create incase it doesn't
         self.early_proposal_assemble_at(None)?;
-        let (pending_block, applied_txs, _, _, cumulative_gas_fee) =
-            self.early_proposal.take().unwrap(); // safe to unwrap due to check above
+        let mut early_proposal = self.early_proposal.write();
+        let (pending_block, applied_txs, _, _, cumulative_gas_fee) = early_proposal.take().unwrap(); // safe to unwrap due to check above
+        std::mem::drop(early_proposal);
 
         // intershard transactions are not meant to be broadcast
         let (mut broadcasted_transactions, opaque_transactions): (Vec<_>, Vec<_>) = applied_txs
@@ -1699,7 +1742,7 @@ impl Consensus {
 
     /// Insert transaction and add to early_proposal if possible.
     pub fn handle_new_transaction(
-        &mut self,
+        &self,
         verified: VerifiedTransaction,
         from_broadcast: bool,
     ) -> Result<TxAddResult> {
@@ -1707,17 +1750,17 @@ impl Consensus {
 
         let mut pool = self.transaction_pool.write();
         let inserted = self.new_transaction(verified, from_broadcast, &mut pool)?;
+        let early_proposal = self.early_proposal.write();
         if inserted.was_added()
             && self.create_next_block_on_timeout
-            && self.early_proposal.is_some()
+            && early_proposal.is_some()
             && pool.has_txn_ready()
         {
             trace!(
                 "add transaction to early proposal {}",
-                self.early_proposal.as_ref().unwrap().0.header.view
+                early_proposal.as_ref().unwrap().0.header.view
             );
-            std::mem::drop(pool);
-            self.early_proposal_apply_transactions()?;
+            self.early_proposal_apply_transactions(pool, early_proposal)?;
         }
         Ok(inserted)
     }
@@ -1951,7 +1994,7 @@ impl Consensus {
         }
 
         // Perform insertion under early state, if available
-        let early_account = match self.early_proposal.as_ref() {
+        let early_account = match self.early_proposal.read().as_ref() {
             Some((block, _, _, _, _)) => {
                 let state = self.state.at_root(block.state_root_hash().into());
                 state.get_account(txn.signer)?
@@ -2970,7 +3013,8 @@ impl Consensus {
         }
 
         // Early return if it is safe to fast-forward
-        if self.receipts_cache_hash == block.receipts_root_hash()
+        let mut receipts_cache = self.receipts_cache.lock();
+        if receipts_cache.hash == block.receipts_root_hash()
             && from.is_some_and(|peer_id| peer_id == self.peer_id())
         {
             debug!(
@@ -2981,8 +3025,7 @@ impl Consensus {
             let mut block_receipts = Vec::new();
 
             for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
-                let (receipt, addresses) = self
-                    .receipts_cache
+                let (receipt, addresses) = receipts_cache
                     .remove(txn_hash)
                     .expect("receipt cached during proposal assembly");
 

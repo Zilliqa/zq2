@@ -1056,15 +1056,27 @@ impl Network {
                                     self.response_channel_id += 1;
                                     self.pending_responses
                                         .insert(response_channel.clone(), source);
-
-                                    inner
-                                        .handle_request(
-                                            source,
-                                            "(synthetic_id)",
-                                            external_message.clone(),
-                                            response_channel,
-                                        )
-                                        .unwrap();
+                                    // Re-route Sync
+                                    match external_message {
+                                        ExternalMessage::MetaDataRequest(_)
+                                        | ExternalMessage::MultiBlockRequest(_)
+                                        | ExternalMessage::BlockRequest(_)
+                                        | ExternalMessage::PassiveSyncRequest(_) => inner
+                                            .handle_broadcast(
+                                                source,
+                                                external_message.clone(),
+                                                response_channel,
+                                            )
+                                            .unwrap(),
+                                        _ => inner
+                                            .handle_request(
+                                                source,
+                                                "(synthetic_id)",
+                                                external_message.clone(),
+                                                response_channel,
+                                            )
+                                            .unwrap(),
+                                    }
                                 }
                             });
                         }
@@ -1081,8 +1093,8 @@ impl Network {
                                 let mut inner = node.inner.write();
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
+                                    // Re-route Proposals from Broadcast to Requests
                                     match external_message {
-                                        // Re-route Proposals from Broadcast to Requests, which is the behaviour in Production.
                                         ExternalMessage::Proposal(_) => inner
                                             .handle_request(
                                                 source,
@@ -1100,7 +1112,11 @@ impl Network {
                                             inner.handle_broadcast_transactions(verified).unwrap();
                                         }
                                         _ => inner
-                                            .handle_broadcast(source, external_message.clone())
+                                            .handle_broadcast(
+                                                source,
+                                                external_message.clone(),
+                                                ResponseChannel::Local,
+                                            )
                                             .unwrap(),
                                     }
                                 }
