@@ -204,14 +204,6 @@ impl P2pNode {
         IdentTopic::new(shard_id.to_string() + VALIDATOR_TOPIC_SUFFIX)
     }
 
-    // Temporary method for backwards compatibility
-    pub fn is_validator_topic_hash(topic_hash: &TopicHash) -> bool {
-        topic_hash
-            .clone()
-            .into_string()
-            .contains(VALIDATOR_TOPIC_SUFFIX)
-    }
-
     /// Temporary method until light nodes are implemented, which will allow
     /// connecting to the other shard and obtaining consensus parameters.
     /// For now, we copy the (presumably main shard's) existing config and use it
@@ -513,11 +505,6 @@ impl P2pNode {
                                 Err(e) => {
                                     trace!(%e, "failed to publish message");
                                 }
-                            }
-
-                            // Send messages for Validator topic to shard-wide topic also for temporary backwards compatibility
-                            if Self::is_validator_topic_hash(&topic.hash()) {
-                                self.swarm.behaviour_mut().gossipsub.publish(Self::shard_id_to_topic(shard_id, None).hash(), data)?;
                             }
                         },
                     }
