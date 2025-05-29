@@ -35,7 +35,7 @@ use tracing::*;
 use crate::{
     api::types::filters::Filters,
     cfg::{ForkName, NodeConfig},
-    consensus::Consensus,
+    consensus::{Consensus, LockedTxPoolContent},
     crypto::{Hash, SecretKey},
     db::Db,
     exec::{PendingState, TransactionApplyResult},
@@ -46,7 +46,7 @@ use crate::{
     },
     node_launcher::ResponseChannel,
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
-    pool::{TxAddResult, TxPoolContent},
+    pool::TxAddResult,
     state::State,
     sync::SyncPeers,
     transaction::{
@@ -241,28 +241,59 @@ impl Node {
         Ok(node)
     }
 
-    pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
+    pub fn handle_broadcast(
+        &mut self,
+        from: PeerId,
+        message: ExternalMessage,
+        response_channel: ResponseChannel,
+    ) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
         match message {
-            // `NewTransaction`s are always broadcasted.
-            ExternalMessage::NewTransaction(t) => {
-                // Don't process again txn sent by this node (it's already in the mempool)
-                if self.peer_id != from {
-                    self.consensus.handle_new_transaction(t)?;
-                }
-            }
             // Repeated `NewView`s might get broadcast.
             ExternalMessage::NewView(m) => {
                 if let Some(network_message) = self.consensus.new_view(from, *m)? {
                     self.handle_network_message_response(network_message)?;
                 }
             }
+            // RFC-161 sync algorithm, phase 2.
+            ExternalMessage::MultiBlockRequest(request) => {
+                let message = self
+                    .consensus
+                    .sync
+                    .handle_multiblock_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
+            }
+            ExternalMessage::PassiveSyncRequest(request) => {
+                let message = self.consensus.sync.handle_passive_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
+            }
+            // RFC-161 sync algorithm, phase 1.
+            ExternalMessage::MetaDataRequest(request) => {
+                let message = self.consensus.sync.handle_active_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
+            }
+            // Respond to block probe requests.
+            ExternalMessage::BlockRequest(request) => {
+                // respond with an invalid response
+                let message = self.consensus.sync.handle_block_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
+            }
             // `Proposals` are re-routed to `handle_request()`
             msg => {
                 warn!(%msg, "unexpected message type");
             }
         }
+        Ok(())
+    }
 
+    pub fn handle_broadcast_transactions(
+        &mut self,
+        transactions: Vec<VerifiedTransaction>,
+    ) -> Result<()> {
+        let from_broadcast = true;
+        for txn in transactions {
+            self.consensus.handle_new_transaction(txn, from_broadcast)?;
+        }
         Ok(())
     }
 
@@ -293,34 +324,6 @@ impl Node {
                     self.handle_network_message_response(network_message)?;
                 }
             }
-            // RFC-161 sync algorithm, phase 2.
-            ExternalMessage::MultiBlockRequest(request) => {
-                let message = self
-                    .consensus
-                    .sync
-                    .handle_multiblock_request(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            ExternalMessage::PassiveSyncRequest(request) => {
-                let message = self.consensus.sync.handle_passive_request(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            // RFC-161 sync algorithm, phase 1.
-            ExternalMessage::MetaDataRequest(request) => {
-                let message = self.consensus.sync.handle_active_request(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            // Respond to block probe requests.
-            ExternalMessage::BlockRequest(request) => {
-                // respond with an invalid response
-                let message = self.consensus.sync.handle_block_request(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            // This just breaks down group block messages into individual messages to stop them blocking threads
-            // for long periods.
-            ExternalMessage::InjectedProposal(p) => {
-                self.handle_injected_proposal(from, p)?;
-            }
             // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
             // a Request by the underlying layer, with a faux request-id. This is to mitigate issues when there are
             // too many transactions in the broadcast queue.
@@ -334,6 +337,11 @@ impl Node {
                 } else {
                     debug!("Ignoring own Proposal broadcast")
                 }
+            }
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
             }
             msg => {
                 warn!(%msg, "unexpected message type");
@@ -395,7 +403,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn handle_internal_message(&mut self, from: u64, message: InternalMessage) -> Result<()> {
+    pub fn handle_internal_message(&self, from: u64, message: InternalMessage) -> Result<()> {
         let to = self.chain_id.eth;
         tracing::debug!(%from, %to, %message, "handling message");
         match message {
@@ -415,7 +423,7 @@ impl Node {
         Ok(())
     }
 
-    fn inject_intershard_transaction(&mut self, intershard_call: IntershardCall) -> Result<()> {
+    fn inject_intershard_transaction(&self, intershard_call: IntershardCall) -> Result<()> {
         let tx = SignedTransaction::Intershard {
             tx: TxIntershard {
                 chain_id: self.chain_id.eth,
@@ -430,7 +438,11 @@ impl Node {
         };
         let verified_tx = tx.verify()?;
         trace!("Injecting intershard transaction {}", verified_tx.hash);
-        self.consensus.new_transaction(verified_tx)?;
+        self.consensus.new_transaction(
+            verified_tx,
+            true,
+            &mut self.consensus.transaction_pool.write(),
+        )?;
         Ok(())
     }
 
@@ -465,17 +477,29 @@ impl Node {
         Ok(false)
     }
 
-    pub fn create_transaction(&mut self, txn: SignedTransaction) -> Result<(Hash, TxAddResult)> {
-        let hash = txn.calculate_hash();
+    pub fn create_transaction(&self, txn: VerifiedTransaction) -> Result<(Hash, TxAddResult)> {
+        let hash = txn.hash;
 
-        let result = self.consensus.handle_new_transaction(txn.clone())?;
-        if result.was_added() {
-            // TODO: Avoid redundant self-broadcast
-            self.message_sender
-                .broadcast_external_message(ExternalMessage::NewTransaction(txn))?;
+        let from_broadcast = false;
+        let result = self.consensus.handle_new_transaction(txn, from_broadcast)?;
+        if !result.was_added() {
+            debug!(?result, "Transaction cannot be added to mempool");
         }
 
         Ok((hash, result))
+    }
+
+    pub fn process_transactions_to_broadcast(&mut self) -> Result<()> {
+        let txns_to_broadcast = self
+            .consensus
+            .transaction_pool
+            .write()
+            .pull_txns_to_broadcast()?;
+        if txns_to_broadcast.is_empty() {
+            return Ok(());
+        }
+        self.message_sender
+            .broadcast_external_message(ExternalMessage::BatchedTransactions(txns_to_broadcast))
     }
 
     pub fn number(&self) -> u64 {
@@ -977,7 +1001,7 @@ impl Node {
         self.consensus.get_transaction_by_hash(hash)
     }
 
-    pub fn txpool_content(&self) -> Result<TxPoolContent> {
+    pub fn txpool_content(&self) -> LockedTxPoolContent {
         self.consensus.txpool_content()
     }
 

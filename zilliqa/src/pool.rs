@@ -1,6 +1,6 @@
 use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    cmp::{Ordering, min},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
 };
 
 use alloy::primitives::Address;
@@ -95,6 +95,8 @@ pub struct TransactionPool {
     /// Keeps transactions sorted by gas_price, each gas_price index can contain more than one txn
     /// These are candidates to be included in the next block
     gas_index: GasCollection,
+    /// Keeps transactions created at this node that will be broadcast
+    transactions_to_broadcast: VecDeque<SignedTransaction>,
 }
 
 /// A wrapper for (gas price, sender, nonce), stored in the `ready` heap of [TransactionPool].
@@ -278,6 +280,7 @@ impl TransactionPool {
         &mut self,
         txn: VerifiedTransaction,
         account_nonce: u64,
+        from_broadcast: bool,
     ) -> TxAddResult {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             debug!(
@@ -322,6 +325,11 @@ impl TransactionPool {
             Self::add_to_gas_index(&mut self.gas_index, &txn);
         }
 
+        // If this is a transaction created at this node, add it to broadcast vector
+        if !from_broadcast {
+            self.store_broadcast_txn(txn.tx.clone());
+        }
+
         debug!(
             "Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}",
             txn.hash,
@@ -332,7 +340,29 @@ impl TransactionPool {
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
         self.transactions.insert(txn.mempool_index(), txn);
+
         TxAddResult::AddedToMempool
+    }
+
+    fn store_broadcast_txn(&mut self, txn: SignedTransaction) {
+        self.transactions_to_broadcast.push_back(txn);
+    }
+
+    pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<SignedTransaction>> {
+        const MAX_BATCH_SIZE: usize = 1000;
+
+        if self.transactions_to_broadcast.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let max_take = min(self.transactions_to_broadcast.len(), MAX_BATCH_SIZE);
+
+        let ret_vec = self
+            .transactions_to_broadcast
+            .drain(..max_take)
+            .collect::<Vec<_>>();
+
+        Ok(ret_vec)
     }
 
     fn remove_from_gas_index(gas_index: &mut GasCollection, txn: &VerifiedTransaction) {
@@ -523,13 +553,13 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 1, 1), 0);
+        pool.insert_transaction(transaction(from, 1, 1), 0, false);
 
         let tx = pool.best_transaction(&state)?;
         assert_eq!(tx, None);
 
-        pool.insert_transaction(transaction(from, 2, 2), 0);
-        pool.insert_transaction(transaction(from, 0, 0), 0);
+        pool.insert_transaction(transaction(from, 2, 2), 0, false);
+        pool.insert_transaction(transaction(from, 0, 0), 0, false);
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
@@ -573,7 +603,7 @@ mod tests {
         nonces.shuffle(&mut rng);
 
         for i in 0..COUNT {
-            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), 0);
+            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), 0, false);
         }
 
         for i in 0..COUNT {
@@ -600,11 +630,11 @@ mod tests {
         create_acc(&mut state, from2, 100, 0)?;
         create_acc(&mut state, from3, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 1), 0);
-        pool.insert_transaction(transaction(from1, 0, 2), 0);
-        pool.insert_transaction(transaction(from2, 0, 3), 0);
-        pool.insert_transaction(transaction(from3, 0, 0), 0);
-        pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
+        pool.insert_transaction(intershard_transaction(0, 0, 1), 0, false);
+        pool.insert_transaction(transaction(from1, 0, 2), 0, false);
+        pool.insert_transaction(transaction(from2, 0, 3), 0, false);
+        pool.insert_transaction(transaction(from3, 0, 0), 0, false);
+        pool.insert_transaction(intershard_transaction(0, 1, 5), 0, false);
         assert_eq!(pool.transactions.len(), 5);
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
@@ -639,8 +669,8 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 0), 0);
-        pool.insert_transaction(transaction(from, 1, 0), 0);
+        pool.insert_transaction(transaction(from, 0, 0), 0, false);
+        pool.insert_transaction(transaction(from, 1, 0), 0, false);
 
         pool.mark_executed(&transaction(from, 0, 0));
         state.mutate_account(from, |acc| {
@@ -663,8 +693,8 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 1), 0);
-        pool.insert_transaction(transaction(from, 1, 200), 0);
+        pool.insert_transaction(transaction(from, 0, 1), 0, false);
+        pool.insert_transaction(transaction(from, 1, 200), 0, false);
 
         assert_eq!(
             pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
@@ -699,12 +729,12 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 100), 0);
-        pool.insert_transaction(transaction(from, 0, 1), 0);
-        pool.insert_transaction(transaction(from, 1, 1), 1);
-        pool.insert_transaction(transaction(from, 2, 1), 2);
-        pool.insert_transaction(transaction(from, 3, 200), 3);
-        pool.insert_transaction(transaction(from, 10, 1), 3);
+        pool.insert_transaction(intershard_transaction(0, 0, 100), 0, false);
+        pool.insert_transaction(transaction(from, 0, 1), 0, false);
+        pool.insert_transaction(transaction(from, 1, 1), 1, false);
+        pool.insert_transaction(transaction(from, 2, 1), 2, false);
+        pool.insert_transaction(transaction(from, 3, 200), 3, false);
+        pool.insert_transaction(transaction(from, 10, 1), 3, false);
 
         let content = pool.preview_content(&state)?;
 

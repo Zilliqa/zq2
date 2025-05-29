@@ -30,7 +30,8 @@ fn txpool_content(
     node: &Arc<RwLock<Node>>,
 ) -> Result<Option<types::txpool::TxPoolContent>> {
     let node = node.read();
-    let content = node.txpool_content()?;
+    let content = node.txpool_content();
+    let content = content.get()?;
 
     let mut result = types::txpool::TxPoolContent {
         pending: HashMap::new(),
@@ -64,7 +65,8 @@ fn txpool_content_from(
     let address: super::zilliqa::ZilAddress = params.one()?;
     let address: Address = address.into();
     let node = node.read();
-    let content = node.txpool_content()?;
+    let content = node.txpool_content();
+    let content = content.get()?;
 
     let mut result = types::txpool::TxPoolContent {
         pending: HashMap::new(),
@@ -100,7 +102,8 @@ fn txpool_inspect(
     node: &Arc<RwLock<Node>>,
 ) -> Result<types::txpool::TxPoolInspect> {
     let node = node.read();
-    let content = node.txpool_content()?;
+    let content = node.txpool_content();
+    let content = content.get()?;
 
     let mut result = types::txpool::TxPoolInspect {
         pending: HashMap::new(),
@@ -139,7 +142,8 @@ fn txpool_inspect(
 /// txpool_status
 fn txpool_status(_params: Params, node: &Arc<RwLock<Node>>) -> Result<types::txpool::TxPoolStatus> {
     let node = node.read();
-    let content = node.txpool_content()?;
+    let content = node.txpool_content();
+    let content = content.get()?;
 
     Ok(types::txpool::TxPoolStatus {
         pending: content.pending.len() as u64,
