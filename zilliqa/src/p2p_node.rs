@@ -479,32 +479,8 @@ impl P2pNode {
                         },
                         None => {
                             debug!(%from, %message, %topic, "broadcasting");
-                            match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data.clone())  {
-                                // Also route broadcasts to ourselves, with a faux request-id.
-                                Ok(msg_id) => {
-                                    match message {
-                                        ExternalMessage::Proposal(_) => {
-                                            self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
-                                        }
-                                        _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message, ResponseChannel::Local)))?;
-                                        }
-                                    }
-                                },
-                                // still publish to self, even if no other peers.
-                                Err(gossipsub::PublishError::InsufficientPeers) => {
-                                    match message {
-                                        ExternalMessage::Proposal(_) => {
-                                            self.send_to(&topic.hash(), |c| c.requests.send((from, "faux-id".to_string(), message, ResponseChannel::Local)))?;
-                                        }
-                                        _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message, ResponseChannel::Local)))?;
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    trace!(%e, "failed to publish message");
-                                }
+                            if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data.clone()) {
+                                trace!(%e, "failed to publish message")
                             }
                         },
                     }
