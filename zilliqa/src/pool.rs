@@ -190,9 +190,7 @@ impl TransactionPool {
     /// Returns a list of txns that are pending for inclusion in the next block
     pub fn pending_transactions(&self, state: &State) -> Result<Vec<&VerifiedTransaction>> {
         // Keeps track of [account, cumulative_txns_cost]
-        let mut tracked_accounts = HashMap::new();
-
-        let mut balances = HashMap::new();
+        let mut tracked_balances = HashMap::new();
 
         let mut ready = self.gas_index.clone();
 
@@ -210,27 +208,21 @@ impl TransactionPool {
 
             Self::remove_from_gas_index(&mut ready, txn);
 
-            let cum_cost = tracked_accounts
-                .get(&txn.signer)
-                .cloned()
-                .unwrap_or(u128::default());
-
-            let tx_cost = txn.tx.maximum_validation_cost()?;
-
-            let balance = if let Some(balance) = balances.get(&txn.signer) {
+            let balance = if let Some(balance) = tracked_balances.get(&txn.signer) {
                 *balance
             } else {
                 let account = state.get_account(txn.signer)?;
-                balances.insert(txn.signer, account.balance);
+                tracked_balances.insert(txn.signer, account.balance);
                 account.balance
             };
 
-            if cum_cost + tx_cost > balance {
+            let tx_cost = txn.tx.maximum_validation_cost()?;
+
+            if tx_cost > balance {
                 continue;
             }
-
+            tracked_balances.insert(txn.signer, balance.saturating_sub(tx_cost));
             pending_txns.push(txn);
-            tracked_accounts.insert(txn.signer, cum_cost + tx_cost);
 
             let Some(next) = tx_index.next() else {
                 continue;
