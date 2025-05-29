@@ -3,6 +3,7 @@ bootstrap_address = [
     "/ip4/198.51.100.1/tcp/5643",
 ]
 otlp_collector_endpoint = "http://otel-collector:4317"
+network = "Localnet"
 
 [[nodes]]
 # These (public key, peerId, stake, rewardAddress) tuples correspond to the private keys of all four nodes in `docker-compose.yaml`.
