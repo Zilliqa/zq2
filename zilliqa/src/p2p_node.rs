@@ -369,7 +369,7 @@ impl P2pNode {
                                     self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
                                 },
                                 _ => {
-                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
+                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message, ResponseChannel::Local)))?;
                                 }
                             }
                         }
@@ -383,7 +383,14 @@ impl P2pNode {
                                     let _id = format!("{}", _request_id);
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
-                                            self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
+                                            match _external_message {
+                                                ExternalMessage::MetaDataRequest(_)
+                                                | ExternalMessage::MultiBlockRequest(_)
+                                                | ExternalMessage::BlockRequest(_)
+                                                | ExternalMessage::PassiveSyncRequest(_) => self
+                                                    .send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?,
+                                                _ => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?,
+                                            }
                                         } else {
                                             panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
                                         }
@@ -488,7 +495,7 @@ impl P2pNode {
                                             self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
                                         }
                                         _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message, ResponseChannel::Local)))?;
                                         }
                                     }
                                 },
@@ -496,10 +503,10 @@ impl P2pNode {
                                 Err(gossipsub::PublishError::InsufficientPeers) => {
                                     match message {
                                         ExternalMessage::Proposal(_) => {
-                                            self.send_to(&topic.hash(), |c| c.requests.send((from, "(faux-id)".to_string(), message, ResponseChannel::Local)))?;
+                                            self.send_to(&topic.hash(), |c| c.requests.send((from, "faux-id".to_string(), message, ResponseChannel::Local)))?;
                                         }
                                         _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
+                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message, ResponseChannel::Local)))?;
                                         }
                                     }
                                 }

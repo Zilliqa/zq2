@@ -241,7 +241,12 @@ impl Node {
         Ok(node)
     }
 
-    pub fn handle_broadcast(&mut self, from: PeerId, message: ExternalMessage) -> Result<()> {
+    pub fn handle_broadcast(
+        &mut self,
+        from: PeerId,
+        message: ExternalMessage,
+        response_channel: ResponseChannel,
+    ) -> Result<()> {
         debug!(%from, to = %self.peer_id, %message, "handling broadcast");
         match message {
             // Repeated `NewView`s might get broadcast.
@@ -249,6 +254,29 @@ impl Node {
                 if let Some(network_message) = self.consensus.new_view(from, *m)? {
                     self.handle_network_message_response(network_message)?;
                 }
+            }
+            // RFC-161 sync algorithm, phase 2.
+            ExternalMessage::MultiBlockRequest(request) => {
+                let message = self
+                    .consensus
+                    .sync
+                    .handle_multiblock_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
+            }
+            ExternalMessage::PassiveSyncRequest(request) => {
+                let message = self.consensus.sync.handle_passive_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
+            }
+            // RFC-161 sync algorithm, phase 1.
+            ExternalMessage::MetaDataRequest(request) => {
+                let message = self.consensus.sync.handle_active_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
+            }
+            // Respond to block probe requests.
+            ExternalMessage::BlockRequest(request) => {
+                // respond with an invalid response
+                let message = self.consensus.sync.handle_block_request(from, request)?;
+                self.request_responses.send((response_channel, message))?;
             }
             // `Proposals` are re-routed to `handle_request()`
             msg => {
@@ -296,34 +324,6 @@ impl Node {
                     self.handle_network_message_response(network_message)?;
                 }
             }
-            // RFC-161 sync algorithm, phase 2.
-            ExternalMessage::MultiBlockRequest(request) => {
-                let message = self
-                    .consensus
-                    .sync
-                    .handle_multiblock_request(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            ExternalMessage::PassiveSyncRequest(request) => {
-                let message = self.consensus.sync.handle_passive_request(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            // RFC-161 sync algorithm, phase 1.
-            ExternalMessage::MetaDataRequest(request) => {
-                let message = self.consensus.sync.handle_active_request(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            // Respond to block probe requests.
-            ExternalMessage::BlockRequest(request) => {
-                // respond with an invalid response
-                let message = self.consensus.sync.handle_block_request(from, request)?;
-                self.request_responses.send((response_channel, message))?;
-            }
-            // This just breaks down group block messages into individual messages to stop them blocking threads
-            // for long periods.
-            ExternalMessage::InjectedProposal(p) => {
-                self.handle_injected_proposal(from, p)?;
-            }
             // Handle requests which contain a block proposal. Initially sent as a broadcast, it is re-routed into
             // a Request by the underlying layer, with a faux request-id. This is to mitigate issues when there are
             // too many transactions in the broadcast queue.
@@ -337,6 +337,11 @@ impl Node {
                 } else {
                     debug!("Ignoring own Proposal broadcast")
                 }
+            }
+            // This just breaks down group block messages into individual messages to stop them blocking threads
+            // for long periods.
+            ExternalMessage::InjectedProposal(p) => {
+                self.handle_injected_proposal(from, p)?;
             }
             msg => {
                 warn!(%msg, "unexpected message type");
