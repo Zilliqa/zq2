@@ -190,7 +190,7 @@ impl TransactionPool {
     /// Returns a list of txns that are pending for inclusion in the next block
     pub fn pending_transactions(&self, state: &State) -> Result<Vec<&VerifiedTransaction>> {
         // Keeps track of [account, cumulative_txns_cost]
-        let mut tracked_accounts = HashMap::new();
+        let mut tracked_balances = HashMap::new();
 
         let mut ready = self.gas_index.clone();
 
@@ -208,19 +208,21 @@ impl TransactionPool {
 
             Self::remove_from_gas_index(&mut ready, txn);
 
-            let cum_cost = tracked_accounts
-                .get(&txn.signer)
-                .cloned()
-                .unwrap_or(u128::default());
+            let balance = if let Some(balance) = tracked_balances.get(&txn.signer) {
+                *balance
+            } else {
+                let account = state.get_account(txn.signer)?;
+                tracked_balances.insert(txn.signer, account.balance);
+                account.balance
+            };
 
             let tx_cost = txn.tx.maximum_validation_cost()?;
 
-            if cum_cost + tx_cost > state.get_account(txn.signer)?.balance {
+            if tx_cost > balance {
                 continue;
             }
-
+            tracked_balances.insert(txn.signer, balance.saturating_sub(tx_cost));
             pending_txns.push(txn);
-            tracked_accounts.insert(txn.signer, cum_cost + tx_cost);
 
             let Some(next) = tx_index.next() else {
                 continue;
@@ -747,6 +749,71 @@ mod tests {
         assert_eq!(content.queued[0].tx.nonce().unwrap(), 3);
         assert_eq!(content.queued[1].tx.nonce().unwrap(), 10);
 
+        Ok(())
+    }
+
+    #[test]
+    fn benchmark_preview_content() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let from = "0x0000000000000000000000000000000000001234".parse()?;
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 1_000_000, 0)?;
+
+        // Insert 100 pending transactions
+        for nonce in 0u64..100u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), nonce, false);
+        }
+
+        // Insert 100 queued transactions
+        for nonce in 101u64..201u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), 0, false);
+        }
+
+        // Benchmark the preview_content method
+        let start = std::time::Instant::now();
+        let content = pool.preview_content(&state)?;
+        let duration = start.elapsed();
+
+        // Verify the results
+        assert_eq!(content.pending.len(), 100);
+        assert_eq!(content.queued.len(), 100);
+
+        println!(
+            "Benchmark completed: preview_content took {:?} to execute.",
+            duration
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn benchmark_pending_transactions() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let from = "0x0000000000000000000000000000000000001234".parse()?;
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 1_000_000, 0)?;
+
+        // Insert 100 pending transactions
+        for nonce in 0u64..100u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), nonce, false);
+        }
+
+        // Insert 100 queued transactions
+        for nonce in 101u64..201u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), 0, false);
+        }
+
+        // Benchmark the preview_content method
+        let start = std::time::Instant::now();
+        let _result = pool.pending_transactions(&state)?;
+        let duration = start.elapsed();
+
+        println!(
+            "Benchmark completed: pending_transactions took {:?} to execute.",
+            duration
+        );
         Ok(())
     }
 }
