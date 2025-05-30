@@ -2,7 +2,6 @@
 
 use std::{
     collections::HashMap,
-    iter,
     sync::{
         Arc,
         atomic::{AtomicPtr, AtomicUsize},
@@ -62,6 +61,7 @@ struct Behaviour {
     autonat_server: autonat::v2::server::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
+    kademlia_legacy: kad::Behaviour<MemoryStore>,
 }
 
 /// Messages circulating over the p2p network.
@@ -95,6 +95,8 @@ pub struct P2pNode {
     // Count of current peers for API
     peer_num: Arc<AtomicUsize>,
     swarm_peers: Arc<AtomicPtr<Vec<PeerId>>>,
+    kad_protocol: StreamProtocol,
+    protocol_version: String,
 }
 
 impl P2pNode {
@@ -112,6 +114,10 @@ impl P2pNode {
         let peer_id = PeerId::from(key_pair.public());
         info!(%peer_id);
 
+        let protocol_version = format!("{}/1.0.0", config.network);
+        let kad_protocol =
+            StreamProtocol::try_from_owned(format!("/{}/kad/1.0.0", config.network))?;
+
         let swarm = libp2p::SwarmBuilder::with_existing_identity(key_pair)
             .with_tokio()
             .with_tcp(
@@ -123,7 +129,16 @@ impl P2pNode {
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
                     request_response: request_response::cbor::Behaviour::new(
-                        iter::once((StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full)),
+                        vec![
+                            (StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full),
+                            (
+                                StreamProtocol::try_from_owned(format!(
+                                    "/{}/req-resp/1.0.0",
+                                    config.network
+                                ))?,
+                                ProtocolSupport::Full,
+                            ),
+                        ],
                         request_response::Config::default()
                             // This is a temporary patch to prevent long-running Scilla executions causing nodes to Timeout - https://github.com/Zilliqa/zq2/issues/2667
                             .with_request_timeout(Duration::from_secs(60)),
@@ -146,9 +161,14 @@ impl P2pNode {
                     .map_err(|e| anyhow!(e))?,
                     autonat_client: autonat::v2::client::Behaviour::default(),
                     autonat_server: autonat::v2::server::Behaviour::default(),
-                    kademlia: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
+                    kademlia_legacy: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
+                    kademlia: kad::Behaviour::with_config(
+                        peer_id,
+                        MemoryStore::new(peer_id),
+                        kad::Config::new(kad_protocol.clone()),
+                    ),
                     identify: identify::Behaviour::new(
-                        identify::Config::new("zilliqa/1.0.0".into(), key_pair.public())
+                        identify::Config::new(protocol_version.clone(), key_pair.public())
                             .with_hide_listen_addrs(true)
                             .with_push_listen_addr_updates(true),
                     ),
@@ -181,6 +201,8 @@ impl P2pNode {
             pending_requests: HashMap::new(),
             peer_num: Arc::new(AtomicUsize::new(0)),
             swarm_peers: Arc::new(AtomicPtr::new(Box::into_raw(Box::new(vec![])))),
+            kad_protocol,
+            protocol_version,
         })
     }
 
@@ -315,12 +337,21 @@ impl P2pNode {
                         }
                         // this is necessary - https://docs.rs/libp2p-kad/latest/libp2p_kad/#important-discrepancies
                         SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                            // only add peer, if it is on the same application protocol
+                            let is_match = info.protocol_version == self.protocol_version;
                             // will only be true if peer is publicly reachable i.e. SERVER mode.
-                            let is_kad = info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME);
+                            let is_kad = info.protocols.iter().any(|p| *p == self.kad_protocol);
+                            let is_kad_legacy = info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME);
+
                             for addr in info.listen_addrs {
-                                self.swarm.add_peer_address(peer_id, addr.clone());
+                                if is_match {
+                                    self.swarm.add_peer_address(peer_id, addr.clone());
+                                }
                                 if is_kad {
-                                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                                }
+                                if is_kad_legacy {
+                                    self.swarm.behaviour_mut().kademlia_legacy.add_address(&peer_id, addr);
                                 }
                             }
                         }
@@ -403,6 +434,7 @@ impl P2pNode {
                                 // address. Someone else in the network must know it, because we learnt their peer ID.
                                 // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
                                 let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+                                let _ = self.swarm.behaviour_mut().kademlia_legacy.bootstrap();
                             }
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {

@@ -17,6 +17,7 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    pub network: String,
     /// Individual configuration for every node to run.
     #[serde(default)]
     pub nodes: Vec<NodeConfig>,

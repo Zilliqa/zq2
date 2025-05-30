@@ -1,4 +1,5 @@
 p2p_port = 0
+network = "Localnet"
 
 [[nodes]]
 api_servers = [
