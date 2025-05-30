@@ -630,9 +630,13 @@ fn full_transaction_benchmark(
                 let mut tiny = consensus(&genesis_accounts, &genesis_deposits, 1, &tiny_scilla);
 
                 for txn in &setup_txns {
-                    let result = big.new_transaction(txn.clone()).unwrap();
+                    let result = big
+                        .new_transaction(txn.clone(), false, &mut big.transaction_pool.write())
+                        .unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
-                    let result = tiny.new_transaction(txn.clone()).unwrap();
+                    let result = tiny
+                        .new_transaction(txn.clone(), false, &mut tiny.transaction_pool.write())
+                        .unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
                 }
 
@@ -655,9 +659,13 @@ fn full_transaction_benchmark(
                 });
 
                 for txn in &txns {
-                    let result = big.new_transaction(txn.clone()).unwrap();
+                    let result = big
+                        .new_transaction(txn.clone(), false, &mut big.transaction_pool.write())
+                        .unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
-                    let result = tiny.new_transaction(txn.clone()).unwrap();
+                    let result = tiny
+                        .new_transaction(txn.clone(), false, &mut tiny.transaction_pool.write())
+                        .unwrap();
                     assert!(result.was_added(), "transaction not added: {result:?}");
                 }
 

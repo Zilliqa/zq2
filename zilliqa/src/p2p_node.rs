@@ -136,6 +136,10 @@ impl P2pNode {
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
                             .duplicate_cache_time(Duration::from_secs(3600))
+                            // Increase the queue duration to reduce the likelihood of dropped messages.
+                            // https://github.com/Zilliqa/zq2/issues/2823
+                            .publish_queue_duration(Duration::from_secs(50))
+                            .forward_queue_duration(Duration::from_secs(30)) // might be helpful too
                             .build()
                             .map_err(|e| anyhow!(e))?,
                     )
@@ -198,14 +202,6 @@ impl P2pNode {
 
     pub fn validator_topic(shard_id: u64) -> IdentTopic {
         IdentTopic::new(shard_id.to_string() + VALIDATOR_TOPIC_SUFFIX)
-    }
-
-    // Temporary method for backwards compatibility
-    pub fn is_validator_topic_hash(topic_hash: &TopicHash) -> bool {
-        topic_hash
-            .clone()
-            .into_string()
-            .contains(VALIDATOR_TOPIC_SUFFIX)
     }
 
     /// Temporary method until light nodes are implemented, which will allow
@@ -365,7 +361,7 @@ impl P2pNode {
                                     self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
                                 },
                                 _ => {
-                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message)))?;
+                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message, ResponseChannel::Local)))?;
                                 }
                             }
                         }
@@ -379,7 +375,14 @@ impl P2pNode {
                                     let _id = format!("{}", _request_id);
                                     cfg_if! {
                                         if #[cfg(not(feature = "fake_response_channel"))] {
-                                            self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?;
+                                            match _external_message {
+                                                ExternalMessage::MetaDataRequest(_)
+                                                | ExternalMessage::MultiBlockRequest(_)
+                                                | ExternalMessage::BlockRequest(_)
+                                                | ExternalMessage::PassiveSyncRequest(_) => self
+                                                    .send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?,
+                                                _ => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?,
+                                            }
                                         } else {
                                             panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");
                                         }
@@ -476,37 +479,8 @@ impl P2pNode {
                         },
                         None => {
                             debug!(%from, %message, %topic, "broadcasting");
-                            match self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data.clone())  {
-                                // Also route broadcasts to ourselves, with a faux request-id.
-                                Ok(msg_id) => {
-                                    match message {
-                                        ExternalMessage::Proposal(_) => {
-                                            self.send_to(&topic.hash(), |c| c.requests.send((from, msg_id.to_string(), message, ResponseChannel::Local)))?;
-                                        }
-                                        _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
-                                        }
-                                    }
-                                },
-                                // still publish to self, even if no other peers.
-                                Err(gossipsub::PublishError::InsufficientPeers) => {
-                                    match message {
-                                        ExternalMessage::Proposal(_) => {
-                                            self.send_to(&topic.hash(), |c| c.requests.send((from, "(faux-id)".to_string(), message, ResponseChannel::Local)))?;
-                                        }
-                                        _ => {
-                                            self.send_to(&topic.hash(), |c| c.broadcasts.send((from, message)))?;
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    trace!(%e, "failed to publish message");
-                                }
-                            }
-
-                            // Send messages for Validator topic to shard-wide topic also for temporary backwards compatibility
-                            if Self::is_validator_topic_hash(&topic.hash()) {
-                                self.swarm.behaviour_mut().gossipsub.publish(Self::shard_id_to_topic(shard_id, None).hash(), data)?;
+                            if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(topic.hash(), data.clone()) {
+                                trace!(%e, "failed to publish message")
                             }
                         },
                     }

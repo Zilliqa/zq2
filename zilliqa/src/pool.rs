@@ -1,6 +1,6 @@
 use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    cmp::{Ordering, min},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
 };
 
 use alloy::primitives::Address;
@@ -98,6 +98,8 @@ pub struct TransactionPool {
     /// Keeps transactions sorted by gas_price, each gas_price index can contain more than one txn
     /// These are candidates to be included in the next block
     gas_index: GasCollection,
+    /// Keeps transactions created at this node that will be broadcast
+    transactions_to_broadcast: VecDeque<SignedTransaction>,
     /// Tracks number of transactions per sender
     sender_txn_counter: HashMap<Address, u64>,
 }
@@ -109,6 +111,7 @@ impl TransactionPool {
             transactions: BTreeMap::new(),
             hash_to_index: BTreeMap::new(),
             gas_index: GasCollection::new(),
+            transactions_to_broadcast: VecDeque::new(),
             sender_txn_counter: HashMap::new(),
         }
     }
@@ -205,7 +208,7 @@ impl TransactionPool {
     /// Returns a list of txns that are pending for inclusion in the next block
     pub fn pending_transactions(&self, state: &State) -> Result<Vec<&VerifiedTransaction>> {
         // Keeps track of [account, cumulative_txns_cost]
-        let mut tracked_accounts = HashMap::new();
+        let mut tracked_balances = HashMap::new();
 
         let mut ready = self.gas_index.clone();
 
@@ -223,19 +226,21 @@ impl TransactionPool {
 
             Self::remove_from_gas_index(&mut ready, txn);
 
-            let cum_cost = tracked_accounts
-                .get(&txn.signer)
-                .cloned()
-                .unwrap_or(u128::default());
+            let balance = if let Some(balance) = tracked_balances.get(&txn.signer) {
+                *balance
+            } else {
+                let account = state.get_account(txn.signer)?;
+                tracked_balances.insert(txn.signer, account.balance);
+                account.balance
+            };
 
             let tx_cost = txn.tx.maximum_validation_cost()?;
 
-            if cum_cost + tx_cost > state.get_account(txn.signer)?.balance {
+            if tx_cost > balance {
                 continue;
             }
-
+            tracked_balances.insert(txn.signer, balance.saturating_sub(tx_cost));
             pending_txns.push(txn);
-            tracked_accounts.insert(txn.signer, cum_cost + tx_cost);
 
             let Some(next) = tx_index.next() else {
                 continue;
@@ -295,6 +300,7 @@ impl TransactionPool {
         &mut self,
         txn: VerifiedTransaction,
         account_nonce: u64,
+        from_broadcast: bool,
     ) -> TxAddResult {
         if txn.tx.nonce().is_some_and(|n| n < account_nonce) {
             debug!(
@@ -363,6 +369,11 @@ impl TransactionPool {
             Self::add_to_gas_index(&mut self.gas_index, &txn);
         }
 
+        // If this is a transaction created at this node, add it to broadcast vector
+        if !from_broadcast {
+            self.store_broadcast_txn(txn.tx.clone());
+        }
+
         debug!(
             "Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {account_nonce}",
             txn.hash,
@@ -375,7 +386,29 @@ impl TransactionPool {
         // Finally we insert it into the tx store and the hash reverse-index
         self.hash_to_index.insert(txn.hash, txn.mempool_index());
         self.transactions.insert(txn.mempool_index(), txn);
+
         TxAddResult::AddedToMempool
+    }
+
+    fn store_broadcast_txn(&mut self, txn: SignedTransaction) {
+        self.transactions_to_broadcast.push_back(txn);
+    }
+
+    pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<SignedTransaction>> {
+        const MAX_BATCH_SIZE: usize = 1000;
+
+        if self.transactions_to_broadcast.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let max_take = min(self.transactions_to_broadcast.len(), MAX_BATCH_SIZE);
+
+        let ret_vec = self
+            .transactions_to_broadcast
+            .drain(..max_take)
+            .collect::<Vec<_>>();
+
+        Ok(ret_vec)
     }
 
     fn remove_from_gas_index(gas_index: &mut GasCollection, txn: &VerifiedTransaction) {
@@ -588,13 +621,13 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 1, 1), 0);
+        pool.insert_transaction(transaction(from, 1, 1), 0, false);
 
         let tx = pool.best_transaction(&state)?;
         assert_eq!(tx, None);
 
-        pool.insert_transaction(transaction(from, 2, 2), 0);
-        pool.insert_transaction(transaction(from, 0, 0), 0);
+        pool.insert_transaction(transaction(from, 2, 2), 0, false);
+        pool.insert_transaction(transaction(from, 0, 0), 0, false);
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
@@ -638,7 +671,7 @@ mod tests {
         nonces.shuffle(&mut rng);
 
         for i in 0..COUNT {
-            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), 0);
+            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), 0, false);
         }
 
         for i in 0..COUNT {
@@ -665,11 +698,11 @@ mod tests {
         create_acc(&mut state, from2, 100, 0)?;
         create_acc(&mut state, from3, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 1), 0);
-        pool.insert_transaction(transaction(from1, 0, 2), 0);
-        pool.insert_transaction(transaction(from2, 0, 3), 0);
-        pool.insert_transaction(transaction(from3, 0, 0), 0);
-        pool.insert_transaction(intershard_transaction(0, 1, 5), 0);
+        pool.insert_transaction(intershard_transaction(0, 0, 1), 0, false);
+        pool.insert_transaction(transaction(from1, 0, 2), 0, false);
+        pool.insert_transaction(transaction(from2, 0, 3), 0, false);
+        pool.insert_transaction(transaction(from3, 0, 0), 0, false);
+        pool.insert_transaction(intershard_transaction(0, 1, 5), 0, false);
         assert_eq!(pool.transactions.len(), 5);
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
@@ -704,8 +737,8 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 0), 0);
-        pool.insert_transaction(transaction(from, 1, 0), 0);
+        pool.insert_transaction(transaction(from, 0, 0), 0, false);
+        pool.insert_transaction(transaction(from, 1, 0), 0, false);
 
         pool.mark_executed(&transaction(from, 0, 0));
         state.mutate_account(from, |acc| {
@@ -728,8 +761,8 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 1), 0);
-        pool.insert_transaction(transaction(from, 1, 200), 0);
+        pool.insert_transaction(transaction(from, 0, 1), 0, false);
+        pool.insert_transaction(transaction(from, 1, 200), 0, false);
 
         assert_eq!(
             pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
@@ -764,12 +797,12 @@ mod tests {
         let mut state = get_in_memory_state()?;
         create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 100), 0);
-        pool.insert_transaction(transaction(from, 0, 1), 0);
-        pool.insert_transaction(transaction(from, 1, 1), 1);
-        pool.insert_transaction(transaction(from, 2, 1), 2);
-        pool.insert_transaction(transaction(from, 3, 200), 3);
-        pool.insert_transaction(transaction(from, 10, 1), 3);
+        pool.insert_transaction(intershard_transaction(0, 0, 100), 0, false);
+        pool.insert_transaction(transaction(from, 0, 1), 0, false);
+        pool.insert_transaction(transaction(from, 1, 1), 1, false);
+        pool.insert_transaction(transaction(from, 2, 1), 2, false);
+        pool.insert_transaction(transaction(from, 3, 200), 3, false);
+        pool.insert_transaction(transaction(from, 10, 1), 3, false);
 
         let content = pool.preview_content(&state)?;
 
@@ -802,7 +835,7 @@ mod tests {
             for nonce in 0..2 {
                 assert_eq!(
                     TxAddResult::AddedToMempool,
-                    pool.insert_transaction(transaction(*address, nonce, 1), 0)
+                    pool.insert_transaction(transaction(*address, nonce, 1), 0, false)
                 );
             }
         }
@@ -812,7 +845,7 @@ mod tests {
         create_acc(&mut state, rand_addr, 100, 0)?;
         assert_eq!(
             TxAddResult::ValidationFailed(ValidationOutcome::GlobalTransactionCountExceeded),
-            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, false)
         );
 
         // Remove all txns sent by one sender
@@ -821,7 +854,7 @@ mod tests {
         // And try to insert again - it should succeed
         assert_eq!(
             TxAddResult::AddedToMempool,
-            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, false)
         );
 
         Ok(())
@@ -841,14 +874,14 @@ mod tests {
         for nonce in 0..COUNT {
             assert_eq!(
                 TxAddResult::AddedToMempool,
-                pool.insert_transaction(transaction(address, nonce, 1), 0)
+                pool.insert_transaction(transaction(address, nonce, 1), 0, false)
             );
         }
 
         // Can't add the following one due to per user limit being exceeded
         assert_eq!(
             TxAddResult::ValidationFailed(ValidationOutcome::TransactionCountExceededForSender),
-            pool.insert_transaction(transaction(address, COUNT, 1), 0)
+            pool.insert_transaction(transaction(address, COUNT, 1), 0, false)
         );
 
         // Remove a single txn
@@ -856,7 +889,7 @@ mod tests {
         // And try to insert again - it should succeed
         assert_eq!(
             TxAddResult::AddedToMempool,
-            pool.insert_transaction(transaction(address, COUNT, 1), 0)
+            pool.insert_transaction(transaction(address, COUNT, 1), 0, false)
         );
 
         Ok(())
@@ -876,20 +909,20 @@ mod tests {
         for nonce in 0..COUNT {
             assert_eq!(
                 TxAddResult::AddedToMempool,
-                pool.insert_transaction(transaction(address, nonce, 1), 0)
+                pool.insert_transaction(transaction(address, nonce, 1), 0, false)
             );
         }
 
         // Can't add the following one due to per user limit being exceeded
         assert_eq!(
             TxAddResult::ValidationFailed(ValidationOutcome::TransactionCountExceededForSender),
-            pool.insert_transaction(transaction(address, COUNT, 1), 0)
+            pool.insert_transaction(transaction(address, COUNT, 1), 0, false)
         );
 
         // Try replacing existing one with higher gas price
         assert_eq!(
             TxAddResult::AddedToMempool,
-            pool.insert_transaction(transaction(address, 0, 2), 0)
+            pool.insert_transaction(transaction(address, 0, 2), 0, false)
         );
 
         Ok(())
@@ -911,7 +944,7 @@ mod tests {
             create_acc(&mut state, *address, 100, 0)?;
             assert_eq!(
                 TxAddResult::AddedToMempool,
-                pool.insert_transaction(transaction(*address, 0, 1), 0)
+                pool.insert_transaction(transaction(*address, 0, 1), 0, false)
             );
         }
 
@@ -920,7 +953,7 @@ mod tests {
         create_acc(&mut state, rand_addr, 100, 0)?;
         assert_eq!(
             TxAddResult::ValidationFailed(ValidationOutcome::TotalNumberOfSlotsExceeded),
-            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, false)
         );
 
         // Remove a single txn
@@ -928,9 +961,74 @@ mod tests {
         // And try to insert again - it should succeed
         assert_eq!(
             TxAddResult::AddedToMempool,
-            pool.insert_transaction(transaction(rand_addr, 0, 1), 0)
+            pool.insert_transaction(transaction(rand_addr, 0, 1), 0, false)
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn benchmark_preview_content() -> Result<()> {
+        let mut pool = get_pool();
+        let from = "0x0000000000000000000000000000000000001234".parse()?;
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 1_000_000, 0)?;
+
+        // Insert 100 pending transactions
+        for nonce in 0u64..100u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), nonce, false);
+        }
+
+        // Insert 100 queued transactions
+        for nonce in 101u64..201u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), 0, false);
+        }
+
+        // Benchmark the preview_content method
+        let start = std::time::Instant::now();
+        let content = pool.preview_content(&state)?;
+        let duration = start.elapsed();
+
+        // Verify the results
+        assert_eq!(content.pending.len(), 100);
+        assert_eq!(content.queued.len(), 100);
+
+        println!(
+            "Benchmark completed: preview_content took {:?} to execute.",
+            duration
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn benchmark_pending_transactions() -> Result<()> {
+        let mut pool = get_pool();
+        let from = "0x0000000000000000000000000000000000001234".parse()?;
+
+        let mut state = get_in_memory_state()?;
+        create_acc(&mut state, from, 1_000_000, 0)?;
+
+        // Insert 100 pending transactions
+        for nonce in 0u64..100u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), nonce, false);
+        }
+
+        // Insert 100 queued transactions
+        for nonce in 101u64..201u64 {
+            pool.insert_transaction(transaction(from, nonce as u8, 1), 0, false);
+        }
+
+        // Benchmark the preview_content method
+        let start = std::time::Instant::now();
+        let _result = pool.pending_transactions(&state)?;
+        let duration = start.elapsed();
+
+        println!(
+            "Benchmark completed: pending_transactions took {:?} to execute.",
+            duration
+        );
         Ok(())
     }
 }

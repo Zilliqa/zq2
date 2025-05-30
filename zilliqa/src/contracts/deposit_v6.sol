@@ -7,7 +7,9 @@
 
 pragma solidity 0.8.28;
 
-import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {
+    UUPSUpgradeable
+} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Deque, Withdrawal} from "./utils/deque_v2.sol";
 
 using Deque for Deque.Withdrawals;

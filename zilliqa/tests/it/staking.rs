@@ -331,13 +331,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
     let wallet = network.random_wallet().await;
     assert_eq!(
         get_minimum_deposit(&wallet).await,
-        *network.nodes[0]
-            .inner
-            .lock()
-            .unwrap()
-            .config
-            .consensus
-            .minimum_stake
+        *network.nodes[0].inner.read().config.consensus.minimum_stake
     );
     assert_eq!(
         get_maximum_stakers(&wallet).await,
@@ -347,8 +341,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
         get_blocks_per_epoch(&wallet).await,
         network.nodes[0]
             .inner
-            .lock()
-            .unwrap()
+            .read()
             .config
             .consensus
             .blocks_per_epoch
@@ -359,8 +352,7 @@ async fn deposit_storage_initially_set(mut network: Network) {
         stakers.len(),
         network.nodes[0]
             .inner
-            .lock()
-            .unwrap()
+            .read()
             .config
             .consensus
             .genesis_deposits

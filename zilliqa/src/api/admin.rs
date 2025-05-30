@@ -1,24 +1,22 @@
 //! An administrative API
 
-use std::{
-    ops::RangeInclusive,
-    sync::{Arc, Mutex},
-};
+use std::{ops::RangeInclusive, sync::Arc};
 
 use alloy::{eips::BlockId, primitives::U64};
 use anyhow::{Result, anyhow};
 use itertools::Itertools;
 use jsonrpsee::{RpcModule, types::Params};
 use libp2p::PeerId;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
-use crate::{api::to_hex::ToHex, cfg::EnabledApi, node::Node};
+use crate::{api::to_hex::ToHex, cfg::EnabledApi, consensus::Validator, node::Node};
 
 pub fn rpc_module(
-    node: Arc<Mutex<Node>>,
+    node: Arc<RwLock<Node>>,
     enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Mutex<Node>>> {
+) -> RpcModule<Arc<RwLock<Node>>> {
     super::declare_module!(
         node,
         enabled_apis,
@@ -30,6 +28,7 @@ pub fn rpc_module(
             ("admin_getPeers", get_peers),
             ("admin_votesReceived", votes_received),
             ("admin_clearMempool", clear_mempool),
+            ("admin_getLeaders", get_leaders),
         ]
     )
 }
@@ -43,13 +42,12 @@ struct ConsensusInfo {
     milliseconds_until_next_view_change: u64,
 }
 
-/// TODO: place-holder for now, feel free to change it.
-fn admin_block_range(_params: Params, node: &Arc<Mutex<Node>>) -> Result<RangeInclusive<u64>> {
-    node.lock().unwrap().db.available_range()
+fn admin_block_range(_params: Params, node: &Arc<RwLock<Node>>) -> Result<RangeInclusive<u64>> {
+    node.read().db.available_range()
 }
 
-fn consensus_info(_: Params, node: &Arc<Mutex<Node>>) -> Result<ConsensusInfo> {
-    let node = node.lock().unwrap();
+fn consensus_info(_: Params, node: &Arc<RwLock<Node>>) -> Result<ConsensusInfo> {
+    let node = node.read();
 
     let view = node.consensus.get_view()?;
     let high_qc = QuorumCertificate::from_qc(&node.consensus.high_qc);
@@ -76,10 +74,10 @@ pub struct CheckpointResponse {
     block: String,
 }
 
-fn checkpoint(params: Params, node: &Arc<Mutex<Node>>) -> Result<CheckpointResponse> {
+fn checkpoint(params: Params, node: &Arc<RwLock<Node>>) -> Result<CheckpointResponse> {
     let mut params = params.sequence();
     let block_id: BlockId = params.next()?;
-    let mut node = node.lock().unwrap();
+    let node = node.read();
     let block = node
         .get_block(block_id)?
         .ok_or(anyhow!("Block {block_id} does not exist"))?;
@@ -92,11 +90,11 @@ fn checkpoint(params: Params, node: &Arc<Mutex<Node>>) -> Result<CheckpointRespo
     })
 }
 
-fn force_view(params: Params, node: &Arc<Mutex<Node>>) -> Result<bool> {
+fn force_view(params: Params, node: &Arc<RwLock<Node>>) -> Result<bool> {
     let mut params = params.sequence();
     let view: U64 = params.next()?;
     let timeout_at: String = params.next()?;
-    let mut node = node.lock().unwrap();
+    let mut node = node.write();
     node.consensus.force_view(view.to::<u64>(), timeout_at)?;
     Ok(true)
 }
@@ -107,8 +105,8 @@ struct PeerInfo {
     pub sync_peers: Vec<PeerId>,
 }
 
-fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<PeerInfo> {
-    let node = node.lock().unwrap();
+fn get_peers(_params: Params, node: &Arc<RwLock<Node>>) -> Result<PeerInfo> {
+    let node = node.read();
     let (swarm_peers, sync_peers) = node.get_peer_ids()?;
     Ok(PeerInfo {
         swarm_peers,
@@ -117,8 +115,8 @@ fn get_peers(_params: Params, node: &Arc<Mutex<Node>>) -> Result<PeerInfo> {
 }
 
 /// Returns information about votes
-fn votes_received(_params: Params, node: &Arc<Mutex<Node>>) -> Result<VotesReceivedReturnee> {
-    let node = node.lock().unwrap();
+fn votes_received(_params: Params, node: &Arc<RwLock<Node>>) -> Result<VotesReceivedReturnee> {
+    let node = node.read();
 
     let new_views = node.consensus.new_views.clone().into_iter().collect_vec();
     let votes = node.consensus.votes.clone().into_iter().collect_vec();
@@ -136,9 +134,26 @@ fn votes_received(_params: Params, node: &Arc<Mutex<Node>>) -> Result<VotesRecei
     Ok(returnee)
 }
 
-fn clear_mempool(_params: Params, node: &Arc<Mutex<Node>>) -> Result<()> {
-    let mut node = node.lock().unwrap();
-
-    node.consensus.clear_mempool();
+fn clear_mempool(_params: Params, node: &Arc<RwLock<Node>>) -> Result<()> {
+    node.read().consensus.clear_mempool();
     Ok(())
+}
+
+fn get_leaders(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<(u64, Validator)>> {
+    let mut params = params.sequence();
+    let mut view = params.next::<U64>()?.to::<u64>();
+    let count = params.next::<U64>()?.to::<usize>().min(100);
+
+    let node = node.read();
+    let head_block = node.consensus.head_block();
+    let mut leaders = vec![];
+
+    while leaders.len() <= count {
+        leaders.push((
+            view,
+            node.consensus.leader_at_block(&head_block, view).unwrap(),
+        ));
+        view += 1;
+    }
+    Ok(leaders)
 }

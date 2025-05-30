@@ -5,6 +5,7 @@ use ethers::{
     providers::{Middleware, PubsubClient},
     types::TransactionRequest,
 };
+use parking_lot::{RwLock, RwLockWriteGuard};
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
@@ -35,7 +36,7 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex,
         atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
@@ -198,9 +199,8 @@ fn node(
         sync_peers.clone(),
         swarm_peers,
     )?;
-    let node = Arc::new(Mutex::new(node));
-    let rpc_module: RpcModule<Arc<Mutex<Node>>> =
-        api::rpc_module(node.clone(), &api::all_enabled());
+    let node = Arc::new(RwLock::new(node));
+    let rpc_module = api::rpc_module(node.clone(), &api::all_enabled());
 
     Ok((
         TestNode {
@@ -225,8 +225,8 @@ struct TestNode {
     secret_key: SecretKey,
     onchain_key: SigningKey,
     peer_id: PeerId,
-    rpc_module: RpcModule<Arc<Mutex<Node>>>,
-    inner: Arc<Mutex<Node>>,
+    rpc_module: RpcModule<Arc<RwLock<Node>>>,
+    inner: Arc<RwLock<Node>>,
     dir: Option<TempDir>,
     peers: Arc<SyncPeers>,
 }
@@ -630,7 +630,7 @@ impl Network {
                     warn!("Failed to copy data dir over");
                 }
 
-                let config = self.nodes[i].inner.lock().unwrap().config.clone();
+                let config = self.nodes[i].inner.read().config.clone();
 
                 node(config, key.0, key.1, i, Some(new_data_dir)).unwrap()
             })
@@ -667,8 +667,12 @@ impl Network {
         // this could of course spin forever, but the test itself should time out.
         loop {
             for node in &self.nodes {
+                node.inner
+                    .write()
+                    .process_transactions_to_broadcast()
+                    .unwrap();
                 // Trigger a tick so that block fetching can operate.
-                if node.inner.lock().unwrap().handle_timeout().unwrap() {
+                if node.inner.write().handle_timeout().unwrap() {
                     return;
                 }
                 zilliqa::time::advance(Duration::from_millis(500));
@@ -842,7 +846,11 @@ impl Network {
                 let span = tracing::span!(tracing::Level::INFO, "handle_timeout", index);
 
                 span.in_scope(|| {
-                    node.inner.lock().unwrap().handle_timeout().unwrap();
+                    node.inner
+                        .write()
+                        .process_transactions_to_broadcast()
+                        .unwrap();
+                    node.inner.write().handle_timeout().unwrap();
                 });
             }
             return;
@@ -914,7 +922,7 @@ impl Network {
             .iter()
             .find(|&node| node.peer_id == source)
             .expect("Sender should be on the nodes list");
-        let sender_chain_id = sender_node.inner.lock().unwrap().config.eth_chain_id;
+        let sender_chain_id = sender_node.inner.read().config.eth_chain_id;
         match contents {
             AnyMessage::Internal(source_shard, destination_shard, internal_message) => {
                 trace!(
@@ -968,8 +976,7 @@ impl Network {
                                     internal_message, source_shard, idx, self.shard_id
                                 );
                                 node.inner
-                                    .lock()
-                                    .unwrap()
+                                    .write()
                                     .handle_internal_message(
                                         *source_shard,
                                         internal_message.clone(),
@@ -1043,7 +1050,7 @@ impl Network {
                             let span =
                                 tracing::span!(tracing::Level::INFO, "handle_message", index);
                             span.in_scope(|| {
-                                let mut inner = node.inner.lock().unwrap();
+                                let mut inner = node.inner.write();
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
                                     let response_channel =
@@ -1051,15 +1058,27 @@ impl Network {
                                     self.response_channel_id += 1;
                                     self.pending_responses
                                         .insert(response_channel.clone(), source);
-
-                                    inner
-                                        .handle_request(
-                                            source,
-                                            "(synthetic_id)",
-                                            external_message.clone(),
-                                            response_channel,
-                                        )
-                                        .unwrap();
+                                    // Re-route Sync
+                                    match external_message {
+                                        ExternalMessage::MetaDataRequest(_)
+                                        | ExternalMessage::MultiBlockRequest(_)
+                                        | ExternalMessage::BlockRequest(_)
+                                        | ExternalMessage::PassiveSyncRequest(_) => inner
+                                            .handle_broadcast(
+                                                source,
+                                                external_message.clone(),
+                                                response_channel,
+                                            )
+                                            .unwrap(),
+                                        _ => inner
+                                            .handle_request(
+                                                source,
+                                                "(synthetic_id)",
+                                                external_message.clone(),
+                                                response_channel,
+                                            )
+                                            .unwrap(),
+                                    }
                                 }
                             });
                         }
@@ -1073,11 +1092,11 @@ impl Network {
                             let span =
                                 tracing::span!(tracing::Level::INFO, "handle_message", index);
                             span.in_scope(|| {
-                                let mut inner = node.inner.lock().unwrap();
+                                let mut inner = node.inner.write();
                                 // Send to nodes only in the same shard (having same chain_id)
                                 if inner.config.eth_chain_id == sender_chain_id {
+                                    // Re-route Proposals from Broadcast to Requests
                                     match external_message {
-                                        // Re-route Proposals from Broadcast to Requests, which is the behaviour in Production.
                                         ExternalMessage::Proposal(_) => inner
                                             .handle_request(
                                                 source,
@@ -1086,8 +1105,20 @@ impl Network {
                                                 ResponseChannel::Local,
                                             )
                                             .unwrap(),
+                                        ExternalMessage::BatchedTransactions(transactions) => {
+                                            let mut verified = Vec::new();
+                                            for tx in transactions {
+                                                let tx = tx.clone().verify().unwrap();
+                                                verified.push(tx);
+                                            }
+                                            inner.handle_broadcast_transactions(verified).unwrap();
+                                        }
                                         _ => inner
-                                            .handle_broadcast(source, external_message.clone())
+                                            .handle_broadcast(
+                                                source,
+                                                external_message.clone(),
+                                                ResponseChannel::Local,
+                                            )
                                             .unwrap(),
                                     }
                                 }
@@ -1109,7 +1140,7 @@ impl Network {
                     if !self.disconnected.contains(&index) {
                         let span = tracing::span!(tracing::Level::INFO, "handle_message", index);
                         span.in_scope(|| {
-                            let mut inner = node.inner.lock().unwrap();
+                            let mut inner = node.inner.write();
                             // Send to nodes only in the same shard (having same chain_id)
                             if inner.config.eth_chain_id == sender_chain_id {
                                 inner.handle_response(source, message.clone()).unwrap();
@@ -1275,8 +1306,8 @@ impl Network {
             .find(|(_, n)| n.peer_id == peer_id)
     }
 
-    pub fn get_node(&self, index: usize) -> MutexGuard<Node> {
-        self.nodes[index].inner.lock().unwrap()
+    pub fn get_node(&self, index: usize) -> RwLockWriteGuard<Node> {
+        self.nodes[index].inner.write()
     }
 
     pub fn get_node_raw(&self, index: usize) -> &TestNode {
@@ -1288,8 +1319,8 @@ impl Network {
         self.nodes.remove(idx)
     }
 
-    pub fn node_at(&mut self, index: usize) -> MutexGuard<Node> {
-        self.nodes[index].inner.lock().unwrap()
+    pub fn node_at(&mut self, index: usize) -> RwLockWriteGuard<Node> {
+        self.nodes[index].inner.write()
     }
 
     pub async fn rpc_client(&mut self, index: usize) -> Result<LocalRpcClient> {
@@ -1511,7 +1542,7 @@ async fn get_stakers(
 #[derive(Debug, Clone)]
 pub struct LocalRpcClient {
     id: Arc<AtomicU64>,
-    rpc_module: RpcModule<Arc<Mutex<Node>>>,
+    rpc_module: RpcModule<Arc<RwLock<Node>>>,
     subscriptions: Arc<Mutex<HashMap<u64, mpsc::Receiver<String>>>>,
 }
 

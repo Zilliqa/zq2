@@ -43,9 +43,38 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .unwrap()
                     .is_some()
             },
-            100,
+            450,
         )
         .await
+        .unwrap();
+
+    let latest_block_number = network
+        .get_node(index)
+        .get_block(BlockId::latest())
+        .unwrap()
+        .map_or(0, |b| b.number());
+
+    // make one block without txs
+    network
+        .run_until(
+            |n| {
+                let block = n
+                    .get_node(index)
+                    .get_block(BlockId::latest())
+                    .unwrap()
+                    .map_or(0, |b| b.number());
+                block > latest_block_number
+            },
+            450,
+        )
+        .await
+        .unwrap();
+
+    let receipt = wallet
+        .provider()
+        .get_transaction_receipt(hash.0)
+        .await
+        .unwrap()
         .unwrap();
 
     // make one block without txs
@@ -57,16 +86,16 @@ async fn block_and_tx_data_persistence(mut network: Network) {
                     .get_block(BlockId::latest())
                     .unwrap()
                     .map_or(0, |b| b.number());
-                block >= 3
+                block > receipt.block_number.unwrap().as_u64()
             },
-            100,
+            450,
         )
         .await
         .unwrap();
 
     let node = network.remove_node(index);
 
-    let inner = node.inner.lock().unwrap();
+    let inner = node.inner.read();
     let last_number = inner.number() - 2;
     let receipt = inner.get_transaction_receipt(hash).unwrap().unwrap();
     let block_with_tx = inner.get_block(receipt.block_hash).unwrap().unwrap();
@@ -81,7 +110,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
 
     // drop and re-create the node using the same datadir:
     drop(inner);
-    let config = node.inner.lock().unwrap().config.clone();
+    let config = node.inner.read().config.clone();
     #[allow(clippy::redundant_closure_call)]
     let dir = (|mut node: TestNode| node.dir.take())(node).unwrap(); // move dir out and drop the rest of node
     let mut rng = network.rng.lock().unwrap();
@@ -105,7 +134,7 @@ async fn block_and_tx_data_persistence(mut network: Network) {
         );
         return;
     };
-    let inner = newnode.inner.lock().unwrap();
+    let inner = newnode.inner.read();
 
     // ensure all blocks created were saved up till the last one
     let loaded_last_block = inner.get_block(last_number).unwrap();
@@ -178,8 +207,8 @@ async fn checkpoints_test(mut network: Network) {
     let scilla_contract_address =
         deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
 
-    // Run until block 9 so that we can insert a tx in block 10 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
-    network.run_until_block(&wallet, 9.into(), 200).await;
+    // Run until block 19 so that we can insert a tx in block 20 (note that this transaction may not *always* appear in the desired block, therefore we do not assert its presence later)
+    network.run_until_block(&wallet, 19.into(), 400).await;
 
     let _hash = wallet
         .send_transaction(TransactionRequest::pay(wallet.address(), 10), None)
@@ -187,8 +216,8 @@ async fn checkpoints_test(mut network: Network) {
         .unwrap()
         .tx_hash();
 
-    // wait 10 blocks for checkpoint to happen - then 3 more to finalize that block
-    network.run_until_block(&wallet, 13.into(), 200).await;
+    // wait 20 blocks for checkpoint to happen - then 3 more to finalize that block
+    network.run_until_block(&wallet, 33.into(), 400).await;
 
     let checkpoint_files = network
         .nodes
@@ -200,7 +229,7 @@ async fn checkpoints_test(mut network: Network) {
                 .path()
                 .join(network.shard_id.to_string())
                 .join("checkpoints")
-                .join("10")
+                .join("30")
         })
         .collect::<Vec<_>>();
 
@@ -216,7 +245,7 @@ async fn checkpoints_test(mut network: Network) {
 
     // Create new node and pass it one of those checkpoint files
     let checkpoint_path = checkpoint_files[0].to_str().unwrap().to_owned();
-    let checkpoint_hash = wallet.get_block(10).await.unwrap().unwrap().hash.unwrap();
+    let checkpoint_hash = wallet.get_block(30).await.unwrap().unwrap().hash.unwrap();
     let new_node_idx = network.add_node_with_options(NewNodeOptions {
         checkpoint: Some(Checkpoint {
             file: checkpoint_path,
@@ -228,7 +257,7 @@ async fn checkpoints_test(mut network: Network) {
     // Confirm wallet and new_node_wallet have the same block and state
     let new_node_wallet = network.wallet_of_node(new_node_idx).await;
     let latest_block_number = new_node_wallet.get_block_number().await.unwrap();
-    assert_eq!(latest_block_number, 10.into());
+    assert_eq!(latest_block_number, 30.into());
 
     let block = wallet
         .get_block(latest_block_number)
@@ -271,7 +300,7 @@ async fn checkpoints_test(mut network: Network) {
     // check the new node catches up and keeps up with block production
     network.run_until_synced(new_node_idx).await;
     network
-        .run_until_block(&new_node_wallet, 20.into(), 200)
+        .run_until_block(&new_node_wallet, 40.into(), 400)
         .await;
 
     // check account nonce of old wallet

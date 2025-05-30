@@ -13,9 +13,9 @@ mod web3;
 pub mod zilliqa;
 
 pub fn rpc_module(
-    node: Arc<Mutex<Node>>,
+    node: Arc<RwLock<Node>>,
     enabled_apis: &[EnabledApi],
-) -> RpcModule<Arc<Mutex<Node>>> {
+) -> RpcModule<Arc<RwLock<Node>>> {
     let mut module = RpcModule::new(node.clone());
 
     module
@@ -61,7 +61,7 @@ pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
     .collect()
 }
 
-/// Returns an `RpcModule<Arc<Mutex<Node>>>`. Call with the following syntax:
+/// Returns an `RpcModule<Arc<RwLock<Node>>>`. Call with the following syntax:
 /// ```ignore
 /// declare_module!(
 ///     node,
@@ -72,8 +72,8 @@ pub fn all_enabled() -> Vec<crate::cfg::EnabledApi> {
 /// )
 /// ```
 ///
-/// where `node` is an `Arc<Mutex<Node>>` and each implementation method has the signature
-/// `Fn(jsonrpsee::types::Params, &Arc<Mutex<Node>>) -> Result<T>`.
+/// where `node` is an `Arc<RwLock<Node>>` and each implementation method has the signature
+/// `Fn(jsonrpsee::types::Params, &Arc<RwLock<Node>>) -> Result<T>`.
 ///
 /// Will panic if any of the method names collide.
 macro_rules! declare_module {
@@ -82,7 +82,7 @@ macro_rules! declare_module {
         $enabled_apis:expr,
         [ $(($name:expr, $method:expr)),* $(,)? ] $(,)?
     ) => {{
-        let mut module: jsonrpsee::RpcModule<std::sync::Arc<std::sync::Mutex<crate::node::Node>>> = jsonrpsee::RpcModule::new($node.clone());
+        let mut module: jsonrpsee::RpcModule<std::sync::Arc<parking_lot::RwLock<crate::node::Node>>> = jsonrpsee::RpcModule::new($node.clone());
         let meter = opentelemetry::global::meter("zilliqa");
 
         $(
@@ -114,7 +114,7 @@ macro_rules! declare_module {
                     let start = std::time::SystemTime::now();
 
                     #[allow(clippy::redundant_closure_call)]
-                    let result = std::panic::catch_unwind(|| $method(params, context)).unwrap_or_else(|_| {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params, context))).unwrap_or_else(|_| {
                         Err(anyhow::anyhow!("Unhandled panic in RPC handler {}", $name))
                     });
 
@@ -150,9 +150,10 @@ macro_rules! declare_module {
     }}
 }
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use declare_module;
 use jsonrpsee::RpcModule;
+use parking_lot::RwLock;
 
 use crate::{cfg::EnabledApi, node::Node};
