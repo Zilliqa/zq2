@@ -50,7 +50,7 @@ use crate::{
 /// Result<Result<String>>, which would be confusing.
 /// The argument is a human-readable error message which can be returned to the
 /// user to indicate the problem with the transaction.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ValidationOutcome {
     Success,
     /// Transaction input size exceeds configured limit - (size, limit)
@@ -71,6 +71,12 @@ pub enum ValidationOutcome {
     NonceTooLow(u64, u64),
     /// Unrecognised type - not invocation, creation or transfer
     UnknownTransactionType,
+    /// Global transaction count exceeded
+    GlobalTransactionCountExceeded,
+    /// Transaction counter exceeded for a sender
+    TransactionCountExceededForSender,
+    /// Total nunber of sender slots exceeded
+    TotalNumberOfSlotsExceeded,
 }
 
 impl ValidationOutcome {
@@ -116,6 +122,15 @@ impl ValidationOutcome {
             }
             Self::UnknownTransactionType => {
                 "Txn is not transfer, contract creation or contract invocation".to_string()
+            }
+            Self::GlobalTransactionCountExceeded => {
+                "Global number of transactions stored in the mempool has been exceeded!".to_string()
+            }
+            Self::TransactionCountExceededForSender => {
+                "Transactions count kept per user has been exceeded!".to_string()
+            }
+            Self::TotalNumberOfSlotsExceeded => {
+                "Total number of slots for all senders has been exceeded".to_string()
             }
         }
     }
