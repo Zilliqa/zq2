@@ -1721,9 +1721,9 @@ impl Consensus {
             }
         }
 
+        let check_block = self.early_proposal_finish_at(pending_block, cumulative_gas_fee)?;
         // finalise the proposal
-        let Some(final_block) = self.early_proposal_finish_at(pending_block, cumulative_gas_fee)?
-        else {
+        let Some(final_block) = self.can_propose(check_block)? else {
             // Do not Propose.
             // Recover the proposed transactions into the pool.
             let mut pool = self.transaction_pool.write();
@@ -1739,6 +1739,26 @@ impl Consensus {
             None,
             ExternalMessage::Proposal(Proposal::from_parts(final_block, broadcasted_transactions)),
         )))
+    }
+
+    // Returns Ok(None) if the early proposal is implausible e.g. out-of-sync proposal.
+    fn can_propose(&mut self, check_block: Option<Block>) -> Result<Option<Block>> {
+        // finished block check
+        if let Some(final_block) = check_block {
+            // out-of-sync check - if syncing, any proposal is invalid
+            if !self.sync.am_syncing()? {
+                let head_number = self
+                    .db
+                    .get_highest_canonical_block_number()?
+                    .expect("head_block must exist");
+                // if the proposed block is lagging, then it is invalid e.g. it was out-of-sync at the early assembly and subsequently caught up.
+                if head_number <= final_block.number() {
+                    return Ok(Some(final_block));
+                }
+                warn!(number = %final_block.number(), view = %final_block.view(), "out-of-sync proposal");
+            }
+        }
+        Ok(None)
     }
 
     /// Insert transaction and add to early_proposal if possible.
