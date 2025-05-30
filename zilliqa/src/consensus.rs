@@ -562,6 +562,7 @@ impl Consensus {
                         if new_view.view == self.get_view()? {
                             // When re-sending new view messages we broadcast them, rather than only sending them to the
                             // view leader. This speeds up network recovery when many nodes have different high QCs.
+                            self.new_view(self.peer_id(), *new_view.clone())?;
                             return Ok(Some((None, ExternalMessage::NewView(new_view))));
                         }
                     }
