@@ -1,12 +1,9 @@
 //! A node in the Zilliqa P2P network. May coordinate multiple shard nodes.
 
 use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicPtr, AtomicUsize},
-    },
-    time::Duration,
+    collections::HashMap, iter, sync::{
+        atomic::{AtomicPtr, AtomicUsize}, Arc
+    }, time::Duration
 };
 
 use anyhow::{Result, anyhow};
@@ -61,7 +58,6 @@ struct Behaviour {
     autonat_server: autonat::v2::server::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
-    kademlia_legacy: kad::Behaviour<MemoryStore>,
 }
 
 /// Messages circulating over the p2p network.
@@ -129,16 +125,7 @@ impl P2pNode {
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
                     request_response: request_response::cbor::Behaviour::new(
-                        vec![
-                            (StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full),
-                            (
-                                StreamProtocol::try_from_owned(format!(
-                                    "/{}/req-resp/1.0.0",
-                                    config.network
-                                ))?,
-                                ProtocolSupport::Full,
-                            ),
-                        ],
+                        iter::once((StreamProtocol::new("/zq2/req-resp/1.0.0"), ProtocolSupport::Full)),
                         request_response::Config::default()
                             // This is a temporary patch to prevent long-running Scilla executions causing nodes to Timeout - https://github.com/Zilliqa/zq2/issues/2667
                             .with_request_timeout(Duration::from_secs(60)),
@@ -161,14 +148,13 @@ impl P2pNode {
                     .map_err(|e| anyhow!(e))?,
                     autonat_client: autonat::v2::client::Behaviour::default(),
                     autonat_server: autonat::v2::server::Behaviour::default(),
-                    kademlia_legacy: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
                     kademlia: kad::Behaviour::with_config(
                         peer_id,
                         MemoryStore::new(peer_id),
-                        kad::Config::new(kad_protocol.clone()),
+                        kad::Config::new(StreamProtocol::new("/zq2/kad/1.0.0")),
                     ),
                     identify: identify::Behaviour::new(
-                        identify::Config::new(protocol_version.clone(), key_pair.public())
+                        identify::Config::new("zq2/1.0.0".into(), key_pair.public())
                             .with_hide_listen_addrs(true)
                             .with_push_listen_addr_updates(true),
                     ),
@@ -350,9 +336,6 @@ impl P2pNode {
                                 if is_kad {
                                     self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
                                 }
-                                if is_kad_legacy {
-                                    self.swarm.behaviour_mut().kademlia_legacy.add_address(&peer_id, addr);
-                                }
                             }
                         }
                         // Add/Remove peers to/from the shard peer list used in syncing.
@@ -434,7 +417,6 @@ impl P2pNode {
                                 // address. Someone else in the network must know it, because we learnt their peer ID.
                                 // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
                                 let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
-                                let _ = self.swarm.behaviour_mut().kademlia_legacy.bootstrap();
                             }
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
