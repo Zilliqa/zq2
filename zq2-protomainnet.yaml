@@ -9,7 +9,7 @@ roles:
 - persistence
 - private-api
 versions:
-  zq2: v0.9.2
+  zq2: v0.9.3
   otterscan: develop
   spout: main
   stats_dashboard: v0.0.6
