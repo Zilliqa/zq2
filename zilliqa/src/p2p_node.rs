@@ -125,7 +125,13 @@ impl P2pNode {
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
                     request_response: request_response::cbor::Behaviour::new(
-                        iter::once((StreamProtocol::new("/zq2/req-resp/1.0.0"), ProtocolSupport::Full)),
+                        iter::once((
+                            StreamProtocol::try_from_owned(format!(
+                                "/zq2/{}/req-resp/1.0.0",
+                                config.network
+                            ))?,
+                            ProtocolSupport::Full,
+                        )),
                         request_response::Config::default()
                             // This is a temporary patch to prevent long-running Scilla executions causing nodes to Timeout - https://github.com/Zilliqa/zq2/issues/2667
                             .with_request_timeout(Duration::from_secs(60)),
@@ -151,12 +157,18 @@ impl P2pNode {
                     kademlia: kad::Behaviour::with_config(
                         peer_id,
                         MemoryStore::new(peer_id),
-                        kad::Config::new(StreamProtocol::new("/zq2/kad/1.0.0")),
+                        kad::Config::new(StreamProtocol::try_from_owned(format!(
+                            "/zq2/{}/kad/1.0.0",
+                            config.network
+                        ))?),
                     ),
                     identify: identify::Behaviour::new(
-                        identify::Config::new("zq2/1.0.0".into(), key_pair.public())
-                            .with_hide_listen_addrs(true)
-                            .with_push_listen_addr_updates(true),
+                        identify::Config::new(
+                            format!("zq2/{}/1.0.0", config.network),
+                            key_pair.public(),
+                        )
+                        .with_hide_listen_addrs(true)
+                        .with_push_listen_addr_updates(true),
                     ),
                 })
             })?
