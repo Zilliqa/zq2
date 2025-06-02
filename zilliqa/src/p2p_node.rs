@@ -157,10 +157,7 @@ impl P2pNode {
                     kademlia: kad::Behaviour::with_config(
                         peer_id,
                         MemoryStore::new(peer_id),
-                        kad::Config::new(StreamProtocol::try_from_owned(format!(
-                            "/zq2/{}/kad/1.0.0",
-                            config.network
-                        ))?),
+                        kad::Config::new(kad_protocol.clone()),
                     ),
                     identify: identify::Behaviour::new(
                         identify::Config::new(
@@ -339,8 +336,6 @@ impl P2pNode {
                             let is_match = info.protocol_version == self.protocol_version;
                             // will only be true if peer is publicly reachable i.e. SERVER mode.
                             let is_kad = info.protocols.iter().any(|p| *p == self.kad_protocol);
-                            let is_kad_legacy = info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME);
-
                             for addr in info.listen_addrs {
                                 if is_match {
                                     self.swarm.add_peer_address(peer_id, addr.clone());
