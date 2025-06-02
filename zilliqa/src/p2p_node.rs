@@ -160,12 +160,9 @@ impl P2pNode {
                         kad::Config::new(kad_protocol.clone()),
                     ),
                     identify: identify::Behaviour::new(
-                        identify::Config::new(
-                            format!("zq2/{}/1.0.0", config.network),
-                            key_pair.public(),
-                        )
-                        .with_hide_listen_addrs(true)
-                        .with_push_listen_addr_updates(true),
+                        identify::Config::new(protocol_version.clone(), key_pair.public())
+                            .with_hide_listen_addrs(true)
+                            .with_push_listen_addr_updates(true),
                     ),
                 })
             })?
@@ -336,6 +333,7 @@ impl P2pNode {
                             let is_match = info.protocol_version == self.protocol_version;
                             // will only be true if peer is publicly reachable i.e. SERVER mode.
                             let is_kad = info.protocols.iter().any(|p| *p == self.kad_protocol);
+
                             for addr in info.listen_addrs {
                                 if is_match {
                                     self.swarm.add_peer_address(peer_id, addr.clone());
