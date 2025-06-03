@@ -41,7 +41,7 @@ use crate::{
 pub struct State {
     sql: Arc<Db>,
     db: Arc<TrieStorage>,
-    accounts: PatriciaTrie<TrieStorage>,
+    accounts: Arc<Mutex<PatriciaTrie<TrieStorage>>>,
     /// The Scilla interpreter interface. Note that it is lazily initialized - This is a bit of a hack to ensure that
     /// tests which don't invoke Scilla, don't spawn the Scilla communication threads or TCP listeners.
     scilla: Arc<OnceLock<Mutex<Scilla>>>,
@@ -61,7 +61,7 @@ impl State {
         let consensus_config = &config.consensus;
         Ok(Self {
             db: db.clone(),
-            accounts: PatriciaTrie::new(db),
+            accounts: Arc::new(Mutex::new(PatriciaTrie::new(db))),
             scilla: Arc::new(OnceLock::new()),
             scilla_address: consensus_config.scilla_address.clone(),
             socket_dir: consensus_config.scilla_server_socket_directory.clone(),
@@ -319,7 +319,7 @@ impl State {
     pub fn at_root(&self, root_hash: B256) -> Self {
         Self {
             db: self.db.clone(),
-            accounts: self.accounts.at_root(root_hash),
+            accounts: Arc::new(Mutex::new(self.accounts.lock().unwrap().at_root(root_hash))),
             scilla: self.scilla.clone(),
             scilla_address: self.scilla_address.clone(),
             socket_dir: self.socket_dir.clone(),
@@ -334,16 +334,18 @@ impl State {
     }
 
     pub fn set_to_root(&mut self, root_hash: B256) {
-        self.accounts = self.accounts.at_root(root_hash);
+        let at_root = self.accounts.lock().unwrap().at_root(root_hash);
+        self.accounts = Arc::new(Mutex::new(at_root));
     }
 
     pub fn try_clone(&mut self) -> Result<Self> {
-        let root_hash = self.accounts.root_hash()?;
+        let root_hash = self.accounts.lock().unwrap().root_hash()?;
         Ok(self.at_root(root_hash))
     }
 
     pub fn root_hash(&mut self) -> Result<crypto::Hash> {
-        Ok(crypto::Hash(self.accounts.root_hash()?.into()))
+        let hash = self.accounts.lock().unwrap().root_hash()?;
+        Ok(crypto::Hash(hash.into()))
     }
 
     /// Canonical method to obtain trie key for an account node
@@ -367,6 +369,8 @@ impl State {
     pub fn get_account(&self, address: Address) -> Result<Account> {
         Ok(self
             .accounts
+            .lock()
+            .unwrap()
             .get(&Self::account_key(address).0)?
             .map(|bytes| bincode::deserialize::<Account>(&bytes))
             .unwrap_or(Ok(Account::default()))?)
@@ -419,11 +423,15 @@ impl State {
 
     /// Returns an error if there are any issues accessing the storage trie
     pub fn has_account(&self, address: Address) -> Result<bool> {
-        Ok(self.accounts.contains(&Self::account_key(address).0)?)
+        Ok(self
+            .accounts
+            .lock()
+            .unwrap()
+            .contains(&Self::account_key(address).0)?)
     }
 
     pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
-        Ok(self.accounts.insert(
+        Ok(self.accounts.lock().unwrap().insert(
             &Self::account_key(address).0,
             &bincode::serialize(&account)?,
         )?)
@@ -438,7 +446,7 @@ impl State {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.accounts.iter().next().is_none()
+        self.accounts.lock().unwrap().iter().next().is_none()
     }
 }
 

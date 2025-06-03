@@ -222,12 +222,13 @@ impl NodeLauncher {
                         if source == my_peer_id {
                             continue;
                         }
-                        let mut verified = Vec::new();
+                        let mut verified = Vec::with_capacity(transactions.len());
                         for txn in transactions {
                             let txn = txn.verify()?;
                             verified.push(txn);
                         }
                         self.node.write().handle_broadcast_transactions(verified)?;
+                        self.node.write().try_to_apply_transactions()?;
                     }
                     else if let Err(e) = self.node.write().handle_broadcast(source, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
