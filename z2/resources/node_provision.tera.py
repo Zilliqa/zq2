@@ -238,8 +238,8 @@ if KMS_ENABLED:
     STATS_DASHBOARD_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-stats-dashboard" --keyring="kms-{{ chain_name }}" --location=global --project="' + KMS_PROJECT_ID + '")'
 else:
     PRIVATE_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-pk")'
-    GENESIS_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis-key")'
-    STATS_DASHBOARD_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-key")'
+    GENESIS_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis")'
+    STATS_DASHBOARD_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard")'
 
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
