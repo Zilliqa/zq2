@@ -148,8 +148,10 @@ def generate_and_fund_accounts(num_accounts, faucet_pk, rpc_endpoint, output_dir
     counter = Value('i', initial_nonce)
     lock = Lock()
     
+    # Ensure at least 1 process is used
+    num_processes = max(1, min(num_accounts, cpu_count()))
+    
     # Prepare arguments for parallel processing
-    num_processes = math.floor(num_accounts / 10)  # Process accounts in batches of 10
     pool_args = [(i, account, faucet_address, faucet.key, rpc_endpoint) for i, account in enumerate(accounts)]
     
     # Send all funding transactions in parallel
