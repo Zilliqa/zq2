@@ -1,0 +1,6 @@
+web3>=6.11.1
+pandas>=2.0.0
+numpy>=1.24.0
+eth-account>=0.10.0
+eth-typing>=4.0.0
+eth-utils>=2.3.1 
