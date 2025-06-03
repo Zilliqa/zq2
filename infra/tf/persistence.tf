@@ -50,33 +50,14 @@ resource "google_storage_bucket" "persistence" {
     enabled = var.persistence_bucket_versioning
   }
 
+  # Delete noncurrent (deleted) file versions after 7 days
   lifecycle_rule {
     action {
-      type          = "SetStorageClass"
-      storage_class = "NEARLINE"
+      type = "Delete"
     }
     condition {
-      age = 7
-    }
-  }
-
-  lifecycle_rule {
-    action {
-      type          = "SetStorageClass"
-      storage_class = "COLDLINE"
-    }
-    condition {
-      age = 37 # 7 days in Standard + 30 days in Nearline
-    }
-  }
-
-  lifecycle_rule {
-    action {
-      type          = "SetStorageClass"
-      storage_class = "ARCHIVE"
-    }
-    condition {
-      age = 127 # 37 days + 90 days in Coldline
+      days_since_noncurrent_time = 7
+      send_age_if_zero           = false
     }
   }
 }
