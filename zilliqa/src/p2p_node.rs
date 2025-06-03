@@ -61,7 +61,6 @@ struct Behaviour {
     autonat_server: autonat::v2::server::Behaviour,
     identify: identify::Behaviour,
     kademlia: kad::Behaviour<MemoryStore>,
-    kademlia_legacy: kad::Behaviour<MemoryStore>,
 }
 
 /// Messages circulating over the p2p network.
@@ -129,16 +128,13 @@ impl P2pNode {
             .with_behaviour(|key_pair| {
                 Ok(Behaviour {
                     request_response: request_response::cbor::Behaviour::new(
-                        vec![
-                            (StreamProtocol::new("/zq2-message/1"), ProtocolSupport::Full),
-                            (
-                                StreamProtocol::try_from_owned(format!(
-                                    "/{}/req-resp/1.0.0",
-                                    config.network
-                                ))?,
-                                ProtocolSupport::Full,
-                            ),
-                        ],
+                        vec![(
+                            StreamProtocol::try_from_owned(format!(
+                                "/{}/req-resp/1.0.0",
+                                config.network
+                            ))?,
+                            ProtocolSupport::Full,
+                        )],
                         request_response::Config::default()
                             // This is a temporary patch to prevent long-running Scilla executions causing nodes to Timeout - https://github.com/Zilliqa/zq2/issues/2667
                             .with_request_timeout(Duration::from_secs(60)),
@@ -161,7 +157,6 @@ impl P2pNode {
                     .map_err(|e| anyhow!(e))?,
                     autonat_client: autonat::v2::client::Behaviour::default(),
                     autonat_server: autonat::v2::server::Behaviour::default(),
-                    kademlia_legacy: kad::Behaviour::new(peer_id, MemoryStore::new(peer_id)),
                     kademlia: kad::Behaviour::with_config(
                         peer_id,
                         MemoryStore::new(peer_id),
@@ -341,7 +336,6 @@ impl P2pNode {
                             let is_match = info.protocol_version == self.protocol_version;
                             // will only be true if peer is publicly reachable i.e. SERVER mode.
                             let is_kad = info.protocols.iter().any(|p| *p == self.kad_protocol);
-                            let is_kad_legacy = info.protocols.iter().any(|p| *p == kad::PROTOCOL_NAME);
 
                             for addr in info.listen_addrs {
                                 if is_match {
@@ -349,9 +343,6 @@ impl P2pNode {
                                 }
                                 if is_kad {
                                     self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
-                                }
-                                if is_kad_legacy {
-                                    self.swarm.behaviour_mut().kademlia_legacy.add_address(&peer_id, addr);
                                 }
                             }
                         }
@@ -434,7 +425,6 @@ impl P2pNode {
                                 // address. Someone else in the network must know it, because we learnt their peer ID.
                                 // Therefore, we can attempt to learn their address by triggering a Kademlia bootstrap.
                                 let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
-                                let _ = self.swarm.behaviour_mut().kademlia_legacy.bootstrap();
                             }
 
                             if let Some((shard_id, request_id)) = self.pending_requests.remove(&request_id) {
