@@ -1,13 +1,3 @@
-# Add a random suffix to the compute instance names. This ensures that when they are re-created, their `self_link`
-# changes and any instance groups containing them are updated.
-
-resource "random_id" "name_suffix" {
-  byte_length = 2
-
-  # Enable keepers to force reprovisioning the module resources
-  # keepers = var.metadata
-}
-
 resource "google_service_account" "this" {
   for_each = local.instances_map
 
