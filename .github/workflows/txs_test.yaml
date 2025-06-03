@@ -10,32 +10,9 @@ on:
         description: 'Zilliqa 2 RPC Endpoint (e.g., https://api.zq2-devnet.zilliqa.com)'
         required: true
         default: 'https://api.zq2-devnet.zilliqa.com'
-      future_nonce_tx_count:
-        description: 'Number of future-nonce Txs for the burst phase'
-        required: true
-        default: '50'
-        type: number
-      sustained_load_duration_seconds:
-        description: 'Duration (seconds) for the sustained load phase'
-        required: true
-        default: '300'
-        type: number
-      sustained_tps:
-        description: 'Target sustained TPS'
-        required: true
-        default: '400'
-        type: number
-      log_level:
-        description: 'Log level for test scripts (e.g., INFO, DEBUG)'
-        required: false
-        default: 'INFO'
 
 env:
   RPC_ENDPOINT: ${{ github.event.inputs.rpc_endpoint || 'https://api.zq2-devnet.zilliqa.com' }}
-  FUTURE_NONCE_TX_COUNT: ${{ github.event.inputs.future_nonce_tx_count || '50' }}
-  SUSTAINED_DURATION: ${{ github.event.inputs.sustained_load_duration_seconds || '300' }}
-  SUSTAINED_TPS: ${{ github.event.inputs.sustained_tps || '400' }}
-  LOG_LEVEL: ${{ github.event.inputs.log_level || 'INFO' }}
 
 jobs:
   execute_load_test:
@@ -78,9 +55,5 @@ jobs:
           ./scripts/run_zilliqa_load_test.sh \
             --rpc-endpoint "${{ env.RPC_ENDPOINT }}" \
             --accounts-dir ./prepared_test_accounts \
-            --future-nonce-count "${{ env.FUTURE_NONCE_TX_COUNT }}" \
-            --sustained-duration "${{ env.SUSTAINED_DURATION }}" \
-            --sustained-tps "${{ env.SUSTAINED_TPS }}" \
-            --log-dir ./sender_logs \
-            --log-level "${{ env.LOG_LEVEL }}"
+            --log-dir ./sender_logs
           echo "Load Test Finished"
