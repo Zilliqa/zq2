@@ -992,12 +992,12 @@ impl Consensus {
             .get_pending_or_queued(&self.state, txn)
     }
 
-    pub fn pending_transaction_count(&self, account: Address) -> u64 {
-        let current_nonce = self.state.must_get_account(account).nonce;
+    pub fn pending_transaction_count(&self, account_address: Address) -> u64 {
+        let account_data = self.state.must_get_account(account_address);
 
         self.transaction_pool
             .read()
-            .pending_transaction_count(account, current_nonce)
+            .pending_transaction_count(&account_address, &account_data)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
@@ -1622,7 +1622,7 @@ impl Consensus {
         };
 
         // Retrieve a list of pending transactions
-        let pool = self.transaction_pool.read();
+        let mut pool = self.transaction_pool.write();
         let pending = pool.pending_transactions(state)?;
 
         for txn in pending.into_iter() {
@@ -1716,8 +1716,8 @@ impl Consensus {
         {
             let mut pool = self.transaction_pool.write();
             for tx in opaque_transactions {
-                let account_nonce = self.state.get_account(tx.signer)?.nonce;
-                pool.insert_transaction(tx, account_nonce, true);
+                let account = self.state.get_account(tx.signer)?;
+                pool.insert_transaction(tx, &account, true);
             }
         }
 
@@ -2023,18 +2023,13 @@ impl Consensus {
 
         let txn_hash = txn.hash;
 
-        let insert_result = pool.insert_transaction(txn, early_account.nonce, from_broadcast);
+        let insert_result = pool.insert_transaction(txn.clone(), &early_account, from_broadcast);
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
             // Avoid cloning the transaction aren't any subscriptions to send it to.
             if self.new_transactions.receiver_count() != 0 {
-                // Clone the transaction from the pool, because we moved it in.
-                let txn = pool
-                    .get_transaction(txn_hash)
-                    .ok_or_else(|| anyhow!("transaction we just added is missing"))?
-                    .clone();
-                let _ = self.new_transactions.send(txn);
+                let _ = self.new_transactions.send(txn.clone());
             }
         }
         Ok(insert_result)
@@ -2916,8 +2911,8 @@ impl Consensus {
                 let orig_tx = self.db.get_transaction(tx_hash)?.unwrap().verify()?;
 
                 // Insert this unwound transaction back into the transaction pool.
-                let account_nonce = self.state.get_account(orig_tx.signer)?.nonce;
-                pool.insert_transaction(orig_tx, account_nonce, true);
+                let account = self.state.get_account(orig_tx.signer)?;
+                pool.insert_transaction(orig_tx, &account, true);
             }
 
             // this block is no longer in the main chain
