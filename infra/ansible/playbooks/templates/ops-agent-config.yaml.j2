@@ -1,0 +1,65 @@
+combined:
+  receivers:
+    otlp:
+      type: otlp
+      metrics_mode: googlecloudmonitoring
+logging:
+  receivers:
+    zilliqa:
+      type: files
+      include_paths:
+        - /var/lib/docker/containers/*/*.log
+        - /zilliqa.log
+      record_log_file_path: true
+  processors:
+    parse_log:
+        type: parse_json
+    parse_log_with_field:
+        type: parse_json
+        field: log
+    move_fields:
+      type: modify_fields
+      fields:
+        jsonPayload."logging.googleapis.com/severity":
+          move_from: jsonPayload.level
+        jsonPayload."logging.googleapis.com/sourceLocation".function:
+          move_from: jsonPayload.target
+        sourceLocation.line:
+          move_from: jsonPayload.line_number
+        jsonPayload.timestamp:
+          move_from: jsonPayload.time
+  service:
+    pipelines:
+      zilliqa:
+        receivers: [ zilliqa ]
+        processors: [ parse_log, parse_log_with_field, move_fields ]
+metrics:
+  receivers:
+    prometheus:
+      type: prometheus
+      config:
+        scrape_configs:
+          - job_name: 'node_exporter'
+            scrape_interval: 15s
+            static_configs:
+              - targets: ['localhost:9100']
+          - job_name: 'process_exporter'
+            scrape_interval: 30s
+            static_configs:
+              - targets: ['localhost:9256']
+            metric_relabel_configs:
+              - source_labels: [__name__]
+                regex: 'namedprocess_namegroup_cpu_seconds_total|namedprocess_namegroup_memory_bytes'
+                action: keep
+  service:
+    log_level: info
+    pipelines:
+      default_pipeline:
+        receivers: [prometheus]
+      otlp:
+        receivers: [otlp]
+traces:
+  service:
+    pipelines:
+      otlp:
+        receivers: [otlp]

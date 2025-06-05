@@ -1,0 +1,94 @@
+---
+- name: Install and configure Spout
+  hosts: role_apps
+  become: true
+  tags:
+    - install
+    - all
+
+  tasks:
+
+    - name: Extract version tag from spout_image
+      set_fact:
+        spout_version: "{{ spout_image.split(':')[-1] }}"
+
+    - name: Show extracted version
+      debug:
+        var: spout_version
+
+    - name: Retrieve genesis key KMS decrypted
+      shell: |
+        gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-genesis" --keyring="kms-{{ chain_name }}" --location=global --project="{{ kms_project_id }}"
+      register: retrieved_genesis_key
+      when: enable_kms
+
+    - name: Set fact with genesis key KMS decrypted
+      set_fact:
+        spout_genesis_key: "{{ retrieved_genesis_key.stdout }}"
+      when: enable_kms
+
+    - name: Retrieve genesis key
+      shell: |
+        gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis"
+      register: retrieved_genesis_key
+      when: not enable_kms
+
+    - name: Set fact with genesis key
+      set_fact:
+        spout_genesis_key: "{{ retrieved_genesis_key.stdout }}"
+      when: not enable_kms
+
+    - name: Create Spout script
+      template:
+        src: templates/spout.sh.j2
+        dest: /usr/local/bin/spout-{{ spout_version }}.sh
+        mode: '0777'
+      vars:
+        spout_version: "{{ spout_version }}"
+        spout_genesis_key: "{{ spout_genesis_key }}"
+      notify:
+        - Restart Spout service
+    
+    - name: Force create symlink for spout script
+      ansible.builtin.file:
+        src: /usr/local/bin/spout-{{ spout_version }}.sh
+        dest: /usr/local/bin/spout.sh
+        state: link
+        force: true
+      notify:
+        - Restart Spout service
+
+    - name: Create Spout systemd service
+      template:
+        src: templates/spout.service.j2
+        dest: /etc/systemd/system/spout.service
+        mode: '0644'
+      notify:
+        - Restart Spout service
+    
+    - name: Force create symlink for spout service
+      ansible.builtin.file:
+        src: /etc/systemd/system/spout.service
+        dest: /etc/systemd/system/multi-user.target.wants/spout.service
+        state: link
+        force: true
+      notify:
+        - Restart Spout service
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable node service
+      systemd:
+        name: spout
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Restart Spout service
+      systemd:
+        name: spout
+        state: restarted
+        enabled: yes
+        daemon_reload: yes 
