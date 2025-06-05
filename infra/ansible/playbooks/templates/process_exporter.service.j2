@@ -1,0 +1,14 @@
+[Unit]
+Description=Prometheus Process exporter
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/process_exporter.sh start
+ExecStop=/usr/local/bin/process_exporter.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target 

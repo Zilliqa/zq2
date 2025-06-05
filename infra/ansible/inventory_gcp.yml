@@ -1,0 +1,20 @@
+plugin: google.cloud.gcp_compute
+projects:
+  - prj-d-zq2-devnet-c83bkpsd
+  - prj-d-zq2-testnet-g13pnaa8
+  - prj-p-zq2-mainnet-sn5n8wfl
+filters:
+  - status = RUNNING
+  - scheduling.automaticRestart = true AND status = RUNNING
+auth_kind: application
+keyed_groups:
+  - key: labels['zq2-network']
+    prefix: network
+  - key: labels['role']
+    prefix: role
+hostnames:
+  # List host by name instead of the default public ip
+  - name
+compose:
+  # set the ansible_host variable to connect with the private IP address without changing the hostname
+  ansible_host: selfLink

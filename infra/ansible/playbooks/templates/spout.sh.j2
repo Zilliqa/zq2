@@ -1,0 +1,31 @@
+#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+
+SPOUT_IMAGE="{{ spout_image }}"
+
+start() {
+    docker rm spout-{{ spout_version }} &> /dev/null || echo 0
+    GENESIS_KEY={{ spout_genesis_key }}
+    docker run -td -p 8080:80 --name spout-{{ spout_version }} \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
+        -e RPC_URL=https://api.{{ dns_subdomain }} \
+        -e NATIVE_TOKEN_SYMBOL="ZIL" \
+        -e PRIVATE_KEY="${GENESIS_KEY}" \
+        -e ETH_AMOUNT=100 \
+        -e EXPLORER_URL="https://explorer.{{ dns_subdomain }}" \
+        -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
+        -e BECH32_HRP="zil" \
+        --restart=unless-stopped --pull=always \
+        ${SPOUT_IMAGE}
+    unset GENESIS_KEY
+}
+
+stop() {
+    docker stop spout-{{ spout_version }}
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0

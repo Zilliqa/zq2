@@ -1,5 +1,5 @@
 name: zq2-infratest
-eth_chain_id: 33103
+eth_chain_id: 33469
 roles:
 - bootstrap
 - validator
@@ -9,7 +9,7 @@ roles:
 - persistence
 - private-api
 versions:
-  zq2: v0.9.2
+  zq2: v0.9.3
   otterscan: develop
   spout: main
   stats_dashboard: v0.0.6

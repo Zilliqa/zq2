@@ -1,0 +1,25 @@
+#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+
+STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
+
+start() {
+    docker rm stats-dashboard-{{ stats_dashboard_version }} &> /dev/null || echo 0
+    STATS_DASHBOARD_KEY={{ stats_dashboard_key }}
+    docker run -td -p 3000:3000 --name stats-dashboard-{{ stats_dashboard_version }} \
+        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
+        -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
+        --restart=unless-stopped --pull=always \
+        ${STATS_DASHBOARD_IMAGE}
+    unset STATS_DASHBOARD_KEY
+}
+
+stop() {
+    docker stop stats-dashboard-{{ stats_dashboard_version }}
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0

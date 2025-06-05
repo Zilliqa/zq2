@@ -1,0 +1,13 @@
+[Unit]
+Description=Zilliqa Node Healthcheck
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'python3 /usr/local/bin/healthcheck.py'
+ExecStop=pkill -f /usr/local/bin/healthcheck.py
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

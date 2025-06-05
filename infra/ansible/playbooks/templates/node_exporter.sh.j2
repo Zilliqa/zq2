@@ -1,0 +1,24 @@
+#!/bin/bash
+NODE_EXPORTER_IMAGE='{{ node_exporter_image }}'
+
+start() {
+    docker rm node-exporter &> /dev/null || echo 0
+    docker run -td -p 9100:9100 --name node-exporter \
+        --net=host --restart=unless-stopped --pull=always \
+        ${NODE_EXPORTER_IMAGE} \
+        --collector.disable-defaults \
+        --collector.cpu \
+        --collector.meminfo \
+        --collector.filesystem \
+        &> /dev/null &
+}
+
+stop() {
+    docker stop node-exporter
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0 

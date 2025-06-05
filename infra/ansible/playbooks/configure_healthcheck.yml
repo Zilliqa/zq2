@@ -1,0 +1,52 @@
+---
+- name: Install and configure healthcheck service
+  hosts: all:!role_apps
+  become: true
+  tags:
+    - install
+    - all
+
+  tasks:
+
+    - name: Create Healthcheck script
+      template:
+        src: templates/healthcheck.py.j2
+        dest: /usr/local/bin/healthcheck.py
+        mode: '0777'
+      notify:
+        - Restart Healthcheck service
+
+    - name: Create Healthcheck systemd service
+      template:
+        src: templates/healthcheck.service.j2
+        dest: /etc/systemd/system/healthcheck.service
+        mode: '0644'
+      notify:
+        - Restart Healthcheck service
+    
+    - name: Force create symlink for healthcheck service
+      ansible.builtin.file:
+        src: /etc/systemd/system/healthcheck.service
+        dest: /etc/systemd/system/multi-user.target.wants/healthcheck.service
+        state: link
+        force: true
+      notify:
+        - Restart Healthcheck service
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable node service
+      systemd:
+        name: healthcheck
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Restart Healthcheck service
+      systemd:
+        name: healthcheck
+        state: restarted
+        enabled: yes
+        daemon_reload: yes 
