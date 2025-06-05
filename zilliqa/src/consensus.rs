@@ -1361,7 +1361,10 @@ impl Consensus {
         let mut early_proposal = self.early_proposal.write();
         *early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie, 0));
         self.early_proposal_apply_transactions(self.transaction_pool.write(), early_proposal)?;
-
+        error!(
+            "BZ view: {} early_proposal_assemble_at assembled",
+            self.get_view()?
+        );
         Ok(())
     }
 
@@ -1534,11 +1537,19 @@ impl Consensus {
             self.get_consensus_timeout_params()?;
 
         if milliseconds_remaining_of_block_time == 0 {
+            error!(
+                "BZ view: {} no more time left, pushing out proposal",
+                self.get_view()?
+            );
             return self.propose_new_block();
         }
 
         // Reset the timeout and wake up again once it has been at least `block_time` since
         // the last view change. At this point we should be ready to produce a new block.
+        error!(
+            "BZ view: {} self.create_next_block_on_timeout = true",
+            self.get_view()?
+        );
         self.create_next_block_on_timeout = true;
         self.reset_timeout.send(
             self.config

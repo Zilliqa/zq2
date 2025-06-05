@@ -227,8 +227,15 @@ impl NodeLauncher {
                             let txn = txn.verify()?;
                             verified.push(txn);
                         }
+                        let view = self.node.read().consensus.get_view()?;
+                        error!("BZ view: {} arrival of new batch", view);
+                        let start_time = Instant::now();
+                        let txn_len = verified.len();
                         self.node.write().handle_broadcast_transactions(verified)?;
+                        error!("BZ view: {} handle broadcast txn took: {} with txn count: {}", view, start_time.elapsed().as_millis(), txn_len);
+                        let start_time = Instant::now();
                         self.node.write().try_to_apply_transactions()?;
+                        error!("BZ view: {} try_to_apply_transactions: {} with txn count: {}", view, start_time.elapsed().as_millis(), txn_len);
                     }
                     else if let Err(e) = self.node.write().handle_broadcast(source, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
