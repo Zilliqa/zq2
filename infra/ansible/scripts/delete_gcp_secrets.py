@@ -4,7 +4,7 @@ import argparse
 from google.cloud import secretmanager
 from google.api_core import exceptions
 
-def delete_secrets_with_label(project_id: str, label_key: str, label_value: str):
+def delete_secrets_with_label(project_id: str, label_key: str, label_value: str, dry_run: bool = False, force: bool = False):
     """
     Delete all secrets in a GCP project that have a specific label.
     
@@ -30,8 +30,17 @@ def delete_secrets_with_label(project_id: str, label_key: str, label_value: str)
                 try:
                     # Delete the secret
                     secret_name = secret.name
-                    client.delete_secret(request={"name": secret_name})
-                    print(f"Deleted secret: {secret_name}")
+                    if not dry_run:
+                        if not force:
+                            confirmation = input(f"Confirm delete {secret_name}? (y/n): ")
+                            if confirmation.lower() != 'y':
+                                print(f"Skipping delete {secret_name}")
+                                continue
+            
+                        client.delete_secret(request={"name": secret_name})
+                        print(f"Deleted secret: {secret_name}")
+                    else:
+                        print(f"[DRY RUN] Would delete secret: {secret_name}")
                     deleted_count += 1
                 except exceptions.NotFound:
                     print(f"Secret {secret_name} not found")
@@ -52,11 +61,13 @@ def main():
     parser.add_argument("--project-id", required=True, help="GCP project ID")
     parser.add_argument("--label-key", default="zq2-network", help="Label key to match")
     parser.add_argument("--label-value", required=True, help="Label value to match")
+    parser.add_argument('--dry-run', action='store_true', help='Simulate actions without making any changes')
+    parser.add_argument('--force', action='store_true', help='Skip confirmation for existing key')
     
     args = parser.parse_args()
     
     print(f"Deleting secrets in project {args.project_id} with label {args.label_key}={args.label_value}")
-    delete_secrets_with_label(args.project_id, args.label_key, args.label_value)
+    delete_secrets_with_label(args.project_id, args.label_key, args.label_value, args.dry_run, args.force)
 
 if __name__ == "__main__":
     main() 

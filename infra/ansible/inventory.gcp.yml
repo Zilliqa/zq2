@@ -1,0 +1,36 @@
+plugin: google.cloud.gcp_compute
+projects:
+  - prj-d-zq2-devnet-c83bkpsd
+filters:
+  - status = RUNNING
+  - scheduling.automaticRestart = true AND status = RUNNING
+auth_kind: application
+keyed_groups:
+  - key: labels['zq2-network']
+    prefix: network
+  - key: labels['role']
+    prefix: role
+hostnames:
+  # List host by name instead of the default public ip
+  - name
+compose:
+# set the ansible_host variable to connect with the private IP address without changing the hostname
+  ansible_host: selfLink
+  ansible_ssh_common_args: >-
+    -o ProxyCommand="gcloud compute ssh %h --project {{ project_id }} --zone {{ zone }} --tunnel-through-iap --quiet"
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o ControlMaster=auto
+    -o ControlPersist=60s
+    -o ControlPath=/tmp/ansible-ssh-%h-%p-%r
+    -o PreferredAuthentications=publickey
+    -o PubkeyAuthentication=yes
+    -o PasswordAuthentication=no
+    -o KbdInteractiveAuthentication=no
+    -o GSSAPIAuthentication=no
+    -o UsePAM=no
+    -o BatchMode=yes
+    -o ConnectTimeout=60
+    -o ServerAliveInterval=30
+    -o ServerAliveCountMax=3
+    -o sftp_server=/usr/lib/openssh/sftp-server
