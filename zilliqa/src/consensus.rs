@@ -1493,6 +1493,13 @@ impl Consensus {
             db_write.elapsed().as_millis()
         );
 
+        let txs_size = bincode::serialize(&applied_txs)?;
+        error!(
+            "BZ view: {}. txns write size: {} bytes",
+            proposal.view(),
+            txs_size.len()
+        );
+
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
             let (proposal, applied_txs, transactions_trie, receipts_trie, _) =

@@ -20,7 +20,7 @@ use rusqlite::{
     types::{FromSql, FromSqlError, ToSqlOutput},
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     crypto::{BlsSignature, Hash},
@@ -1325,6 +1325,7 @@ impl TrieStorage {
         let keys = keys.chunks(chunk_size);
         let values = values.chunks(chunk_size);
 
+        let mut write_counter = 0;
         for (keys, values) in keys.zip(values) {
             // Generate the SQL substring of the form "(?1, ?2), (?3, ?4), (?5, ?6), ...". There will be one pair of
             // parameters for each key. Note that parameters are one-indexed.
@@ -1349,7 +1350,12 @@ impl TrieStorage {
                     .unwrap()
                     .insert(key.to_vec(), value.to_vec());
             }
+            write_counter += 1;
         }
+        error!(
+            "BZ view: ??, state_trie number of write statements: {}",
+            write_counter
+        );
 
         Ok(())
     }

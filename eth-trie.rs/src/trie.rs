@@ -4,6 +4,7 @@ use alloy::primitives::{B256, keccak256};
 use hashbrown::{HashMap, HashSet};
 use log::warn;
 use rlp::{Prototype, Rlp, RlpStream};
+use tracing::error;
 
 use crate::{
     db::{DB, MemoryDB},
@@ -886,8 +887,15 @@ where
         }
 
         self.db
-            .insert_batch(keys, values)
+            .insert_batch(keys.clone(), values.clone())
             .map_err(|e| TrieError::DB(e.to_string()))?;
+
+        let data_size: usize = keys
+            .iter()
+            .zip(&values)
+            .map(|(k, v)| k.len() + v.len())
+            .sum();
+        error!("BZ view: ??, state_trie write size: {} bytes", data_size);
 
         let removed_keys: Vec<Vec<u8>> = self
             .passing_keys

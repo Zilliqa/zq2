@@ -2839,6 +2839,7 @@ dependencies = [
  "parking_lot",
  "rand 0.8.5",
  "rlp 0.6.1",
+ "tracing",
  "uuid 1.16.0",
 ]
 
