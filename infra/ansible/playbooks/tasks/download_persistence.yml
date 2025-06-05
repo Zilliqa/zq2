@@ -1,0 +1,20 @@
+---
+- name: Create persistence directory
+  file:
+    path: /var/lib/zilliqa/persistence
+    state: directory
+    mode: '0755'
+
+- name: Download persistence data
+  shell: |
+    gsutil cp {{ persistence_url }} /var/lib/zilliqa/persistence/persistence.tar.gz
+  args:
+    creates: /var/lib/zilliqa/persistence/persistence.tar.gz
+
+- name: Extract persistence data
+  unarchive:
+    src: /var/lib/zilliqa/persistence/persistence.tar.gz
+    dest: /var/lib/zilliqa/persistence
+    remote_src: yes
+    extra_opts: [--strip-components=1]
+  when: not ansible_check_mode 

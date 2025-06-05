@@ -1,0 +1,10 @@
+---
+- name: Configure Docker registry login
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Login to Docker registry
+      ansible.builtin.shell: gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://asia-docker.pkg.dev
+      args:
+        creates: /root/.docker/config.json 

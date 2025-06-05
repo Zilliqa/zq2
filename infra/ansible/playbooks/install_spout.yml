@@ -1,0 +1,38 @@
+---
+- name: Install and configure Docker
+  hosts: role_apps
+  become: true
+
+  tasks:
+
+    - name: Create Spout directory
+      file:
+        path: /etc/zilliqa/spout
+        state: directory
+        mode: '0755'
+
+    - name: Create Spout configuration
+      template:
+        src: templates/spout_config.yml.j2
+        dest: /etc/zilliqa/spout/config.yml
+        mode: '0644'
+
+    - name: Create Spout systemd service
+      template:
+        src: templates/spout.service.j2
+        dest: /etc/systemd/system/spout.service
+        mode: '0644'
+
+    - name: Pull Spout Docker image
+      docker_image:
+        name: "{{ spout_image }}"
+        source: pull
+        force_source: yes
+
+    - name: Start and enable Spout service
+      systemd:
+        name: spout
+        state: started
+        enabled: yes
+        daemon_reload: yes 
+        # TODO are restart handlers and flush

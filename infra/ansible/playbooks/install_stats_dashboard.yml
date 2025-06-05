@@ -1,0 +1,38 @@
+---
+- name: Install and configure Docker
+  hosts: role_apps
+  become: true
+
+  tasks:
+
+    - name: Create Stats Dashboard directory
+      file:
+        path: /etc/zilliqa/stats-dashboard
+        state: directory
+        mode: '0755'
+
+    - name: Create Stats Dashboard configuration
+      template:
+        src: templates/stats_dashboard_config.yml.j2
+        dest: /etc/zilliqa/stats-dashboard/config.yml
+        mode: '0644'
+
+    - name: Create Stats Dashboard systemd service
+      template:
+        src: templates/stats_dashboard.service.j2
+        dest: /etc/systemd/system/stats-dashboard.service
+        mode: '0644'
+
+    - name: Pull Stats Dashboard Docker image
+      docker_image:
+        name: "{{ stats_dashboard_image }}"
+        source: pull
+        force_source: yes
+
+    - name: Start and enable Stats Dashboard service
+      systemd:
+        name: stats-dashboard
+        state: started
+        enabled: yes
+        daemon_reload: yes 
+        # TODO are restart handlers and flush

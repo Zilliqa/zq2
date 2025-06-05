@@ -1,0 +1,66 @@
+---
+- name: Install and configure Node Exporter and Process Exporter
+  hosts: all
+  become: true
+
+  tasks:
+
+    - name: Create monitoring directory
+      file:
+        path: /etc/zilliqa/monitoring
+        state: directory
+        mode: '0755'
+
+    - name: Create Node Exporter script
+      template:
+        src: templates/node_exporter.sh.j2
+        dest: /usr/local/bin/node_exporter.sh
+        mode: '0755'
+      notify: restart node_exporter
+
+    - name: Create Node Exporter systemd service
+      template:
+        src: templates/node_exporter.service.j2
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+      notify: restart node_exporter
+
+    - name: Create Process Exporter script
+      template:
+        src: templates/process_exporter.sh.j2
+        dest: /usr/local/bin/process_exporter.sh
+        mode: '0755'
+      notify: restart process_exporter
+
+    - name: Create Process Exporter systemd service
+      template:
+        src: templates/process_exporter.service.j2
+        dest: /etc/systemd/system/process_exporter.service
+        mode: '0644'
+      notify: restart process_exporter
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable monitoring services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      loop:
+        - node_exporter
+        - process_exporter
+
+  handlers:
+    - name: restart node_exporter
+      systemd:
+        name: node_exporter
+        state: restarted
+        daemon_reload: yes
+
+    - name: restart process_exporter
+      systemd:
+        name: process_exporter
+        state: restarted
+        daemon_reload: yes

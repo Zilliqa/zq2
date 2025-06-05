@@ -1,0 +1,16 @@
+---
+network:
+  name: {{ chain_name }}
+  eth_chain_id: {{ eth_chain_id }}
+
+node:
+  name: {{ node_name }}-spout
+  log_level: {{ log_level }}
+
+api:
+  public_api: {{ public_api }}
+
+faucet:
+  enabled: true
+  amount: {{ faucet_amount }}
+  interval: {{ faucet_interval }} 

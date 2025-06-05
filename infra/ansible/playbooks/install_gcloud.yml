@@ -1,0 +1,39 @@
+---
+- name: Install and configure Google Cloud SDK
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Install required packages
+      apt:
+        name: 
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: yes
+
+    - name: Create keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Google Cloud GPG key
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        keyring: /etc/apt/keyrings/cloud.google.gpg
+        state: present
+
+    - name: Add Google Cloud repository
+      apt_repository:
+        repo: deb https://packages.cloud.google.com/apt cloud-sdk main
+        state: present
+        filename: google-cloud-sdk
+        update_cache: yes
+
+    - name: Install Google Cloud SDK
+      apt:
+        name: google-cloud-cli
+        state: present
+        update_cache: yes 

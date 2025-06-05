@@ -1,0 +1,136 @@
+---
+# Playbook to generate private keys for Zilliqa 2 nodes
+- name: Generate private keys for Zilliqa 2 nodes
+  hosts: localhost
+  gather_facts: false
+  vars:
+    config_file: "{{ config_file | default('config.yaml') }}"
+    force: "{{ force | default(false) }}"
+    dry_run: "{{ dry_run | default(false) }}"
+    kms: "{{ kms | default(false) }}"
+    select_nodes: "{{ select_nodes | default(false) }}"
+    chain_name: ""
+
+  tasks:
+    - name: Load network configuration
+      ansible.builtin.slurp:
+        src: "{{ config_file }}"
+      register: config_content
+
+    - name: Parse YAML configuration
+      set_fact:
+        config: "{{ config_content.content | b64decode | from_yaml }}"
+        chain_name: "{{ config.name }}"
+
+    - name: Fail if chain name not found
+      fail:
+        msg: "Could not determine chain/network name from config."
+      when: not chain_name
+
+    - name: Get GCP instances
+      community.google.gcp_compute_instance_info:
+        filters:
+          - labels.zq2-network = {{ chain_name }}
+        project: "{{ item }}"
+        zone: "{{ item }}"
+      register: gcp_instances
+      loop: "{{ config.projects | default([]) }}"
+      when: config.projects is defined
+
+    - name: Filter nodes (exclude apps)
+      set_fact:
+        nodes: "{{ gcp_instances.results | map('json_query', 'instances') | flatten | selectattr('labels.role', '!=', 'apps') | list }}"
+
+    - name: Fail if no eligible nodes found
+      fail:
+        msg: "No eligible nodes found for key generation."
+      when: nodes | length == 0
+
+    - name: Display node selection
+      debug:
+        msg: "Selected {{ nodes | length }} nodes for key generation."
+
+    - name: Generate private keys for each node
+      block:
+        - name: Generate secret key
+          set_fact:
+            secret_key: "{{ lookup('password', '/dev/null chars=hexdigits length=64') }}"
+
+        - name: Get KMS project ID
+          set_fact:
+            kms_project_id: >-
+              {% if item.project_id is regex('^prj-p') %}
+              prj-p-kms-2vduab0g
+              {% else %}
+              prj-d-kms-tw1xyxbh
+              {% endif %}
+          loop: "{{ nodes }}"
+          when: kms
+
+        - name: Encrypt key with KMS
+          community.google.gcp_kms_crypto_key:
+            name: "{{ item.name }}"
+            key_ring: "kms-{{ chain_name }}"
+            project: "{{ kms_project_id }}"
+            location: global
+            state: present
+          register: kms_key
+          loop: "{{ nodes }}"
+          when: kms and not dry_run
+
+        - name: Encrypt secret with KMS
+          community.google.gcp_kms_encrypt:
+            crypto_key: "{{ item.name }}"
+            key_ring: "kms-{{ chain_name }}"
+            location: global
+            project: "{{ kms_project_id }}"
+            plaintext: "{{ secret_key }}"
+          register: encrypted_key
+          loop: "{{ nodes }}"
+          when: kms and not dry_run
+
+        - name: Set final key value
+          set_fact:
+            final_key: "{{ encrypted_key.results[0].ciphertext | b64encode if kms else secret_key }}"
+
+        - name: Create GCP secret
+          community.google.gcp_secret_manager_secret:
+            name: "{{ item.name }}-{{ 'enckey' if kms else 'pk' }}"
+            project: "{{ item.project_id }}"
+            labels:
+              role: "{{ item.labels.role | default('') }}"
+              zq2-network: "{{ chain_name }}"
+              node-name: "{{ item.name }}"
+              is-private-key: "true"
+            state: present
+            force: "{{ force }}"
+          register: secret_result
+          loop: "{{ nodes }}"
+          when: not dry_run
+
+        - name: Add secret version
+          community.google.gcp_secret_manager_secret_version:
+            secret: "{{ item.item.name }}-{{ 'enckey' if kms else 'pk' }}"
+            project: "{{ item.item.project_id }}"
+            secret_data: "{{ final_key }}"
+            state: present
+          loop: "{{ secret_result.results }}"
+          when: not dry_run and item.changed
+
+        - name: Grant IAM access
+          community.google.gcp_iam_policy:
+            project: "{{ item.project_id }}"
+            bindings:
+              - role: roles/secretmanager.secretAccessor
+                members:
+                  - "serviceAccount:{{ item.service_account }}"
+            resource: "{{ item.name }}-{{ 'enckey' if kms else 'pk' }}"
+          loop: "{{ nodes }}"
+          when: not dry_run and item.service_account is defined
+
+      when: not dry_run
+
+    - name: Display dry run message
+      debug:
+        msg: "Dry run completed. No changes were made."
+      when: dry_run 

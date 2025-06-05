@@ -1,0 +1,46 @@
+---
+- name: Install and configure Google Cloud Ops Agent
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Download Ops Agent installation script
+      get_url:
+        url: https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+        dest: /tmp/add-google-cloud-ops-agent-repo.sh
+        mode: '0755'
+
+    - name: Install Ops Agent repository
+      command: /tmp/add-google-cloud-ops-agent-repo.sh --also-install
+      args:
+        creates: /etc/apt/sources.list.d/google-cloud-ops-agent.list
+
+    - name: Create Ops Agent config directory
+      file:
+        path: /etc/google-cloud-ops-agent
+        state: directory
+        mode: '0755'
+
+    - name: Configure Ops Agent
+      template:
+        src: templates/ops-agent-config.yaml.j2
+        dest: /etc/google-cloud-ops-agent/config.yaml
+        mode: '0644'
+      notify: restart ops_agent
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable ops agent service
+      systemd:
+        name: "google-cloud-ops-agent"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: restart ops_agent
+      systemd:
+        name: google-cloud-ops-agent
+        state: restarted
+        daemon_reload: yes 

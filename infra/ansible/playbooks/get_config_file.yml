@@ -1,0 +1,88 @@
+---
+# Get ZQ2 node configuration file
+- name: Generate ZQ2 node configuration file
+  hosts: localhost
+  gather_facts: false
+  vars:
+    config_file: "{{ config_file | default('config.yaml') }}"
+    role: "{{ role | default('validator') }}"
+    output_file: "{{ output_file | default(omit) }}"
+    otlp_collector_endpoint: "http://localhost:4317"
+    enable_ots_indices: true
+
+  tasks:
+    - name: Load network configuration
+      ansible.builtin.slurp:
+        src: "{{ config_file }}"
+      register: config_content
+      failed_when: not config_content.content
+
+    - name: Parse network configuration
+      ansible.builtin.set_fact:
+        network_config: "{{ config_content.content | b64decode | from_yaml }}"
+      failed_when: not network_config
+
+    - name: Validate network configuration
+      ansible.builtin.fail:
+        msg: "Missing required network configuration fields"
+      when: >
+        not network_config.name or
+        not network_config.eth_chain_id or
+        not network_config.api_servers
+
+    - name: Get GCP instances
+      community.google.gcp_compute_instance_info:
+        filters:
+          - labels.zq2-network = {{ network_config.name }}
+          - status = RUNNING
+      register: gcp_instances
+      failed_when: not gcp_instances.instances
+
+    - name: Filter nodes by role
+      ansible.builtin.set_fact:
+        filtered_nodes: >-
+          {{
+            gcp_instances.instances | selectattr('labels.role', 'equalto', role)
+            | selectattr('labels.role', 'ne', 'apps')
+            | list
+          }}
+
+    - name: Validate node selection
+      ansible.builtin.fail:
+        msg: "No nodes found with role '{{ role }}'"
+      when: not filtered_nodes
+
+    - name: Select first matching node
+      ansible.builtin.set_fact:
+        selected_node: "{{ filtered_nodes[0] }}"
+
+    - name: Prepare API servers list
+      ansible.builtin.set_fact:
+        api_servers_json: "{{ network_config.api_servers | to_json }}"
+
+    - name: Prepare fork configuration
+      ansible.builtin.set_fact:
+        genesis_fork: "{{ network_config.genesis_fork | default({}) }}"
+        forks: "{{ network_config.forks | default([]) }}"
+
+    - name: Prepare checkpoint configuration
+      ansible.builtin.set_fact:
+        checkpoint_file: "{{ network_config.checkpoint_file | default('') }}"
+        checkpoint_hash: "{{ network_config.checkpoint_hash | default('') }}"
+
+    - name: Generate node configuration
+      ansible.builtin.template:
+        src: templates/node_config.toml.j2
+        dest: "{{ output_file | default('/tmp/zq2_node_config.toml') }}"
+        mode: '0644'
+      register: config_result
+
+    - name: Display configuration
+      ansible.builtin.debug:
+        msg: "{{ config_result.dest }}"
+      when: not output_file
+
+    - name: Show configuration content
+      ansible.builtin.debug:
+        msg: "{{ lookup('file', config_result.dest) }}"
+      when: not output_file 

@@ -1,0 +1,30 @@
+---
+network:
+  name: {{ chain_name }}
+  eth_chain_id: {{ eth_chain_id }}
+
+node:
+  name: {{ node_name }}
+  role: {{ node_role }}
+  log_level: {{ log_level }}
+
+api:
+  private_api: {{ private_api }}
+  public_api: {{ public_api }}
+
+persistence:
+  path: /var/lib/zilliqa/persistence
+  checkpoint_path: /var/lib/zilliqa/checkpoint
+
+{% if enable_kms %}
+kms:
+  project_id: {{ kms_project_id }}
+  key_ring: {{ kms_key_ring }}
+  key_name: {{ kms_key_name }}
+{% endif %}
+
+{% if zq2_metrics_enabled %}
+metrics:
+  enabled: true
+  port: {{ metrics_port }}
+{% endif %} 

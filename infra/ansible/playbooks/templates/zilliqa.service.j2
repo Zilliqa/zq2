@@ -1,0 +1,23 @@
+[Unit]
+Description=Zilliqa 2.0 Node
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/zilliqa/zilliqa.env
+ExecStart=/usr/bin/docker run --rm \
+    --name zilliqa \
+    --network host \
+    --volume /var/lib/zilliqa:/var/lib/zilliqa \
+    --volume /etc/zilliqa:/etc/zilliqa \
+    --log-driver json-file \
+    --log-opt max-size=100m \
+    --log-opt max-file=3 \
+    {{ zq2_image }}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 

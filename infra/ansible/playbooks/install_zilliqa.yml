@@ -1,0 +1,70 @@
+---
+- name: Install required packages
+  hosts: !role_apps
+  become: true
+  tags:
+    - install
+    - all
+  tasks:
+
+    - name: Create Zilliqa directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /etc/zilliqa
+        - /var/lib/zilliqa
+        - /var/log/zilliqa
+
+    - name: Create Zilliqa node configuration
+      template:
+        src: templates/zilliqa_config.yml.j2
+        dest: /etc/zilliqa/config.yml
+        mode: '0644'
+
+    - name: Create Zilliqa node systemd service
+      template:
+        src: templates/zilliqa.service.j2
+        dest: /etc/systemd/system/zilliqa.service
+        mode: '0644'
+
+    - name: Create Zilliqa node environment file
+      template:
+        src: templates/zilliqa.env.j2
+        dest: /etc/zilliqa/zilliqa.env
+        mode: '0644'
+
+    - name: Pull Zilliqa node Docker image
+      docker_image:
+        name: "{{ zq2_image }}"
+        source: pull
+        force_source: yes
+
+    # TODO if persistence_url is defined and persistence_url != "" and persistence_url ends with .tar.gz
+    - name: Create persistence directory
+      file:
+        path: /var/lib/zilliqa/persistence
+        state: directory
+        mode: '0755'
+
+    - name: Download persistence data
+      shell: |
+        gsutil cp {{ persistence_url }} /var/lib/zilliqa/persistence/persistence.tar.gz
+      args:
+        creates: /var/lib/zilliqa/persistence/persistence.tar.gz
+
+    - name: Extract persistence data
+      unarchive:
+        src: /var/lib/zilliqa/persistence/persistence.tar.gz
+        dest: /var/lib/zilliqa/persistence
+        remote_src: yes
+        extra_opts: [--strip-components=1]
+      when: not ansible_check_mode 
+
+    - name: Start and enable Zilliqa service
+      systemd:
+        name: zilliqa
+        state: started
+        enabled: yes
+        daemon_reload: yes 

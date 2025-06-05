@@ -1,0 +1,66 @@
+---
+
+# - name: Import required packages installation
+#   ansible.builtin.import_playbook: install_packages.yml
+
+# - name: Import Docker installation
+#   ansible.builtin.import_playbook: install_docker.yml
+
+# - name: Import monitoring tasks
+#   ansible.builtin.import_playbook: install_monitoring.yml
+
+# - name: Import ops_agent tasks
+#   ansible.builtin.import_playbook: install_ops_agent.yml
+
+# - name: Import gcloud tasks
+#   ansible.builtin.import_playbook: install_gcloud.yml
+
+- name: Import log rotation configuration
+  ansible.builtin.import_playbook: configure_logrotate.yml
+
+
+
+
+
+
+
+
+
+
+
+
+
+# - name: Import Docker registry configuration
+#   ansible.builtin.import_playbook: configure_docker_registry.yml
+
+# - name: Import Otterscan installation
+#   ansible.builtin.import_playbook: install_otterscan.yml
+
+# - name: Import Spout installation
+#   ansible.builtin.import_playbook: install_spout.yml
+#   when: spout_enabled
+
+# - name: Import Stats Dashboard installation
+#   ansible.builtin.import_playbook: install_stats_dashboard.yml
+
+# - name: Import Zilliqa node installation
+#   ansible.builtin.import_playbook: install_zilliqa.yml
+
+# - name: Import persistence data download
+#   ansible.builtin.import_playbook: download_persistence.yml
+#   when: persistence_url is defined and persistence_url != ""
+
+# - name: Import checkpoint data download
+#   ansible.builtin.import_playbook: download_checkpoint.yml
+#   when: checkpoint_url is defined and checkpoint_url != ""
+
+# - name: Import monitoring components installation
+#   ansible.builtin.import_playbook: install_zq2_metrics.yml
+#   when: zq2_metrics_enabled
+
+# - name: Import healthcheck service configuration
+#   ansible.builtin.import_playbook: configure_healthcheck.yml
+
+# - name: Import Stats Agent installation
+#   ansible.builtin.import_playbook: install_stats_agent.yml
+#   when: "ansible_hostname in groups['role_validator'] or ansible_hostname in groups['role_bootstrap'] or ansible_hostname in groups['role_api']"

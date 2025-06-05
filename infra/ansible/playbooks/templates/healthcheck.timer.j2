@@ -1,0 +1,10 @@
+[Unit]
+Description=Zilliqa 2.0 Health Check Timer
+
+[Timer]
+OnCalendar=*:*:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target 

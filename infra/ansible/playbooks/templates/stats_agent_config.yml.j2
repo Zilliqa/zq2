@@ -1,0 +1,16 @@
+---
+network:
+  name: {{ chain_name }}
+  eth_chain_id: {{ eth_chain_id }}
+
+node:
+  name: {{ node_name }}-stats-agent
+  log_level: {{ log_level }}
+
+api:
+  public_api: {{ public_api }}
+
+agent:
+  port: {{ stats_agent_port }}
+  collect_interval: {{ stats_agent_collect_interval }}
+  metrics_endpoint: {{ stats_agent_metrics_endpoint }} 

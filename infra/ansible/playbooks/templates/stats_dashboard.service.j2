@@ -1,0 +1,22 @@
+[Unit]
+Description=Zilliqa 2.0 Stats Dashboard
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/docker run --rm \
+    --name stats-dashboard \
+    --network host \
+    --volume /var/lib/zilliqa/stats-dashboard:/var/lib/zilliqa/stats-dashboard \
+    --volume /etc/zilliqa/stats-dashboard:/etc/zilliqa/stats-dashboard \
+    --log-driver json-file \
+    --log-opt max-size=100m \
+    --log-opt max-file=3 \
+    {{ stats_dashboard_image }}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 

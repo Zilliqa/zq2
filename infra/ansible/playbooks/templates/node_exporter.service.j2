@@ -1,0 +1,14 @@
+[Unit]
+Description=Prometheus Node exporter
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/node_exporter.sh start
+ExecStop=/usr/local/bin/node_exporter.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target 

@@ -1,0 +1,38 @@
+---
+- name: Install and configure Docker
+  hosts: role_apps
+  become: true
+
+  tasks:
+
+    - name: Create Otterscan directory
+      file:
+        path: /etc/zilliqa/otterscan
+        state: directory
+        mode: '0755'
+
+    - name: Create Otterscan configuration
+      template:
+        src: templates/otterscan_config.yml.j2
+        dest: /etc/zilliqa/otterscan/config.yml
+        mode: '0644'
+
+    - name: Create Otterscan systemd service
+      template:
+        src: templates/otterscan.service.j2
+        dest: /etc/systemd/system/otterscan.service
+        mode: '0644'
+
+    - name: Pull Otterscan Docker image
+      docker_image:
+        name: "{{ otterscan_image }}"
+        source: pull
+        force_source: yes
+
+    - name: Start and enable Otterscan service
+      systemd:
+        name: otterscan
+        state: started
+        enabled: yes
+        daemon_reload: yes 
+        # TODO are restart handlers and flush
