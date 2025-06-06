@@ -556,7 +556,7 @@ impl Consensus {
                     % self.config.consensus.new_view_broadcast_interval.as_secs())
                     == 0
             {
-                match self.network_message_cache.take() {
+                match self.network_message_cache.clone() {
                     Some((_, ExternalMessage::NewView(new_view))) => {
                         // If new_view message is not for this view then it must be outdated
                         if new_view.view == self.get_view()? {
@@ -1197,9 +1197,8 @@ impl Consensus {
             .context("missing parent block")?;
         let parent_block_hash = parent_block.hash();
 
-        let mut state = self.state.clone();
-        let previous_state_root_hash = state.root_hash()?;
-        state.set_to_root(proposal.state_root_hash().into());
+        let previous_state_root_hash = self.state.root_hash()?;
+        self.state.set_to_root(proposal.state_root_hash().into());
 
         // Compute the majority QC. If aggQC exists then QC is already set to correct value.
         let (final_qc, committee) = match proposal.agg {
@@ -1220,7 +1219,8 @@ impl Consensus {
                     return Ok(None);
                 };
                 // Retrieve the previous leader and committee - for rewards
-                let committee = state
+                let committee = self
+                    .state
                     .at_root(parent_block.state_root_hash().into())
                     .get_stakers(proposal.header)?;
                 (
@@ -1234,69 +1234,9 @@ impl Consensus {
                 )
             }
         };
-
-        let proposer = self
-            .leader_at_block(&parent_block, proposal.view())
-            .context("missing parent block leader")?
-            .public_key;
-        // Apply the rewards when exiting the round
         proposal.header.qc = final_qc;
-        Self::apply_rewards_late_at(
-            &parent_block,
-            &mut state,
-            &self.config.consensus,
-            &committee,
-            proposer, // Last leader
-            &proposal,
-        )?;
 
-        // ZIP-9: Sink gas to zero account
-        let fork = self.state.forks.get(proposal.header.number);
-        let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
-            cumulative_gas_fee
-        } else {
-            proposal.gas_used().0 as u128
-        };
-
-        state.mutate_account(Address::ZERO, |a| {
-            a.balance = a
-                .balance
-                .checked_add(gas_fee_amount)
-                .ok_or(anyhow!("Overflow occured in zero account balance"))?;
-            Ok(())
-        })?;
-
-        if !fork.fund_accounts_from_zero_account.is_empty() {
-            if let Some(fork_height) = self
-                .state
-                .forks
-                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
-            {
-                if fork_height == proposal.header.number {
-                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
-                        state.mutate_account(Address::ZERO, |a| {
-                            a.balance = a
-                                .balance
-                                .checked_sub(*address_amount_pair.1)
-                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
-                            Ok(())
-                        })?;
-                        state.mutate_account(address_amount_pair.0, |a| {
-                            a.balance = a
-                                .balance
-                                .checked_add(*address_amount_pair.1)
-                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
-                            Ok(())
-                        })?;
-                    }
-                }
-            };
-        }
-
-        if self.block_is_first_in_epoch(proposal.header.number) {
-            // Update state with any contract upgrades for this block
-            state.contract_upgrade_apply_state_change(&self.config.consensus, proposal.header)?;
-        }
+        self.apply_proposal_to_state(&proposal, &parent_block, &committee, cumulative_gas_fee)?;
 
         // Finalise the proposal with final QC and state.
         let proposal = Block::from_qc(
@@ -1307,7 +1247,7 @@ impl Consensus {
             final_qc,
             proposal.agg,
             // post-reward updated state
-            state.root_hash()?,
+            self.state.root_hash()?,
             proposal.header.transactions_root_hash,
             proposal.header.receipts_root_hash,
             proposal.transactions,
@@ -1320,8 +1260,7 @@ impl Consensus {
             .set_hash(proposal.header.receipts_root_hash);
 
         // Restore the state to previous
-        state.set_to_root(previous_state_root_hash.into());
-        self.state = state;
+        self.state.set_to_root(previous_state_root_hash.into());
 
         // Return the final proposal
         Ok(Some(proposal))
@@ -1524,6 +1463,7 @@ impl Consensus {
             }
         }
         std::mem::drop(pool);
+
         let (_, applied_txs, _, _, _) = early_proposal.as_ref().unwrap();
         self.db.with_sqlite_tx(|sqlite_tx| {
             for tx in applied_txs {
@@ -2030,7 +1970,7 @@ impl Consensus {
         if insert_result.was_added() {
             let _ = self.new_transaction_hashes.send(txn_hash);
 
-            // Avoid cloning the transaction aren't any subscriptions to send it to.
+            // Avoid cloning the transaction if there aren't any subscriptions to send it to.
             if self.new_transactions.receiver_count() != 0 {
                 let _ = self.new_transactions.send(txn.clone());
             }
@@ -2434,7 +2374,7 @@ impl Consensus {
         // Retrieve the highest among the aggregated QCs and check if it equals the block's QC.
         let block_high_qc = self.get_high_qc_from_block(block)?;
         let Some(block_high_qc_block) = self.get_block(&block_high_qc.block_hash)? else {
-            warn!("missing finalized block4");
+            warn!("missing finalized block");
             return Err(MissingBlockError::from(block_high_qc.block_hash).into());
         };
         // Prevent the creation of forks from the already committed chain
@@ -3011,37 +2951,39 @@ impl Consensus {
             trace!("applying {} transactions to state", transactions.len());
         }
 
-        // Early return if it is safe to fast-forward
-        let mut receipts_cache = self.receipts_cache.lock();
-        if receipts_cache.hash == block.receipts_root_hash()
-            && from.is_some_and(|peer_id| peer_id == self.peer_id())
         {
-            debug!(
-                "fast-forward self-proposal view {} block number {}",
-                block.header.view, block.header.number
-            );
+            // Early return if it is safe to fast-forward
+            let mut receipts_cache = self.receipts_cache.lock();
+            if receipts_cache.hash == block.receipts_root_hash()
+                && from.is_some_and(|peer_id| peer_id == self.peer_id())
+            {
+                debug!(
+                    "fast-forward self-proposal view {} block number {}",
+                    block.header.view, block.header.number
+                );
 
-            let mut block_receipts = Vec::new();
+                let mut block_receipts = Vec::new();
 
-            for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
-                let (receipt, addresses) = receipts_cache
-                    .remove(txn_hash)
-                    .expect("receipt cached during proposal assembly");
+                for (tx_index, txn_hash) in block.transactions.iter().enumerate() {
+                    let (receipt, addresses) = receipts_cache
+                        .remove(txn_hash)
+                        .expect("receipt cached during proposal assembly");
 
-                // Recover set of receipts
-                block_receipts.push((receipt, tx_index));
+                    // Recover set of receipts
+                    block_receipts.push((receipt, tx_index));
 
-                // Apply 'touched-address' from cache
-                for address in addresses {
-                    self.db.add_touched_address(address, *txn_hash)?;
+                    // Apply 'touched-address' from cache
+                    for address in addresses {
+                        self.db.add_touched_address(address, *txn_hash)?;
+                    }
                 }
-            }
-            // fast-forward state
-            self.state.set_to_root(block.state_root_hash().into());
+                // fast-forward state
+                self.state.set_to_root(block.state_root_hash().into());
 
-            // broadcast/commit receipts
-            return self.broadcast_commit_receipts(from, block, block_receipts);
-        };
+                // broadcast/commit receipts
+                return self.broadcast_commit_receipts(from, block, block_receipts);
+            };
+        }
 
         let mut pool = self.transaction_pool.write();
         let mut verified_txns = Vec::new();
@@ -3134,6 +3076,8 @@ impl Consensus {
             debug!(?receipt, "applied transaction {:?}", receipt);
             block_receipts.push((receipt, tx_index));
         }
+        std::mem::drop(pool);
+
         self.db.with_sqlite_tx(|sqlite_tx| {
             for txn in &verified_txns {
                 self.db
@@ -3178,66 +3122,7 @@ impl Consensus {
             return Ok(());
         }
 
-        // Apply rewards after executing transactions but with the committee members from the previous block
-        let proposer = self.leader_at_block(&parent, block.view()).unwrap();
-        Self::apply_rewards_late_at(
-            &parent,
-            &mut self.state,
-            &self.config.consensus,
-            committee,
-            proposer.public_key,
-            block,
-        )?;
-
-        // ZIP-9: Sink gas to zero account
-        let fork = self.state.forks.get(block.header.number);
-        let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
-            cumulative_gas_fee
-        } else {
-            block.gas_used().0 as u128
-        };
-
-        let mut state = self.state.clone();
-        state.mutate_account(Address::ZERO, |a| {
-            a.balance = a
-                .balance
-                .checked_add(gas_fee_amount)
-                .ok_or(anyhow!("Overflow occurred in zero account balance"))?;
-            Ok(())
-        })?;
-
-        if !fork.fund_accounts_from_zero_account.is_empty() {
-            if let Some(fork_height) = self
-                .state
-                .forks
-                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
-            {
-                if fork_height == block.header.number {
-                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
-                        state.mutate_account(Address::ZERO, |a| {
-                            a.balance = a
-                                .balance
-                                .checked_sub(*address_amount_pair.1)
-                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
-                            Ok(())
-                        })?;
-                        state.mutate_account(address_amount_pair.0, |a| {
-                            a.balance = a
-                                .balance
-                                .checked_add(*address_amount_pair.1)
-                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
-                            Ok(())
-                        })?;
-                    }
-                }
-            };
-        }
-
-        if self.block_is_first_in_epoch(block.header.number) {
-            // Update state with any contract upgrades for this block
-            state.contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
-        }
-        self.state = state;
+        self.apply_proposal_to_state(block, &parent, committee, cumulative_gas_fee)?;
 
         if self.state.root_hash()? != block.state_root_hash() {
             warn!(
@@ -3254,6 +3139,76 @@ impl Consensus {
         }
 
         self.broadcast_commit_receipts(from, block, block_receipts)
+    }
+
+    fn apply_proposal_to_state(
+        &mut self,
+        block: &Block,
+        parent: &Block,
+        committee: &[NodePublicKey],
+        cumulative_gas_fee: u128,
+    ) -> Result<()> {
+        // Apply the rewards of previous round
+        let proposer = self.leader_at_block(parent, block.view()).unwrap();
+        Self::apply_rewards_late_at(
+            parent,
+            &mut self.state,
+            &self.config.consensus,
+            committee,
+            proposer.public_key,
+            block,
+        )?;
+
+        // ZIP-9: Sink gas to zero account
+        let fork = self.state.forks.get(block.header.number).clone();
+        let gas_fee_amount = if fork.transfer_gas_fee_to_zero_account {
+            cumulative_gas_fee
+        } else {
+            block.gas_used().0 as u128
+        };
+
+        self.state.mutate_account(Address::ZERO, |a| {
+            a.balance = a
+                .balance
+                .checked_add(gas_fee_amount)
+                .ok_or(anyhow!("Overflow occurred in zero account balance"))?;
+            Ok(())
+        })?;
+
+        if !fork.fund_accounts_from_zero_account.is_empty() {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::FundAccountsFromZeroAccount)
+            {
+                if fork_height == block.header.number {
+                    for address_amount_pair in fork.fund_accounts_from_zero_account.clone() {
+                        self.state.mutate_account(Address::ZERO, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_sub(*address_amount_pair.1)
+                                .ok_or(anyhow!("Underflow occurred in zero account balance"))?;
+                            Ok(())
+                        })?;
+                        self.state.mutate_account(address_amount_pair.0, |a| {
+                            a.balance = a
+                                .balance
+                                .checked_add(*address_amount_pair.1)
+                                .ok_or(anyhow!("Overflow occurred in Faucet account balance"))?;
+                            Ok(())
+                        })?;
+                    }
+                }
+            };
+        }
+
+        if self.block_is_first_in_epoch(block.header.number) {
+            // Update state with any contract upgrades for this block
+            self.state
+                .contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
+        }
+
+        Ok(())
     }
 
     fn broadcast_commit_receipts(
