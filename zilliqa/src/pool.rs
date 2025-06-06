@@ -5,7 +5,7 @@ use std::{
 
 use alloy::primitives::Address;
 use anyhow::{Result, anyhow};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{
     crypto::Hash,
@@ -152,20 +152,22 @@ impl TransactionPool {
         for (_, gas_txns) in self.gas_index.iter().rev() {
             let same_price_iter = gas_txns.iter();
             for tx_index in same_price_iter {
-                let txn = self
-                    .transactions
-                    .get(tx_index)
-                    .ok_or(anyhow!("Unable to find txn in global index!"))?;
+                if let Some(txn) = self.transactions.get(tx_index) {
+                    let tx_cost = txn.tx.maximum_validation_cost()?;
+                    let account = state.must_get_account(txn.signer);
 
-                let tx_cost = txn.tx.maximum_validation_cost()?;
-                let account = state.must_get_account(txn.signer);
+                    // We're not going to propose txn this time
+                    if tx_cost > account.balance
+                        || txn.tx.nonce().unwrap_or_default() > account.nonce
+                    {
+                        continue;
+                    }
 
-                // We're not going to propose txn this time
-                if tx_cost > account.balance || txn.tx.nonce().unwrap_or_default() > account.nonce {
+                    return Ok(Some(txn));
+                } else {
+                    warn!("Unable to find txn in global index!");
                     continue;
                 }
-
-                return Ok(Some(txn));
             }
         }
         Ok(None)
@@ -412,11 +414,7 @@ impl TransactionPool {
         for (_, gas_price_set) in self.gas_index.iter() {
             for index in gas_price_set.iter() {
                 if next_index == *index {
-                    next_txn = Some(
-                        self.transactions
-                            .get(index)
-                            .ok_or(anyhow!("Unable to find txn in global index!"))?,
-                    );
+                    next_txn = self.transactions.get(index);
                     break;
                 }
             }
