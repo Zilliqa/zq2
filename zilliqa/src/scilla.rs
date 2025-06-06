@@ -803,16 +803,25 @@ pub fn storage_key(var_name: &str, indices: &[Vec<u8>]) -> Bytes {
     let len = var_name.len() + indices.len() + indices.iter().map(|v| v.len()).sum::<usize>();
     let mut bytes = BytesMut::with_capacity(len);
     bytes.extend_from_slice(var_name.as_bytes());
+
+    // This separator should be added before iterating over the indices.
+    // Otherwise, if the indices are empty, there's a chance that a variable like `collection_owning_brand`
+    // will have a storage key that is a prefix of a variable like `collection_owning_brand_size`,
+    // and `iter_by_prefix` will incorrectly return the latter when the former is requested.
+    bytes.put_u8(SEPARATOR);
     for index in indices {
         assert!(!index.contains(&SEPARATOR));
-        bytes.put_u8(SEPARATOR);
         bytes.extend_from_slice(index.as_slice());
+        bytes.put_u8(SEPARATOR);
     }
     bytes.freeze()
 }
 
 pub fn split_storage_key(key: impl AsRef<[u8]>) -> Result<(String, Vec<Vec<u8>>)> {
-    let mut parts = key.as_ref().split(|b| *b == SEPARATOR);
+    let mut parts = key
+        .as_ref()
+        .split(|b| *b == SEPARATOR)
+        .filter(|part| !part.is_empty());
     let var_name = parts.next().expect("split always returns one element");
     let var_name = String::from_utf8(var_name.to_vec())?;
     let indices = parts.map(|s| s.to_vec()).collect();
