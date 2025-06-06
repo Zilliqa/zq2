@@ -64,7 +64,7 @@ struct NoncelessTransactionKey {
 impl From<VerifiedTransaction> for NoncelessTransactionKey {
     fn from(txn: VerifiedTransaction) -> Self {
         NoncelessTransactionKey {
-            highest_gas_price: txn.gas_price,
+            highest_gas_price: txn.tx.gas_price_per_evm_gas(),
             hash: txn.hash,
         }
     }
@@ -73,7 +73,7 @@ impl From<VerifiedTransaction> for NoncelessTransactionKey {
 impl From<&VerifiedTransaction> for NoncelessTransactionKey {
     fn from(txn: &VerifiedTransaction) -> Self {
         NoncelessTransactionKey {
-            highest_gas_price: txn.gas_price,
+            highest_gas_price: txn.tx.gas_price_per_evm_gas(),
             hash: txn.hash,
         }
     }
@@ -111,7 +111,7 @@ impl TransactionsAccount {
                 .nonced_transactions
                 .range((Included(self.nonce_after_pending), Unbounded))
                 .take_while(|(k, _v)| {
-                    if k == &nonced_iterator_nonce_tracker {
+                    if **k == nonced_iterator_nonce_tracker {
                         nonced_iterator_nonce_tracker += 1;
                         true
                     } else {
@@ -184,27 +184,29 @@ impl TransactionsAccount {
             }
             self.maintain();
         } else {
-            let gas_price = txn.tx.gas_price_per_evm_gas() as i128;
+            let gas_price = txn.tx.gas_price_per_evm_gas();
             let worst_pending_nonceless = self
                 .nonceless_transactions_pending
                 .first_key_value()
-                .map_or(-1, |v| v.txn.tx.gas_price_per_evm_gas() as i128);
+                .map_or(0, |(_k, v)| v.tx.gas_price_per_evm_gas());
             let highest_pending_nonced = self
                 .nonced_transactions
                 .get(&(self.nonce_after_pending - 1))
-                .map_or(-1, |txn| txn.tx.gas_price_per_evm_gas() as i128);
-            if gas_price > worst_pending_nonceless || gas_price > worst_pending_nonceless {
-                self.balance_after_pending -= gas_price;
-                self.nonceless_transactions_pending.insert(txn.into(), txn);
+                .map_or(0, |txn| txn.tx.gas_price_per_evm_gas());
+            if gas_price > worst_pending_nonceless || gas_price > highest_pending_nonced {
+                self.balance_after_pending -= gas_price as i128;
+                self.nonceless_transactions_pending
+                    .insert((&txn).into(), txn);
                 self.pending_transaction_count += 1;
                 self.maintain();
             } else {
-                self.nonceless_transactions_queued.insert(txn.into(), txn);
+                self.nonceless_transactions_queued
+                    .insert((&txn).into(), txn);
             }
         }
     }
     fn update_txn(&mut self, new_txn: VerifiedTransaction) {
-        if let Some(nonce) = new_txn.tx.nonce(){
+        if let Some(nonce) = new_txn.tx.nonce() {
             let new_gas_price = new_txn.tx.gas_price_per_evm_gas() as i128;
             assert!(self.nonced_transactions.contains_key(&nonce));
             let old_txn = self.nonced_transactions.insert(nonce, new_txn).unwrap();
@@ -261,32 +263,48 @@ impl TransactionsAccount {
             None => None,
         };
         let best_nonceless_entry = self.nonceless_transactions_pending.last_entry();
-        let best_entry = match (best_nonced_entry, best_nonceless_entry) {
-            (Some(nonced_entry), Some(nonceless_entry)) => {
-                if nonced_entry.get().tx.gas_price_per_evm_gas()
-                    >= nonceless_entry.get().tx.gas_price_per_evm_gas()
-                {
-                    nonced_entry
+
+        if best_nonced_entry.is_none() && best_nonceless_entry.is_none() {
+            return None;
+        } else {
+            let best_nonced_gas = best_nonced_entry
+                .as_ref()
+                .map_or(0, |x| x.get().tx.gas_price_per_evm_gas());
+            let best_nonceless_gas = best_nonceless_entry
+                .as_ref()
+                .map_or(0, |x| x.get().tx.gas_price_per_evm_gas());
+            if best_nonced_gas < best_nonceless_gas {
+                if let Some(best_nonceless_entry) = best_nonceless_entry {
+                    if predicate(best_nonceless_entry.get()) {
+                        let result = best_nonceless_entry.remove();
+                        self.pending_transaction_count -= 1;
+                        self.balance_after_pending += result.tx.gas_price_per_evm_gas() as i128;
+                        self.maintain();
+                        Some(result)
+                    } else {
+                        None
+                    }
                 } else {
-                    nonceless_entry
+                    None
+                }
+            } else {
+                if let Some(best_nonced_entry) = best_nonced_entry {
+                    if predicate(best_nonced_entry.get()) {
+                        let result = best_nonced_entry.remove();
+                        self.pending_transaction_count -= 1;
+                        self.balance_after_pending += result.tx.gas_price_per_evm_gas() as i128;
+                        if Some(self.nonce_after_pending - 1) == result.tx.nonce() {
+                            self.nonce_after_pending = 0; // This was the last nonced transaction
+                        }
+                        self.maintain();
+                        Some(result)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
             }
-            (Some(nonced_entry), None) => nonced_entry,
-            (None, Some(nonceless_entry)) => nonceless_entry,
-            (None, None) => return None,
-        };
-        // Check the predicate and remove if appropriate
-        if predicate(best_entry.get()) {
-            let result = best_entry.remove();
-            self.pending_transaction_count -= 1;
-            self.balance_after_pending += result.tx.gas_price_per_evm_gas() as i128;
-            if Some(self.nonce_after_pending - 1) == result.tx.nonce() {
-                self.nonce_after_pending = 0; // This was the last nonced transaction
-            }
-            self.maintain();
-            Some(result)
-        } else {
-            None
         }
     }
     fn update_balance(&mut self, new_balance: u128) {
@@ -355,6 +373,35 @@ impl TransactionsAccount {
             })
         } else {
             None
+        }
+    }
+
+    fn mark_executed(&self, txn: &VerifiedTransaction) {
+        if let Some(nonce) = txn.tx.nonce() {
+            // split the transactions into ones to keep and ones to discard (which are annoyingly returned the wrong way round)
+            let transactions_to_retain = self.nonced_transactions.split_off(&(nonce + 1));
+            // discard transactions which were queued but now aren't
+            self.nonced_transactions
+                .split_off(&self.nonce_after_pending);
+            // removed discarded transactions from balance
+            for discarded_tx in self.nonced_transactions {
+                self.balance_after_pending += discarded_tx.tx.gas_price_per_evm_gas() as i128;
+                self.pending_transaction_count -= 1;
+            }
+            // Put the cut down transaction list back in place
+            self.nonced_transactions = transactions_to_retain;
+            // put the counters right again
+            self.nonce_account = std::cmp::max(self.nonce_account, nonce);
+            self.nonce_after_pending = std::cmp::max(self.nonce_after_pending, nonce + 1);
+            self.maintain()
+        } else {
+            if let Some(txn) = self.nonceless_transactions_pending.remove(&txn.into()) {
+                self.balance_after_pending += txn.tx.gas_price_per_evm_gas() as i128;
+                self.pending_transaction_count -= 1;
+                self.maintain()
+            } else {
+                self.nonceless_transactions_queued.remove(&txn.into());
+            }
         }
     }
 }
@@ -445,7 +492,7 @@ impl TransactionPoolCore {
     fn get_pending_transaction_count(&self, account_address: &Address) -> u64 {
         // This could be slightly faster by keeping track of the number but it'll do for now
         match self.all_transactions.get(account_address) {
-            Some(account) => account.get_pending_transaction_count(),
+            Some(account) => account.get_pending_transaction_count() as u64,
             None => 0,
         }
     }
@@ -489,6 +536,7 @@ impl TransactionPoolCore {
                     nonced_transactions: BTreeMap::new(),
                     nonceless_transactions_pending: BTreeMap::new(),
                     nonceless_transactions_queued: BTreeMap::new(),
+                    pending_transaction_count: 0,
                 });
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.remove(&pending_queue_key);
@@ -566,6 +614,19 @@ impl TransactionPoolCore {
         }
         result
     }
+
+    pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
+        let address = txn.signer;
+        self.hash_to_txn_map.remove(&txn.hash);
+        if let Some(account) = self.all_transactions.get_mut(&address) {
+            self.pending_account_queue
+                .remove(&account.get_pending_queue_key().unwrap());
+            account.mark_executed(txn);
+            if let Some(key) = account.get_pending_queue_key() {
+                self.pending_account_queue.insert(key);
+            }
+        }
+    }
 }
 
 /// A pool that manages uncommitted transactions.
@@ -590,8 +651,8 @@ impl TransactionPool {
         Ok(self.core.peek_best_txn())
     }
 
-    pub fn get_transaction(&mut self, hash: &Hash) -> Result<Option<&VerifiedTransaction>> {
-        Ok(self.core.get_transaction_by_hash(hash))
+    pub fn get_transaction(&mut self, hash: &Hash) -> Option<&VerifiedTransaction> {
+        self.core.get_transaction_by_hash(hash)
     }
 
     /// Returns whether the transaction is pending or queued
@@ -629,6 +690,10 @@ impl TransactionPool {
         self.core.get_pending_transaction_count(account_address)
     }
 
+    pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
+        self.core.mark_executed(txn);
+    }
+
     /// Returns a pair (did_we_add_it, message).
     /// If we return false, it's safe to say that txn validation failed.
     pub fn insert_transaction(
@@ -645,18 +710,15 @@ impl TransactionPool {
                 );
                 // This transaction is permanently invalid, so there is nothing to do.
                 // unwrap() is safe because we checked above that it was some().
-                return TxAddResult::NonceTooLow(transaction_nonce.unwrap(), account.nonce);
+                return TxAddResult::NonceTooLow(transaction_nonce, account.nonce);
             }
         }
 
-        let existing_transaction = match txn.tx.nonce(){
-            Some(nonce) => self
-                .core
-                .get_txn_by_address_and_nonce(&txn.signer, nonce),
+        let existing_transaction = match txn.tx.nonce() {
+            Some(nonce) => self.core.get_txn_by_address_and_nonce(&txn.signer, nonce),
             None => None,
-        }
-        if let Some(existing_txn) = existing_transaction
-        {
+        };
+        if let Some(existing_txn) = existing_transaction {
             // Only proceed if the new transaction is better. Note that if they are
             // equally good, we prioritise the existing transaction to avoid the need
             // to broadcast a new transaction to the network.
@@ -665,28 +727,34 @@ impl TransactionPool {
             // keeping the same nonce. So for those, it will always discard the new (identical)
             // one.
             if txn.signer == existing_txn.signer
-                && transaction_nonce.unwrap() == existing_txn.tx.nonce().unwrap()
+                && txn.tx.nonce().unwrap() == existing_txn.tx.nonce().unwrap()
                 && txn.tx.gas_price_per_evm_gas() < existing_txn.tx.gas_price_per_evm_gas()
             {
                 debug!(
                     "Received txn with the same nonce but lower gas price. Txn hash: {:?}, from: {:?}, nonce: {:?}, gas_price: {:?}",
                     txn.hash,
                     txn.signer,
-                    transaction_nonce,
+                    txn.tx.nonce(),
                     txn.tx.gas_price_per_evm_gas()
                 );
                 return TxAddResult::SameNonceButLowerGasPrice;
             } else {
                 debug!(
                     "Txn updated in mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {:?}",
-                    txn.hash, txn.signer, transaction_nonce, account.nonce,
+                    txn.hash,
+                    txn.signer,
+                    txn.tx.nonce(),
+                    account.nonce,
                 );
                 self.core.update_txn(txn.clone());
             }
         } else {
             debug!(
                 "Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {:?}",
-                txn.hash, txn.signer, transaction_nonce, account.nonce,
+                txn.hash,
+                txn.signer,
+                txn.tx.nonce(),
+                account.nonce,
             );
             self.core.add_txn(txn.clone(), account);
         }

@@ -834,7 +834,9 @@ impl Consensus {
                         let (_, txns, _, _, _) = early_proposal.take().unwrap();
                         let mut pool = self.transaction_pool.write();
                         for txn in txns.into_iter().rev() {
-                            pool.insert_transaction(txn)?;
+                            let account = self.state.get_account(txn.signer)?;
+                            let added = pool.insert_transaction(txn, &account, false);
+                            assert!(added.was_added())
                         }
                         warn!("Early proposal exists but we are not leader. Clearing proposal");
                     }
@@ -1727,7 +1729,9 @@ impl Consensus {
             // Recover the proposed transactions into the pool.
             let mut pool = self.transaction_pool.write();
             while let Some(txn) = broadcasted_transactions.pop() {
-                pool.insert_transaction(txn)?;
+                let account = self.state.get_account(txn.signer)?;
+                let added = pool.insert_transaction(txn, &account, false);
+                assert!(added.was_added())
             }
             return Ok(None);
         };
@@ -2040,7 +2044,7 @@ impl Consensus {
             .get_transaction(&hash)?
             .map(|tx| tx.verify())
             .transpose()?
-            .or_else(|| self.transaction_pool.read().get_transaction(hash).cloned()))
+            .or_else(|| self.transaction_pool.read().get_transaction(&hash).cloned()))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
@@ -3047,7 +3051,7 @@ impl Consensus {
         // message or locally, the proposal cannot be applied
         for (idx, tx_hash) in block.transactions.iter().enumerate() {
             // Prefer to insert verified txn from pool. This is faster.
-            let txn = match pool.get_transaction(*tx_hash) {
+            let txn = match pool.get_transaction(tx_hash) {
                 Some(txn) => txn.clone(),
                 _ => match transactions
                     .get(idx)
