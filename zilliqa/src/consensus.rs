@@ -556,7 +556,7 @@ impl Consensus {
                     % self.config.consensus.new_view_broadcast_interval.as_secs())
                     == 0
             {
-                match self.network_message_cache.take() {
+                match self.network_message_cache.clone() {
                     Some((_, ExternalMessage::NewView(new_view))) => {
                         // If new_view message is not for this view then it must be outdated
                         if new_view.view == self.get_view()? {
