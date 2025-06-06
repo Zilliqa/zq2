@@ -1,11 +1,13 @@
 [Unit]
-Description=Zilliqa 2.0 Health Check Service
-After=network.target
+Description=Zilliqa Node Healthcheck
 
 [Service]
-Type=oneshot
-ExecStart=/etc/zilliqa/healthcheck/healthcheck.sh
-User=root
+Type=simple
+ExecStart=/bin/bash -c 'python3 /usr/local/bin/healthcheck.py'
+ExecStop=pkill -f /usr/local/bin/healthcheck.py
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
 
 [Install]
-WantedBy=multi-user.target 
+WantedBy=multi-user.target

@@ -15,23 +15,21 @@
 # - name: Import gcloud tasks
 #   ansible.builtin.import_playbook: install_gcloud.yml
 
-- name: Import log rotation configuration
-  ansible.builtin.import_playbook: configure_logrotate.yml
+# - name: Import log rotation configuration
+#   ansible.builtin.import_playbook: configure_logrotate.yml
 
+# - name: Import Zilliqa node installation
+#   ansible.builtin.import_playbook: install_zilliqa.yml
+#   vars:
+#     target_group: role_bootstrap
 
+# - name: Import Zilliqa node installation
+#   ansible.builtin.import_playbook: install_zilliqa.yml
+#   vars:
+#     target_group: all:!role_apps:!role_bootstrap
 
-
-
-
-
-
-
-
-
-
-
-# - name: Import Docker registry configuration
-#   ansible.builtin.import_playbook: configure_docker_registry.yml
+- name: Import healthcheck service configuration
+  ansible.builtin.import_playbook: configure_healthcheck.yml
 
 # - name: Import Otterscan installation
 #   ansible.builtin.import_playbook: install_otterscan.yml
@@ -43,8 +41,17 @@
 # - name: Import Stats Dashboard installation
 #   ansible.builtin.import_playbook: install_stats_dashboard.yml
 
-# - name: Import Zilliqa node installation
-#   ansible.builtin.import_playbook: install_zilliqa.yml
+# - name: Import Stats Agent installation
+#   ansible.builtin.import_playbook: install_stats_agent.yml
+
+
+
+
+
+
+
+
+
 
 # - name: Import persistence data download
 #   ansible.builtin.import_playbook: download_persistence.yml
@@ -58,9 +65,10 @@
 #   ansible.builtin.import_playbook: install_zq2_metrics.yml
 #   when: zq2_metrics_enabled
 
-# - name: Import healthcheck service configuration
-#   ansible.builtin.import_playbook: configure_healthcheck.yml
+# - name: Import checkpoint service installation
+#   ansible.builtin.import_playbook: install_checkpoint_service.yml
+#   when: zq2_metrics_enabled
 
-# - name: Import Stats Agent installation
-#   ansible.builtin.import_playbook: install_stats_agent.yml
-#   when: "ansible_hostname in groups['role_validator'] or ansible_hostname in groups['role_bootstrap'] or ansible_hostname in groups['role_api']"
+# - name: Import persistence service installation
+#   ansible.builtin.import_playbook: install_persistence_service.yml
+#   when: zq2_metrics_enabled

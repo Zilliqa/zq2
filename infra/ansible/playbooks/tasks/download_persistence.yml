@@ -1,4 +1,13 @@
 ---
+- name: Install and configure healthcheck service
+  hosts: all:!role_apps
+  become: true
+
+  tasks:
+
+
+  
+# TODO if persistence_url is defined and persistence_url != "" and persistence_url ends with .tar.gz
 - name: Create persistence directory
   file:
     path: /var/lib/zilliqa/persistence

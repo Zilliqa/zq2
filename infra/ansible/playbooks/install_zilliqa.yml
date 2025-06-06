@@ -1,39 +1,49 @@
 ---
-- name: Install required packages
-  hosts: !role_apps
+- name: Install Zilliqa node
+  hosts: "{{ target_group }}"
   become: true
   tags:
     - install
     - all
+
   tasks:
 
-    - name: Create Zilliqa directories
+    - name: Clean config temp directory
+      delegate_to: localhost
+      connection: local
+      run_once: true
+      become: false
       file:
-        path: "{{ item }}"
+        path: /tmp/configfiles
+        state: absent
+
+    - name: Ensure remote_tmp directory exists
+      delegate_to: localhost
+      connection: local
+      run_once: true
+      become: false
+      file:
+        path: /tmp/configfiles
         state: directory
-        mode: '0755'
-      loop:
-        - /etc/zilliqa
-        - /var/lib/zilliqa
-        - /var/log/zilliqa
+        mode: '0777'
 
-    - name: Create Zilliqa node configuration
-      template:
-        src: templates/zilliqa_config.yml.j2
-        dest: /etc/zilliqa/config.yml
-        mode: '0644'
+    - name: Generate configuration file
+      delegate_to: localhost
+      connection: local
+      become: false
+      shell: |
+        source ../../../scripts/setenv && z2 deployer get-config-file --role {{ hostvars[inventory_hostname]['labels']['role'] }} --out /tmp/configfiles/{{ ansible_hostname }}.config.toml {{ chain_name }}.yaml
 
-    - name: Create Zilliqa node systemd service
-      template:
-        src: templates/zilliqa.service.j2
-        dest: /etc/systemd/system/zilliqa.service
-        mode: '0644'
+    - name: Upload configuration file
+      ansible.builtin.copy:
+        src: /tmp/configfiles/{{ ansible_hostname }}.config.toml
+        dest: /config.toml
+        owner: zilliqa
+        group: zilliqa
+        mode: '0777'
 
-    - name: Create Zilliqa node environment file
-      template:
-        src: templates/zilliqa.env.j2
-        dest: /etc/zilliqa/zilliqa.env
-        mode: '0644'
+    - name: Login to Docker registry
+      ansible.builtin.shell: gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://asia-docker.pkg.dev
 
     - name: Pull Zilliqa node Docker image
       docker_image:
@@ -41,30 +51,87 @@
         source: pull
         force_source: yes
 
-    # TODO if persistence_url is defined and persistence_url != "" and persistence_url ends with .tar.gz
-    - name: Create persistence directory
-      file:
-        path: /var/lib/zilliqa/persistence
-        state: directory
-        mode: '0755'
+    - name: Extract version tag from zq2_image
+      set_fact:
+        zq2_version: "{{ zq2_image.split(':')[-1] }}"
 
-    - name: Download persistence data
+    - name: Show extracted version
+      debug:
+        var: zq2_version
+
+    - name: Retrieve node private key KMS decrypted
       shell: |
-        gsutil cp {{ persistence_url }} /var/lib/zilliqa/persistence/persistence.tar.gz
-      args:
-        creates: /var/lib/zilliqa/persistence/persistence.tar.gz
+        gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ ansible_hostname }}-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ ansible_hostname }}" --keyring="kms-{{ chain_name }}" --location=global --project="{{ kms_project_id }}"
+      register: retrieved_private_key
+      when: enable_kms
 
-    - name: Extract persistence data
-      unarchive:
-        src: /var/lib/zilliqa/persistence/persistence.tar.gz
-        dest: /var/lib/zilliqa/persistence
-        remote_src: yes
-        extra_opts: [--strip-components=1]
-      when: not ansible_check_mode 
+    - name: Set fact with private key KMS decrypted
+      set_fact:
+        zq2_private_key: "{{ retrieved_private_key.stdout }}"
+      when: enable_kms
 
-    - name: Start and enable Zilliqa service
+    - name: Retrieve node private key
+      shell: |
+        gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ ansible_hostname }}-pk"
+      register: retrieved_private_key
+      when: not enable_kms
+
+    - name: Set fact with private key
+      set_fact:
+        zq2_private_key: "{{ retrieved_private_key.stdout }}"
+      when: not enable_kms
+
+    - name: Create Zilliqa node script
+      template:
+        src: templates/zilliqa.sh.j2
+        dest: /usr/local/bin/zq2-{{ zq2_version }}.sh
+        mode: '0777'
+      vars:
+        zq2_version: "{{ zq2_version }}"
+        zq2_private_key: "{{ zq2_private_key }}"
+      notify:
+        - Restart Zilliqa service
+    
+    - name: Force create symlink for zilliqa script
+      ansible.builtin.file:
+        src: /usr/local/bin/zq2-{{ zq2_version }}.sh
+        dest: /usr/local/bin/zq2.sh
+        state: link
+        force: true
+      notify:
+        - Restart Zilliqa service
+
+    - name: Create Zilliqa node systemd service
+      template:
+        src: templates/zilliqa.service.j2
+        dest: /etc/systemd/system/zilliqa.service
+        mode: '0644'
+      notify:
+        - Restart Zilliqa service
+    
+    - name: Force create symlink for zilliqa service
+      ansible.builtin.file:
+        src: /etc/systemd/system/zilliqa.service
+        dest: /etc/systemd/system/multi-user.target.wants/zilliqa.service
+        state: link
+        force: true
+      notify:
+        - Restart Zilliqa service
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable node service
       systemd:
         name: zilliqa
         state: started
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Restart Zilliqa service
+      systemd:
+        name: zilliqa
+        state: restarted
         enabled: yes
         daemon_reload: yes 

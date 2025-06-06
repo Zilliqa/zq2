@@ -1,4 +1,12 @@
 ---
+- name: Install and configure healthcheck service
+  hosts: role_bootstrap:role_validator
+  become: true
+
+  tasks:
+
+
+
 - name: Create checkpoint directory
   file:
     path: /var/lib/zilliqa/checkpoint

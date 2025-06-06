@@ -1,38 +1,68 @@
 ---
-- name: Install and configure Docker
+- name: Install and configure Otterscan
   hosts: role_apps
   become: true
 
   tasks:
 
-    - name: Create Otterscan directory
-      file:
-        path: /etc/zilliqa/otterscan
-        state: directory
-        mode: '0755'
+    - name: Extract version tag from otterscan_image
+      set_fact:
+        otterscan_version: "{{ otterscan_image.split(':')[-1] }}"
 
-    - name: Create Otterscan configuration
+    - name: Show extracted version
+      debug:
+        var: otterscan_version
+
+    - name: Create Otterscan script
       template:
-        src: templates/otterscan_config.yml.j2
-        dest: /etc/zilliqa/otterscan/config.yml
-        mode: '0644'
+        src: templates/otterscan.sh.j2
+        dest: /usr/local/bin/otterscan-{{ otterscan_version }}.sh
+        mode: '0777'
+      vars:
+        otterscan_version: "{{ otterscan_version }}"
+      notify:
+        - Restart Otterscan service
+    
+    - name: Force create symlink for otterscan script
+      ansible.builtin.file:
+        src: /usr/local/bin/otterscan-{{ otterscan_version }}.sh
+        dest: /usr/local/bin/otterscan.sh
+        state: link
+        force: true
+      notify:
+        - Restart Otterscan service
 
     - name: Create Otterscan systemd service
       template:
         src: templates/otterscan.service.j2
         dest: /etc/systemd/system/otterscan.service
         mode: '0644'
+      notify:
+        - Restart Otterscan service
+    
+    - name: Force create symlink for otterscan service
+      ansible.builtin.file:
+        src: /etc/systemd/system/otterscan.service
+        dest: /etc/systemd/system/multi-user.target.wants/otterscan.service
+        state: link
+        force: true
+      notify:
+        - Restart Otterscan service
 
-    - name: Pull Otterscan Docker image
-      docker_image:
-        name: "{{ otterscan_image }}"
-        source: pull
-        force_source: yes
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
 
-    - name: Start and enable Otterscan service
+    - name: Start and enable node service
       systemd:
         name: otterscan
         state: started
         enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Restart Otterscan service
+      systemd:
+        name: otterscan
+        state: restarted
+        enabled: yes
         daemon_reload: yes 
-        # TODO are restart handlers and flush

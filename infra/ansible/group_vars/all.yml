@@ -3,7 +3,7 @@
 ansible_ssh_args: --tunnel-through-iap --zone={{ zone }} --no-user-output-enabled
 ansible_scp_extra_args: --tunnel-through-iap --zone={{ zone }} --quiet
 project_id: "{{ project_id }}"
-environment: "{{ environment }}"
+# environment: "{{ environment }}"
 gcp_service_account_key: "{{ lookup('env', 'GCP_SERVICE_ACCOUNT_KEY') }}"
 gcp_persistent_disk_device: /dev/sdb
 gcp_persistent_disk_mount_point: /data

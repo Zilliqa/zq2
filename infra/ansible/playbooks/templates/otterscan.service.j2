@@ -1,22 +1,14 @@
 [Unit]
-Description=Zilliqa 2.0 Otterscan
-After=docker.service
-Requires=docker.service
+Description=Otterscan app
 
 [Service]
-Type=simple
-User=root
-ExecStart=/usr/bin/docker run --rm \
-    --name otterscan \
-    --network host \
-    --volume /var/lib/zilliqa/otterscan:/var/lib/zilliqa/otterscan \
-    --volume /etc/zilliqa/otterscan:/etc/zilliqa/otterscan \
-    --log-driver json-file \
-    --log-opt max-size=100m \
-    --log-opt max-file=3 \
-    {{ otterscan_image }}
-Restart=always
+Type=forking
+ExecStart=/usr/local/bin/otterscan.sh start
+ExecStop=/usr/local/bin/otterscan.sh stop
+RemainAfterExit=yes
+Restart=on-failure
 RestartSec=10
+TimeoutStartSec=300
 
 [Install]
-WantedBy=multi-user.target 
+WantedBy=multi-user.target

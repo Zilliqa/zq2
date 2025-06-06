@@ -1,1 +1,13 @@
- 
+[Unit]
+Description=Stats agent app
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/stats_agent.sh start
+ExecStop=/usr/local/bin/stats_agent.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 

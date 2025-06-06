@@ -1,22 +1,13 @@
 [Unit]
-Description=Zilliqa 2.0 Spout
-After=docker.service
-Requires=docker.service
+Description=Spout app
 
 [Service]
-Type=simple
-User=root
-ExecStart=/usr/bin/docker run --rm \
-    --name spout \
-    --network host \
-    --volume /var/lib/zilliqa/spout:/var/lib/zilliqa/spout \
-    --volume /etc/zilliqa/spout:/etc/zilliqa/spout \
-    --log-driver json-file \
-    --log-opt max-size=100m \
-    --log-opt max-file=3 \
-    {{ spout_image }}
-Restart=always
+Type=forking
+ExecStart=/usr/local/bin/spout.sh start
+ExecStop=/usr/local/bin/spout.sh stop
+RemainAfterExit=yes
+Restart=on-failure
 RestartSec=10
 
 [Install]
-WantedBy=multi-user.target 
+WantedBy=multi-user.target

@@ -1,17 +1,17 @@
 ---
-- name: Install and configure Stats Dashboard
-  hosts: role_apps
+- name: Install and configure Stats Agent
+  hosts: role_api:role_bootstrap:role_validator
   become: true
 
   tasks:
 
-    - name: Extract version tag from stats_dashboard_image
+    - name: Extract version tag from stats_agent_image
       set_fact:
-        stats_dashboard_version: "{{ stats_dashboard_image.split(':')[-1] }}"
+        stats_agent_version: "{{ stats_agent_image.split(':')[-1] }}"
 
     - name: Show extracted version
       debug:
-        var: stats_dashboard_version
+        var: stats_agent_version
 
     - name: Retrieve stats dashboard key KMS decrypted
       shell: |
@@ -35,57 +35,57 @@
         stats_dashboard_key: "{{ retrieved_stats_dashboard_key.stdout }}"
       when: not enable_kms
 
-    - name: Create Stats Dashboard script
+    - name: Create Stats Agent script
       template:
-        src: templates/stats_dashboard.sh.j2
-        dest: /usr/local/bin/stats_dashboard-{{ stats_dashboard_version }}.sh
+        src: templates/stats_agent.sh.j2
+        dest: /usr/local/bin/stats_agent-{{ stats_agent_version }}.sh
         mode: '0777'
       vars:
-        stats_dashboard_version: "{{ stats_dashboard_version }}"
+        stats_agent_version: "{{ stats_agent_version }}"
         stats_dashboard_key: "{{ stats_dashboard_key }}"
       notify:
-        - Restart Stats Dashboard service
+        - Restart Stats Agent service
     
-    - name: Force create symlink for stats_dashboard script
+    - name: Force create symlink for stats_agent script
       ansible.builtin.file:
-        src: /usr/local/bin/stats_dashboard-{{ stats_dashboard_version }}.sh
-        dest: /usr/local/bin/stats_dashboard.sh
+        src: /usr/local/bin/stats_agent-{{ stats_agent_version }}.sh
+        dest: /usr/local/bin/stats_agent.sh
         state: link
         force: true
       notify:
-        - Restart Stats Dashboard service
+        - Restart Stats Agent service
 
-    - name: Create Stats Dashboard systemd service
+    - name: Create Stats Agent systemd service
       template:
-        src: templates/stats_dashboard.service.j2
-        dest: /etc/systemd/system/stats_dashboard.service
+        src: templates/stats_agent.service.j2
+        dest: /etc/systemd/system/stats_agent.service
         mode: '0644'
       notify:
-        - Restart Stats Dashboard service
+        - Restart Stats Agent service
     
-    - name: Force create symlink for stats_dashboard service
+    - name: Force create symlink for stats_agent service
       ansible.builtin.file:
-        src: /etc/systemd/system/stats_dashboard.service
-        dest: /etc/systemd/system/multi-user.target.wants/stats_dashboard.service
+        src: /etc/systemd/system/stats_agent.service
+        dest: /etc/systemd/system/multi-user.target.wants/stats_agent.service
         state: link
         force: true
       notify:
-        - Restart Stats Dashboard service
+        - Restart Stats Agent service
 
     - name: Flush handlers
       ansible.builtin.meta: flush_handlers
 
     - name: Start and enable node service
       systemd:
-        name: stats_dashboard
+        name: stats_agent
         state: started
         enabled: yes
         daemon_reload: yes
 
   handlers:
-    - name: Restart Stats Dashboard service
+    - name: Restart Stats Agent service
       systemd:
-        name: stats_dashboard
+        name: stats_agent
         state: restarted
         enabled: yes
         daemon_reload: yes 

@@ -14,7 +14,7 @@ hostnames:
   # List host by name instead of the default public ip
   - name
 compose:
-# set the ansible_host variable to connect with the private IP address without changing the hostname
+  # set the ansible_host variable to connect with the private IP address without changing the hostname
   ansible_host: selfLink
   ansible_ssh_common_args: >-
     -o ProxyCommand="gcloud compute ssh %h --project {{ project_id }} --zone {{ zone }} --tunnel-through-iap --quiet"
