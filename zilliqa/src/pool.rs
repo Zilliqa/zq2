@@ -229,6 +229,7 @@ impl TransactionsAccount {
 struct TransactionPoolCore {
     all_transactions: HashMap<Address, TransactionsAccount>,
     pending_account_queue: BTreeSet<PendingQueueKey>,
+    hash_to_address_and_nonce_map: HashMap<Hash, (Address, Option<u64>)>,
 }
 
 impl TransactionPoolCore {
@@ -325,6 +326,12 @@ impl TransactionPoolCore {
         }
     }
 
+    fn get_transaction_by_hash(&self, hash: &Hash) -> Option<&VerifiedTransaction> {
+        self.hash_to_address_and_nonce_map
+            .get(hash)
+            .map(|(address, nonce)| self.get_txn_by_address_and_nonce(address, *nonce.unwrap()))
+    }
+
     fn update_txn(&mut self, txn: VerifiedTransaction) {
         let transactions_account = self.all_transactions.get_mut(&txn.signer).unwrap();
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
@@ -355,12 +362,14 @@ impl TransactionPoolCore {
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
+        self.hash_to_address_and_nonce_map
+            .insert(txn.hash, (txn.signer, txn.tx.nonce()));
     }
 
     fn preview_content(&self) -> TxPoolContent<'_> {
         // There doesn't appear to be a used call chain for this, maybe delete it?
         // It's not necessarily the fastest but no point optimising it if unused
-        let pending_txns = self.pending_transactions();
+        let pending_txns = self.pending_transactions_unordered();
         let queued_txns = self
             .all_transactions
             .values()
@@ -379,6 +388,7 @@ impl TransactionPoolCore {
     fn clear(&mut self) {
         self.pending_account_queue.clear();
         self.all_transactions.clear();
+        self.hash_to_address_and_nonce_map.clear();
     }
 
     fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
@@ -418,6 +428,7 @@ impl TransactionPoolCore {
             if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                 self.pending_account_queue.insert(pending_queue_key);
             }
+            self.hash_to_address_and_nonce_map.remove(result.hash);
         }
         result
     }
@@ -445,7 +456,12 @@ impl TransactionPool {
         Ok(self.core.peek_best_txn())
     }
 
+    pub fn get_transaction(&mut self, hash: &Hash) -> Result<Option<&VerifiedTransaction>> {
+        Ok(self.core.get_transaction_by_hash(hash))
+    }
+
     /// Returns whether the transaction is pending or queued
+    /// The result is not guaranteed to be in any particular order
     pub fn get_pending_or_queued(
         &mut self,
         state: &State,
