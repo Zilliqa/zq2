@@ -185,22 +185,22 @@ pub(crate) fn test_macro(args: TokenStream, item: TokenStream) -> TokenStream {
                         if #deposit_v3_upgrade_block_height != 0 {
                             deposit_v3_upgrade_block_height_option = Option::Some(#deposit_v3_upgrade_block_height);
                         };
-                        let network = crate::Network::new(
-                            std::sync::Arc::new(std::sync::Mutex::new(rng)),
-                            4,
-                            seed,
-                            addr,
-                            "/scilla/0/_build/default/src/stdlib/".to_owned(),
-                            #do_checkpoints,
-                            #blocks_per_epoch,
-                            deposit_v3_upgrade_block_height_option,
-                            format!("{temp_dir}/scilla-sockets"),
-                        );
+                        let result = zilliqa::time::with_fake_time(async {
+                            let network = crate::Network::new(
+                                std::sync::Arc::new(std::sync::Mutex::new(rng)),
+                                4,
+                                seed,
+                                addr,
+                                "/scilla/0/_build/default/src/stdlib/".to_owned(),
+                                #do_checkpoints,
+                                #blocks_per_epoch,
+                                deposit_v3_upgrade_block_height_option,
+                                format!("{temp_dir}/scilla-sockets"),
+                            );
 
-                        // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
-                        let result = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
-                            zilliqa::time::with_fake_time(#inner_name(network))
-                        )).await;
+                            // Call the original test function, wrapped in `catch_unwind` so we can detect the panic.
+                            futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(#inner_name(network))).await
+                        }).await;
 
                         match result {
                             Ok(()) => {},
