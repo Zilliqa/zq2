@@ -287,7 +287,7 @@ impl TransactionPoolCore {
         }
     }
 
-    fn pending_transactions(&self) -> Vec<&VerifiedTransaction> {
+    fn pending_transactions_unordered(&self) -> Vec<&VerifiedTransaction> {
         self.pending_account_queue
             .iter()
             .flat_map(|key| {
@@ -456,9 +456,13 @@ impl TransactionPool {
     }
 
     /// Returns a list of txns that are pending for inclusion in the next block
-    pub fn pending_transactions(&mut self, state: &State) -> Result<Vec<&VerifiedTransaction>> {
+    /// The result is not guaranteed to be in any particular order
+    pub fn pending_transactions_unordered(
+        &mut self,
+        state: &State,
+    ) -> Result<Vec<&VerifiedTransaction>> {
         self.core.update_with_state(state);
-        Ok(self.core.pending_transactions())
+        Ok(self.core.pending_transactions_unordered())
     }
 
     pub fn preview_content(&mut self, state: &State) -> Result<TxPoolContent> {

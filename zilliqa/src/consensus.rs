@@ -834,7 +834,7 @@ impl Consensus {
                         let (_, txns, _, _, _) = early_proposal.take().unwrap();
                         let mut pool = self.transaction_pool.write();
                         for txn in txns.into_iter().rev() {
-                            pool.insert_ready_transaction(txn)?;
+                            pool.insert_transaction(txn)?;
                         }
                         warn!("Early proposal exists but we are not leader. Clearing proposal");
                     }
@@ -1479,7 +1479,6 @@ impl Consensus {
             // Skip transactions whose execution resulted in an error and drop them.
             let Some(result) = result else {
                 warn!("Dropping failed transaction: {:?}", tx.hash);
-                pool.mark_executed(&tx);
                 continue;
             };
 
@@ -1489,9 +1488,6 @@ impl Consensus {
                 .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
             let gas_fee = result.gas_used().0 as u128 * tx.tx.gas_price_per_evm_gas();
-
-            // Do necessary work to assemble the transaction
-            pool.mark_executed(&tx);
 
             // Grab and update early_proposal data in own scope to avoid multiple mutable references to self
             {
@@ -1623,24 +1619,25 @@ impl Consensus {
             ..BlockHeader::default()
         };
 
-        // Retrieve a list of pending transactions
-        let mut pool = self.transaction_pool.write();
-        let pending = pool.pending_transactions(state)?;
+        // Clone the pool
+        // This isn't perfect performance-wise, but it does mean that we aren't dealing with transactions that don't fit into the block
+        let mut cloned_pool = self.transaction_pool.read().clone();
 
-        for txn in pending.into_iter() {
-            // First - check for time
+        while let Some(txn) = cloned_pool.pop_best_if(&state, |txn| {
+            // First - check if we have time left to process txns and give enough time for block propagation
             let (_, milliseconds_remaining_of_block_time, _) =
-                self.get_consensus_timeout_params()?;
+                self.get_consensus_timeout_params().unwrap();
 
             if milliseconds_remaining_of_block_time == 0 {
-                break;
+                return false;
             }
 
             if gas_left < txn.tx.gas_limit() {
                 debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), "block out of space");
-                break;
+                return false;
             }
-
+            return true;
+        }) {
             // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
@@ -1730,7 +1727,7 @@ impl Consensus {
             // Recover the proposed transactions into the pool.
             let mut pool = self.transaction_pool.write();
             while let Some(txn) = broadcasted_transactions.pop() {
-                pool.insert_ready_transaction(txn)?;
+                pool.insert_transaction(txn)?;
             }
             return Ok(None);
         };
