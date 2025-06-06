@@ -118,22 +118,42 @@ impl TransactionsAccount {
         }
         self.maintain();
     }
-    fn peek_best_txn(&mut self) -> Option<VerifiedTransaction> {
+    fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
         // TODO: Handle nonceless transactions
-        match self.transactions.first_key_value() {
-            Some((_, txn)) => Some(txn.clone()),
-            None => None,
-        }
-    }
-    fn pop_best_txn(&mut self) -> Option<VerifiedTransaction> {
-        // TODO: Handle nonceless transactions
-        match self.transactions.pop_first() {
-            Some((_, txn)) => {
-                self.balance_after_pending += txn.tx.gas_price_per_evm_gas() as i128;
-                self.maintain();
-                Some(txn)
+        let first_nonce_transaction = match self.transactions.first_key_value() {
+            Some((_nonce, transaction)) => {
+                if transaction.tx.nonce().unwrap() < self.nonce_after_pending {
+                    Some(transaction)
+                } else {
+                    None
+                }
             }
             None => None,
+        };
+        first_nonce_transaction
+    }
+    fn pop_best_if(
+        &mut self,
+        predicate: impl Fn(&VerifiedTransaction) -> bool,
+    ) -> Option<VerifiedTransaction> {
+        // TODO: Handle nonceless transactions
+        // // Get the best entry
+        let first_entry = match self.transactions.first_entry() {
+            Some(entry) => entry,
+            None => return None, // If there's no transaction, the answer is always going to be None
+        };
+        // Check the transaction is actually pending
+        if *first_entry.key() >= self.nonce_after_pending {
+            return None; // If the best transaction isn't pending, we can't pop it
+        }
+        // Check the predicate and remove if appropriate
+        if predicate(first_entry.get()) {
+            let result = first_entry.remove();
+            self.balance_after_pending += result.tx.gas_price_per_evm_gas() as i128;
+            self.maintain();
+            Some(result)
+        } else {
+            None
         }
     }
     fn update_balance(&mut self, new_balance: u128) {
@@ -155,20 +175,6 @@ impl TransactionsAccount {
         self.nonce_after_pending = self.nonce_account + 1;
         self.transactions = self.transactions.split_off(&self.nonce_after_pending);
         self.maintain();
-    }
-    fn best_transaction(&self) -> Option<&VerifiedTransaction> {
-        // TODO: Handle nonceless transactions
-        let first_nonce_transaction = match self.transactions.first_key_value() {
-            Some((_nonce, transaction)) => {
-                if transaction.tx.nonce().unwrap() < self.nonce_after_pending {
-                    Some(transaction)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        };
-        first_nonce_transaction
     }
     fn get_pending_transactions(&self) -> Vec<&VerifiedTransaction> {
         // TODO: Handle nonceless transactions
@@ -207,7 +213,7 @@ impl TransactionsAccount {
         self.transactions.get(&nonce)
     }
     fn get_pending_queue_key(&self) -> Option<PendingQueueKey> {
-        if let Some(best_transaction) = self.best_transaction() {
+        if let Some(best_transaction) = self.peek_best_txn() {
             Some(PendingQueueKey {
                 highest_gas_price: best_transaction.tx.gas_price_per_evm_gas(),
                 address: best_transaction.signer,
@@ -366,10 +372,6 @@ impl TransactionPoolCore {
         }
     }
 
-    fn remove_txn_by_verifiedtxn(&self, txn: &VerifiedTransaction) {
-        todo!("work out correct behaviour")
-    }
-
     fn any_pending(&self) -> bool {
         self.pending_account_queue.len() > 0
     }
@@ -379,7 +381,7 @@ impl TransactionPoolCore {
         self.all_transactions.clear();
     }
 
-    fn best_transaction(&self) -> Option<&VerifiedTransaction> {
+    fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
         let best_account_key = match self.pending_account_queue.first() {
             Some(key) => key,
             None => return None,
@@ -390,7 +392,34 @@ impl TransactionPoolCore {
             .get(&best_account_key.address)
             .unwrap();
 
-        best_account.best_transaction()
+        best_account.peek_best_txn()
+    }
+
+    pub fn pop_best_if(
+        &mut self,
+        predicate: impl Fn(&VerifiedTransaction) -> bool,
+    ) -> Option<VerifiedTransaction> {
+        let best_account_key = match self.pending_account_queue.first() {
+            Some(key) => key,
+            None => return None,
+        };
+
+        let transactions_account = self
+            .all_transactions
+            .get_mut(&best_account_key.address)
+            .unwrap();
+
+        let old_pending_queue_key = transactions_account.get_pending_queue_key();
+        let result = transactions_account.pop_best_if(predicate);
+        if result.is_some() {
+            if let Some(pending_queue_key) = old_pending_queue_key {
+                self.pending_account_queue.remove(&pending_queue_key);
+            }
+            if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
+                self.pending_account_queue.insert(pending_queue_key);
+            }
+        }
+        result
     }
 }
 
@@ -411,16 +440,9 @@ pub struct TxPoolContent<'a> {
 }
 
 impl TransactionPool {
-    /// Pop a *ready* transaction out of the pool, maximising the gas price.
-    ///
-    /// Ready means that the transaction has a nonce equal to the sender's current nonce or it has a nonce that is
-    /// consecutive with a previously returned transaction, from the same sender.
-    ///
-    /// If the returned transaction is executed, the caller must call [TransactionPool::mark_executed] to inform the
-    /// pool that the account's nonce has been updated and further transactions from this signer may now be ready.
     pub fn best_transaction(&mut self, state: &State) -> Result<Option<&VerifiedTransaction>> {
         self.core.update_with_state(state);
-        Ok(self.core.best_transaction())
+        Ok(self.core.peek_best_txn())
     }
 
     /// Returns whether the transaction is pending or queued
@@ -540,12 +562,13 @@ impl TransactionPool {
         Ok(ret_vec)
     }
 
-    /// Update the pool after a transaction has been executed.
-    ///
-    /// It is important to call this for all executed transactions, otherwise permanently invalidated transactions
-    /// will be left indefinitely in the pool.
-    pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
-        self.core.remove_txn_by_verifiedtxn(&txn);
+    pub fn pop_best_if(
+        &mut self,
+        state: &State,
+        predicate: impl Fn(&VerifiedTransaction) -> bool,
+    ) -> Option<VerifiedTransaction> {
+        self.core.update_with_state(state);
+        self.core.pop_best_if(predicate)
     }
 
     /// Check the ready transactions in arbitrary order, for one that is Ready
