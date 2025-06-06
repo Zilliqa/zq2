@@ -132,13 +132,22 @@ impl TransactionsAccount {
                         self.pending_transaction_count += 1;
                     } else {
                         let txn_key: NoncelessTransactionKey = txn.into();
-                        self.nonceless_transactions_pending.insert(txn_key, *txn);
-                        self.nonceless_transactions_queued.remove(&txn_key);
+                        self.nonceless_transactions_pending
+                            .insert(txn_key, txn.clone());
                         self.pending_transaction_count += 1;
                     }
                 } else {
                     break;
                 }
+            }
+            // Drop the transactions we added to pending from the queue
+            if let Some(smallest_pending_key) = self
+                .nonceless_transactions_pending
+                .first_key_value()
+                .map(|x| x.1.into())
+            {
+                self.nonceless_transactions_queued
+                    .split_off(&smallest_pending_key);
             }
         } else {
             // Remove transactions from the pending queue if there's not enough balance
@@ -161,13 +170,24 @@ impl TransactionsAccount {
                         self.pending_transaction_count -= 1;
                     } else {
                         let txn_key: NoncelessTransactionKey = txn.into();
-                        self.nonceless_transactions_queued.insert(txn_key, *txn);
-                        self.nonceless_transactions_pending.remove(&txn_key);
+                        self.nonceless_transactions_queued
+                            .insert(txn_key, txn.clone());
                         self.pending_transaction_count -= 1;
                     }
                 } else {
                     break;
                 }
+            }
+            // Drop the transactions we added to the queue from pending
+            if let Some(largest_queued_key) = self
+                .nonceless_transactions_queued
+                .last_key_value()
+                .map(|x| x.1.into())
+            {
+                self.nonceless_transactions_pending = self
+                    .nonceless_transactions_pending
+                    .split_off(&largest_queued_key);
+                self.nonceless_transactions_pending.pop_first();
             }
         }
     }
@@ -376,7 +396,7 @@ impl TransactionsAccount {
         }
     }
 
-    fn mark_executed(&self, txn: &VerifiedTransaction) {
+    fn mark_executed(&mut self, txn: &VerifiedTransaction) {
         if let Some(nonce) = txn.tx.nonce() {
             // split the transactions into ones to keep and ones to discard (which are annoyingly returned the wrong way round)
             let transactions_to_retain = self.nonced_transactions.split_off(&(nonce + 1));
@@ -384,7 +404,7 @@ impl TransactionsAccount {
             self.nonced_transactions
                 .split_off(&self.nonce_after_pending);
             // removed discarded transactions from balance
-            for discarded_tx in self.nonced_transactions {
+            for discarded_tx in self.nonced_transactions.values() {
                 self.balance_after_pending += discarded_tx.tx.gas_price_per_evm_gas() as i128;
                 self.pending_transaction_count -= 1;
             }
