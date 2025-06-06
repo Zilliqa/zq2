@@ -56,11 +56,6 @@
 
 
 
-
-# - name: Import persistence data download
-#   ansible.builtin.import_playbook: download_persistence.yml
-#   when: persistence_url is defined and persistence_url != ""
-
 # - name: Import checkpoint data download
 #   ansible.builtin.import_playbook: download_checkpoint.yml
 #   when: checkpoint_url is defined and checkpoint_url != ""
