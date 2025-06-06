@@ -47,7 +47,8 @@
 
 
 
-# TODO: Add tasks for downloading persistence and checkpoint data
+# TODO: Test install from persistence
+# TODO: Add tasks for install from checkpoint
 # TODO: Clean the code
 # TODO: Add documentation
 # TODO: Add every environments
@@ -63,10 +64,6 @@
 # - name: Import checkpoint data download
 #   ansible.builtin.import_playbook: download_checkpoint.yml
 #   when: checkpoint_url is defined and checkpoint_url != ""
-
-# - name: Import monitoring components installation
-#   ansible.builtin.import_playbook: install_zq2_metrics.yml
-#   when: zq2_metrics_enabled
 
 # - name: Import checkpoint service installation
 #   ansible.builtin.import_playbook: install_checkpoint_service.yml
