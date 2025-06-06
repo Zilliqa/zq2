@@ -26,7 +26,7 @@ use zilliqa::{
 };
 use zilliqa::{
     cfg::{
-        self, Amount, ConsensusConfig, ContractUpgrades, GenesisDeposit,
+        self, Amount, ConsensusConfig, ContractUpgrades, GenesisDeposit, TxnPoolConfig,
         allowed_timestamp_skew_default, block_request_batch_size_default,
         block_request_limit_default, block_time_default, consensus_timeout_default,
         eth_chain_id_default, failed_request_sleep_duration_default, max_blocks_in_flight_default,
@@ -549,6 +549,7 @@ impl Setup {
                     genesis_fork: genesis_fork_default(),
                     new_view_broadcast_interval: new_view_broadcast_interval_default(),
                 },
+                txn_pool: TxnPoolConfig::default(),
                 block_request_limit: block_request_limit_default(),
                 sync: SyncConfig {
                     max_blocks_in_flight: max_blocks_in_flight_default(),

@@ -339,6 +339,7 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let txn_pool_config = config.txn_pool.clone();
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -353,7 +354,7 @@ impl Consensus {
             state,
             db,
             receipts_cache: Default::default(),
-            transaction_pool: Default::default(),
+            transaction_pool: TransactionPool::new(txn_pool_config).into(),
             early_proposal: Default::default(),
             create_next_block_on_timeout: false,
             view_updated_at: SystemTime::now(),

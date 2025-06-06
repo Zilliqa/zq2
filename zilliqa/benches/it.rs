@@ -83,6 +83,9 @@ fn process_empty(c: &mut Criterion) {
                         "0x0000000000000000000000000000000000000001",
                     ],
                 ]
+                txn_pool.maximum_global_size = 10000000000
+                txn_pool.maximum_txn_count_per_sender = 200000000
+                txn_pool.total_slots_for_all_senders = 50000000
             "#,
             secret_key.node_public_key()
         ))
@@ -191,6 +194,9 @@ fn consensus(
             consensus.gas_price = "1"
             consensus.scilla_address = "{}"
             consensus.scilla_server_socket_directory = "{}/scilla-sockets"
+            txn_pool.maximum_global_size = 10000000000
+            txn_pool.maximum_txn_count_per_sender = 200000000
+            txn_pool.total_slots_for_all_senders = 50000000
         "#,
         scilla.addr, scilla.temp_dir,
     ))
