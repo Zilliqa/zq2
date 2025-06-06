@@ -268,6 +268,14 @@ impl TransactionsAccount {
     fn get_pending_transaction_count(&self) -> usize {
         self.pending_transaction_count
     }
+    fn get_queued_transaction_count(&self) -> usize {
+        self.total_transaction_count() - self.pending_transaction_count
+    }
+    fn total_transaction_count(&self) -> usize {
+        self.nonced_transactions.len()
+            + self.nonceless_transactions_queued.len()
+            + self.nonceless_transactions_pending.len()
+    }
     fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
         self.get_pending().next()
     }
@@ -490,16 +498,21 @@ impl TransactionPoolCore {
         }
     }
 
-    fn pending_transactions_unordered(&self) -> Vec<&VerifiedTransaction> {
-        self.pending_account_queue
-            .iter()
-            .flat_map(|key| {
-                self.all_transactions
-                    .get(&key.address)
-                    .unwrap()
-                    .get_pending_transactions()
-            })
-            .collect()
+    fn pending_transactions_unordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
+        self.pending_account_queue.iter().flat_map(|key| {
+            self.all_transactions
+                .get(&key.address)
+                .unwrap()
+                .get_pending()
+        })
+    }
+
+    // Potentially slow
+    fn pending_transactions_ordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
+        self.all_transactions
+            .values()
+            .map(|x| x.get_pending())
+            .kmerge_by(|a, b| a.tx.gas_price_per_evm_gas() > b.tx.gas_price_per_evm_gas())
     }
 
     fn get_pending_or_queued(&self, txn: &VerifiedTransaction) -> Option<PendingOrQueued> {
@@ -568,19 +581,48 @@ impl TransactionPoolCore {
         self.hash_to_txn_map.insert(txn.hash, txn);
     }
 
-    fn preview_content(&self) -> TxPoolContent<'_> {
-        // There doesn't appear to be a used call chain for this, maybe delete it?
-        // It's not necessarily the fastest but no point optimising it if unused
-        let pending_txns = self.pending_transactions_unordered();
-        let queued_txns = self
+    fn preview_content(&self) -> TxPoolContent {
+        let pending_txns: HashMap<Address, Vec<VerifiedTransaction>> = self
             .all_transactions
-            .values()
-            .flat_map(|v| v.get_queued_transactions())
-            .collect_vec();
+            .iter()
+            .map(|(address, transactions)| {
+                (*address, transactions.get_pending().cloned().collect())
+            })
+            .collect();
+        let queued_txns: HashMap<Address, Vec<VerifiedTransaction>> = self
+            .all_transactions
+            .iter()
+            .map(|(address, transactions)| (*address, transactions.get_queue().cloned().collect()))
+            .collect();
         TxPoolContent {
             pending: pending_txns,
             queued: queued_txns,
         }
+    }
+
+    fn preview_content_from(&self, address: &Address) -> TxPoolContentFrom {
+        let pending_txns: Vec<VerifiedTransaction> = self
+            .all_transactions
+            .get(address)
+            .map_or(Vec::new(), |x| x.get_pending().cloned().collect());
+        let queued_txns: Vec<VerifiedTransaction> = self
+            .all_transactions
+            .get(address)
+            .map_or(Vec::new(), |x| x.get_queue().cloned().collect());
+        TxPoolContentFrom {
+            pending: pending_txns,
+            queued: queued_txns,
+        }
+    }
+
+    fn get_txpool_status(&self) -> TxPoolStatus {
+        let mut pending = 0;
+        let mut queued = 0;
+        for account in self.all_transactions.values() {
+            pending += account.get_pending_transaction_count() as u64;
+            queued += account.get_queued_transaction_count() as u64;
+        }
+        TxPoolStatus { pending, queued }
     }
 
     fn any_pending(&self) -> bool {
@@ -660,9 +702,22 @@ pub struct TransactionPool {
 }
 
 // Represents currently pending txns for inclusion in the next block(s), as well as the ones that are being scheduled for future execution.
-pub struct TxPoolContent<'a> {
-    pub pending: Vec<&'a VerifiedTransaction>,
-    pub queued: Vec<&'a VerifiedTransaction>,
+#[derive(Clone)]
+pub struct TxPoolContent {
+    pub pending: HashMap<Address, Vec<VerifiedTransaction>>,
+    pub queued: HashMap<Address, Vec<VerifiedTransaction>>,
+}
+
+#[derive(Clone)]
+pub struct TxPoolContentFrom {
+    pub pending: Vec<VerifiedTransaction>,
+    pub queued: Vec<VerifiedTransaction>,
+}
+
+#[derive(Clone)]
+pub struct TxPoolStatus {
+    pub pending: u64,
+    pub queued: u64,
 }
 
 impl TransactionPool {
@@ -686,19 +741,19 @@ impl TransactionPool {
         Ok(self.core.get_pending_or_queued(txn))
     }
 
-    /// Returns a list of txns that are pending for inclusion in the next block
-    /// The result is not guaranteed to be in any particular order
-    pub fn pending_transactions_unordered(
-        &mut self,
-        state: &State,
-    ) -> Result<Vec<&VerifiedTransaction>> {
+    pub fn preview_content(&mut self, state: &State) -> TxPoolContent {
         self.core.update_with_state(state);
-        Ok(self.core.pending_transactions_unordered())
+        self.core.preview_content()
     }
 
-    pub fn preview_content(&mut self, state: &State) -> Result<TxPoolContent> {
+    pub fn preview_content_from(&mut self, state: &State, address: &Address) -> TxPoolContentFrom {
         self.core.update_with_state(state);
-        Ok(self.core.preview_content())
+        self.core.preview_content_from(address)
+    }
+
+    pub fn preview_status(&mut self, state: &State) -> TxPoolStatus {
+        self.core.update_with_state(state);
+        self.core.get_txpool_status()
     }
 
     pub fn pending_transaction_count(

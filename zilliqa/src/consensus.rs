@@ -13,7 +13,7 @@ use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
-use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -34,7 +34,10 @@ use crate::{
         QuorumCertificate, Vote,
     },
     node::{MessageSender, NetworkMessage},
-    pool::{PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent},
+    pool::{
+        PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
+        TxPoolStatus,
+    },
     state::State,
     sync::{Sync, SyncPeers},
     time::SystemTime,
@@ -72,17 +75,6 @@ impl PartialOrd for Validator {
 impl Ord for Validator {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.peer_id.cmp(&other.peer_id)
-    }
-}
-
-pub struct LockedTxPoolContent<'a> {
-    pub state: &'a State,
-    pub transaction_pool: RwLockReadGuard<'a, TransactionPool>,
-}
-
-impl LockedTxPoolContent<'_> {
-    pub fn get(&self) -> Result<TxPoolContent> {
-        self.transaction_pool.preview_content(self.state)
     }
 }
 
@@ -976,13 +968,19 @@ impl Consensus {
         Ok(Some(result))
     }
 
-    pub fn txpool_content(&self) -> LockedTxPoolContent {
-        let pool = self.transaction_pool.read();
+    pub fn txpool_content(&mut self) -> TxPoolContent {
+        let mut pool = self.transaction_pool.write();
+        pool.preview_content(&self.state)
+    }
 
-        LockedTxPoolContent {
-            state: &self.state,
-            transaction_pool: pool,
-        }
+    pub fn txpool_content_from(&mut self, address: &Address) -> TxPoolContentFrom {
+        let mut pool = self.transaction_pool.write();
+        pool.preview_content_from(&self.state, address)
+    }
+
+    pub fn txpool_status(&mut self) -> TxPoolStatus {
+        let mut pool = self.transaction_pool.write();
+        pool.preview_status(&self.state)
     }
 
     pub fn get_pending_or_queued(
@@ -990,7 +988,7 @@ impl Consensus {
         txn: &VerifiedTransaction,
     ) -> Result<Option<PendingOrQueued>> {
         self.transaction_pool
-            .read()
+            .write()
             .get_pending_or_queued(&self.state, txn)
     }
 
@@ -998,7 +996,7 @@ impl Consensus {
         let account_data = self.state.must_get_account(account_address);
 
         self.transaction_pool
-            .read()
+            .write()
             .pending_transaction_count(&account_address, &account_data)
     }
 
@@ -1984,7 +1982,12 @@ impl Consensus {
             .get_transaction(&hash)?
             .map(|tx| tx.verify())
             .transpose()?
-            .or_else(|| self.transaction_pool.read().get_transaction(&hash).cloned()))
+            .or_else(|| {
+                self.transaction_pool
+                    .write()
+                    .get_transaction(&hash)
+                    .cloned()
+            }))
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {

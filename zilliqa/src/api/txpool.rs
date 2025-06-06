@@ -29,30 +29,38 @@ fn txpool_content(
     _params: Params,
     node: &Arc<RwLock<Node>>,
 ) -> Result<Option<types::txpool::TxPoolContent>> {
-    let node = node.read();
+    let mut node = node.write();
     let content = node.txpool_content();
-    let content = content.get()?;
 
-    let mut result = types::txpool::TxPoolContent {
-        pending: HashMap::new(),
-        queued: HashMap::new(),
-    };
+    let pending = content
+        .pending
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                v.iter()
+                    .filter(|x| x.tx.nonce().is_some())
+                    .map(|x| (x.tx.nonce().unwrap(), Transaction::new(x.clone(), None)))
+                    .collect(),
+            )
+        })
+        .collect();
 
-    for item in content.pending {
-        let txns = result.pending.entry(item.signer).or_default();
-        txns.insert(
-            item.tx.nonce().unwrap(),
-            Transaction::new(item.clone(), None),
-        );
-    }
+    let queued = content
+        .queued
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                v.iter()
+                    .filter(|x| x.tx.nonce().is_some())
+                    .map(|x| (x.tx.nonce().unwrap(), Transaction::new(x.clone(), None)))
+                    .collect(),
+            )
+        })
+        .collect();
 
-    for item in content.queued {
-        let txns = result.queued.entry(item.signer).or_default();
-        txns.insert(
-            item.tx.nonce().unwrap(),
-            Transaction::new(item.clone(), None),
-        );
-    }
+    let result = types::txpool::TxPoolContent { pending, queued };
 
     Ok(Some(result))
 }
@@ -64,9 +72,8 @@ fn txpool_content_from(
 ) -> Result<types::txpool::TxPoolContent> {
     let address: super::zilliqa::ZilAddress = params.one()?;
     let address: Address = address.into();
-    let node = node.read();
-    let content = node.txpool_content();
-    let content = content.get()?;
+    let mut node = node.write();
+    let content = node.txpool_content_from(&address);
 
     let mut result = types::txpool::TxPoolContent {
         pending: HashMap::new(),
@@ -101,16 +108,15 @@ fn txpool_inspect(
     _params: Params,
     node: &Arc<RwLock<Node>>,
 ) -> Result<types::txpool::TxPoolInspect> {
-    let node = node.read();
+    let mut node = node.write();
     let content = node.txpool_content();
-    let content = content.get()?;
 
     let mut result = types::txpool::TxPoolInspect {
         pending: HashMap::new(),
         queued: HashMap::new(),
     };
 
-    for item in content.pending {
+    for item in content.pending.values().flatten() {
         let txns = result.pending.entry(item.signer).or_default();
         let txn = Transaction::new(item.clone(), None);
         let summary = format!(
@@ -123,7 +129,7 @@ fn txpool_inspect(
         txns.insert(item.tx.nonce().unwrap(), summary);
     }
 
-    for item in content.queued {
+    for item in content.queued.values().flatten() {
         let txns = result.queued.entry(item.signer).or_default();
         let txn = Transaction::new(item.clone(), None);
         let summary = format!(
@@ -141,12 +147,11 @@ fn txpool_inspect(
 
 /// txpool_status
 fn txpool_status(_params: Params, node: &Arc<RwLock<Node>>) -> Result<types::txpool::TxPoolStatus> {
-    let node = node.read();
-    let content = node.txpool_content();
-    let content = content.get()?;
+    let mut node = node.write();
+    let content = node.txpool_status();
 
     Ok(types::txpool::TxPoolStatus {
-        pending: content.pending.len() as u64,
-        queued: content.queued.len() as u64,
+        pending: content.pending,
+        queued: content.queued,
     })
 }
