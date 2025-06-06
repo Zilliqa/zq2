@@ -1,254 +1,309 @@
-# Zilliqa 2.0 Node Provisioning with Ansible
+# Zilliqa 2.0 Network Deployment
 
-This Ansible playbook automates the provisioning and configuration of Zilliqa 2.0 nodes on Google Cloud Platform (GCP).
+This repository contains Ansible playbooks and Python scripts for deploying and managing Zilliqa 2.0 networks on Google Cloud Platform (GCP). It provides a complete solution for setting up validator nodes, API nodes, and supporting services.
 
-```bash
-ansible-playbook -i inventory/inventory.gcp.yml playbooks/node_provision.yml -l gcp_zq2_network_zq2_infratest
-```
+## Table of Contents
+- [Prerequisites](#prerequisites)
+- [Project Structure](#project-structure)
+- [Configuration](#configuration)
+- [Deployment Process](#deployment-process)
+- [Network Management](#network-management)
+- [Monitoring and Maintenance](#monitoring-and-maintenance)
+- [Troubleshooting](#troubleshooting)
 
 ## Prerequisites
 
-- Ansible 2.9 or higher
-- Python 3.6 or higher
-- SSH access to target nodes
-- Google Cloud SDK installed and configured
-- Docker registry credentials
-- GCP service account with appropriate permissions
-- GCP project with enabled APIs:
+### Required Tools
+- Python 3.9+
+- Ansible 2.9+
+- Google Cloud SDK
+- Docker
+- Terraform (for infrastructure provisioning)
+
+### GCP Requirements
+- GCP project with billing enabled
+- Service account with the following roles:
+  - Compute Admin
+  - Secret Manager Admin
+  - Cloud KMS Admin
+  - Storage Admin
+  - IAM Admin
+- Enabled APIs:
   - Compute Engine API
+  - Cloud KMS API
+  - Secret Manager API
+  - Cloud Storage API
   - Cloud Monitoring API
   - Cloud Logging API
 
-## Directory Structure
-
-```
-ansible/
-├── inventory/
-│   ├── gcp_inventory.py      # Dynamic inventory script for GCP
-│   └── gcp_inventory.ini     # GCP inventory configuration
-├── playbooks/
-│   └── node_provision.yml    # Main playbook
-├── tasks/
-│   ├── common.yml           # Common tasks
-│   ├── gcp.yml             # GCP-specific tasks
-│   ├── zilliqa.yml         # Zilliqa node tasks
-│   ├── monitoring.yml      # Monitoring tasks
-│   ├── healthcheck.yml     # Health check tasks
-│   └── logrotate.yml      # Log rotation tasks
-├── templates/
-│   ├── ops-agent-config.yaml.j2  # GCP Ops Agent configuration
-│   └── ... (other templates)
-├── group_vars/
-│   └── all.yml            # Global variables
-└── run_playbook.sh        # Helper script to run the playbook
+### Authentication Setup
+1. Set up GCP authentication:
+```bash
+gcloud auth application-default login
+gcloud config set project <your-project-id>
 ```
 
-## Usage
-
-1. Set up GCP service account key:
+2. Set service account key:
 ```bash
 export GCP_SERVICE_ACCOUNT_KEY='{"type": "service_account", ...}'
 ```
 
-2. Run the playbook:
-```bash
-./run_playbook.sh --project <project-id> --environment <environment> [--extra-vars <extra-vars>]
+## Project Structure
+
+```
+infra/
+├── ansible/
+│   ├── playbooks/              # Ansible playbooks
+│   │   ├── install_zilliqa.yml    # Main node installation
+│   │   ├── install_monitoring.yml # Monitoring setup
+│   │   ├── install_spout.yml      # Faucet service
+│   │   ├── install_otterscan.yml  # Block explorer
+│   │   └── configure_*.yml        # Various configuration playbooks
+│   │
+│   ├── templates/              # Jinja2 templates
+│   │   ├── zilliqa.sh.j2         # Node startup script
+│   │   ├── zilliqa.service.j2    # Systemd service
+│   │   └── *.j2                 # Other configuration templates
+│   │
+│   ├── group_vars/            # Group variables
+│   │   ├── all.yml              # Global variables
+│   │   └── network_*/           # Network-specific variables
+│   │
+│   ├── inventory.gcp.yml      # GCP inventory configuration
+│   └── ansible.cfg            # Ansible configuration
+│
+├── scripts/                   # Python scripts
+│   ├── generate_keys.py       # Key generation
+│   ├── generate_keys_config.py # Key configuration
+│   └── setenv                 # Environment setup
+│
+└── terraform/                 # Infrastructure as Code
+    ├── main.tf               # Main Terraform configuration
+    ├── variables.tf          # Variable definitions
+    └── outputs.tf            # Output definitions
 ```
 
-Example:
-```bash
-./run_playbook.sh --project my-project --environment prod --extra-vars "zq2_image=zilliqa/z2:latest"
+## Configuration
+
+### Network Configuration
+Create a YAML file (e.g., `network.yaml`) with the following structure:
+
+```yaml
+name: "zq2-devnet"
+eth_chain_id: 33101
+api_servers:
+  - "https://api.zq2-devnet.zilstg.dev"
+genesis_fork:
+  block: 0
+  version: "0.1.0"
+forks:
+  - block: 1000
+    version: "0.2.0"
 ```
-
-## Dynamic Inventory
-
-The playbook uses a dynamic inventory script (`gcp_inventory.py`) that:
-- Filters GCP instances by environment tag
-- Generates Ansible inventory from filtered instances
-- Supports host listing and host details
-- Configures SSH access and user information
-
-## Variables
-
-### GCP Configuration
-- `project_id`: GCP project ID
-- `environment`: Environment name (e.g., dev, prod)
-- `gcp_service_account_key`: GCP service account key JSON
-- `gcp_persistent_disk_device`: Persistent disk device path
-- `gcp_persistent_disk_mount_point`: Persistent disk mount point
-- `enable_gcp_monitoring`: Enable GCP monitoring (default: true)
-
-### Docker Configuration
-- `docker_image`: Zilliqa 2.0 Docker image
-- `otterscan_image`: Otterscan Docker image
-- `spout_image`: Spout Docker image
-- `stats_dashboard_image`: Stats Dashboard Docker image
-- `stats_agent_image`: Stats Agent Docker image
-- `zq2_metrics_image`: Zilliqa 2.0 metrics Docker image
 
 ### Node Configuration
-- `node_role`: Node role (default: validator)
-- `chain_name`: Chain name
-- `log_level`: Log level (default: info)
+Configure node-specific variables in `group_vars/network_*/all.yml`:
 
-### API Configuration
-- `private_api`: Private API type (default: metrics)
-- `zq2_metrics_enabled`: Enable Zilliqa 2.0 metrics
+```yaml
+# Node Configuration
+chain_name: "zq2-devnet"
+eth_chain_id: 33101
+log_level: "info"
+dns_subdomain: "zq2-devnet.zilstg.dev"
 
-### Persistence Configuration
-- `persistence_url`: Persistence data URL
-- `checkpoint_url`: Checkpoint data URL
+# Docker Configuration
+zq2_image: "asia-docker.pkg.dev/your-project/zq2:latest"
+```
 
-### KMS Configuration
-- `enable_kms`: Enable KMS (default: false)
-- `kms_project_id`: KMS project ID
+## Deployment Process
 
-## Services
+### 1. Infrastructure Setup
+```bash
+# Initialize Terraform
+cd terraform
+terraform init
 
-The playbook installs and configures the following services:
+# Create infrastructure
+terraform apply -var="project_id=your-project" -var="network_name=zq2-devnet"
+```
 
-1. Zilliqa 2.0 Node
-   - Core node service
-   - Configuration management
-   - Persistence handling
+### 2. Key Generation
+```bash
+# Generate node keys
+python scripts/generate_keys.py network.yaml --project-id=your-project
 
-2. Otterscan (optional)
-   - Block explorer
-   - Transaction monitoring
-   - Contract interaction
+# Generate key configuration
+python scripts/generate_keys_config.py network.yaml --project-id=your-project
+```
 
-3. Spout (optional)
-   - Faucet service
-   - Token distribution
-   - Network testing
+### 3. Node Deployment
+```bash
+# Deploy validator nodes
+ansible-playbook -i inventory.gcp.yml playbooks/install_zilliqa.yml \
+  -e "target_group=role_validator" \
+  -e "chain_name=zq2-devnet"
 
-4. Stats Dashboard (optional)
-   - Performance monitoring
-   - Network statistics
-   - Node health metrics
+# Deploy API nodes
+ansible-playbook -i inventory.gcp.yml playbooks/install_zilliqa.yml \
+  -e "target_group=role_api" \
+  -e "chain_name=zq2-devnet"
+```
 
-5. Stats Agent (optional)
-   - Metrics collection
-   - Data aggregation
-   - Monitoring integration
+### 4. Supporting Services
+```bash
+# Install monitoring
+ansible-playbook -i inventory.gcp.yml playbooks/install_monitoring.yml
 
-6. Node Exporter
-   - System metrics
-   - Resource monitoring
-   - Performance tracking
+# Install block explorer
+ansible-playbook -i inventory.gcp.yml playbooks/install_otterscan.yml
 
-7. Process Exporter
-   - Process monitoring
-   - Service health checks
-   - Resource usage tracking
+# Install faucet
+ansible-playbook -i inventory.gcp.yml playbooks/install_spout.yml
+```
 
-8. Health Check Service
-   - Service monitoring
-   - Automatic recovery
-   - Status reporting
+## Network Management
 
-## Monitoring
+### Adding New Nodes
+1. Update inventory:
+```bash
+ansible-inventory --list -i inventory.gcp.yml
+```
 
-The playbook configures comprehensive monitoring using:
+2. Deploy node:
+```bash
+ansible-playbook -i inventory.gcp.yml playbooks/install_zilliqa.yml \
+  -e "target_group=role_validator" \
+  -e "chain_name=zq2-devnet"
+```
 
-1. GCP Ops Agent
-   - Log collection
-   - Metric aggregation
-   - Cloud monitoring integration
+### Updating Nodes
+```bash
+# Update node software
+ansible-playbook -i inventory.gcp.yml playbooks/install_zilliqa.yml \
+  -e "target_group=role_validator" \
+  -e "zq2_image=asia-docker.pkg.dev/your-project/zq2:new-version"
+```
 
-2. Prometheus Exporters
-   - Node Exporter
-   - Process Exporter
-   - Zilliqa metrics
+### Node Maintenance
+```bash
+# Stop node
+ansible-playbook -i inventory.gcp.yml playbooks/maintenance.yml \
+  -e "action=stop" \
+  -e "target_group=role_validator"
 
-3. Log Management
-   - Centralized logging
-   - Log rotation
-   - Error tracking
+# Start node
+ansible-playbook -i inventory.gcp.yml playbooks/maintenance.yml \
+  -e "action=start" \
+  -e "target_group=role_validator"
+```
 
-## Health Checks
+## Monitoring and Maintenance
 
-The health check service:
-- Monitors all running services
-- Checks Docker container status
-- Verifies API endpoints
-- Reports service health
-- Triggers automatic recovery
+### Health Checks
+```bash
+# Check node health
+ansible-playbook -i inventory.gcp.yml playbooks/configure_healthcheck.yml
 
-## Log Rotation
+# View health status
+curl http://node-ip:8000/health
+```
 
-Log rotation is configured for all services with:
-- Daily rotation
-- 7-day retention
-- Compression
-- Size limits
-- Post-rotation commands
+### Log Management
+```bash
+# View node logs
+ansible-playbook -i inventory.gcp.yml playbooks/view_logs.yml \
+  -e "target_group=role_validator"
 
-## Security
+# Configure log rotation
+ansible-playbook -i inventory.gcp.yml playbooks/configure_logrotate.yml
+```
 
-The playbook implements several security measures:
+### Metrics Collection
+```bash
+# Install metrics collection
+ansible-playbook -i inventory.gcp.yml playbooks/install_stats_agent.yml
 
-1. Service Isolation
-   - Separate service accounts
-   - Minimal permissions
-   - Network isolation
-
-2. Log Management
-   - Secure log storage
-   - Access control
-   - Audit trails
-
-3. Health Monitoring
-   - Service checks
-   - Security scanning
-   - Vulnerability detection
-
-4. KMS Integration
-   - Secure key management
-   - Encryption at rest
-   - Access control
-
-5. File Permissions
-   - Strict access control
-   - Secure defaults
-   - Regular audits
-
-6. Service Hardening
-   - Minimal privileges
-   - Secure defaults
-   - Regular updates
+# View metrics dashboard
+open https://stats.zq2-devnet.zilstg.dev
+```
 
 ## Troubleshooting
 
-1. Check service status:
+### Common Issues
+
+1. Node Not Starting
 ```bash
-systemctl status zilliqa
-systemctl status healthcheck
+# Check service status
+ansible-playbook -i inventory.gcp.yml playbooks/check_status.yml \
+  -e "target_group=role_validator"
+
+# View logs
+ansible-playbook -i inventory.gcp.yml playbooks/view_logs.yml \
+  -e "target_group=role_validator"
 ```
 
-2. View logs:
+2. KMS Issues
 ```bash
-journalctl -u zilliqa
-journalctl -u healthcheck
+# Verify KMS configuration
+ansible-playbook -i inventory.gcp.yml playbooks/verify_kms.yml
+
+# Check key access
+gcloud kms keys list --keyring=kms-zq2-devnet --location=global
 ```
 
-3. Check GCP monitoring:
+3. Network Connectivity
 ```bash
-gcloud monitoring dashboards list
+# Check network connectivity
+ansible-playbook -i inventory.gcp.yml playbooks/check_network.yml
+
+# Verify API endpoints
+curl https://api.zq2-devnet.zilstg.dev/health
 ```
 
-4. Verify disk mounts:
+### Debugging Tools
+
+1. Node Debugging
 ```bash
-mount | grep /data
+# Enable debug logging
+ansible-playbook -i inventory.gcp.yml playbooks/configure_logging.yml \
+  -e "log_level=debug"
+
+# Collect debug information
+ansible-playbook -i inventory.gcp.yml playbooks/collect_debug.yml
 ```
+
+2. Network Debugging
+```bash
+# Check network status
+ansible-playbook -i inventory.gcp.yml playbooks/check_network.yml
+
+# Verify node synchronization
+ansible-playbook -i inventory.gcp.yml playbooks/check_sync.yml
+```
+
+## Security Considerations
+
+1. Key Management
+- Use KMS for key encryption
+- Rotate keys regularly
+- Implement access controls
+
+2. Network Security
+- Use IAP for SSH access
+- Implement firewall rules
+- Enable VPC service controls
+
+3. Monitoring
+- Enable audit logging
+- Monitor access patterns
+- Set up alerts
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+3. Make your changes
+4. Submit a pull request
 
 ## License
 
