@@ -62,8 +62,6 @@
 
 # - name: Import checkpoint service installation
 #   ansible.builtin.import_playbook: install_checkpoint_service.yml
-#   when: zq2_metrics_enabled
 
 # - name: Import persistence service installation
 #   ansible.builtin.import_playbook: install_persistence_service.yml
-#   when: zq2_metrics_enabled
