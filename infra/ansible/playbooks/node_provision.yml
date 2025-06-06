@@ -1,48 +1,48 @@
 ---
 
-# - name: Import required packages installation
-#   ansible.builtin.import_playbook: install_packages.yml
+- name: Import required packages installation
+  ansible.builtin.import_playbook: install_packages.yml
 
-# - name: Import Docker installation
-#   ansible.builtin.import_playbook: install_docker.yml
+- name: Import Docker installation
+  ansible.builtin.import_playbook: install_docker.yml
 
-# - name: Import monitoring tasks
-#   ansible.builtin.import_playbook: install_monitoring.yml
+- name: Import monitoring tasks
+  ansible.builtin.import_playbook: install_monitoring.yml
 
-# - name: Import ops_agent tasks
-#   ansible.builtin.import_playbook: install_ops_agent.yml
+- name: Import ops_agent tasks
+  ansible.builtin.import_playbook: install_ops_agent.yml
 
-# - name: Import gcloud tasks
-#   ansible.builtin.import_playbook: install_gcloud.yml
+- name: Import gcloud tasks
+  ansible.builtin.import_playbook: install_gcloud.yml
 
-# - name: Import log rotation configuration
-#   ansible.builtin.import_playbook: configure_logrotate.yml
+- name: Import log rotation configuration
+  ansible.builtin.import_playbook: configure_logrotate.yml
 
-# - name: Import Zilliqa node installation
-#   ansible.builtin.import_playbook: install_zilliqa.yml
-#   vars:
-#     target_group: role_bootstrap
+- name: Import Zilliqa node installation
+  ansible.builtin.import_playbook: install_zilliqa.yml
+  vars:
+    target_group: role_bootstrap
 
-# - name: Import Zilliqa node installation
-#   ansible.builtin.import_playbook: install_zilliqa.yml
-#   vars:
-#     target_group: all:!role_apps:!role_bootstrap
+- name: Import Zilliqa node installation
+  ansible.builtin.import_playbook: install_zilliqa.yml
+  vars:
+    target_group: all:!role_apps:!role_bootstrap
 
 - name: Import healthcheck service configuration
   ansible.builtin.import_playbook: configure_healthcheck.yml
 
-# - name: Import Otterscan installation
-#   ansible.builtin.import_playbook: install_otterscan.yml
+- name: Import Otterscan installation
+  ansible.builtin.import_playbook: install_otterscan.yml
 
-# - name: Import Spout installation
-#   ansible.builtin.import_playbook: install_spout.yml
-#   when: spout_enabled
+- name: Import Spout installation
+  ansible.builtin.import_playbook: install_spout.yml
+  when: spout_enabled
 
-# - name: Import Stats Dashboard installation
-#   ansible.builtin.import_playbook: install_stats_dashboard.yml
+- name: Import Stats Dashboard installation
+  ansible.builtin.import_playbook: install_stats_dashboard.yml
 
-# - name: Import Stats Agent installation
-#   ansible.builtin.import_playbook: install_stats_agent.yml
+- name: Import Stats Agent installation
+  ansible.builtin.import_playbook: install_stats_agent.yml
 
 
 
