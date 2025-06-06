@@ -1445,24 +1445,26 @@ impl Consensus {
         let mut tx_index_in_block = proposal.transactions.len();
 
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = pool.best_transaction(&state)? {
-            let tx = tx.clone();
+        while let Some(tx) = pool.pop_best_if(&state, |txn| {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (_, milliseconds_remaining_of_block_time, _) =
-                self.get_consensus_timeout_params()?;
+                self.get_consensus_timeout_params().unwrap();
 
             if milliseconds_remaining_of_block_time == 0 {
                 debug!(
                     "stopped adding txs to block number {} because block time is reached",
                     proposal.header.number,
                 );
-                break;
+                return false;
             }
 
-            if gas_left < tx.tx.gas_limit() {
-                debug!(?gas_left, gas_limit = ?tx.tx.gas_limit(), "block out of space");
-                break;
+            if gas_left < txn.tx.gas_limit() {
+                debug!(?gas_left, gas_limit = ?txn.tx.gas_limit(), "block out of space");
+                return false;
             }
+            return true;
+        }) {
+            let tx = tx.clone();
 
             // Apply specific txn
             let mut inspector = TouchedAddressInspector::default();
