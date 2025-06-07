@@ -116,10 +116,11 @@ def grant_secret_access(secret_name: str, project_id: str, service_account: str,
     return result.returncode == 0
 
 # --- GCP Node Discovery ---
-def discover_gcp_nodes(chain_name: str) -> List[Dict[str, Any]]:
+def discover_gcp_nodes(chain_name: str, project_id: str) -> List[Dict[str, Any]]:
     # Use gcloud CLI to list instances with the correct label
     cmd = [
         'gcloud', 'compute', 'instances', 'list',
+        '--project', project_id,
         '--filter', f'labels.zq2-network={chain_name}',
         '--format', 'json'
     ]
@@ -129,6 +130,7 @@ def discover_gcp_nodes(chain_name: str) -> List[Dict[str, Any]]:
         sys.exit(1)
     instances = json.loads(result.stdout)
     nodes = []
+    print(f"Found {len(instances)} instances")
     for inst in instances:
         node = {
             'project_id': inst['zone'].split('/')[-3],
@@ -178,7 +180,7 @@ if __name__ == "__main__":
         print("Failed to create genesis key secret.", file=sys.stderr)
         sys.exit(1)
 
-    nodes = discover_gcp_nodes(chain_name)
+    nodes = discover_gcp_nodes(chain_name, project_id)
 
     address_labels = {"role": "genesis-address", "zq2-network": chain_name}
     if not create_secret_in_gcp(address_secret_name, genesis_address, project_id, address_labels, args.force, args.dry_run):
