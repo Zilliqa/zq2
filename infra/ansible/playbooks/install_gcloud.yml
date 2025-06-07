@@ -2,6 +2,9 @@
 - name: Install and configure Google Cloud SDK
   hosts: all
   become: true
+  tags:
+    - install
+    - all
 
   tasks:
     - name: Install required packages

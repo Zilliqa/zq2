@@ -2,6 +2,9 @@
 - name: Install and configure Node Exporter and Process Exporter
   hosts: all
   become: true
+  tags:
+    - install
+    - all
 
   tasks:
 

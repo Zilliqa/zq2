@@ -2,6 +2,9 @@
 - name: Install and configure Stats Dashboard
   hosts: role_apps
   become: true
+  tags:
+    - install
+    - all
 
   tasks:
 

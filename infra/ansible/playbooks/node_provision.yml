@@ -1,66 +1,62 @@
 ---
 
-- name: Import required packages installation
+- name: Required packages installation
   ansible.builtin.import_playbook: install_packages.yml
 
-- name: Import Docker installation
+- name: Docker installation
   ansible.builtin.import_playbook: install_docker.yml
 
-- name: Import monitoring tasks
+- name: Monitoring exporters installation
   ansible.builtin.import_playbook: install_monitoring.yml
 
-- name: Import ops_agent tasks
+- name: Ops Agent installation
   ansible.builtin.import_playbook: install_ops_agent.yml
 
-- name: Import gcloud tasks
+- name: Gcloud installation
   ansible.builtin.import_playbook: install_gcloud.yml
 
-- name: Import log rotation configuration
+- name: Log rotation configuration
   ansible.builtin.import_playbook: configure_logrotate.yml
 
-- name: Import Zilliqa node installation
+- name: Download Zilliqa node persistence
+  ansible.builtin.import_playbook: download_persistence.yml
+  when: persistence_url is defined and persistence_url != ""
+
+- name: Zilliqa node installation
   ansible.builtin.import_playbook: install_zilliqa.yml
   vars:
     target_group: role_bootstrap
 
-- name: Import Zilliqa node installation
+- name: Zilliqa node installation
   ansible.builtin.import_playbook: install_zilliqa.yml
   vars:
     target_group: all:!role_apps:!role_bootstrap
 
-- name: Import healthcheck service configuration
+- name: Healthcheck service configuration
   ansible.builtin.import_playbook: configure_healthcheck.yml
 
-- name: Import Otterscan installation
+- name: Otterscan installation
   ansible.builtin.import_playbook: install_otterscan.yml
 
-- name: Import Spout installation
+- name: Spout installation
   ansible.builtin.import_playbook: install_spout.yml
-  when: spout_enabled
+  when: enable_faucet
 
-- name: Import Stats Dashboard installation
+- name: Stats Dashboard installation
   ansible.builtin.import_playbook: install_stats_dashboard.yml
 
-- name: Import Stats Agent installation
+- name: Stats Agent installation
   ansible.builtin.import_playbook: install_stats_agent.yml
-
-
-
-
-# TODO: Test install from persistence
-# TODO: Add tasks for install from checkpoint
-# TODO: Add documentation
-# TODO: Add every environments
-
-
-
-
-# - name: Import checkpoint data download
-#   ansible.builtin.import_playbook: download_checkpoint.yml
-#   when: checkpoint_url is defined and checkpoint_url != ""
 
 # - name: Import checkpoint service installation
 #   ansible.builtin.import_playbook: install_checkpoint_service.yml
 
 # - name: Import persistence service installation
 #   ansible.builtin.import_playbook: install_persistence_service.yml
+
+
+
+# TODO: Test install from persistence
+# TODOL implement tag machine looking at the keys-config and tagging each machine with the corresponding peer-id
+# TODO: Add documentation (including python scripts)
+# TODO: Add every environments

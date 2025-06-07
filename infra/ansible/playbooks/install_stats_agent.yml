@@ -2,6 +2,9 @@
 - name: Install and configure Stats Agent
   hosts: role_api:role_bootstrap:role_validator
   become: true
+  tags:
+    - install
+    - all
 
   tasks:
 

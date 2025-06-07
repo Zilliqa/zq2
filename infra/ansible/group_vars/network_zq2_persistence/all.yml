@@ -9,8 +9,8 @@ enable_gcp_monitoring: true
 
 # Node Configuration
 eth_chain_id: 33469
-chain_name: "zq2-infratest"
-dns_subdomain: "zq2-infratest.zilstg.dev"
+chain_name: "zq2-persistence"
+dns_subdomain: "zq2-persistence.zilstg.dev"
 project_id: prj-d-zq2-devnet-c83bkpsd
 log_level: "zilliqa=info"
 enable_faucet: true

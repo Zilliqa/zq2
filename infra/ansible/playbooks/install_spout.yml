@@ -2,6 +2,9 @@
 - name: Install and configure Spout
   hosts: role_apps
   become: true
+  tags:
+    - install
+    - all
 
   tasks:
 

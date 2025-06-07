@@ -2,6 +2,9 @@
 - name: Install and configure Google Cloud Ops Agent
   hosts: all
   become: true
+  tags:
+    - install
+    - all
 
   tasks:
     - name: Download Ops Agent installation script

@@ -2,6 +2,9 @@
 - name: Install and configure Otterscan
   hosts: role_apps
   become: true
+  tags:
+    - install
+    - all
 
   tasks:
 
