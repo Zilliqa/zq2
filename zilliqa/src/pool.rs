@@ -335,36 +335,26 @@ impl TransactionsAccount {
             }
         }
     }
+    // Must be followed by maintain()
     fn update_balance(&mut self, new_balance: u128) {
         assert!(new_balance <= i128::MAX as u128);
         let balance_delta = new_balance - self.balance_account;
         self.balance_after_pending += balance_delta as i128;
-        self.maintain();
     }
-    // If we're updating the nonce, the the balance has changed and probably the transactions too so let's fully recalculate
+    // Must be followed by maintain()
+    fn update_nonce(&mut self, new_nonce: u64) {
+        assert!(new_nonce > self.nonce_account);
+        if new_nonce == self.nonce_account {
+            return;
+        }
+        self.complete_txns_below_nonce(new_nonce);
+    }
     fn update_nonce_and_balance(&mut self, new_nonce: u64, new_balance: u128) {
         assert!(new_balance <= i128::MAX as u128);
         assert!(new_nonce > self.nonce_account);
-        if new_nonce == self.nonce_account && new_balance == self.balance_account {
-            return;
-        }
-        self.nonce_account = new_nonce;
-        self.balance_account = new_balance;
-        self.balance_after_pending = self.balance_account as i128;
-        self.nonce_after_pending = self.nonce_account + 1;
-        self.nonced_transactions = self
-            .nonced_transactions
-            .split_off(&self.nonce_after_pending);
-        self.nonceless_transactions_queued
-            .append(&mut self.nonceless_transactions_pending);
-        self.pending_transaction_count = 0;
+        self.update_nonce(new_nonce);
+        self.update_balance(new_balance);
         self.maintain();
-    }
-    fn get_pending_transactions(&self) -> Vec<&VerifiedTransaction> {
-        self.get_pending().collect()
-    }
-    fn get_queued_transactions(&self) -> Vec<&VerifiedTransaction> {
-        self.get_queue().collect()
     }
     fn get_pending_or_queued(&self, txn: &VerifiedTransaction) -> Option<PendingOrQueued> {
         assert!(txn.signer == self.address);
@@ -406,22 +396,8 @@ impl TransactionsAccount {
 
     fn mark_executed(&mut self, txn: &VerifiedTransaction) {
         if let Some(nonce) = txn.tx.nonce() {
-            // split the transactions into ones to keep and ones to discard (which are annoyingly returned the wrong way round)
-            let transactions_to_retain = self.nonced_transactions.split_off(&(nonce + 1));
-            // discard transactions which were queued but now aren't
-            self.nonced_transactions
-                .split_off(&self.nonce_after_pending);
-            // removed discarded transactions from balance
-            for discarded_tx in self.nonced_transactions.values() {
-                self.balance_after_pending += discarded_tx.tx.gas_price_per_evm_gas() as i128;
-                self.pending_transaction_count -= 1;
-            }
-            // Put the cut down transaction list back in place
-            self.nonced_transactions = transactions_to_retain;
-            // put the counters right again
-            self.nonce_account = std::cmp::max(self.nonce_account, nonce);
-            self.nonce_after_pending = std::cmp::max(self.nonce_after_pending, nonce + 1);
-            self.maintain()
+            self.complete_txns_below_nonce(nonce);
+            self.maintain();
         } else {
             if let Some(txn) = self.nonceless_transactions_pending.remove(&txn.into()) {
                 self.balance_after_pending += txn.tx.gas_price_per_evm_gas() as i128;
@@ -431,6 +407,30 @@ impl TransactionsAccount {
                 self.nonceless_transactions_queued.remove(&txn.into());
             }
         }
+    }
+    /// Remove all transactions with nonces less than or equal to the given nonce
+    /// // Must be followed by maintain()
+    fn complete_txns_below_nonce(&mut self, nonce: u64) {
+        // Optimisation for when there's nothing to do
+        if nonce == self.nonce_account {
+            return;
+        }
+        // split the transactions into ones to keep and ones to discard (which are annoyingly returned the wrong way round)
+        let transactions_to_retain = self.nonced_transactions.split_off(&(nonce + 1));
+        // discard transactions which were queued but now aren't
+        // since we only need to adjust for previously pending transactions
+        self.nonced_transactions
+            .split_off(&self.nonce_after_pending);
+        // removed discarded transactions from balance
+        for discarded_tx in self.nonced_transactions.values() {
+            self.balance_after_pending += discarded_tx.tx.gas_price_per_evm_gas() as i128;
+            self.pending_transaction_count -= 1;
+        }
+        // Put the cut down transaction list back in place
+        self.nonced_transactions = transactions_to_retain;
+        // put the counters right again
+        self.nonce_account = std::cmp::max(self.nonce_account, nonce);
+        self.nonce_after_pending = std::cmp::max(self.nonce_after_pending, nonce + 1);
     }
 }
 
@@ -724,6 +724,14 @@ impl TransactionPool {
     pub fn best_transaction(&mut self, state: &State) -> Result<Option<&VerifiedTransaction>> {
         self.core.update_with_state(state);
         Ok(self.core.peek_best_txn())
+    }
+
+    pub fn pending_transactions_ordered(
+        &mut self,
+        state: &State,
+    ) -> impl Iterator<Item = &VerifiedTransaction> {
+        self.core.update_with_state(state);
+        self.core.pending_transactions_ordered()
     }
 
     pub fn get_transaction(&mut self, hash: &Hash) -> Option<&VerifiedTransaction> {
