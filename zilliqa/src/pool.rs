@@ -1093,7 +1093,7 @@ mod tests {
         nonces.shuffle(&mut rng);
 
         for i in 0..COUNT {
-            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), acc, false);
+            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), &acc, false);
         }
 
         for i in 0..COUNT {
@@ -1122,11 +1122,11 @@ mod tests {
         let acc2 = create_acc(&mut state, from2, 100, 0)?;
         let acc3 = create_acc(&mut state, from3, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(from0, 0, 1), &acc0, false);
+        pool.insert_transaction(intershard_transaction(0, 0, 1), &acc0, false);
         pool.insert_transaction(transaction(from1, 0, 2), &acc1, false);
         pool.insert_transaction(transaction(from2, 0, 3), &acc2, false);
         pool.insert_transaction(transaction(from3, 0, 0), &acc3, false);
-        pool.insert_transaction(intershard_transaction(from0, 1, 5), &acc0, false);
+        pool.insert_transaction(intershard_transaction(0, 1, 5), &acc0, false);
         assert_eq!(pool.transaction_count(&state), 5);
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
@@ -1149,7 +1149,7 @@ mod tests {
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 0);
         pool.mark_executed(&tx);
 
-        assert_eq!(pool.transactions.len(), 0);
+        assert_eq!(pool.transaction_count(&state), 0);
         Ok(())
     }
 
@@ -1214,7 +1214,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_content_test() -> Result<()> {
+    fn pending_queued_test() -> Result<()> {
         let mut pool = TransactionPool::default();
         let from0 = "0x0000000000000000000000000000000000000000".parse()?;
         let from = "0x0000000000000000000000000000000000001234".parse()?;
@@ -1230,9 +1230,8 @@ mod tests {
         pool.insert_transaction(transaction(from, 3, 200), &acc, false);
         pool.insert_transaction(transaction(from, 10, 1), &acc, false);
 
-        let preview = pool.preview_content(&state);
-        let pending = preview.pending;
-        let queued = preview.queued;
+        let pending: Vec<_> = pool.pending_transactions_ordered(&state).cloned().collect();
+        let queued: Vec<_> = pool.pending_transactions_ordered(&state).cloned().collect();
 
         assert_eq!(pending.len(), 3);
         assert_eq!(pending[0].tx.nonce().unwrap(), 0);
