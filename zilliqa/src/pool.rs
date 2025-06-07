@@ -254,7 +254,7 @@ impl TransactionsAccount {
             a.tx.gas_price_per_evm_gas() > b.tx.gas_price_per_evm_gas()
         })
     }
-    fn get_queue(&self) -> impl Iterator<Item = &VerifiedTransaction> {
+    fn get_queued(&self) -> impl Iterator<Item = &VerifiedTransaction> {
         let nonceless_iterator = self.nonceless_transactions_queued.iter().rev().map(|x| x.1);
         let nonced_iterator = self
             .nonced_transactions
@@ -269,9 +269,9 @@ impl TransactionsAccount {
         self.pending_transaction_count
     }
     fn get_queued_transaction_count(&self) -> usize {
-        self.total_transaction_count() - self.pending_transaction_count
+        self.get_transaction_count() - self.pending_transaction_count
     }
-    fn total_transaction_count(&self) -> usize {
+    fn get_transaction_count(&self) -> usize {
         self.nonced_transactions.len()
             + self.nonceless_transactions_queued.len()
             + self.nonceless_transactions_pending.len()
@@ -499,19 +499,32 @@ impl TransactionPoolCore {
     }
 
     fn pending_transactions_unordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
-        self.pending_account_queue.iter().flat_map(|key| {
-            self.all_transactions
-                .get(&key.address)
-                .unwrap()
-                .get_pending()
-        })
+        self.all_transactions
+            .values()
+            .map(|x| x.get_pending())
+            .flatten()
     }
 
-    // Potentially slow
+    fn queued_transactions_unordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
+        self.all_transactions
+            .values()
+            .map(|x| x.get_queued())
+            .flatten()
+    }
+
+    // Potentially slow, depending on merge behaviour
     fn pending_transactions_ordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
         self.all_transactions
             .values()
             .map(|x| x.get_pending())
+            .kmerge_by(|a, b| a.tx.gas_price_per_evm_gas() > b.tx.gas_price_per_evm_gas())
+    }
+
+    // Potentially slow, depending on merge behaviour
+    fn queued_transactions_ordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
+        self.all_transactions
+            .values()
+            .map(|x| x.get_queued())
             .kmerge_by(|a, b| a.tx.gas_price_per_evm_gas() > b.tx.gas_price_per_evm_gas())
     }
 
@@ -522,12 +535,32 @@ impl TransactionPoolCore {
         }
     }
 
-    fn get_pending_transaction_count(&self, account_address: &Address) -> u64 {
-        // This could be slightly faster by keeping track of the number but it'll do for now
+    fn account_pending_transaction_count(&self, account_address: &Address) -> u64 {
         match self.all_transactions.get(account_address) {
             Some(account) => account.get_pending_transaction_count() as u64,
             None => 0,
         }
+    }
+
+    fn account_transaction_count(&self, account_address: &Address) -> u64 {
+        match self.all_transactions.get(account_address) {
+            Some(account) => account.get_transaction_count() as u64,
+            None => 0,
+        }
+    }
+
+    fn pending_transaction_count(&self) -> u64 {
+        self.all_transactions
+            .values()
+            .map(|x| x.get_pending_transaction_count() as u64)
+            .sum()
+    }
+
+    fn transaction_count(&self) -> u64 {
+        self.all_transactions
+            .values()
+            .map(|x| x.get_transaction_count() as u64)
+            .sum()
     }
 
     fn get_txn_by_address_and_nonce(
@@ -592,7 +625,7 @@ impl TransactionPoolCore {
         let queued_txns: HashMap<Address, Vec<VerifiedTransaction>> = self
             .all_transactions
             .iter()
-            .map(|(address, transactions)| (*address, transactions.get_queue().cloned().collect()))
+            .map(|(address, transactions)| (*address, transactions.get_queued().cloned().collect()))
             .collect();
         TxPoolContent {
             pending: pending_txns,
@@ -608,21 +641,11 @@ impl TransactionPoolCore {
         let queued_txns: Vec<VerifiedTransaction> = self
             .all_transactions
             .get(address)
-            .map_or(Vec::new(), |x| x.get_queue().cloned().collect());
+            .map_or(Vec::new(), |x| x.get_queued().cloned().collect());
         TxPoolContentFrom {
             pending: pending_txns,
             queued: queued_txns,
         }
-    }
-
-    fn get_txpool_status(&self) -> TxPoolStatus {
-        let mut pending = 0;
-        let mut queued = 0;
-        for account in self.all_transactions.values() {
-            pending += account.get_pending_transaction_count() as u64;
-            queued += account.get_queued_transaction_count() as u64;
-        }
-        TxPoolStatus { pending, queued }
     }
 
     fn any_pending(&self) -> bool {
@@ -734,6 +757,14 @@ impl TransactionPool {
         self.core.pending_transactions_ordered()
     }
 
+    pub fn queued_transactions_ordered(
+        &mut self,
+        state: &State,
+    ) -> impl Iterator<Item = &VerifiedTransaction> {
+        self.core.update_with_state(state);
+        self.core.queued_transactions_ordered()
+    }
+
     pub fn get_transaction(&mut self, hash: &Hash) -> Option<&VerifiedTransaction> {
         self.core.get_transaction_by_hash(hash)
     }
@@ -761,16 +792,40 @@ impl TransactionPool {
 
     pub fn preview_status(&mut self, state: &State) -> TxPoolStatus {
         self.core.update_with_state(state);
-        self.core.get_txpool_status()
+        let pending_count = self.pending_transaction_count(state);
+        let total_count = self.transaction_count(state);
+        TxPoolStatus {
+            pending: pending_count,
+            queued: total_count - pending_count,
+        }
     }
 
-    pub fn pending_transaction_count(
+    pub fn account_pending_transaction_count(
         &mut self,
         account_address: &Address,
         account_data: &Account,
     ) -> u64 {
         self.core.update_with_account(account_address, account_data);
-        self.core.get_pending_transaction_count(account_address)
+        self.core.account_pending_transaction_count(account_address)
+    }
+
+    pub fn account_total_transaction_count(
+        &mut self,
+        account_address: &Address,
+        account_data: &Account,
+    ) -> u64 {
+        self.core.update_with_account(account_address, account_data);
+        self.core.account_transaction_count(account_address)
+    }
+
+    pub fn pending_transaction_count(&mut self, state: &State) -> u64 {
+        self.core.update_with_state(state);
+        self.core.pending_transaction_count()
+    }
+
+    pub fn transaction_count(&mut self, state: &State) -> u64 {
+        self.core.update_with_state(state);
+        self.core.transaction_count()
     }
 
     pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
@@ -967,11 +1022,17 @@ mod tests {
         State::new_with_genesis(db.state_trie()?, node_config, db.clone())
     }
 
-    fn create_acc(state: &mut State, address: Address, balance: u128, nonce: u64) -> Result<()> {
+    fn create_acc(
+        state: &mut State,
+        address: Address,
+        balance: u128,
+        nonce: u64,
+    ) -> Result<crate::state::Account> {
         let mut acc = state.get_account(address)?;
         acc.balance = balance;
         acc.nonce = nonce;
-        state.save_account(address, acc)
+        state.save_account(address, acc.clone())?;
+        Ok(acc)
     }
 
     #[test]
@@ -980,15 +1041,15 @@ mod tests {
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
-        create_acc(&mut state, from, 100, 0)?;
+        let acc = create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 1, 1), 0, false);
+        pool.insert_transaction(transaction(from, 1, 1), &acc, false);
 
         let tx = pool.best_transaction(&state)?;
         assert_eq!(tx, None);
 
-        pool.insert_transaction(transaction(from, 2, 2), 0, false);
-        pool.insert_transaction(transaction(from, 0, 0), 0, false);
+        pool.insert_transaction(transaction(from, 2, 2), &acc, false);
+        pool.insert_transaction(transaction(from, 0, 0), &acc, false);
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
@@ -1023,7 +1084,7 @@ mod tests {
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
-        create_acc(&mut state, from, 100, 0)?;
+        let acc = create_acc(&mut state, from, 100, 0)?;
 
         const COUNT: u64 = 100;
 
@@ -1032,7 +1093,7 @@ mod tests {
         nonces.shuffle(&mut rng);
 
         for i in 0..COUNT {
-            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), 0, false);
+            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), acc, false);
         }
 
         for i in 0..COUNT {
@@ -1050,21 +1111,23 @@ mod tests {
     #[test]
     fn ordered_by_gas_price() -> Result<()> {
         let mut pool = TransactionPool::default();
+        let from0 = "0x0000000000000000000000000000000000000000".parse()?;
         let from1 = "0x0000000000000000000000000000000000000001".parse()?;
         let from2 = "0x0000000000000000000000000000000000000002".parse()?;
         let from3 = "0x0000000000000000000000000000000000000003".parse()?;
 
         let mut state = get_in_memory_state()?;
-        create_acc(&mut state, from1, 100, 0)?;
-        create_acc(&mut state, from2, 100, 0)?;
-        create_acc(&mut state, from3, 100, 0)?;
+        let acc0 = create_acc(&mut state, from0, 100, 0)?;
+        let acc1 = create_acc(&mut state, from1, 100, 0)?;
+        let acc2 = create_acc(&mut state, from2, 100, 0)?;
+        let acc3 = create_acc(&mut state, from3, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 1), 0, false);
-        pool.insert_transaction(transaction(from1, 0, 2), 0, false);
-        pool.insert_transaction(transaction(from2, 0, 3), 0, false);
-        pool.insert_transaction(transaction(from3, 0, 0), 0, false);
-        pool.insert_transaction(intershard_transaction(0, 1, 5), 0, false);
-        assert_eq!(pool.transactions.len(), 5);
+        pool.insert_transaction(intershard_transaction(from0, 0, 1), &acc0, false);
+        pool.insert_transaction(transaction(from1, 0, 2), &acc1, false);
+        pool.insert_transaction(transaction(from2, 0, 3), &acc2, false);
+        pool.insert_transaction(transaction(from3, 0, 0), &acc3, false);
+        pool.insert_transaction(intershard_transaction(from0, 1, 5), &acc0, false);
+        assert_eq!(pool.transaction_count(&state), 5);
 
         let tx = pool.best_transaction(&state)?.unwrap().clone();
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 5);
@@ -1096,10 +1159,10 @@ mod tests {
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
-        create_acc(&mut state, from, 100, 0)?;
+        let acc = create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 0), 0, false);
-        pool.insert_transaction(transaction(from, 1, 0), 0, false);
+        pool.insert_transaction(transaction(from, 0, 0), &acc, false);
+        pool.insert_transaction(transaction(from, 1, 0), &acc, false);
 
         pool.mark_executed(&transaction(from, 0, 0));
         state.mutate_account(from, |acc| {
@@ -1120,10 +1183,10 @@ mod tests {
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
-        create_acc(&mut state, from, 100, 0)?;
+        let acc = create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(transaction(from, 0, 1), 0, false);
-        pool.insert_transaction(transaction(from, 1, 200), 0, false);
+        pool.insert_transaction(transaction(from, 0, 1), &acc, false);
+        pool.insert_transaction(transaction(from, 1, 200), &acc, false);
 
         assert_eq!(
             pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
@@ -1153,28 +1216,32 @@ mod tests {
     #[test]
     fn preview_content_test() -> Result<()> {
         let mut pool = TransactionPool::default();
+        let from0 = "0x0000000000000000000000000000000000000000".parse()?;
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
-        create_acc(&mut state, from, 100, 0)?;
+        let acc0 = create_acc(&mut state, from0, 100, 0)?;
+        let acc = create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 100), 0, false);
-        pool.insert_transaction(transaction(from, 0, 1), 0, false);
-        pool.insert_transaction(transaction(from, 1, 1), 1, false);
-        pool.insert_transaction(transaction(from, 2, 1), 2, false);
-        pool.insert_transaction(transaction(from, 3, 200), 3, false);
-        pool.insert_transaction(transaction(from, 10, 1), 3, false);
+        pool.insert_transaction(intershard_transaction(0, 0, 100), &acc0, false);
+        pool.insert_transaction(transaction(from, 0, 1), &acc, false);
+        pool.insert_transaction(transaction(from, 1, 1), &acc, false);
+        pool.insert_transaction(transaction(from, 2, 1), &acc, false);
+        pool.insert_transaction(transaction(from, 3, 200), &acc, false);
+        pool.insert_transaction(transaction(from, 10, 1), &acc, false);
 
-        let content = pool.preview_content(&state)?;
+        let preview = pool.preview_content(&state);
+        let pending = preview.pending;
+        let queued = preview.queued;
 
-        assert_eq!(content.pending.len(), 3);
-        assert_eq!(content.pending[0].tx.nonce().unwrap(), 0);
-        assert_eq!(content.pending[1].tx.nonce().unwrap(), 1);
-        assert_eq!(content.pending[2].tx.nonce().unwrap(), 2);
+        assert_eq!(pending.len(), 3);
+        assert_eq!(pending[0].tx.nonce().unwrap(), 0);
+        assert_eq!(pending[1].tx.nonce().unwrap(), 1);
+        assert_eq!(pending[2].tx.nonce().unwrap(), 2);
 
-        assert_eq!(content.queued.len(), 2);
-        assert_eq!(content.queued[0].tx.nonce().unwrap(), 3);
-        assert_eq!(content.queued[1].tx.nonce().unwrap(), 10);
+        assert_eq!(queued.len(), 2);
+        assert_eq!(queued[0].tx.nonce().unwrap(), 3);
+        assert_eq!(queued[1].tx.nonce().unwrap(), 10);
 
         Ok(())
     }
@@ -1185,21 +1252,21 @@ mod tests {
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
-        create_acc(&mut state, from, 1_000_000, 0)?;
+        let acc = create_acc(&mut state, from, 1_000_000, 0)?;
 
         // Insert 100 pending transactions
         for nonce in 0u64..100u64 {
-            pool.insert_transaction(transaction(from, nonce as u8, 1), nonce, false);
+            pool.insert_transaction(transaction(from, nonce as u8, 1), &acc, false);
         }
 
         // Insert 100 queued transactions
         for nonce in 101u64..201u64 {
-            pool.insert_transaction(transaction(from, nonce as u8, 1), 0, false);
+            pool.insert_transaction(transaction(from, nonce as u8, 1), &acc, false);
         }
 
         // Benchmark the preview_content method
         let start = std::time::Instant::now();
-        let content = pool.preview_content(&state)?;
+        let content = pool.preview_content(&state);
         let duration = start.elapsed();
 
         // Verify the results
@@ -1220,21 +1287,21 @@ mod tests {
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
-        create_acc(&mut state, from, 1_000_000, 0)?;
+        let acc = create_acc(&mut state, from, 1_000_000, 0)?;
 
         // Insert 100 pending transactions
         for nonce in 0u64..100u64 {
-            pool.insert_transaction(transaction(from, nonce as u8, 1), nonce, false);
+            pool.insert_transaction(transaction(from, nonce as u8, 1), &acc, false);
         }
 
         // Insert 100 queued transactions
         for nonce in 101u64..201u64 {
-            pool.insert_transaction(transaction(from, nonce as u8, 1), 0, false);
+            pool.insert_transaction(transaction(from, nonce as u8, 1), &acc, false);
         }
 
         // Benchmark the preview_content method
         let start = std::time::Instant::now();
-        let _result = pool.pending_transactions(&state)?;
+        let _result: Vec<_> = pool.pending_transactions_ordered(&state).collect();
         let duration = start.elapsed();
 
         println!(

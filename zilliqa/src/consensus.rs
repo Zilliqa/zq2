@@ -997,7 +997,7 @@ impl Consensus {
 
         self.transaction_pool
             .write()
-            .pending_transaction_count(&account_address, &account_data)
+            .account_pending_transaction_count(&account_address, &account_data)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
