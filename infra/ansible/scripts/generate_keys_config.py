@@ -27,9 +27,10 @@ def load_config(config_path: str) -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 # --- GCP Node Discovery ---
-def discover_gcp_nodes(chain_name: str) -> List[Dict[str, Any]]:
+def discover_gcp_nodes(chain_name: str, project_id: str) -> List[Dict[str, Any]]:
     cmd = [
         'gcloud', 'compute', 'instances', 'list',
+        '--project', project_id,
         '--filter', f'labels.zq2-network={chain_name}',
         '--format', 'json'
     ]
@@ -39,6 +40,7 @@ def discover_gcp_nodes(chain_name: str) -> List[Dict[str, Any]]:
         sys.exit(1)
     instances = json.loads(result.stdout)
     nodes = []
+    print(f"Found {len(instances)} instances")
     for inst in instances:
         node = {
             'project_id': inst['zone'].split('/')[-3],
@@ -204,7 +206,7 @@ if __name__ == "__main__":
     output = {}
 
     # Discover nodes
-    nodes = discover_gcp_nodes(chain_name)
+    nodes = discover_gcp_nodes(chain_name, project_id)
     running_nodes = filter_running_nodes(nodes)
     running_nodes = filter_nodes(running_nodes)
     for node in running_nodes:

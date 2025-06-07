@@ -19,6 +19,7 @@ from secret_key import SecretKey
 def parse_args():
     parser = argparse.ArgumentParser(description='Generate private keys for Zilliqa 2 nodes (GCP)')
     parser.add_argument('config_file', help='Path to network YAML configuration')
+    parser.add_argument('--project-id', required=True, help='GCP project ID')
     parser.add_argument('--select', action='store_true', help='Interactive node selection')
     parser.add_argument('--force', action='store_true', help='Overwrite existing keys')
     parser.add_argument('--dry-run', action='store_true', help='Simulate actions without making any changes')
@@ -32,10 +33,11 @@ def load_config(config_path: str) -> Dict[str, Any]:
     return config
 
 # --- GCP Node Discovery ---
-def discover_gcp_nodes(chain_name: str) -> List[Dict[str, Any]]:
+def discover_gcp_nodes(chain_name: str, project_id: str) -> List[Dict[str, Any]]:
     # Use gcloud CLI to list instances with the correct label
     cmd = [
         'gcloud', 'compute', 'instances', 'list',
+        '--project', project_id,
         '--filter', f'labels.zq2-network={chain_name}',
         '--format', 'json'
     ]
@@ -45,6 +47,7 @@ def discover_gcp_nodes(chain_name: str) -> List[Dict[str, Any]]:
         sys.exit(1)
     instances = json.loads(result.stdout)
     nodes = []
+    print(f"Found {len(instances)} instances")
     for inst in instances:
         node = {
             'project_id': inst['zone'].split('/')[-3],
@@ -237,7 +240,7 @@ if __name__ == "__main__":
     if not chain_name:
         print("Could not determine chain/network name from config.", file=sys.stderr)
         sys.exit(1)
-    nodes = discover_gcp_nodes(chain_name)
+    nodes = discover_gcp_nodes(chain_name, args.project_id)
     nodes = filter_nodes(nodes)
     if not nodes:
         print("No eligible nodes found for key generation.", file=sys.stderr)
