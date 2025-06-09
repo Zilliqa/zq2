@@ -1,0 +1,94 @@
+---
+- name: Install and configure Stats Dashboard
+  hosts: role_apps
+  become: true
+  tags:
+    - install
+    - all
+
+  tasks:
+
+    - name: Extract version tag from stats_dashboard_image
+      set_fact:
+        stats_dashboard_version: "{{ stats_dashboard_image.split(':')[-1] }}"
+
+    - name: Show extracted version
+      debug:
+        var: stats_dashboard_version
+
+    - name: Retrieve stats dashboard key KMS decrypted
+      shell: |
+        gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-stats-dashboard" --keyring="kms-{{ chain_name }}" --location=global --project="{{ kms_project_id }}"
+      register: retrieved_stats_dashboard_key
+      when: enable_kms
+
+    - name: Set fact with stats dashboard key KMS decrypted
+      set_fact:
+        stats_dashboard_key: "{{ retrieved_stats_dashboard_key.stdout }}"
+      when: enable_kms
+
+    - name: Retrieve stats dashboard key
+      shell: |
+        gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard"
+      register: retrieved_stats_dashboard_key
+      when: not enable_kms
+
+    - name: Set fact with stats dashboard key
+      set_fact:
+        stats_dashboard_key: "{{ retrieved_stats_dashboard_key.stdout }}"
+      when: not enable_kms
+
+    - name: Create Stats Dashboard script
+      template:
+        src: templates/stats_dashboard.sh.j2
+        dest: /usr/local/bin/stats_dashboard-{{ stats_dashboard_version }}.sh
+        mode: '0777'
+      vars:
+        stats_dashboard_version: "{{ stats_dashboard_version }}"
+        stats_dashboard_key: "{{ stats_dashboard_key }}"
+      notify:
+        - Restart Stats Dashboard service
+    
+    - name: Force create symlink for stats_dashboard script
+      ansible.builtin.file:
+        src: /usr/local/bin/stats_dashboard-{{ stats_dashboard_version }}.sh
+        dest: /usr/local/bin/stats_dashboard.sh
+        state: link
+        force: true
+      notify:
+        - Restart Stats Dashboard service
+
+    - name: Create Stats Dashboard systemd service
+      template:
+        src: templates/stats_dashboard.service.j2
+        dest: /etc/systemd/system/stats_dashboard.service
+        mode: '0644'
+      notify:
+        - Restart Stats Dashboard service
+    
+    - name: Force create symlink for stats_dashboard service
+      ansible.builtin.file:
+        src: /etc/systemd/system/stats_dashboard.service
+        dest: /etc/systemd/system/multi-user.target.wants/stats_dashboard.service
+        state: link
+        force: true
+      notify:
+        - Restart Stats Dashboard service
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable node service
+      systemd:
+        name: stats_dashboard
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Restart Stats Dashboard service
+      systemd:
+        name: stats_dashboard
+        state: restarted
+        enabled: yes
+        daemon_reload: yes 

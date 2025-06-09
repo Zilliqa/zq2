@@ -1,0 +1,14 @@
+[Unit]
+Description=Zilliqa Node
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/zq2.sh start
+ExecStop=/usr/local/bin/zq2.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/zilliqa.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+#!/bin/bash
+PROCESS_EXPORTER_IMAGE='{{ process_exporter_image }}'
+
+start() {
+    cat > process-exporter.yml << 'EOL'
+process_names:
+  - name: "{{ '{{' }}.Comm{{ '}}' }}"
+    cmdline:
+    - '.+'
+EOL
+    docker rm process-exporter &> /dev/null || echo 0
+    docker run -td -p 9256:9256 --name process-exporter \
+        --net=host --restart=unless-stopped --pull=always \
+        --privileged -v /proc:/host/proc -v `pwd`:/config \
+        ${PROCESS_EXPORTER_IMAGE} \
+        --procfs /host/proc -config.path /config/process-exporter.yml &> /dev/null &
+}
+
+stop() {
+    docker stop process-exporter
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0 
