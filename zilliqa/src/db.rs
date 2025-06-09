@@ -1350,7 +1350,6 @@ impl TrieStorage {
                     .insert(key.to_vec(), value.to_vec());
             }
         }
-
         Ok(())
     }
 }

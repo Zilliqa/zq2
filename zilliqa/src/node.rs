@@ -297,6 +297,10 @@ impl Node {
         Ok(())
     }
 
+    pub fn try_to_apply_transactions(&mut self) -> Result<()> {
+        self.consensus.try_early_proposal_after_txn_batch()
+    }
+
     pub fn handle_request(
         &mut self,
         from: PeerId,

@@ -69,7 +69,7 @@ describe("Block Properties", function () {
   });
 
   it("should emit zero blockhash for current block that's not finalized yet", async function () {
-    const tx = await contract.emitBlockHash(toBeTestedBlockNumber + 1);
+    const tx = await contract.emitBlockHash(toBeTestedBlockNumber + 2);
     await expect(tx).to.emit(contract, "BlockHash").withArgs(ZERO);
   });
 
