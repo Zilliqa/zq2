@@ -593,7 +593,7 @@ impl SignedTransaction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// A [SignedTransaction] which has had the signature verified and the signer recovered. The transaction's hash is also
 /// calculated and cached.
 ///
