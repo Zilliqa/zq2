@@ -27,5 +27,5 @@ persistence_url: ""
 checkpoint_url: ""
 
 # KMS Configuration
-enable_kms: true
+enable_kms: false
 kms_project_id: "{{ 'prj-p-kms-2vduab0g' if project_id.startswith('prj-p') else 'prj-d-kms-tw1xyxbh' }}"

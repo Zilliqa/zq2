@@ -81,7 +81,8 @@ def fetch_secret(secret_name: str, project_id: str) -> str:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"Failed to fetch secret {secret_name}: {result.stderr}")
+        print(f"Failed to fetch secret {secret_name}: {result.stderr}")
+        sys.exit(1)
     return result.stdout.strip()
 
 def decrypt_with_kms(ciphertext_b64: str, project_id: str, chain_name: str, key_name: str) -> str:
