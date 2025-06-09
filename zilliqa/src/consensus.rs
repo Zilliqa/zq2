@@ -16,10 +16,7 @@ use libp2p::PeerId;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    sync::{broadcast, mpsc::UnboundedSender},
-    time::Instant,
-};
+use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
 use crate::{
@@ -1361,10 +1358,6 @@ impl Consensus {
         let mut early_proposal = self.early_proposal.write();
         *early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie, 0));
         self.early_proposal_apply_transactions(self.transaction_pool.write(), early_proposal)?;
-        error!(
-            "BZ view: {} early_proposal_assemble_at assembled",
-            self.get_view()?
-        );
         Ok(())
     }
 
@@ -1374,8 +1367,6 @@ impl Consensus {
         mut pool: RwLockWriteGuard<TransactionPool>,
         mut early_proposal: RwLockWriteGuard<Option<EarlyProposal>>,
     ) -> Result<()> {
-        let fun_start = Instant::now();
-
         if early_proposal.is_none() {
             error!("could not apply transactions to early_proposal because it does not exist");
             return Ok(());
@@ -1391,7 +1382,6 @@ impl Consensus {
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
-        let txn_start_time = Instant::now();
         // Assemble new block with whatever is in the mempool
         while let Some(tx) = pool.best_transaction(&state)? {
             let tx = tx.clone();
@@ -1471,15 +1461,9 @@ impl Consensus {
                 applied_txs.push(tx);
             }
         }
-        error!(
-            "BZ view: {}. txn execution took: {}",
-            proposal.view(),
-            txn_start_time.elapsed().as_millis()
-        );
         std::mem::drop(pool);
 
         let (_, applied_txs, _, _, _) = early_proposal.as_ref().unwrap();
-        let db_write = Instant::now();
         self.db.with_sqlite_tx(|sqlite_tx| {
             for tx in applied_txs {
                 self.db
@@ -1487,18 +1471,6 @@ impl Consensus {
             }
             Ok(())
         })?;
-        error!(
-            "BZ view: {}. txns write to db took: {}",
-            proposal.view(),
-            db_write.elapsed().as_millis()
-        );
-
-        let txs_size = bincode::serialize(&applied_txs)?;
-        error!(
-            "BZ view: {}. txns write size: {} bytes",
-            proposal.view(),
-            txs_size.len()
-        );
 
         // Grab and update early_proposal data in own scope to avoid multiple mutable references to Self
         {
@@ -1513,24 +1485,12 @@ impl Consensus {
             );
 
             // Update proposal with transactions added
-            let state_root_start = Instant::now();
             proposal.header.state_root_hash = state.root_hash()?;
-            error!(
-                "BZ view: {}. state root hash took: {}",
-                proposal.view(),
-                state_root_start.elapsed().as_millis()
-            );
             proposal.header.transactions_root_hash = Hash(transactions_trie.root_hash()?.into());
             proposal.header.receipts_root_hash = Hash(receipts_trie.root_hash()?.into());
             proposal.transactions = applied_transaction_hashes;
             proposal.header.gas_used = proposal.header.gas_limit - gas_left;
         }
-
-        error!(
-            "BZ view: {}. early_proposal_apply_transactions took: {}",
-            proposal.view(),
-            fun_start.elapsed().as_millis()
-        );
 
         // as a future improvement, process the proposal before broadcasting it
         Ok(())
@@ -1544,19 +1504,11 @@ impl Consensus {
             self.get_consensus_timeout_params()?;
 
         if milliseconds_remaining_of_block_time == 0 {
-            error!(
-                "BZ view: {} no more time left, pushing out proposal",
-                self.get_view()?
-            );
             return self.propose_new_block();
         }
 
         // Reset the timeout and wake up again once it has been at least `block_time` since
         // the last view change. At this point we should be ready to produce a new block.
-        error!(
-            "BZ view: {} self.create_next_block_on_timeout = true",
-            self.get_view()?
-        );
         self.create_next_block_on_timeout = true;
         self.reset_timeout.send(
             self.config
