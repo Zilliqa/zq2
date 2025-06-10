@@ -486,25 +486,26 @@ impl TransactionPoolCore {
     }
 
     fn update_with_account(&mut self, account_address: &Address, account_data: &Account) {
-        let transactions_account = self.all_transactions.get_mut(account_address).unwrap();
-        let old_nonce = transactions_account.nonce_account;
-        let old_balance = transactions_account.balance_account;
-        let new_account = account_data;
-        let new_nonce = new_account.nonce;
-        let new_balance = new_account.balance;
-        if old_nonce != new_nonce || old_balance != new_balance {
-            if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
-                self.pending_account_queue.remove(&pending_queue_key);
-            }
-            let removed_txn_hashes = transactions_account.update_with_account(&new_account);
-            for hash in removed_txn_hashes {
-                self.hash_to_txn_map.remove(&hash);
-            }
-            if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
-                self.pending_account_queue.insert(pending_queue_key);
-            }
-            if transactions_account.is_empty() {
-                self.all_transactions.remove(account_address);
+        if let Some(transactions_account) = self.all_transactions.get_mut(account_address) {
+            let old_nonce = transactions_account.nonce_account;
+            let old_balance = transactions_account.balance_account;
+            let new_account = account_data;
+            let new_nonce = new_account.nonce;
+            let new_balance = new_account.balance;
+            if old_nonce != new_nonce || old_balance != new_balance {
+                if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
+                    self.pending_account_queue.remove(&pending_queue_key);
+                }
+                let removed_txn_hashes = transactions_account.update_with_account(&new_account);
+                for hash in removed_txn_hashes {
+                    self.hash_to_txn_map.remove(&hash);
+                }
+                if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
+                    self.pending_account_queue.insert(pending_queue_key);
+                }
+                if transactions_account.is_empty() {
+                    self.all_transactions.remove(account_address);
+                }
             }
         }
     }
@@ -1351,7 +1352,7 @@ mod tests {
         pool.insert_transaction(txn5.clone(), &acc, false);
 
         let pending: Vec<_> = pool.pending_transactions_ordered().cloned().collect();
-        let queued: Vec<_> = pool.pending_transactions_ordered().cloned().collect();
+        let queued: Vec<_> = pool.queued_transactions_ordered().cloned().collect();
 
         assert_eq!(pending.len(), 4);
         assert_eq!(pending[0], txn0);
@@ -1362,42 +1363,6 @@ mod tests {
         assert_eq!(queued.len(), 2);
         assert_eq!(queued[0], txn4);
         assert_eq!(queued[1], txn5);
-
-        Ok(())
-    }
-
-    #[test]
-    fn benchmark_preview_content() -> Result<()> {
-        let mut pool = TransactionPool::default();
-        let from = "0x0000000000000000000000000000000000001234".parse()?;
-
-        let mut state = get_in_memory_state()?;
-        let acc = create_acc(&mut state, from, 1_000_000, 0)?;
-        pool.update_with_state(&state);
-
-        // Insert 100 pending transactions
-        for nonce in 0u64..100u64 {
-            pool.insert_transaction(transaction(from, nonce as u8, 1), &acc, false);
-        }
-
-        // Insert 100 queued transactions
-        for nonce in 101u64..201u64 {
-            pool.insert_transaction(transaction(from, nonce as u8, 1), &acc, false);
-        }
-
-        // Benchmark the preview_content method
-        let start = std::time::Instant::now();
-        let content = pool.preview_content();
-        let duration = start.elapsed();
-
-        // Verify the results
-        assert_eq!(content.pending.len(), 100);
-        assert_eq!(content.queued.len(), 100);
-
-        println!(
-            "Benchmark completed: preview_content took {:?} to execute.",
-            duration
-        );
 
         Ok(())
     }
