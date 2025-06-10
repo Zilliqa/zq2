@@ -192,36 +192,33 @@ impl TransactionsAccount {
             }
         }
     }
+    fn insert_nonced_txn(&mut self, txn: VerifiedTransaction) {
+        assert!(txn.tx.nonce().is_some());
+        let nonce = txn.tx.nonce().unwrap();
+        let gas_price = txn.tx.gas_price_per_evm_gas() as i128;
+        assert!(!self.nonced_transactions.contains_key(&nonce));
+        self.nonced_transactions.insert(nonce, txn);
+        // If it can pend, put it in pending and then pop it again if necessary
+        if nonce == self.nonce_after_pending {
+            self.nonce_after_pending += 1;
+            self.balance_after_pending -= gas_price;
+        }
+        self.maintain();
+    }
+    fn insert_unnonced_txn(&mut self, txn: VerifiedTransaction) {
+        assert!(txn.tx.nonce().is_none());
+        let gas_price = txn.tx.gas_price_per_evm_gas() as i128;
+        // Put it in pending and then pop it again if necessary
+        self.nonceless_transactions_pending
+            .insert((&txn).into(), txn.clone());
+        self.balance_after_pending -= gas_price;
+        self.maintain();
+    }
     fn insert_txn(&mut self, txn: VerifiedTransaction) {
         if txn.tx.nonce().is_some() {
-            let nonce = txn.tx.nonce().unwrap();
-            let gas_price = txn.tx.gas_price_per_evm_gas() as i128;
-            assert!(!self.nonced_transactions.contains_key(&nonce));
-            self.nonced_transactions.insert(nonce, txn);
-            if nonce == self.nonce_after_pending && self.balance_after_pending <= gas_price {
-                self.nonce_after_pending += 1;
-                self.balance_after_pending -= gas_price;
-            }
-            self.maintain();
+            self.insert_nonced_txn(txn);
         } else {
-            let gas_price = txn.tx.gas_price_per_evm_gas();
-            let worst_pending_nonceless = self
-                .nonceless_transactions_pending
-                .first_key_value()
-                .map_or(0, |(_k, v)| v.tx.gas_price_per_evm_gas());
-            let highest_pending_nonced = self
-                .nonced_transactions
-                .get(&(self.nonce_after_pending - 1))
-                .map_or(0, |txn| txn.tx.gas_price_per_evm_gas());
-            if gas_price > worst_pending_nonceless || gas_price > highest_pending_nonced {
-                self.balance_after_pending -= gas_price as i128;
-                self.nonceless_transactions_pending
-                    .insert((&txn).into(), txn);
-                self.maintain();
-            } else {
-                self.nonceless_transactions_queued
-                    .insert((&txn).into(), txn);
-            }
+            self.insert_unnonced_txn(txn);
         }
     }
     fn update_txn(&mut self, new_txn: VerifiedTransaction) {
@@ -1303,31 +1300,37 @@ mod tests {
     #[test]
     fn pending_queued_test() -> Result<()> {
         let mut pool = TransactionPool::default();
-        let from0 = "0x0000000000000000000000000000000000000000".parse()?;
         let from = "0x0000000000000000000000000000000000001234".parse()?;
 
         let mut state = get_in_memory_state()?;
-        let acc0 = create_acc(&mut state, from0, 100, 0)?;
         let acc = create_acc(&mut state, from, 100, 0)?;
 
-        pool.insert_transaction(intershard_transaction(0, 0, 100), &acc0, false);
-        pool.insert_transaction(transaction(from, 0, 1), &acc, false);
-        pool.insert_transaction(transaction(from, 1, 1), &acc, false);
-        pool.insert_transaction(transaction(from, 2, 1), &acc, false);
-        pool.insert_transaction(transaction(from, 3, 200), &acc, false);
-        pool.insert_transaction(transaction(from, 10, 1), &acc, false);
+        let txn0 = intershard_transaction(0, 0, 100);
+        let txn1 = transaction(from, 0, 1);
+        let txn2 = transaction(from, 1, 1);
+        let txn3 = transaction(from, 2, 1);
+        let txn4 = transaction(from, 3, 200);
+        let txn5 = transaction(from, 10, 1);
+
+        pool.insert_transaction(txn0.clone(), &acc, false);
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+        pool.insert_transaction(txn4.clone(), &acc, false);
+        pool.insert_transaction(txn5.clone(), &acc, false);
 
         let pending: Vec<_> = pool.pending_transactions_ordered(&state).cloned().collect();
         let queued: Vec<_> = pool.pending_transactions_ordered(&state).cloned().collect();
 
-        assert_eq!(pending.len(), 3);
-        assert_eq!(pending[0].tx.nonce().unwrap(), 0);
-        assert_eq!(pending[1].tx.nonce().unwrap(), 1);
-        assert_eq!(pending[2].tx.nonce().unwrap(), 2);
+        assert_eq!(pending.len(), 4);
+        assert_eq!(pending[0], txn0);
+        assert_eq!(pending[1], txn1);
+        assert_eq!(pending[2], txn2);
+        assert_eq!(pending[3], txn3);
 
         assert_eq!(queued.len(), 2);
-        assert_eq!(queued[0].tx.nonce().unwrap(), 3);
-        assert_eq!(queued[1].tx.nonce().unwrap(), 10);
+        assert_eq!(queued[0], txn4);
+        assert_eq!(queued[1], txn5);
 
         Ok(())
     }
