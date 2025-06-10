@@ -16,6 +16,7 @@ templatefile() vars:
 - persistence_url, the ZQ2 persistence URL used for recover the network
 - docker_image, the ZQ2 docker image (incl. version)
 - role, the node role: validator or apps
+- enable_kms, a flag to enable the KMS decryption for the keys
 - subdomain, the ZQ2 network domain name
 - log_level, the ZQ2 network service log level
 - project_id, id of the GCP project

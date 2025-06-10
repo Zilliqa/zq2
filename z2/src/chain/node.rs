@@ -909,10 +909,16 @@ impl ChainNode {
         let project_id = &self.machine.project_id;
         let chain_name = &self.chain.name();
         let node_name = &self.machine.name;
+        let enable_kms = if self.chain()?.get_enable_kms()? {
+            "true"
+        } else {
+            "false"
+        };
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
         var_map.insert("docker_image", z2_image);
+        var_map.insert("enable_kms", enable_kms);
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
         var_map.insert("log_level", log_level);
