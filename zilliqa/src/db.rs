@@ -1048,6 +1048,7 @@ impl Db {
                 self.db.lock().unwrap().prepare_cached(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond),)?.query_row([$($key),*], make_block).optional()?
             };
         }
+        // Remember to add to `query_planner_stability_guarantee()` test below
         Ok(match filter {
             BlockFilter::Hash(hash) => {
                 query_block!("block_hash = ?1", hash)
@@ -1434,6 +1435,7 @@ mod tests {
 
         let sql = db.db.lock().unwrap();
 
+        // Check that EXPLAIN works
         // sqlite> EXPLAIN QUERY PLAN SELECT min(height), max(height) FROM blocks;
         //         3|0|0|SCAN blocks USING COVERING INDEX idx_blocks_height
         let qp = sql
@@ -1448,7 +1450,42 @@ mod tests {
             "SCAN blocks USING COVERING INDEX idx_blocks_height".to_string()
         );
 
-        // TODO: ADD MORE TROUBLESOME QUERY TESTS
+        // List of queries to check - it doesn't have to be verbatim, just use the same set of indices i.e. validating assumptions
+        let queries = vec![
+            "SELECT MIN(height) FROM blocks",
+            "SELECT MAX(height) FROM blocks",
+            "SELECT block_hash FROM blocks WHERE view = ?1",
+            "SELECT MAX(height) FROM blocks WHERE is_canonical = 1",
+            "SELECT tx_hash FROM touched_address_index JOIN receipts USING (tx_hash) JOIN blocks USING (block_hash) WHERE address = ?1 ORDER BY blocks.height, receipts.tx_index",
+            "SELECT data FROM transactions WHERE tx_hash = ?1",
+            "SELECT r.block_hash FROM receipts r INNER JOIN blocks b ON r.block_hash = b.block_hash WHERE r.tx_hash = ?1 AND b.is_canonical = TRUE",
+            "SELECT tx_hash FROM receipts WHERE block_hash = ?1",
+            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1",
+            "SELECT 1 FROM blocks WHERE is_canonical = TRUE AND block_hash = ?1",
+            "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1",
+            "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index",
+            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
+            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
+            // TODO: Add more queries
+        ];
+
+        for query in queries {
+            let explain = format!("EXPLAIN QUERY PLAN {query};");
+            println!("{explain}");
+            let plans = sql
+                .prepare(&explain)
+                .unwrap()
+                .raw_query()
+                .mapped(|r| r.get::<_, String>(3))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            for plan in plans {
+                // Check for any SCANs
+                if plan.starts_with("SCAN") {
+                    panic!("SQL Regression '{query}' => {plan}");
+                }
+            }
+        }
     }
 
     #[test]
