@@ -268,6 +268,14 @@ impl Db {
         // increase size of prepared cache
         connection.set_prepared_statement_cache_capacity(128); // default is 16, which is small
 
+        // enable QPSG - https://github.com/Zilliqa/zq2/issues/2870
+        if !connection.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG,
+            true,
+        )? {
+            tracing::warn!("QPSG disabled");
+        }
+
         tracing::info!(
             ?journal_mode,
             ?journal_size_limit,
@@ -1040,6 +1048,7 @@ impl Db {
                 self.db.lock().unwrap().prepare_cached(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond),)?.query_row([$($key),*], make_block).optional()?
             };
         }
+        // Remember to add to `query_planner_stability_guarantee()` test below
         Ok(match filter {
             BlockFilter::Hash(hash) => {
                 query_block!("block_hash = ?1", hash)
@@ -1417,6 +1426,68 @@ mod tests {
 
     use super::*;
     use crate::{crypto::SecretKey, state::State};
+
+    #[test]
+    fn query_planner_stability_guarantee() {
+        let base_path = tempdir().unwrap();
+        let base_path = base_path.path();
+        let db = Db::new(Some(base_path), 0, 1024, None).unwrap();
+
+        let sql = db.db.lock().unwrap();
+
+        // Check that EXPLAIN works
+        // sqlite> EXPLAIN QUERY PLAN SELECT min(height), max(height) FROM blocks;
+        //         3|0|0|SCAN blocks USING COVERING INDEX idx_blocks_height
+        let qp = sql
+            .query_row_and_then(
+                "EXPLAIN QUERY PLAN SELECT min(height), max(height) FROM blocks;",
+                [],
+                |r| r.get::<_, String>(3),
+            )
+            .unwrap();
+        assert_eq!(
+            qp,
+            "SCAN blocks USING COVERING INDEX idx_blocks_height".to_string()
+        );
+
+        // List of queries to check - it doesn't have to be verbatim, just use the same set of indices i.e. validating assumptions
+        let queries = vec![
+            "SELECT MIN(height) FROM blocks",
+            "SELECT MAX(height) FROM blocks",
+            "SELECT block_hash FROM blocks WHERE view = ?1",
+            "SELECT MAX(height) FROM blocks WHERE is_canonical = 1",
+            "SELECT tx_hash FROM touched_address_index JOIN receipts USING (tx_hash) JOIN blocks USING (block_hash) WHERE address = ?1 ORDER BY blocks.height, receipts.tx_index",
+            "SELECT data FROM transactions WHERE tx_hash = ?1",
+            "SELECT r.block_hash FROM receipts r INNER JOIN blocks b ON r.block_hash = b.block_hash WHERE r.tx_hash = ?1 AND b.is_canonical = TRUE",
+            "SELECT tx_hash FROM receipts WHERE block_hash = ?1",
+            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = ?1",
+            "SELECT 1 FROM blocks WHERE is_canonical = TRUE AND block_hash = ?1",
+            "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1",
+            "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index",
+            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
+            "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
+            // TODO: Add more queries
+        ];
+
+        for query in queries {
+            let explain = format!("EXPLAIN QUERY PLAN {query};");
+            let plans = sql
+                .prepare(&explain)
+                .unwrap()
+                .raw_query()
+                .mapped(|r| r.get::<_, String>(3))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert!(!plans.is_empty(), "{explain}");
+            for plan in plans {
+                assert!(!plan.is_empty(), "{explain}");
+                // Check for any SCANs
+                if plan.starts_with("SCAN") {
+                    panic!("SQL regression {query} => {plan}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn checkpoint_export_import() {
