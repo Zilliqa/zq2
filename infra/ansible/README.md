@@ -117,9 +117,6 @@ python scripts/generate_stats_key.py network.yaml --project-id=your-project
 
 # Generate genesis key
 python scripts/generate_genesis_key.py network.yaml --project-id=your-project
-
-# Generate key configuration
-python scripts/generate_keys_config.py network.yaml --project-id=your-project
 ```
 
 for example:
@@ -131,8 +128,6 @@ python3 scripts/generate_private_keys.py --project-id prj-d-zq2-devnet-c83bkpsd 
 python3 scripts/generate_stats_key.py --project-id prj-d-zq2-devnet-c83bkpsd ../../zq2-infratest.yaml
 
 python3 scripts/generate_genesis_key.py --project-id prj-d-zq2-devnet-c83bkpsd ../../zq2-infratest.yaml
-
-python3 scripts/generate_keys_config.py --project-id prj-d-zq2-devnet-c83bkpsd ../../zq2-infratest.yaml
 ```
 
 ### 2. Node Deployment

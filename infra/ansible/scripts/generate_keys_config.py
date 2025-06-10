@@ -245,19 +245,19 @@ if __name__ == "__main__":
         with open(args.output, 'w') as f:
             json.dump(output, f, indent=2)
         print(f"Wrote keys config to {args.output}")
-
-    key_hex = base64.b64encode(json.dumps(output).encode()).decode()
-    secret_name = f"{chain_name}-keys-config"
-    
-    # Store secret
-    if not create_secret_in_gcp(secret_name, key_hex, project_id, chain_name, True, dry_run=args.dry_run):
-        print("Failed to create secret.", file=sys.stderr)
-        sys.exit(1)
-
-    for node in nodes:
-        # Grant access
-        if not grant_secret_access(secret_name, args.project_id, node.get('service_account'), dry_run=args.dry_run):
-            print("Failed to grant access to secret.", file=sys.stderr)
+    else:
+        key_hex = base64.b64encode(json.dumps(output).encode()).decode()
+        secret_name = f"{chain_name}-keys-config"
+        
+        # Store secret
+        if not create_secret_in_gcp(secret_name, key_hex, project_id, chain_name, True, dry_run=args.dry_run):
+            print("Failed to create secret.", file=sys.stderr)
             sys.exit(1)
 
-    print(f"Successfully generated and stored keys config as '{secret_name}'")
+        for node in nodes:
+            # Grant access
+            if not grant_secret_access(secret_name, args.project_id, node.get('service_account'), dry_run=args.dry_run):
+                print("Failed to grant access to secret.", file=sys.stderr)
+                sys.exit(1)
+
+        print(f"Successfully generated and stored keys config as '{secret_name}'")
