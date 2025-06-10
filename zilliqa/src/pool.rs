@@ -147,8 +147,9 @@ impl TransactionsAccount {
             .first_key_value()
             .map(|(_k, v)| v)
     }
-    // Common code for recalculating after changes
+    /// Update pending transactions after changes
     fn maintain(&mut self) {
+        let dbg_total_txns_before = self.get_transaction_count();
         if self.balance_after_pending >= 0 {
             // Add transactions to pending queue if there's balance and they're valid
             loop {
@@ -191,6 +192,7 @@ impl TransactionsAccount {
                 }
             }
         }
+        assert_eq!(dbg_total_txns_before, self.get_transaction_count());
     }
     fn insert_nonced_txn(&mut self, txn: VerifiedTransaction) {
         assert!(txn.tx.nonce().is_some());
@@ -282,6 +284,14 @@ impl TransactionsAccount {
             + self.nonceless_transactions_queued.len()
             + self.nonceless_transactions_pending.len()
     }
+    fn is_empty(&self) -> bool {
+        self.nonceless_transactions_pending.is_empty()
+            && self.nonced_transactions.is_empty()
+            && self.nonceless_transactions_queued.is_empty()
+    }
+    fn has_pending_transactions(&self) -> bool {
+        self.get_pending_transaction_count() > 0
+    }
     fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
         self.get_pending().next()
     }
@@ -344,13 +354,13 @@ impl TransactionsAccount {
         self.balance_after_pending += balance_delta as i128;
     }
     // Must be followed by maintain()
-    fn update_nonce(&mut self, new_nonce: u64) {
+    fn update_nonce(&mut self, new_nonce: u64) -> Vec<Hash> {
         assert!(new_nonce >= self.nonce_account);
-        self.complete_txns_below_nonce(new_nonce);
+        self.complete_txns_below_nonce(new_nonce)
     }
-    fn update_with_account(&mut self, account: &Account) {
-        self.update_nonce(account.nonce);
+    fn update_with_account(&mut self, account: &Account) -> Vec<Hash> {
         self.update_balance(account.balance);
+        self.update_nonce(account.nonce)
     }
     fn get_pending_or_queued(&self, txn: &VerifiedTransaction) -> Option<PendingOrQueued> {
         assert!(txn.signer == self.address);
@@ -390,28 +400,37 @@ impl TransactionsAccount {
         }
     }
 
-    fn mark_executed(&mut self, txn: &VerifiedTransaction) {
+    fn mark_executed(&mut self, txn: &VerifiedTransaction) -> Vec<Hash> {
         if let Some(nonce) = txn.tx.nonce() {
-            self.complete_txns_below_nonce(nonce + 1);
+            let removed_txn_hashes = self.complete_txns_below_nonce(nonce + 1);
             self.maintain();
+            return removed_txn_hashes;
         } else {
             if let Some(txn) = self.nonceless_transactions_pending.remove(&txn.into()) {
                 self.balance_after_pending += txn.tx.gas_price_per_evm_gas() as i128;
-                self.maintain()
+                self.maintain();
+                return vec![txn.hash];
             } else {
                 self.nonceless_transactions_queued.remove(&txn.into());
+                return vec![txn.hash];
             }
         }
     }
     /// Remove all transactions with nonces less than to the given nonce
     /// Must be followed by maintain()
-    fn complete_txns_below_nonce(&mut self, nonce: u64) {
+    fn complete_txns_below_nonce(&mut self, nonce: u64) -> Vec<Hash> {
         // Optimisation for when there's nothing to do
         if nonce == self.nonce_account {
-            return;
+            return Vec::new();
         }
         // split the transactions into ones to keep and ones to discard (which are annoyingly returned the wrong way round)
         let transactions_to_retain = self.nonced_transactions.split_off(&(nonce));
+        // Get removed transaction hashes to return
+        let removed_txn_hashes = self
+            .nonced_transactions
+            .values()
+            .map(|tx| tx.hash)
+            .collect();
         // discard transactions which were queued but now aren't
         // since we only need to adjust for previously pending transactions
         self.nonced_transactions
@@ -425,6 +444,8 @@ impl TransactionsAccount {
         // put the counters right again
         self.nonce_after_pending = std::cmp::max(self.nonce_after_pending, nonce);
         self.nonce_account = std::cmp::max(self.nonce_account, nonce);
+
+        return removed_txn_hashes;
     }
 }
 
@@ -450,12 +471,16 @@ impl TransactionPoolCore {
                 if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                     self.pending_account_queue.remove(&pending_queue_key);
                 }
-                transactions_account.update_with_account(&new_account);
+                let removed_txn_hashes = transactions_account.update_with_account(&new_account);
+                for hash in removed_txn_hashes {
+                    self.hash_to_txn_map.remove(&hash);
+                }
                 if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                     self.pending_account_queue.insert(pending_queue_key);
                 }
             }
         }
+        self.all_transactions.retain(|_k, v| !v.is_empty());
     }
 
     fn update_with_account(&mut self, account_address: &Address, account_data: &Account) {
@@ -469,9 +494,15 @@ impl TransactionPoolCore {
             if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                 self.pending_account_queue.remove(&pending_queue_key);
             }
-            transactions_account.update_with_account(&new_account);
+            let removed_txn_hashes = transactions_account.update_with_account(&new_account);
+            for hash in removed_txn_hashes {
+                self.hash_to_txn_map.remove(&hash);
+            }
             if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                 self.pending_account_queue.insert(pending_queue_key);
+            }
+            if transactions_account.is_empty() {
+                self.all_transactions.remove(account_address);
             }
         }
     }
@@ -654,14 +685,11 @@ impl TransactionPoolCore {
         &mut self,
         predicate: impl Fn(&VerifiedTransaction) -> bool,
     ) -> Option<VerifiedTransaction> {
-        let best_account_key = match self.pending_account_queue.last() {
-            Some(key) => key,
-            None => return None,
-        };
+        let best_account_key = self.pending_account_queue.last().cloned()?;
 
         let transactions_account = self
             .all_transactions
-            .get_mut(&best_account_key.address)
+            .get_mut(&best_account_key.address.clone())
             .unwrap();
 
         let old_pending_queue_key = transactions_account.get_pending_queue_key();
@@ -673,6 +701,9 @@ impl TransactionPoolCore {
             if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                 self.pending_account_queue.insert(pending_queue_key);
             }
+            if transactions_account.is_empty() {
+                self.all_transactions.remove(&best_account_key.address);
+            }
             self.hash_to_txn_map.remove(&txn.hash);
         }
         result
@@ -680,13 +711,18 @@ impl TransactionPoolCore {
 
     pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
         let address = txn.signer;
-        self.hash_to_txn_map.remove(&txn.hash);
         if let Some(account) = self.all_transactions.get_mut(&address) {
             self.pending_account_queue
                 .remove(&account.get_pending_queue_key().unwrap());
-            account.mark_executed(txn);
+            let removed_txn_hashes = account.mark_executed(txn);
+            for hash in removed_txn_hashes {
+                self.hash_to_txn_map.remove(&hash);
+            }
             if let Some(key) = account.get_pending_queue_key() {
                 self.pending_account_queue.insert(key);
+            }
+            if account.is_empty() {
+                self.all_transactions.remove(&address);
             }
         }
     }
@@ -728,8 +764,8 @@ impl TransactionPool {
     pub fn update_with_account(&mut self, account_address: &Address, account_data: &Account) {
         self.core.update_with_account(account_address, account_data);
     }
-    pub fn best_transaction(&self) -> Result<Option<&VerifiedTransaction>> {
-        Ok(self.core.peek_best_txn())
+    pub fn best_transaction(&self) -> Option<&VerifiedTransaction> {
+        self.core.peek_best_txn()
     }
 
     pub fn pending_transactions_ordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
@@ -1104,13 +1140,13 @@ mod tests {
         pool.insert_transaction(transaction(from, 1, 1), &acc, false);
 
         pool.update_with_state(&state);
-        let tx = pool.best_transaction()?;
+        let tx = pool.best_transaction();
         assert_eq!(tx, None);
 
         pool.insert_transaction(transaction(from, 2, 2), &acc, false);
         pool.insert_transaction(transaction(from, 0, 0), &acc, false);
 
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction().unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
         pool.mark_executed(&tx);
         state.mutate_account(from, |acc| {
@@ -1119,7 +1155,7 @@ mod tests {
         })?;
         pool.update_with_state(&state);
 
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction().unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 1);
         pool.mark_executed(&tx);
         state.mutate_account(from, |acc| {
@@ -1128,7 +1164,7 @@ mod tests {
         })?;
         pool.update_with_state(&state);
 
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction().unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 2);
         pool.mark_executed(&tx);
         state.mutate_account(from, |acc| {
@@ -1160,7 +1196,7 @@ mod tests {
         }
 
         for i in 0..COUNT {
-            let tx = pool.best_transaction()?.unwrap().clone();
+            let tx = pool.best_transaction().unwrap().clone();
             assert_eq!(tx.tx.nonce().unwrap(), i);
             pool.mark_executed(&tx);
             state.mutate_account(from, |acc| {
@@ -1194,22 +1230,22 @@ mod tests {
         pool.insert_transaction(intershard_transaction(0, 1, 5), &acc0, false);
         assert_eq!(pool.transaction_count(), 5);
 
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction().unwrap().clone();
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 5);
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction().unwrap().clone();
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 3);
 
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction().unwrap().clone();
 
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 2);
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction().unwrap().clone();
 
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 1);
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction()?.unwrap().clone();
+        let tx = pool.best_transaction().unwrap().clone();
 
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 0);
         pool.mark_executed(&tx);
@@ -1237,7 +1273,7 @@ mod tests {
         })?;
         pool.update_with_state(&state);
 
-        assert_eq!(pool.best_transaction()?.unwrap().tx.nonce().unwrap(), 1);
+        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 1);
         Ok(())
     }
 
@@ -1253,7 +1289,7 @@ mod tests {
         pool.insert_transaction(transaction(from, 0, 1), &acc, false);
         pool.insert_transaction(transaction(from, 1, 200), &acc, false);
 
-        assert_eq!(pool.best_transaction()?.unwrap().tx.nonce().unwrap(), 0);
+        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 0);
         pool.mark_executed(&transaction(from, 0, 1));
         state.mutate_account(from, |acc| {
             acc.nonce += 1;
@@ -1262,7 +1298,7 @@ mod tests {
         pool.update_with_state(&state);
 
         // Sender has insufficient funds at this point
-        assert_eq!(pool.best_transaction()?, None);
+        assert_eq!(pool.best_transaction(), None);
 
         // Increase funds of sender to satisfy txn fee
         let mut acc = state.must_get_account(from);
@@ -1270,7 +1306,7 @@ mod tests {
         state.save_account(from, acc)?;
         pool.update_with_state(&state);
 
-        assert_eq!(pool.best_transaction()?.unwrap().tx.nonce().unwrap(), 1);
+        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 1);
         Ok(())
     }
 
