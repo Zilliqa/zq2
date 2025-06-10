@@ -64,7 +64,7 @@ infra/
 │   │   ├── all.yml              # Global variables
 │   │   └── network_*/           # Network-specific variables
 │   │
-│   ├── inventory_gcp.yml      # GCP inventory configuration
+│   ├── inventory.gcp.yml      # GCP inventory configuration
 │   └── ansible.cfg            # Ansible configuration
 │
 ├── scripts/                   # Python scripts
@@ -140,19 +140,19 @@ python3 scripts/generate_keys_config.py --project-id prj-d-zq2-devnet-c83bkpsd .
 Deploy all the nodes:
 
 ```bash
-ansible-playbook -i inventory_gcp.yml -l network_zq2_infratest,localhost playbooks/node_provision.yml
+ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/node_provision.yml
 ```
 
 ### 3. (Alternative) Deploy single components, for example:
 ```bash
 # Install monitoring
-ansible-playbook -i inventory_gcp.yml -l network_zq2_infratest,localhost playbooks/install_monitoring.yml
+ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/install_monitoring.yml
 
 # Install block explorer
-ansible-playbook -i inventory_gcp.yml -l network_zq2_infratest,localhost playbooks/install_otterscan.yml
+ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/install_otterscan.yml
 
 # Install faucet
-ansible-playbook -i inventory_gcp.yml -l network_zq2_infratest,localhost playbooks/install_spout.yml
+ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/install_spout.yml
 ```
 
 ## Network Management
@@ -161,7 +161,7 @@ ansible-playbook -i inventory_gcp.yml -l network_zq2_infratest,localhost playboo
 1. Update inventory:
 ```bash
 # Print the inventory as list
-ansible-inventory -i inventory_gcp.yml --list 
+ansible-inventory -i inventory.gcp.yml --list 
 
 # Print the inventory as graph
 ansible-inventory -i inventory.gcp.yml --graph
@@ -169,13 +169,13 @@ ansible-inventory -i inventory.gcp.yml --graph
 
 2. Deploy node:
 ```bash
-ansible-playbook -i inventory_gcp.yml -l network_zq2_infratest,localhost playbooks/install_zilliqa.yml --limit role_validator
+ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/install_zilliqa.yml --limit role_validator
 ```
 
 ### Updating Nodes
 ```bash
 # Update node software
-ansible-playbook -i inventory_gcp.yml -l network_zq2_infratest,localhost playbooks/install_zilliqa.yml --limit role_validator \
+ansible-playbook -i inventory.gcp.yml -l network_zq2_infratest,localhost playbooks/install_zilliqa.yml --limit role_validator \
   -e "zq2_image=asia-docker.pkg.dev/your-project/zq2:new-version"
 ```
 

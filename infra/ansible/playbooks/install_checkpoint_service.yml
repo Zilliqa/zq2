@@ -1,0 +1,60 @@
+---
+- name: Install and configure Checkpoints
+  hosts: role_checkpoint
+  become: true
+  tags:
+    - install
+    - all
+
+  tasks:
+
+    - name: Create Checkpoints script
+      template:
+        src: templates/checkpoints.py.j2
+        dest: /usr/local/bin/checkpoints.py
+        mode: '0777'
+      notify:
+        - Restart Checkpoints timer
+
+    - name: Create Checkpoints systemd service
+      template:
+        src: templates/checkpoints.service.j2
+        dest: /etc/systemd/system/checkpoints.service
+        mode: '0644'
+      notify:
+        - Restart Checkpoints timer
+
+    - name: Create Checkpoints systemd timer
+      template:
+        src: templates/checkpoints.timer.j2
+        dest: /etc/systemd/system/checkpoints.timer
+        mode: '0644'
+      notify:
+        - Restart Checkpoints timer
+    
+    - name: Force create symlink for checkpoints timer
+      ansible.builtin.file:
+        src: /etc/systemd/system/checkpoints.timer
+        dest: /etc/systemd/system/timers.target.wants/checkpoints.timer
+        state: link
+        force: true
+      notify:
+        - Restart Checkpoints timer
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable checkpoints timer
+      systemd:
+        name: checkpoints.timer
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Restart Checkpoints timer
+      systemd:
+        name: checkpoints.timer
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
