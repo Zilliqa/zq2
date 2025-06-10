@@ -223,7 +223,8 @@ impl TransactionsAccount {
             self.insert_unnonced_txn(txn);
         }
     }
-    fn update_txn(&mut self, new_txn: VerifiedTransaction) {
+    /// Returns hash of updated transaction
+    fn update_txn(&mut self, new_txn: VerifiedTransaction) -> Option<Hash> {
         if let Some(nonce) = new_txn.tx.nonce() {
             let new_gas_price = new_txn.tx.gas_price_per_evm_gas() as i128;
             assert!(self.nonced_transactions.contains_key(&nonce));
@@ -233,6 +234,7 @@ impl TransactionsAccount {
                     new_gas_price - old_txn.tx.gas_price_per_evm_gas() as i128;
             }
             self.maintain();
+            return Some(old_txn.hash);
         } else {
             unreachable!("Cannot update transaction without nonce")
         }
@@ -688,7 +690,9 @@ impl TransactionPoolCore {
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.remove(&pending_queue_key);
         }
-        transactions_account.update_txn(txn);
+        let old_hash = transactions_account.update_txn(txn.clone()).unwrap();
+        self.hash_to_txn_map.remove(&old_hash);
+        self.hash_to_txn_map.insert(txn.hash, txn);
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
@@ -872,7 +876,7 @@ impl TransactionPool {
         self.core.queued_transactions_ordered()
     }
 
-    pub fn get_transaction(&mut self, hash: &Hash) -> Option<&VerifiedTransaction> {
+    pub fn get_transaction(&self, hash: &Hash) -> Option<&VerifiedTransaction> {
         self.core.get_transaction_by_hash(hash)
     }
 

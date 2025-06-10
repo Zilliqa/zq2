@@ -1990,17 +1990,10 @@ impl Consensus {
     }
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
-        Ok(self
-            .db
-            .get_transaction(&hash)?
-            .map(|tx| tx.verify())
-            .transpose()?
-            .or_else(|| {
-                self.transaction_pool
-                    .write()
-                    .get_transaction(&hash)
-                    .cloned()
-            }))
+        Ok(match self.db.get_transaction(&hash)? {
+            Some(tx) => Some(tx.verify()?),
+            None => self.transaction_pool.read().get_transaction(&hash).cloned(),
+        })
     }
 
     pub fn get_transaction_receipt(&self, hash: &Hash) -> Result<Option<TransactionReceipt>> {
