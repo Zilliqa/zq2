@@ -1063,12 +1063,12 @@ mod tests {
         transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
     };
 
-    fn transaction(from_addr: Address, nonce: u8, gas_price: u128) -> VerifiedTransaction {
+    fn transaction(from_addr: Address, nonce: u64, gas_price: u128) -> VerifiedTransaction {
         VerifiedTransaction {
             tx: SignedTransaction::Legacy {
                 tx: TxLegacy {
                     chain_id: Some(0),
-                    nonce: nonce as u64,
+                    nonce,
                     gas_price,
                     gas_limit: 1,
                     to: TxKind::Create,
@@ -1080,7 +1080,7 @@ mod tests {
             signer: from_addr,
             hash: Hash::builder()
                 .with(from_addr.as_slice())
-                .with([nonce])
+                .with(nonce.to_le_bytes())
                 .finalize(),
         }
     }
@@ -1312,7 +1312,7 @@ mod tests {
         nonces.shuffle(&mut rng);
 
         for i in 0..COUNT {
-            pool.insert_transaction(transaction(from, nonces[i as usize] as u8, 3), &acc, false);
+            pool.insert_transaction(transaction(from, nonces[i as usize], 3), &acc, false);
         }
 
         for i in 0..COUNT {
@@ -1480,12 +1480,12 @@ mod tests {
 
         // Insert 100 pending transactions
         for nonce in 0u64..100u64 {
-            pool.insert_transaction(transaction(from, nonce as u8, 1), &acc, false);
+            pool.insert_transaction(transaction(from, nonce, 1), &acc, false);
         }
 
         // Insert 100 queued transactions
         for nonce in 101u64..201u64 {
-            pool.insert_transaction(transaction(from, nonce as u8, 1), &acc, false);
+            pool.insert_transaction(transaction(from, nonce, 1), &acc, false);
         }
 
         // Benchmark the preview_content method
@@ -2231,7 +2231,7 @@ mod tests {
         // Insert 1000 transactions per account in ascending nonce order
         for (addr, acc) in &accounts {
             for nonce in 0..1000 {
-                let txn = transaction(*addr, nonce as u8, 10);
+                let txn = transaction(*addr, nonce, 10);
                 pool.insert_transaction(txn, acc, false);
             }
         }
@@ -2267,7 +2267,7 @@ mod tests {
         // Insert 1000 transactions per account in descending nonce order
         for (addr, acc) in &accounts {
             for nonce in (0..1000).rev() {
-                let txn = transaction(*addr, nonce as u8, 10);
+                let txn = transaction(*addr, nonce, 10);
                 pool.insert_transaction(txn, acc, false);
             }
         }
@@ -2301,7 +2301,7 @@ mod tests {
         // Insert transactions
         for (addr, acc) in &accounts {
             for nonce in 0..1000 {
-                let txn = transaction(*addr, nonce as u8, 10);
+                let txn = transaction(*addr, nonce, 10);
                 pool.insert_transaction(txn, acc, false);
             }
         }
