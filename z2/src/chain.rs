@@ -136,7 +136,7 @@ pub enum Chain {
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
             log_level = "zilliqa=trace",
             enable_faucet = "false",
-            enable_kms = "true"
+            enable_kms = "false"
         )
     )]
     Zq2Mainnet,
