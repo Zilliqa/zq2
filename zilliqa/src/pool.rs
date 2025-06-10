@@ -1042,6 +1042,7 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
     use std::{path::PathBuf, sync::Arc};
 
     use alloy::{
@@ -2208,6 +2209,137 @@ mod tests {
         assert!(pool.get_transaction(&txn2_acc1.hash).is_some());
         assert!(pool.get_transaction(&txn1_acc2.hash).is_none());
         assert!(pool.get_transaction(&txn2_acc2.hash).is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn pool_benchmark_insert_ascending_nonces() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let mut state = get_in_memory_state()?;
+
+        // Create 1000 accounts
+        let mut accounts = Vec::new();
+        for i in 0..1000 {
+            let addr: Address = format!("0x{:040x}", i).parse()?;
+            let acc = create_acc(&mut state, addr, 1_000_000, 0)?;
+            accounts.push((addr, acc));
+        }
+
+        let start = Instant::now();
+
+        // Insert 1000 transactions per account in ascending nonce order
+        for (addr, acc) in &accounts {
+            for nonce in 0..1000 {
+                let txn = transaction(*addr, nonce as u8, 10);
+                pool.insert_transaction(txn, acc, false);
+            }
+        }
+
+        let duration = start.elapsed();
+        println!(
+            "NEW: Insert 1000x1000 transactions (ascending nonces) took {:?}",
+            duration
+        );
+        println!(
+            "NEW: Total transactions in pool: {}",
+            pool.transaction_count()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn pool_benchmark_insert_descending_nonces() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let mut state = get_in_memory_state()?;
+
+        // Create 1000 accounts
+        let mut accounts = Vec::new();
+        for i in 0..1000 {
+            let addr: Address = format!("0x{:040x}", i).parse()?;
+            let acc = create_acc(&mut state, addr, 1_000_000, 0)?;
+            accounts.push((addr, acc));
+        }
+
+        let start = Instant::now();
+
+        // Insert 1000 transactions per account in descending nonce order
+        for (addr, acc) in &accounts {
+            for nonce in (0..1000).rev() {
+                let txn = transaction(*addr, nonce as u8, 10);
+                pool.insert_transaction(txn, acc, false);
+            }
+        }
+
+        let duration = start.elapsed();
+        println!(
+            "NEW: Insert 1000x1000 transactions (descending nonces) took {:?}",
+            duration
+        );
+        println!(
+            "NEW: Total transactions in pool: {}",
+            pool.transaction_count()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn pool_benchmark_operations_on_large_pool() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let mut state = get_in_memory_state()?;
+
+        // Create 1000 accounts with 1000 transactions each
+        let mut accounts = Vec::new();
+        for i in 0..1000 {
+            let addr: Address = format!("0x{:040x}", i).parse()?;
+            let acc = create_acc(&mut state, addr, 1_000_000, 0)?;
+            accounts.push((addr, acc));
+        }
+
+        // Insert transactions
+        for (addr, acc) in &accounts {
+            for nonce in 0..1000 {
+                let txn = transaction(*addr, nonce as u8, 10);
+                pool.insert_transaction(txn, acc, false);
+            }
+        }
+
+        println!(
+            "NEW: Pool setup complete with {} transactions",
+            pool.transaction_count()
+        );
+
+        // Benchmark getting all pending transactions 1000 times
+        let start = Instant::now();
+        for _ in 0..1000 {
+            let _pending: Vec<_> = pool.pending_transactions_ordered().collect();
+        }
+        let duration = start.elapsed();
+        println!(
+            "NEW: Get all pending transactions 1000 times took {:?}",
+            duration
+        );
+
+        // Benchmark getting pending transaction count 1000 times
+        let start = Instant::now();
+        for _ in 0..1000 {
+            let _count = pool.pending_transaction_count();
+        }
+        let duration = start.elapsed();
+        println!(
+            "NEW: Get pending transaction count 1000 times took {:?}",
+            duration
+        );
+
+        // Benchmark getting best transaction 1000 times
+        let start = Instant::now();
+        for _ in 0..1000 {
+            let _best = pool.best_transaction();
+        }
+        let duration = start.elapsed();
+        println!("NEW: Get best transaction 1000 times took {:?}", duration);
 
         Ok(())
     }
