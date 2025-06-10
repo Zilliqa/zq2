@@ -348,14 +348,9 @@ impl TransactionsAccount {
         assert!(new_nonce > self.nonce_account);
         self.complete_txns_below_nonce(new_nonce);
     }
-    fn update_nonce_and_balance(&mut self, new_nonce: u64, new_balance: u128) {
-        if new_balance != self.balance_account {
-            self.update_balance(new_balance);
-        }
-        if new_nonce > self.nonce_account {
-            self.update_nonce(new_nonce);
-        }
-        self.maintain();
+    fn update_with_account(&mut self, account: &Account) {
+        self.update_nonce(account.nonce);
+        self.update_balance(account.balance);
     }
     fn get_pending_or_queued(&self, txn: &VerifiedTransaction) -> Option<PendingOrQueued> {
         assert!(txn.signer == self.address);
@@ -455,7 +450,7 @@ impl TransactionPoolCore {
                 if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                     self.pending_account_queue.remove(&pending_queue_key);
                 }
-                transactions_account.update_nonce_and_balance(new_nonce, new_balance);
+                transactions_account.update_with_account(&new_account);
                 if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                     self.pending_account_queue.insert(pending_queue_key);
                 }
@@ -474,7 +469,7 @@ impl TransactionPoolCore {
             if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                 self.pending_account_queue.remove(&pending_queue_key);
             }
-            transactions_account.update_nonce_and_balance(new_nonce, new_balance);
+            transactions_account.update_with_account(&new_account);
             if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                 self.pending_account_queue.insert(pending_queue_key);
             }
@@ -590,6 +585,7 @@ impl TransactionPoolCore {
             self.pending_account_queue.remove(&pending_queue_key);
         }
         transactions_account.insert_txn(txn.clone());
+        transactions_account.update_with_account(account);
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
@@ -726,24 +722,21 @@ pub struct TxPoolStatus {
 }
 
 impl TransactionPool {
-    pub fn best_transaction(&mut self, state: &State) -> Result<Option<&VerifiedTransaction>> {
+    pub fn update_with_state(&mut self, state: &State) {
         self.core.update_with_state(state);
+    }
+    pub fn update_with_account(&mut self, account_address: &Address, account_data: &Account) {
+        self.core.update_with_account(account_address, account_data);
+    }
+    pub fn best_transaction(&self) -> Result<Option<&VerifiedTransaction>> {
         Ok(self.core.peek_best_txn())
     }
 
-    pub fn pending_transactions_ordered(
-        &mut self,
-        state: &State,
-    ) -> impl Iterator<Item = &VerifiedTransaction> {
-        self.core.update_with_state(state);
+    pub fn pending_transactions_ordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
         self.core.pending_transactions_ordered()
     }
 
-    pub fn queued_transactions_ordered(
-        &mut self,
-        state: &State,
-    ) -> impl Iterator<Item = &VerifiedTransaction> {
-        self.core.update_with_state(state);
+    pub fn queued_transactions_ordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
         self.core.queued_transactions_ordered()
     }
 
@@ -754,59 +747,42 @@ impl TransactionPool {
     /// Returns whether the transaction is pending or queued
     /// The result is not guaranteed to be in any particular order
     pub fn get_pending_or_queued(
-        &mut self,
-        state: &State,
+        &self,
         txn: &VerifiedTransaction,
     ) -> Result<Option<PendingOrQueued>> {
-        self.core.update_with_state(state);
         Ok(self.core.get_pending_or_queued(txn))
     }
 
-    pub fn preview_content(&mut self, state: &State) -> TxPoolContent {
-        self.core.update_with_state(state);
+    pub fn preview_content(&self) -> TxPoolContent {
         self.core.preview_content()
     }
 
-    pub fn preview_content_from(&mut self, state: &State, address: &Address) -> TxPoolContentFrom {
-        self.core.update_with_state(state);
+    pub fn preview_content_from(&self, address: &Address) -> TxPoolContentFrom {
         self.core.preview_content_from(address)
     }
 
-    pub fn preview_status(&mut self, state: &State) -> TxPoolStatus {
-        self.core.update_with_state(state);
-        let pending_count = self.pending_transaction_count(state);
-        let total_count = self.transaction_count(state);
+    pub fn preview_status(&self) -> TxPoolStatus {
+        let pending_count = self.pending_transaction_count();
+        let total_count = self.transaction_count();
         TxPoolStatus {
             pending: pending_count,
             queued: total_count - pending_count,
         }
     }
 
-    pub fn account_pending_transaction_count(
-        &mut self,
-        account_address: &Address,
-        account_data: &Account,
-    ) -> u64 {
-        self.core.update_with_account(account_address, account_data);
+    pub fn account_pending_transaction_count(&self, account_address: &Address) -> u64 {
         self.core.account_pending_transaction_count(account_address)
     }
 
-    pub fn account_total_transaction_count(
-        &mut self,
-        account_address: &Address,
-        account_data: &Account,
-    ) -> u64 {
-        self.core.update_with_account(account_address, account_data);
+    pub fn account_total_transaction_count(&self, account_address: &Address) -> u64 {
         self.core.account_transaction_count(account_address)
     }
 
-    pub fn pending_transaction_count(&mut self, state: &State) -> u64 {
-        self.core.update_with_state(state);
+    pub fn pending_transaction_count(&self) -> u64 {
         self.core.pending_transaction_count()
     }
 
-    pub fn transaction_count(&mut self, state: &State) -> u64 {
-        self.core.update_with_state(state);
+    pub fn transaction_count(&self) -> u64 {
         self.core.transaction_count()
     }
 

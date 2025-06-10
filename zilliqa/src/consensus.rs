@@ -970,34 +970,37 @@ impl Consensus {
 
     pub fn txpool_content(&mut self) -> TxPoolContent {
         let mut pool = self.transaction_pool.write();
-        pool.preview_content(&self.state)
+        pool.update_with_state(&self.state);
+        pool.preview_content()
     }
 
     pub fn txpool_content_from(&mut self, address: &Address) -> TxPoolContentFrom {
         let mut pool = self.transaction_pool.write();
-        pool.preview_content_from(&self.state, address)
+        pool.update_with_state(&self.state);
+        pool.preview_content_from(address)
     }
 
     pub fn txpool_status(&mut self) -> TxPoolStatus {
         let mut pool = self.transaction_pool.write();
-        pool.preview_status(&self.state)
+        pool.update_with_state(&self.state);
+        pool.preview_status()
     }
 
     pub fn get_pending_or_queued(
         &self,
         txn: &VerifiedTransaction,
     ) -> Result<Option<PendingOrQueued>> {
-        self.transaction_pool
-            .write()
-            .get_pending_or_queued(&self.state, txn)
+        let mut pool = self.transaction_pool.write();
+        pool.update_with_state(&self.state);
+        self.transaction_pool.write().get_pending_or_queued(txn)
     }
 
     pub fn pending_transaction_count(&self, account_address: Address) -> u64 {
+        let mut pool = self.transaction_pool.write();
         let account_data = self.state.must_get_account(account_address);
+        pool.update_with_account(&account_address, &account_data);
 
-        self.transaction_pool
-            .write()
-            .account_pending_transaction_count(&account_address, &account_data)
+        pool.account_pending_transaction_count(&account_address)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
@@ -1383,6 +1386,9 @@ impl Consensus {
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
+        // update the pool with the current state
+        pool.update_with_state(&state);
+
         // Assemble new block with whatever is in the mempool
         while let Some(tx) = pool.pop_best_if(&state, |txn| {
             // First - check if we have time left to process txns and give enough time for block propagation
@@ -1414,6 +1420,8 @@ impl Consensus {
                 &mut inspector,
                 self.config.enable_ots_indices,
             )?;
+            // Update the pool with the new state
+            pool.update_with_state(&state);
 
             // Skip transactions whose execution resulted in an error and drop them.
             let Some(result) = result else {
@@ -1656,6 +1664,7 @@ impl Consensus {
             let mut pool = self.transaction_pool.write();
             for tx in opaque_transactions {
                 let account = self.state.get_account(tx.signer)?;
+                pool.update_with_account(&tx.signer, &account);
                 pool.insert_transaction(tx, &account, true);
             }
         }
@@ -1668,6 +1677,7 @@ impl Consensus {
             let mut pool = self.transaction_pool.write();
             while let Some(txn) = broadcasted_transactions.pop() {
                 let account = self.state.get_account(txn.signer)?;
+                pool.update_with_account(&txn.signer, &account);
                 let added = pool.insert_transaction(txn, &account, false);
                 assert!(added.was_added())
             }
@@ -2989,6 +2999,7 @@ impl Consensus {
         }
 
         let mut pool = self.transaction_pool.write();
+        pool.update_with_state(&self.state);
         let mut verified_txns = Vec::new();
 
         // We re-inject any missing Intershard transactions (or really, any missing
