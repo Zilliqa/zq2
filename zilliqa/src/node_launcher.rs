@@ -219,15 +219,16 @@ impl NodeLauncher {
                     if let ExternalMessage::BatchedTransactions(transactions) = message {
                         let my_peer_id = self.node.write().consensus.peer_id();
 
-                        if source == my_peer_id {
-                            continue;
+                        if source != my_peer_id {
+                            let mut verified = Vec::with_capacity(transactions.len());
+                            for txn in transactions {
+                                let txn = txn.verify()?;
+                                verified.push(txn);
+                            }
+                            self.node.write().handle_broadcast_transactions(verified)?;
                         }
-                        let mut verified = Vec::new();
-                        for txn in transactions {
-                            let txn = txn.verify()?;
-                            verified.push(txn);
-                        }
-                        self.node.write().handle_broadcast_transactions(verified)?;
+                        // Try to assemble block even for the origin of this batch
+                        self.node.write().try_to_apply_transactions()?;
                     }
                     else if let Err(e) = self.node.write().handle_broadcast(source, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));

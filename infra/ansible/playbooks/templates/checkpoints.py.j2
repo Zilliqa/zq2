@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+
+import os
+import glob
+import subprocess
+import logging
+import sys
+from pathlib import Path
+
+# Configuration - replace with your actual values or use environment variables
+CHECKPOINT_DIR = "/data/{{ eth_chain_id }}/checkpoints"
+GCS_BUCKET = "gs://{{ chain_name }}-checkpoint"
+LOG_NAME = "{{ chain_name }}-checkpoint-cron-log"
+
+def setup_logging():
+    """Setup logging to syslog (similar to logger command in bash)"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format=f'{LOG_NAME}: %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+    return logging.getLogger(__name__)
+
+def log_message(logger, message):
+    """Log message (equivalent to logger -t in bash)"""
+    logger.info(message)
+    # Also log to syslog if available
+    try:
+        subprocess.run(['logger', '-t', LOG_NAME, message], check=False)
+    except FileNotFoundError:
+        # logger command not available, already logged to stdout
+        pass
+
+def get_checkpoint_files_sorted(checkpoint_dir):
+    """Get checkpoint files sorted by modification time (oldest first)"""
+    checkpoint_files = []
+    
+    # Find all files in checkpoint directory, excluding .part files
+    pattern = os.path.join(checkpoint_dir, "*")
+    for filepath in glob.glob(pattern):
+        if os.path.isfile(filepath) and not filepath.endswith('.part'):
+            mtime = os.path.getmtime(filepath)
+            checkpoint_files.append((mtime, filepath))
+    
+    # Sort by modification time
+    checkpoint_files.sort(key=lambda x: x[0])
+    
+    # Return just the file paths
+    return [filepath for _, filepath in checkpoint_files]
+
+def run_gsutil_command(command):
+    """Run gsutil command and return success status"""
+    try:
+        result = subprocess.run(command, shell=True, check=True, 
+                              capture_output=True, text=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Command failed: {command}")
+        print(f"Error: {e.stderr}")
+        return False
+
+def main():
+    logger = setup_logging()
+    
+    # Check if checkpoint directory exists
+    if not os.path.exists(CHECKPOINT_DIR):
+        log_message(logger, f"Checkpoint directory {CHECKPOINT_DIR} does not exist")
+        sys.exit(1)
+    
+    # Get sorted checkpoint files
+    checkpoint_files = get_checkpoint_files_sorted(CHECKPOINT_DIR)
+    
+    if not checkpoint_files:
+        log_message(logger, "No checkpoint files found")
+        return
+    
+    # Process each checkpoint file
+    for checkpoint_file in checkpoint_files:
+        log_message(logger, f"Processing {checkpoint_file}")
+        
+        filename = os.path.basename(checkpoint_file)
+        
+        # Format filename with zero padding (9 digits)
+        try:
+            formatted_filename = f"{int(filename):09d}"
+        except ValueError:
+            # If filename is not a number, use as-is
+            formatted_filename = filename
+        
+        # Move existing .dat files to previous directory
+        move_cmd = f'gsutil mv "{GCS_BUCKET}/*.dat" "{GCS_BUCKET}/previous/"'
+        run_gsutil_command(move_cmd)  # Don't check return value as this might fail if no files exist
+        
+        # Copy checkpoint file to GCS
+        copy_cmd = f'gsutil cp "{checkpoint_file}" "{GCS_BUCKET}/{formatted_filename}.dat"'
+        
+        if run_gsutil_command(copy_cmd):
+            log_message(logger, f"Uploaded {checkpoint_file} to GCS")
+            
+            # Delete the local file
+            try:
+                os.remove(checkpoint_file)
+                log_message(logger, f"Deleted {checkpoint_file} from local directory")
+            except OSError as e:
+                log_message(logger, f"Failed to delete {checkpoint_file}: {e}")
+        else:
+            log_message(logger, f"Failed to upload {checkpoint_file} to GCS")
+
+if __name__ == "__main__":
+    main()

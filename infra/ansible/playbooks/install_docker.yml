@@ -1,0 +1,89 @@
+---
+- name: Install and configure Docker
+  hosts: all
+  become: true
+  tags:
+    - install
+    - all
+
+  tasks:
+    - name: Ensure remote_tmp directory exists with correct permissions
+      file:
+        path: /root/.ansible/tmp
+        state: directory
+        mode: '0777'  # or more appropriate if another user needs access
+        owner: root
+        group: root
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Install Docker packages
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Create the user zilliqa and add to the docker and sudo groups
+      ansible.builtin.user:
+        name: zilliqa
+        groups:
+          - docker
+          - sudo
+        append: true
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Add zilliqa to sudo group for elevated privileges
+      ansible.builtin.user:
+        name: zilliqa
+        groups: sudo
+        append: true
+
+    - name: Create Docker daemon config directory
+      file:
+        path: /etc/docker
+        state: directory
+        mode: '0755'
+
+    - name: Configure Docker daemon
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "100m",
+              "max-file": "3"
+            }
+          }
+        mode: '0644'
+      notify: Restart Docker service
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart Docker service
+      service:
+        name: docker
+        state: restarted 

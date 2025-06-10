@@ -1363,7 +1363,6 @@ impl Consensus {
         let mut early_proposal = self.early_proposal.write();
         *early_proposal = Some((proposal, applied_txs, transactions_trie, receipts_trie, 0));
         self.early_proposal_apply_transactions(self.transaction_pool.write(), early_proposal)?;
-
         Ok(())
     }
 
@@ -1705,19 +1704,25 @@ impl Consensus {
 
         let mut pool = self.transaction_pool.write();
         let inserted = self.new_transaction(verified, from_broadcast, &mut pool)?;
-        let early_proposal = self.early_proposal.write();
-        if inserted.was_added()
-            && self.create_next_block_on_timeout
-            && early_proposal.is_some()
-            && pool.has_txn_ready()
-        {
-            trace!(
-                "add transaction to early proposal {}",
-                early_proposal.as_ref().unwrap().0.header.view
-            );
-            self.early_proposal_apply_transactions(pool, early_proposal)?;
-        }
+
         Ok(inserted)
+    }
+
+    pub fn try_early_proposal_after_txn_batch(&self) -> Result<()> {
+        let early_proposal = self.early_proposal.write();
+
+        if self.create_next_block_on_timeout && early_proposal.is_some() {
+            let pool = self.transaction_pool.write();
+            if pool.has_txn_ready() {
+                trace!(
+                    "add transaction to early proposal {}",
+                    early_proposal.as_ref().unwrap().0.header.view
+                );
+
+                self.early_proposal_apply_transactions(pool, early_proposal)?;
+            }
+        }
+        Ok(())
     }
 
     /// Provides a preview of the early proposal.

@@ -1,0 +1,14 @@
+[Unit]
+Description=Otterscan app
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/otterscan.sh start
+ExecStop=/usr/local/bin/otterscan.sh stop
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
