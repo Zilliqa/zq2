@@ -1,0 +1,9 @@
+[Unit]
+Description=Zilliqa Checkpoints
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'python3 /usr/local/bin/checkpoints.py'
+
+[Install]
+WantedBy=multi-user.target
