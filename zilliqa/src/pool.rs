@@ -234,7 +234,7 @@ impl TransactionsAccount {
                     new_gas_price - old_txn.tx.maximum_validation_cost().unwrap() as i128;
             }
             self.maintain();
-            return Some(old_txn.hash);
+            Some(old_txn.hash)
         } else {
             unreachable!("Cannot update transaction without nonce")
         }
@@ -304,7 +304,7 @@ impl TransactionsAccount {
         let best_nonceless_entry = self.nonceless_transactions_pending.last_entry();
 
         if best_nonced_entry.is_none() && best_nonceless_entry.is_none() {
-            return None;
+            None
         } else {
             let best_nonced_gas = best_nonced_entry
                 .as_ref()
@@ -326,21 +326,19 @@ impl TransactionsAccount {
                 } else {
                     None
                 }
-            } else {
-                if let Some(best_nonced_entry) = best_nonced_entry {
-                    if predicate(best_nonced_entry.get()) {
-                        let result = best_nonced_entry.remove();
-                        self.nonce_account = result.tx.nonce().unwrap();
-                        self.balance_after_pending +=
-                            result.tx.maximum_validation_cost().unwrap() as i128;
-                        self.maintain();
-                        Some(result)
-                    } else {
-                        None
-                    }
+            } else if let Some(best_nonced_entry) = best_nonced_entry {
+                if predicate(best_nonced_entry.get()) {
+                    let result = best_nonced_entry.remove();
+                    self.nonce_account = result.tx.nonce().unwrap();
+                    self.balance_after_pending +=
+                        result.tx.maximum_validation_cost().unwrap() as i128;
+                    self.maintain();
+                    Some(result)
                 } else {
                     None
                 }
+            } else {
+                None
             }
         }
     }
@@ -377,43 +375,35 @@ impl TransactionsAccount {
             .nonced_transactions
             .contains_key(&txn.tx.nonce().unwrap())
         {
-            return None;
+            None
+        } else if txn.tx.nonce().unwrap() < self.nonce_after_pending {
+            Some(PendingOrQueued::Pending)
         } else {
-            if txn.tx.nonce().unwrap() < self.nonce_after_pending {
-                Some(PendingOrQueued::Pending)
-            } else {
-                Some(PendingOrQueued::Queued)
-            }
+            Some(PendingOrQueued::Queued)
         }
     }
     fn get_txn_by_nonce(&self, nonce: u64) -> Option<&VerifiedTransaction> {
         self.nonced_transactions.get(&nonce)
     }
     fn get_pending_queue_key(&self) -> Option<PendingQueueKey> {
-        if let Some(best_transaction) = self.peek_best_txn() {
-            Some(PendingQueueKey {
+        self.peek_best_txn().map(|best_transaction| PendingQueueKey {
                 highest_gas_price: best_transaction.tx.gas_price_per_evm_gas(),
                 address: best_transaction.signer,
             })
-        } else {
-            None
-        }
     }
 
     fn mark_executed(&mut self, txn: &VerifiedTransaction) -> Vec<Hash> {
         if let Some(nonce) = txn.tx.nonce() {
             let removed_txn_hashes = self.complete_txns_below_nonce(nonce + 1);
             self.maintain();
-            return removed_txn_hashes;
+            removed_txn_hashes
+        } else if let Some(txn) = self.nonceless_transactions_pending.remove(&txn.into()) {
+            self.balance_after_pending += txn.tx.maximum_validation_cost().unwrap() as i128;
+            self.maintain();
+            vec![txn.hash]
         } else {
-            if let Some(txn) = self.nonceless_transactions_pending.remove(&txn.into()) {
-                self.balance_after_pending += txn.tx.maximum_validation_cost().unwrap() as i128;
-                self.maintain();
-                return vec![txn.hash];
-            } else {
-                self.nonceless_transactions_queued.remove(&txn.into());
-                return vec![txn.hash];
-            }
+            self.nonceless_transactions_queued.remove(&txn.into());
+            vec![txn.hash]
         }
     }
     /// Remove all transactions with nonces less than to the given nonce
@@ -446,7 +436,7 @@ impl TransactionsAccount {
         self.nonce_after_pending = std::cmp::max(self.nonce_after_pending, nonce);
         self.nonce_account = std::cmp::max(self.nonce_account, nonce);
 
-        return removed_txn_hashes;
+        removed_txn_hashes
     }
 }
 
@@ -495,7 +485,7 @@ impl TransactionPoolCore {
                 if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
                     self.pending_account_queue.remove(&pending_queue_key);
                 }
-                let removed_txn_hashes = transactions_account.update_with_account(&new_account);
+                let removed_txn_hashes = transactions_account.update_with_account(new_account);
                 for hash in removed_txn_hashes {
                     self.hash_to_txn_map.remove(&hash);
                 }
@@ -533,7 +523,7 @@ impl TransactionPoolCore {
 
     fn account_pending_transaction_count(&self, account_address: &Address) -> u64 {
         match self.all_transactions.get(account_address) {
-            Some(account) => account.get_pending_transaction_count() as u64,
+            Some(account) => account.get_pending_transaction_count(),
             None => 0,
         }
     }
@@ -548,7 +538,7 @@ impl TransactionPoolCore {
     fn pending_transaction_count(&self) -> u64 {
         self.all_transactions
             .values()
-            .map(|x| x.get_pending_transaction_count() as u64)
+            .map(|x| x.get_pending_transaction_count())
             .sum()
     }
 
@@ -647,7 +637,7 @@ impl TransactionPoolCore {
     }
 
     fn any_pending(&self) -> bool {
-        self.pending_account_queue.len() > 0
+        !self.pending_account_queue.is_empty()
     }
 
     fn clear(&mut self) {
@@ -657,10 +647,7 @@ impl TransactionPoolCore {
     }
 
     fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
-        let best_account_key = match self.pending_account_queue.last() {
-            Some(key) => key,
-            None => return None,
-        };
+        let best_account_key = self.pending_account_queue.last()?;
 
         let best_account = self
             .all_transactions
