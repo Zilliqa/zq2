@@ -1471,7 +1471,6 @@ mod tests {
 
         for query in queries {
             let explain = format!("EXPLAIN QUERY PLAN {query};");
-            println!("{explain}");
             let plans = sql
                 .prepare(&explain)
                 .unwrap()
@@ -1479,10 +1478,12 @@ mod tests {
                 .mapped(|r| r.get::<_, String>(3))
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
+            assert_eq!(plans.is_empty(), false, "{explain}");
             for plan in plans {
+                assert_ne!(plan.is_empty(), true, "{explain}");
                 // Check for any SCANs
                 if plan.starts_with("SCAN") {
-                    panic!("SQL Regression '{query}' => {plan}");
+                    panic!("SQL regression {query} => {plan}");
                 }
             }
         }
