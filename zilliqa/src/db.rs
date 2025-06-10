@@ -268,6 +268,14 @@ impl Db {
         // increase size of prepared cache
         connection.set_prepared_statement_cache_capacity(128); // default is 16, which is small
 
+        // enable QPSG - https://github.com/Zilliqa/zq2/issues/2870
+        if !connection.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG,
+            true,
+        )? {
+            tracing::warn!("QPSG disabled");
+        }
+
         tracing::info!(
             ?journal_mode,
             ?journal_size_limit,
