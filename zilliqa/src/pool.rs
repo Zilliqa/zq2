@@ -104,7 +104,7 @@ impl TransactionsAccount {
     // they should leave everything consistent
     fn queue_to_pending_nonced(&mut self, txn: VerifiedTransaction) {
         let nonce = txn.tx.nonce().unwrap();
-        let gas = txn.tx.gas_price_per_evm_gas();
+        let gas = txn.tx.maximum_validation_cost().unwrap();
         assert!(self.nonce_after_pending == nonce);
         assert!(self.nonced_transactions.contains_key(&nonce));
         self.nonce_after_pending += 1;
@@ -112,7 +112,7 @@ impl TransactionsAccount {
     }
     fn pending_to_queue_nonced(&mut self, txn: VerifiedTransaction) {
         let nonce = txn.tx.nonce().unwrap();
-        let gas = txn.tx.gas_price_per_evm_gas();
+        let gas = txn.tx.maximum_validation_cost().unwrap();
         assert!(self.nonce_after_pending == nonce + 1);
         assert!(self.nonced_transactions.contains_key(&nonce));
         self.nonce_after_pending -= 1;
@@ -120,13 +120,13 @@ impl TransactionsAccount {
     }
     fn queue_to_pending_nonceless(&mut self, key: NoncelessTransactionKey) {
         let transaction = self.nonceless_transactions_queued.remove(&key).unwrap();
-        self.balance_after_pending -= transaction.tx.gas_price_per_evm_gas() as i128;
+        self.balance_after_pending -= transaction.tx.maximum_validation_cost().unwrap() as i128;
         let prev_value = self.nonceless_transactions_pending.insert(key, transaction);
         assert!(prev_value.is_none());
     }
     fn pending_to_queue_nonceless(&mut self, key: NoncelessTransactionKey) {
         let transaction = self.nonceless_transactions_pending.remove(&key).unwrap();
-        self.balance_after_pending += transaction.tx.gas_price_per_evm_gas() as i128;
+        self.balance_after_pending += transaction.tx.maximum_validation_cost().unwrap() as i128;
         let prev_value = self.nonceless_transactions_queued.insert(key, transaction);
         assert!(prev_value.is_none());
     }
@@ -197,7 +197,7 @@ impl TransactionsAccount {
     fn insert_nonced_txn(&mut self, txn: VerifiedTransaction) {
         assert!(txn.tx.nonce().is_some());
         let nonce = txn.tx.nonce().unwrap();
-        let gas_price = txn.tx.gas_price_per_evm_gas() as i128;
+        let gas_price = txn.tx.maximum_validation_cost().unwrap() as i128;
         assert!(!self.nonced_transactions.contains_key(&nonce));
         self.nonced_transactions.insert(nonce, txn);
         // If it can pend, put it in pending and then pop it again if necessary
@@ -209,7 +209,7 @@ impl TransactionsAccount {
     }
     fn insert_unnonced_txn(&mut self, txn: VerifiedTransaction) {
         assert!(txn.tx.nonce().is_none());
-        let gas_price = txn.tx.gas_price_per_evm_gas() as i128;
+        let gas_price = txn.tx.maximum_validation_cost().unwrap() as i128;
         // Put it in pending and then pop it again if necessary
         self.nonceless_transactions_pending
             .insert((&txn).into(), txn.clone());
@@ -226,12 +226,12 @@ impl TransactionsAccount {
     /// Returns hash of updated transaction
     fn update_txn(&mut self, new_txn: VerifiedTransaction) -> Option<Hash> {
         if let Some(nonce) = new_txn.tx.nonce() {
-            let new_gas_price = new_txn.tx.gas_price_per_evm_gas() as i128;
+            let new_gas_price = new_txn.tx.maximum_validation_cost().unwrap() as i128;
             assert!(self.nonced_transactions.contains_key(&nonce));
             let old_txn = self.nonced_transactions.insert(nonce, new_txn).unwrap();
             if nonce < self.nonce_after_pending {
                 self.balance_after_pending -=
-                    new_gas_price - old_txn.tx.gas_price_per_evm_gas() as i128;
+                    new_gas_price - old_txn.tx.maximum_validation_cost().unwrap() as i128;
             }
             self.maintain();
             return Some(old_txn.hash);
@@ -322,7 +322,8 @@ impl TransactionsAccount {
                 if let Some(best_nonceless_entry) = best_nonceless_entry {
                     if predicate(best_nonceless_entry.get()) {
                         let result = best_nonceless_entry.remove();
-                        self.balance_after_pending += result.tx.gas_price_per_evm_gas() as i128;
+                        self.balance_after_pending +=
+                            result.tx.maximum_validation_cost().unwrap() as i128;
                         self.maintain();
                         Some(result)
                     } else {
@@ -336,7 +337,8 @@ impl TransactionsAccount {
                     if predicate(best_nonced_entry.get()) {
                         let result = best_nonced_entry.remove();
                         self.nonce_account = result.tx.nonce().unwrap();
-                        self.balance_after_pending += result.tx.gas_price_per_evm_gas() as i128;
+                        self.balance_after_pending +=
+                            result.tx.maximum_validation_cost().unwrap() as i128;
                         self.maintain();
                         Some(result)
                     } else {
@@ -411,7 +413,7 @@ impl TransactionsAccount {
             return removed_txn_hashes;
         } else {
             if let Some(txn) = self.nonceless_transactions_pending.remove(&txn.into()) {
-                self.balance_after_pending += txn.tx.gas_price_per_evm_gas() as i128;
+                self.balance_after_pending += txn.tx.maximum_validation_cost().unwrap() as i128;
                 self.maintain();
                 return vec![txn.hash];
             } else {
@@ -441,7 +443,8 @@ impl TransactionsAccount {
             .split_off(&self.nonce_after_pending);
         // removed discarded transactions from balance
         for discarded_tx in self.nonced_transactions.values() {
-            self.balance_after_pending += discarded_tx.tx.gas_price_per_evm_gas() as i128;
+            self.balance_after_pending +=
+                discarded_tx.tx.maximum_validation_cost().unwrap() as i128;
         }
         // Put the cut down transaction list back in place
         self.nonced_transactions = transactions_to_retain;
