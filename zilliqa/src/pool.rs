@@ -449,6 +449,99 @@ impl TransactionsAccount {
 
         return removed_txn_hashes;
     }
+
+    /// Debug function to pretty print the contents of TransactionsAccount
+    /// Quick and simple, delete when no longer required
+    pub fn debug_print(&self) -> String {
+        let mut output = String::new();
+
+        // Print scalar values
+        output.push_str(&format!("TransactionsAccount Debug Info:\n"));
+        output.push_str(&format!("  Address: {:?}\n", self.address));
+        output.push_str(&format!("  Balance (account): {}\n", self.balance_account));
+        output.push_str(&format!(
+            "  Balance (after pending): {}\n",
+            self.balance_after_pending
+        ));
+        output.push_str(&format!("  Nonce (account): {}\n", self.nonce_account));
+        output.push_str(&format!(
+            "  Nonce (after pending): {}\n",
+            self.nonce_after_pending
+        ));
+
+        // Print nonced transactions
+        output.push_str(&format!(
+            "  Nonced Transactions ({} total):\n",
+            self.nonced_transactions.len()
+        ));
+        for (nonce, tx) in &self.nonced_transactions {
+            let hash_suffix = format!("{:?}", tx.hash)
+                .chars()
+                .rev()
+                .take(6)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>();
+            output.push_str(&format!(
+                "    Nonce: {}, Address: {:?}, Gas Price: {}, Hash: ...{}\n",
+                nonce,
+                tx.signer,
+                tx.tx.gas_price_per_evm_gas(),
+                hash_suffix
+            ));
+        }
+
+        // Print nonceless pending transactions
+        output.push_str(&format!(
+            "  Nonceless Pending Transactions ({} total):\n",
+            self.nonceless_transactions_pending.len()
+        ));
+        for (_key, tx) in &self.nonceless_transactions_pending {
+            let hash_suffix = format!("{:?}", tx.hash)
+                .chars()
+                .rev()
+                .take(6)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>();
+            let nonce = tx.tx.nonce().map_or("None".to_string(), |n| n.to_string());
+            output.push_str(&format!(
+                "    Nonce: {}, Address: {:?}, Gas Price: {}, Hash: ...{}\n",
+                nonce,
+                tx.signer,
+                tx.tx.gas_price_per_evm_gas(),
+                hash_suffix
+            ));
+        }
+
+        // Print nonceless queued transactions
+        output.push_str(&format!(
+            "  Nonceless Queued Transactions ({} total):\n",
+            self.nonceless_transactions_queued.len()
+        ));
+        for (_key, tx) in &self.nonceless_transactions_queued {
+            let hash_suffix = format!("{:?}", tx.hash)
+                .chars()
+                .rev()
+                .take(6)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>();
+            let nonce = tx.tx.nonce().map_or("None".to_string(), |n| n.to_string());
+            output.push_str(&format!(
+                "    Nonce: {}, Address: {:?}, Gas Price: {}, Hash: ...{}\n",
+                nonce,
+                tx.signer,
+                tx.tx.gas_price_per_evm_gas(),
+                hash_suffix
+            ));
+        }
+
+        output
+    }
 }
 
 /// Private implementation of the transaction pool
@@ -957,6 +1050,7 @@ mod tests {
         cfg::NodeConfig,
         crypto::Hash,
         db::Db,
+        pool::{PendingOrQueued, TxAddResult},
         state::State,
         transaction::{EvmGas, SignedTransaction, TxIntershard, VerifiedTransaction},
     };
@@ -1395,6 +1489,419 @@ mod tests {
             "Benchmark completed: pending_transactions took {:?} to execute.",
             duration
         );
+        Ok(())
+    }
+
+    // Helper function to create a transaction with custom hash
+    fn transaction_with_hash(
+        from_addr: Address,
+        nonce: u8,
+        gas_price: u128,
+        hash_suffix: u8,
+    ) -> VerifiedTransaction {
+        VerifiedTransaction {
+            tx: SignedTransaction::Legacy {
+                tx: TxLegacy {
+                    chain_id: Some(0),
+                    nonce: nonce as u64,
+                    gas_price,
+                    gas_limit: 1,
+                    to: TxKind::Create,
+                    value: U256::ZERO,
+                    input: Bytes::new(),
+                },
+                sig: PrimitiveSignature::new(U256::from(1), U256::from(1), false),
+            },
+            signer: from_addr,
+            hash: Hash::builder()
+                .with(from_addr.as_slice())
+                .with([nonce, hash_suffix])
+                .finalize(),
+        }
+    }
+
+    #[test]
+    fn test_duplicate_transaction_handling() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn = transaction(addr, 0, 10);
+
+        // First insertion should succeed
+        let result1 = pool.insert_transaction(txn.clone(), &acc, false);
+        assert!(matches!(result1, TxAddResult::AddedToMempool));
+
+        // Second insertion of same transaction should be handled gracefully
+        let result2 = pool.insert_transaction(txn.clone(), &acc, false);
+        assert!(matches!(result2, TxAddResult::AddedToMempool)); // Same txn, no change
+
+        assert_eq!(pool.transaction_count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_nonce_too_low_rejection() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 5)?; // Account nonce is 5
+
+        let txn = transaction(addr, 3, 10); // Transaction nonce is 3 (too low)
+
+        let result = pool.insert_transaction(txn, &acc, false);
+        assert!(matches!(result, TxAddResult::NonceTooLow(3, 5)));
+        assert_eq!(pool.transaction_count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_gas_price_replacement() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn_low = transaction_with_hash(addr, 0, 10, 1);
+        let txn_high = transaction_with_hash(addr, 0, 20, 2);
+        let txn_same = transaction_with_hash(addr, 0, 10, 3);
+
+        // Insert low gas price transaction
+        let result1 = pool.insert_transaction(txn_low.clone(), &acc, false);
+        assert!(matches!(result1, TxAddResult::AddedToMempool));
+
+        // Insert higher gas price transaction with same nonce - should replace
+        let result2 = pool.insert_transaction(txn_high.clone(), &acc, false);
+        assert!(matches!(result2, TxAddResult::AddedToMempool));
+
+        // Insert same gas price transaction - should be rejected
+        let result3 = pool.insert_transaction(txn_same, &acc, false);
+        assert!(matches!(result3, TxAddResult::SameNonceButLowerGasPrice));
+
+        // Pool should contain only the high gas price transaction
+        assert_eq!(pool.transaction_count(), 1);
+        assert_eq!(pool.best_transaction().unwrap().hash, txn_high.hash);
+        Ok(())
+    }
+
+    #[test]
+    fn test_insufficient_balance_queuing() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 25, 0)?; // Balance only covers 2.5 transactions at gas price 10
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = transaction(addr, 1, 10);
+        let txn3 = transaction(addr, 2, 10);
+        let txn4 = transaction(addr, 3, 10);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+        pool.insert_transaction(txn4.clone(), &acc, false);
+
+        // Only first 2 transactions should be pending due to balance constraint
+        let pending: Vec<_> = pool.pending_transactions_ordered().cloned().collect();
+        let queued: Vec<_> = pool.queued_transactions_ordered().cloned().collect();
+
+        assert_eq!(pending.len(), 2);
+        assert_eq!(queued.len(), 2);
+        assert_eq!(pending[0], txn1);
+        assert_eq!(pending[1], txn2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_nonceless_transaction_ordering() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 1000, 0)?;
+
+        // Create nonceless transactions with different gas prices
+        let txn1 = intershard_transaction(1, 1, 5);
+        let txn2 = intershard_transaction(2, 2, 15);
+        let txn3 = intershard_transaction(3, 3, 10);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+
+        // Should be ordered by gas price (highest first)
+        let pending: Vec<_> = pool.pending_transactions_ordered().cloned().collect();
+        assert_eq!(pending.len(), 3);
+        assert_eq!(pending[0], txn2); // gas price 15
+        assert_eq!(pending[1], txn3); // gas price 10
+        assert_eq!(pending[2], txn1); // gas price 5
+        Ok(())
+    }
+
+    #[test]
+    fn test_mixed_nonce_nonceless_ordering() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 1000, 0)?;
+
+        let txn_nonce = transaction(addr, 0, 12);
+        let txn_nonceless_high = intershard_transaction(1, 1, 15);
+        let txn_nonceless_low = intershard_transaction(2, 2, 8);
+
+        pool.insert_transaction(txn_nonce.clone(), &acc, false);
+        pool.insert_transaction(txn_nonceless_high.clone(), &acc, false);
+        pool.insert_transaction(txn_nonceless_low.clone(), &acc, false);
+
+        let pending: Vec<_> = pool.pending_transactions_ordered().cloned().collect();
+        assert_eq!(pending.len(), 3);
+        assert_eq!(pending[0], txn_nonceless_high); // gas price 15
+        assert_eq!(pending[1], txn_nonce); // gas price 12
+        assert_eq!(pending[2], txn_nonceless_low); // gas price 8
+        Ok(())
+    }
+
+    #[test]
+    fn test_account_balance_updates() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 15, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = transaction(addr, 1, 10);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+
+        // Initially, only first transaction should be pending due to balance
+        assert_eq!(pool.pending_transaction_count(), 1);
+
+        // Increase balance
+        let new_acc = create_acc(&mut state, addr, 25, 0)?;
+        pool.update_with_account(&addr, &new_acc);
+
+        // Now both should be pending
+        assert_eq!(pool.pending_transaction_count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_account_nonce_updates() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = transaction(addr, 1, 10);
+        let txn3 = transaction(addr, 2, 10);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+
+        assert_eq!(pool.transaction_count(), 3);
+
+        // Update account nonce to 2 (should remove txn1 and txn2)
+        let new_acc = create_acc(&mut state, addr, 100, 2)?;
+        pool.update_with_account(&addr, &new_acc);
+
+        assert_eq!(pool.transaction_count(), 1);
+        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pop_best_with_predicate() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = transaction(addr, 1, 20);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+
+        // Pop best transaction only if gas price > 15
+        let popped = pool.pop_best_if(|tx| tx.tx.gas_price_per_evm_gas() > 15);
+        assert!(popped.is_none()); // Should be None because best tx has gas price 10
+
+        // Pop best transaction only if gas price > 5
+        let popped = pool.pop_best_if(|tx| tx.tx.gas_price_per_evm_gas() > 5);
+        assert!(popped.is_some());
+        assert_eq!(popped.unwrap().hash, txn1.hash);
+
+        assert_eq!(pool.transaction_count(), 1);
+        assert_eq!(pool.best_transaction().unwrap().hash, txn2.hash);
+        Ok(())
+    }
+
+    #[test]
+    fn test_mark_executed_removes_transaction() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = intershard_transaction(1, 1, 15);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+
+        assert_eq!(pool.transaction_count(), 2);
+
+        // Mark nonceless transaction as executed
+        pool.mark_executed(&txn2);
+        assert_eq!(pool.transaction_count(), 1);
+
+        // Mark nonced transaction as executed
+        pool.mark_executed(&txn1);
+        assert_eq!(pool.transaction_count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_transaction_broadcast_queue() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = transaction(addr, 1, 20);
+
+        // Insert without broadcast flag
+        pool.insert_transaction(txn1.clone(), &acc, false);
+
+        // Insert with broadcast flag (from network)
+        pool.insert_transaction(txn2.clone(), &acc, true);
+
+        let to_broadcast = pool.pull_txns_to_broadcast()?;
+        assert_eq!(to_broadcast.len(), 1); // Only txn1 should be in broadcast queue
+        assert_eq!(to_broadcast[0], txn1.tx);
+
+        // Second call should return empty
+        let to_broadcast2 = pool.pull_txns_to_broadcast()?;
+        assert_eq!(to_broadcast2.len(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_pending_or_queued_status() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 15, 0)?; // Limited balance
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = transaction(addr, 1, 10);
+        let txn3 = intershard_transaction(1, 1, 5);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+
+        // txn1 should be pending (enough balance)
+        let status1 = pool.get_pending_or_queued(&txn1)?;
+        assert!(matches!(status1, Some(PendingOrQueued::Pending)));
+
+        // txn2 should be queued (insufficient balance)
+        let status2 = pool.get_pending_or_queued(&txn2)?;
+        assert!(matches!(status2, Some(PendingOrQueued::Queued)));
+
+        // txn3 (nonceless) should be pending
+        let status3 = pool.get_pending_or_queued(&txn3)?;
+        assert!(matches!(status3, Some(PendingOrQueued::Pending)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_pool_content_preview() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr1 = "0x0000000000000000000000000000000000000001".parse()?;
+        let addr2 = "0x0000000000000000000000000000000000000002".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc1 = create_acc(&mut state, addr1, 50, 0)?;
+        let acc2 = create_acc(&mut state, addr2, 50, 0)?;
+
+        let txn1 = transaction(addr1, 0, 10);
+        let txn2 = transaction(addr1, 1, 50); // Will be queued due to balance
+        let txn3 = transaction(addr2, 0, 20);
+
+        pool.insert_transaction(txn1.clone(), &acc1, false);
+        pool.insert_transaction(txn2.clone(), &acc1, false);
+        pool.insert_transaction(txn3.clone(), &acc2, false);
+
+        let content = pool.preview_content();
+
+        // Check pending transactions
+        assert_eq!(content.pending.get(&addr1).unwrap().len(), 1);
+        assert_eq!(content.pending.get(&addr2).unwrap().len(), 1);
+
+        // Check queued transactions
+        assert_eq!(content.queued.get(&addr1).unwrap().len(), 1);
+        assert_eq!(content.queued.get(&addr2).unwrap().len(), 0);
+
+        let content_from = pool.preview_content_from(&addr1);
+        assert_eq!(content_from.pending.len(), 1);
+        assert_eq!(content_from.queued.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pool_clear() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = intershard_transaction(1, 1, 15);
+
+        pool.insert_transaction(txn1, &acc, false);
+        pool.insert_transaction(txn2, &acc, false);
+
+        assert_eq!(pool.transaction_count(), 2);
+        assert!(pool.has_txn_ready());
+
+        pool.clear();
+
+        assert_eq!(pool.transaction_count(), 0);
+        assert!(!pool.has_txn_ready());
+        assert!(pool.best_transaction().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_account_counts() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr1 = "0x0000000000000000000000000000000000000001".parse()?;
+        let addr2 = "0x0000000000000000000000000000000000000002".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc1 = create_acc(&mut state, addr1, 100, 0)?;
+        let acc2 = create_acc(&mut state, addr2, 20, 0)?;
+
+        let txn1 = transaction(addr1, 0, 10);
+        let txn2 = transaction(addr1, 1, 10);
+        let txn3 = transaction(addr2, 0, 30); // Will be queued due to insufficient balance
+
+        pool.insert_transaction(txn1, &acc1, false);
+        pool.insert_transaction(txn2, &acc1, false);
+        pool.insert_transaction(txn3, &acc2, false);
+
+        assert_eq!(pool.account_total_transaction_count(&addr1), 2);
+        assert_eq!(pool.account_pending_transaction_count(&addr1), 2);
+
+        assert_eq!(pool.account_total_transaction_count(&addr2), 1);
+        assert_eq!(pool.account_pending_transaction_count(&addr2), 0);
+
+        let status = pool.preview_status();
+        assert_eq!(status.pending, 2);
+        assert_eq!(status.queued, 1);
         Ok(())
     }
 }
