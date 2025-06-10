@@ -1908,4 +1908,304 @@ mod tests {
         assert_eq!(status.queued, 1);
         Ok(())
     }
+
+    #[test]
+    fn test_get_transaction_by_hash_basic() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = intershard_transaction(1, 1, 15);
+        let non_existent_hash = Hash::builder().with([99, 99, 99]).finalize();
+
+        // Initially, no transactions should be found
+        assert!(pool.get_transaction(&txn1.hash).is_none());
+        assert!(pool.get_transaction(&txn2.hash).is_none());
+        assert!(pool.get_transaction(&non_existent_hash).is_none());
+
+        // Add transactions
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+
+        // Now they should be retrievable by hash
+        let retrieved_txn1 = pool.get_transaction(&txn1.hash);
+        let retrieved_txn2 = pool.get_transaction(&txn2.hash);
+
+        assert!(retrieved_txn1.is_some());
+        assert!(retrieved_txn2.is_some());
+        assert_eq!(retrieved_txn1.unwrap().hash, txn1.hash);
+        assert_eq!(retrieved_txn2.unwrap().hash, txn2.hash);
+        assert_eq!(retrieved_txn1.unwrap().signer, txn1.signer);
+        assert_eq!(retrieved_txn2.unwrap().signer, txn2.signer);
+
+        // Non-existent hash should still return None
+        assert!(pool.get_transaction(&non_existent_hash).is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_transaction_by_hash_after_execution() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = transaction(addr, 1, 20);
+        let txn3 = intershard_transaction(1, 1, 15);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+
+        // All should be retrievable initially
+        assert!(pool.get_transaction(&txn1.hash).is_some());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        // Mark txn1 as executed
+        pool.mark_executed(&txn1);
+
+        // txn1 should no longer be retrievable, others should still be
+        assert!(pool.get_transaction(&txn1.hash).is_none());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        // Mark txn3 (nonceless) as executed
+        pool.mark_executed(&txn3);
+
+        // txn3 should no longer be retrievable
+        assert!(pool.get_transaction(&txn1.hash).is_none());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_transaction_by_hash_after_pop() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 30);
+        let txn2 = transaction(addr, 1, 20);
+        let txn3 = transaction(addr, 2, 10);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+
+        // All should be retrievable initially
+        assert!(pool.get_transaction(&txn1.hash).is_some());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        // Pop best transaction (should be txn1 with highest gas price)
+        let popped = pool.pop_best_if(|_| true);
+        assert!(popped.is_some());
+        assert_eq!(popped.unwrap().hash, txn1.hash);
+
+        // txn1 should no longer be retrievable after popping
+        assert!(pool.get_transaction(&txn1.hash).is_none());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        // Pop with a predicate that should reject the next best
+        let popped2 = pool.pop_best_if(|tx| tx.tx.gas_price_per_evm_gas() > 25);
+        assert!(popped2.is_none()); // Should be None because txn2 has gas price 20
+
+        // txn2 should still be retrievable since it wasn't popped
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_transaction_by_hash_after_nonce_update() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn0 = transaction(addr, 0, 10);
+        let txn1 = transaction(addr, 1, 20);
+        let txn2 = transaction(addr, 2, 30);
+        let txn3 = transaction(addr, 3, 40);
+
+        pool.insert_transaction(txn0.clone(), &acc, false);
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+
+        // All should be retrievable initially
+        assert!(pool.get_transaction(&txn0.hash).is_some());
+        assert!(pool.get_transaction(&txn1.hash).is_some());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        // Update account nonce to 2 (should remove txn0 and txn1)
+        let new_acc = create_acc(&mut state, addr, 100, 2)?;
+        pool.update_with_account(&addr, &new_acc);
+
+        // Transactions with nonces < 2 should no longer be retrievable
+        assert!(pool.get_transaction(&txn0.hash).is_none());
+        assert!(pool.get_transaction(&txn1.hash).is_none());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_transaction_by_hash_after_replacement() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn_low = transaction_with_hash(addr, 0, 10, 1);
+        let txn_high = transaction_with_hash(addr, 0, 20, 2);
+
+        // Insert low gas price transaction
+        pool.insert_transaction(txn_low.clone(), &acc, false);
+
+        // Should be retrievable by its hash
+        assert!(pool.get_transaction(&txn_low.hash).is_some());
+        assert!(pool.get_transaction(&txn_high.hash).is_none());
+
+        // Insert higher gas price transaction with same nonce (should replace)
+        pool.insert_transaction(txn_high.clone(), &acc, false);
+
+        // Old transaction should no longer be retrievable, new one should be
+        assert!(pool.get_transaction(&txn_low.hash).is_none());
+        assert!(pool.get_transaction(&txn_high.hash).is_some());
+
+        // Verify the retrieved transaction is correct
+        let retrieved = pool.get_transaction(&txn_high.hash).unwrap();
+        assert_eq!(retrieved.hash, txn_high.hash);
+        assert_eq!(retrieved.tx.gas_price_per_evm_gas(), 20);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_transaction_by_hash_after_clear() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = intershard_transaction(1, 1, 15);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+
+        // Both should be retrievable initially
+        assert!(pool.get_transaction(&txn1.hash).is_some());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+
+        // Clear the pool
+        pool.clear();
+
+        // No transactions should be retrievable after clearing
+        assert!(pool.get_transaction(&txn1.hash).is_none());
+        assert!(pool.get_transaction(&txn2.hash).is_none());
+        assert_eq!(pool.transaction_count(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_transaction_by_hash_consistency_during_state_updates() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 15, 0)?; // Limited balance
+
+        let txn1 = transaction(addr, 0, 10);
+        let txn2 = transaction(addr, 1, 10); // Will be queued due to balance
+        let txn3 = intershard_transaction(1, 1, 5);
+
+        pool.insert_transaction(txn1.clone(), &acc, false);
+        pool.insert_transaction(txn2.clone(), &acc, false);
+        pool.insert_transaction(txn3.clone(), &acc, false);
+
+        // All should be retrievable regardless of pending/queued status
+        assert!(pool.get_transaction(&txn1.hash).is_some());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        // Update balance to allow all transactions to be pending
+        let new_acc = create_acc(&mut state, addr, 100, 0)?;
+        pool.update_with_account(&addr, &new_acc);
+
+        // All should still be retrievable after balance update
+        assert!(pool.get_transaction(&txn1.hash).is_some());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        // Reduce balance again
+        let limited_acc = create_acc(&mut state, addr, 12, 0)?;
+        pool.update_with_account(&addr, &limited_acc);
+
+        // All should still be retrievable even if some are queued again
+        assert!(pool.get_transaction(&txn1.hash).is_some());
+        assert!(pool.get_transaction(&txn2.hash).is_some());
+        assert!(pool.get_transaction(&txn3.hash).is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_transaction_by_hash_multiple_accounts() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr1 = "0x0000000000000000000000000000000000000001".parse()?;
+        let addr2 = "0x0000000000000000000000000000000000000002".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc1 = create_acc(&mut state, addr1, 100, 0)?;
+        let acc2 = create_acc(&mut state, addr2, 100, 0)?;
+
+        let txn1_acc1 = transaction(addr1, 0, 10);
+        let txn2_acc1 = transaction(addr1, 1, 20);
+        let txn1_acc2 = transaction(addr2, 0, 15);
+        let txn2_acc2 = intershard_transaction(1, 1, 25);
+
+        pool.insert_transaction(txn1_acc1.clone(), &acc1, false);
+        pool.insert_transaction(txn2_acc1.clone(), &acc1, false);
+        pool.insert_transaction(txn1_acc2.clone(), &acc2, false);
+        pool.insert_transaction(txn2_acc2.clone(), &acc2, false);
+
+        // All transactions from both accounts should be retrievable
+        assert!(pool.get_transaction(&txn1_acc1.hash).is_some());
+        assert!(pool.get_transaction(&txn2_acc1.hash).is_some());
+        assert!(pool.get_transaction(&txn1_acc2.hash).is_some());
+        assert!(pool.get_transaction(&txn2_acc2.hash).is_some());
+
+        // Execute a transaction from account 1
+        pool.mark_executed(&txn1_acc1);
+
+        // Only that specific transaction should be removed
+        assert!(pool.get_transaction(&txn1_acc1.hash).is_none());
+        assert!(pool.get_transaction(&txn2_acc1.hash).is_some());
+        assert!(pool.get_transaction(&txn1_acc2.hash).is_some());
+        assert!(pool.get_transaction(&txn2_acc2.hash).is_some());
+
+        // Update nonce for account 2 to remove its first transaction
+        let new_acc2 = create_acc(&mut state, addr2, 100, 1)?;
+        pool.update_with_account(&addr2, &new_acc2);
+
+        // Account 2's first transaction should be removed, others should remain
+        assert!(pool.get_transaction(&txn1_acc1.hash).is_none());
+        assert!(pool.get_transaction(&txn2_acc1.hash).is_some());
+        assert!(pool.get_transaction(&txn1_acc2.hash).is_none());
+        assert!(pool.get_transaction(&txn2_acc2.hash).is_some());
+
+        Ok(())
+    }
 }
