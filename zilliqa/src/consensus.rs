@@ -995,12 +995,14 @@ impl Consensus {
         self.transaction_pool.write().get_pending_or_queued(txn)
     }
 
+    /// This is total transactions for the account, including both executed and pending
     pub fn pending_transaction_count(&self, account_address: Address) -> u64 {
         let mut pool = self.transaction_pool.write();
         let account_data = self.state.must_get_account(account_address);
+        let current_nonce = account_data.nonce;
         pool.update_with_account(&account_address, &account_data);
 
-        pool.account_pending_transaction_count(&account_address)
+        current_nonce + pool.account_pending_transaction_count(&account_address)
     }
 
     pub fn get_touched_transactions(&self, address: Address) -> Result<Vec<Hash>> {
