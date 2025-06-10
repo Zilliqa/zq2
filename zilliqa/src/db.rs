@@ -1427,6 +1427,31 @@ mod tests {
     use crate::{crypto::SecretKey, state::State};
 
     #[test]
+    fn query_planner_stability_guarantee() {
+        let base_path = tempdir().unwrap();
+        let base_path = base_path.path();
+        let db = Db::new(Some(base_path), 0, 1024, None).unwrap();
+
+        let sql = db.db.lock().unwrap();
+
+        // sqlite> EXPLAIN QUERY PLAN SELECT min(height), max(height) FROM blocks;
+        //         3|0|0|SCAN blocks USING COVERING INDEX idx_blocks_height
+        let qp = sql
+            .query_row_and_then(
+                "EXPLAIN QUERY PLAN SELECT min(height), max(height) FROM blocks;",
+                [],
+                |r| r.get::<_, String>(3),
+            )
+            .unwrap();
+        assert_eq!(
+            qp,
+            "SCAN blocks USING COVERING INDEX idx_blocks_height".to_string()
+        );
+
+        // TODO: ADD MORE TROUBLESOME QUERY TESTS
+    }
+
+    #[test]
     fn checkpoint_export_import() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
