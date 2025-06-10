@@ -35,8 +35,8 @@ macro_rules! sqlify_with_bincode {
     ($type: ty) => {
         impl ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-                let data = bincode::serialize(self)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
+                let data = bitcode::serialize(self)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.to_string().into()))?;
                 Ok(ToSqlOutput::from(data))
             }
         }
@@ -45,7 +45,7 @@ macro_rules! sqlify_with_bincode {
                 value: rusqlite::types::ValueRef<'_>,
             ) -> rusqlite::types::FromSqlResult<Self> {
                 let blob = value.as_blob()?;
-                bincode::deserialize(blob).map_err(|e| FromSqlError::Other(e))
+                bitcode::deserialize(blob).map_err(|e| FromSqlError::Other(e.to_string().into()))
             }
         }
     };
