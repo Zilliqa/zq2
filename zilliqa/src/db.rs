@@ -1478,9 +1478,9 @@ mod tests {
                 .mapped(|r| r.get::<_, String>(3))
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
-            assert_eq!(plans.is_empty(), false, "{explain}");
+            assert!(!plans.is_empty(), "{explain}");
             for plan in plans {
-                assert_ne!(plan.is_empty(), true, "{explain}");
+                assert!(!plan.is_empty(), "{explain}");
                 // Check for any SCANs
                 if plan.starts_with("SCAN") {
                     panic!("SQL regression {query} => {plan}");
