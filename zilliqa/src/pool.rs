@@ -349,9 +349,9 @@ impl TransactionsAccount {
     // Must be followed by maintain()
     fn update_balance(&mut self, new_balance: u128) {
         assert!(new_balance < i128::MAX as u128);
-        let balance_delta = new_balance - self.balance_account;
+        let balance_delta = new_balance as i128 - self.balance_account as i128;
         self.balance_account = new_balance;
-        self.balance_after_pending += balance_delta as i128;
+        self.balance_after_pending += balance_delta;
     }
     // Must be followed by maintain()
     fn update_nonce(&mut self, new_nonce: u64) -> Vec<Hash> {
@@ -360,7 +360,9 @@ impl TransactionsAccount {
     }
     fn update_with_account(&mut self, account: &Account) -> Vec<Hash> {
         self.update_balance(account.balance);
-        self.update_nonce(account.nonce)
+        let result = self.update_nonce(account.nonce);
+        self.maintain();
+        result
     }
     fn get_pending_or_queued(&self, txn: &VerifiedTransaction) -> Option<PendingOrQueued> {
         assert!(txn.signer == self.address);
@@ -1071,9 +1073,24 @@ mod tests {
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_after_pending, 3);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending().collect_vec(), vec![&txn1, &txn2, &txn3]);
 
-        // increase the balance and now they should all be pending
+        // Increase the balance by 5 and nothing else should change
         state.mutate_account(acc1_addr, |acc| {
-            acc.balance += 10;
+            acc.balance += 5;
+            Ok(())
+        })?;
+        assert_eq!(state.get_account(acc1_addr).unwrap().balance, 35);
+        pool.core.update_with_state(&state);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions.len(), 4);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending_transaction_count(), 3);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_account, 35);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_account, 0);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_after_pending, 5);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_after_pending, 3);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending().collect_vec(), vec![&txn1, &txn2, &txn3]);
+
+        // increase the balance by another 5 and now they should all be pending
+        state.mutate_account(acc1_addr, |acc| {
+            acc.balance += 5;
             Ok(())
         })?;
         assert_eq!(state.get_account(acc1_addr).unwrap().balance, 40);
