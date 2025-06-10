@@ -89,7 +89,7 @@ struct TransactionsAccount {
     balance_after_pending: i128,
     // The account's actual nonce
     nonce_account: u64,
-    // The largest pending transaction nonce plus one
+    // The largest pending transaction nonce plus one.
     nonce_after_pending: u64,
     // All transactions with nonces, sorted by nonce
     nonced_transactions: BTreeMap<u64, VerifiedTransaction>,
@@ -386,7 +386,8 @@ impl TransactionsAccount {
         self.nonced_transactions.get(&nonce)
     }
     fn get_pending_queue_key(&self) -> Option<PendingQueueKey> {
-        self.peek_best_txn().map(|best_transaction| PendingQueueKey {
+        self.peek_best_txn()
+            .map(|best_transaction| PendingQueueKey {
                 highest_gas_price: best_transaction.tx.gas_price_per_evm_gas(),
                 address: best_transaction.signer,
             })
@@ -441,6 +442,9 @@ impl TransactionsAccount {
 }
 
 /// Private implementation of the transaction pool
+/// The pool is a set of pools for individual accounts (all_transactions), each of which maintains
+/// its own pending lists of nonced and nonceless transactions.
+/// When pending transactions are queried they just need to be merged from the individual accounts.
 #[derive(Clone, Debug, Default)]
 struct TransactionPoolCore {
     all_transactions: HashMap<Address, TransactionsAccount>,
@@ -704,9 +708,8 @@ impl TransactionPoolCore {
     }
 }
 
-/// A pool that manages uncommitted transactions.
-///
-/// It provides transactions to the chain via [`TransactionPool::best_transaction`].
+/// This struct wraps the transaction pool to separate the methods needed by the wider application
+/// from the internal implementation details.
 #[derive(Clone, Debug, Default)]
 pub struct TransactionPool {
     core: TransactionPoolCore,
