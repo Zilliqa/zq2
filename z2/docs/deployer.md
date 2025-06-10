@@ -30,9 +30,6 @@ Commands:
   restart                Restart a network stopping all the nodes and starting the service again
   monitor                Monitor the network nodes specified metrics
   api                    Perform operation over the network API nodes
-  generate-private-keys  Generate the node private keys. --force to replace if already existing
-  generate-genesis-key   Generate the genesis key. --force to replace if already existing
-  generate-stats-key     Generate the Stats Dashboard key. --force to replace if already existing
   help                   Print this message or the help of the given subcommand(s)
 
 Options:
@@ -136,11 +133,7 @@ name: zq2-prototestnet
 eth_chain_id: 33333
 roles:
 - apps
-versions:
-  stats_dashboard: v0.0.3
-  stats_agent: v0.0.1
-  spout: v1.3.72
-  otterscan: latest
+versions: {}
 ```
 
 #### Scenario 3
@@ -168,10 +161,6 @@ roles:
 - apps
 versions:
   zq2: fbee9ec5
-  stats_dashboard: v0.0.3
-  stats_agent: v0.0.1
-  spout: v1.3.72
-  otterscan: latest
 ```
 
 By default, the `z2 deployer new` will generate a configuration file with the current Github release.

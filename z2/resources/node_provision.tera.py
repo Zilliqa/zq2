@@ -16,14 +16,7 @@ templatefile() vars:
 - persistence_url, the ZQ2 persistence URL used for recover the network
 - docker_image, the ZQ2 docker image (incl. version)
 - role, the node role: validator or apps
-- otterscan_image, the Otterscan docker image (incl. version)
-- enable_faucet, a flag to enable the faucet Spout app
-- enable_kms, a flag to enable the KMS decryption for the keys
-- spout_image, the Eth Spout docker image (incl. version)
-- stats_dashboard_image, the Stats dashboard docker image (incl. version)
-- stats_agent_image, the Stats agent docker image (incl. version)
 - subdomain, the ZQ2 network domain name
-- zq2_metrics_image, the ZQ2 metrics docker image (incl. version)
 - log_level, the ZQ2 network service log level
 - project_id, id of the GCP project
 - chain_name, name of the ZQ2 chain
@@ -46,16 +39,9 @@ def query_metadata_key(key: str) -> str:
         return ""
 
 ZQ2_IMAGE="{{ docker_image }}"
-OTTERSCAN_IMAGE="{{ otterscan_image }}"
-SPOUT_ENABLED="{{ enable_faucet }}" == "true"
-SPOUT_IMAGE="{{ spout_image }}"
-STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
-STATS_AGENT_IMAGE="{{ stats_agent_image }}"
 PERSISTENCE_URL="{{ persistence_url }}"
 CHECKPOINT_URL="{{ checkpoint_url }}"
 SUBDOMAIN=query_metadata_key("subdomain")
-ZQ2_METRICS_ENABLED=query_metadata_key("private-api") == "metrics"
-ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
 LOG_LEVEL='{{ log_level }}'
 PROJECT_ID="{{ project_id }}"
 KMS_ENABLED="{{ enable_kms }}" == "true"
@@ -69,13 +55,6 @@ def mount_checkpoint_file():
 
 VERSIONS={
     "zilliqa": ZQ2_IMAGE.split(":")[-1] if ZQ2_IMAGE.split(":")[-1] else "latest",
-    "otterscan": OTTERSCAN_IMAGE.split(":")[-1] if OTTERSCAN_IMAGE.split(":")[-1] else "latest",
-    "spout": SPOUT_IMAGE.split(":")[-1] if SPOUT_IMAGE.split(":")[-1] else "latest",
-    "stats_dashboard": STATS_DASHBOARD_IMAGE.split(":")[-1] if STATS_DASHBOARD_IMAGE.split(":")[-1] else "latest",
-    "stats_agent": STATS_AGENT_IMAGE.split(":")[-1] if STATS_AGENT_IMAGE.split(":")[-1] else "latest",
-    "zq2_metrics": ZQ2_METRICS_IMAGE.split(":")[-1] if ZQ2_METRICS_IMAGE.split(":")[-1] else "latest",
-    "node_exporter": "v1.9.0",
-    "process_exporter": "0.8.1",
 }
 
 def query_metadata_ext_ip() -> str:
@@ -235,11 +214,9 @@ SCILLA_SERVER_PORT="62831"
 if KMS_ENABLED:
     PRIVATE_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ node_name }}" --keyring="kms-{{ chain_name }}" --location=global --project="' + KMS_PROJECT_ID + '")'
     GENESIS_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-genesis" --keyring="kms-{{ chain_name }}" --location=global --project="' + KMS_PROJECT_ID + '")'
-    STATS_DASHBOARD_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard-enckey" | base64 -d | gcloud kms decrypt --ciphertext-file=- --plaintext-file=- --key="{{ chain_name }}-stats-dashboard" --keyring="kms-{{ chain_name }}" --location=global --project="' + KMS_PROJECT_ID + '")'
 else:
     PRIVATE_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ node_name }}-pk")'
     GENESIS_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-genesis")'
-    STATS_DASHBOARD_KEY_CMD = '$(gcloud secrets versions access latest --project="{{ project_id }}" --secret="{{ chain_name }}-stats-dashboard")'
 
 ZQ2_SCRIPT="""#!/bin/bash
 echo yes | gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
@@ -282,328 +259,6 @@ RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/zilliqa.log
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-OTTERSCAN_SCRIPT="""#!/bin/bash
-echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
-
-OTTERSCAN_IMAGE="{{ otterscan_image }}"
-
-start() {
-    docker rm otterscan-""" + VERSIONS.get('otterscan') + """ &> /dev/null || echo 0
-    docker run -td -p 80:80 --name otterscan-""" + VERSIONS.get('otterscan') + """ \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
-        -e ERIGON_URL=https://api.""" + SUBDOMAIN + """ \
-        --restart=unless-stopped --pull=always \
-        ${OTTERSCAN_IMAGE} &> /dev/null &
-}
-
-stop() {
-    docker stop otterscan-""" + VERSIONS.get('otterscan') + """
-}
-
-case ${1} in
-    start|stop) ${1} ;;
-esac
-
-exit 0
-"""
-
-OTTERSCAN_SERVICE_DESC="""
-[Unit]
-Description=Otterscan app
-
-[Service]
-Type=forking
-ExecStart=/usr/local/bin/otterscan.sh start
-ExecStop=/usr/local/bin/otterscan.sh stop
-RemainAfterExit=yes
-Restart=on-failure
-RestartSec=10
-TimeoutStartSec=300
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-SPOUT_SCRIPT="""#!/bin/bash
-echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
-
-SPOUT_IMAGE="{{ spout_image }}"
-
-start() {
-    docker rm spout-""" + VERSIONS.get('spout') + """ &> /dev/null || echo 0
-    GENESIS_KEY=""" + GENESIS_KEY_CMD + """
-    docker run -td -p 8080:80 --name spout-""" + VERSIONS.get('spout') + """ \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
-        -e RPC_URL=https://api.""" + SUBDOMAIN + """ \
-        -e NATIVE_TOKEN_SYMBOL="ZIL" \
-        -e PRIVATE_KEY="${GENESIS_KEY}" \
-        -e ETH_AMOUNT=100 \
-        -e EXPLORER_URL="https://explorer.""" + SUBDOMAIN + """" \
-        -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
-        -e BECH32_HRP="zil" \
-        --restart=unless-stopped --pull=always \
-        ${SPOUT_IMAGE}
-    unset GENESIS_KEY
-}
-
-stop() {
-    docker stop spout-""" + VERSIONS.get('spout') + """
-}
-
-case ${1} in
-    start|stop) ${1} ;;
-esac
-
-exit 0
-"""
-
-SPOUT_SERVICE_DESC="""
-[Unit]
-Description=Spout app
-
-[Service]
-Type=forking
-ExecStart=/usr/local/bin/spout.sh start
-ExecStop=/usr/local/bin/spout.sh stop
-RemainAfterExit=yes
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-STATS_DASHBOARD_SCRIPT="""#!/bin/bash
-echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
-
-STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
-
-start() {
-    docker rm stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ &> /dev/null || echo 0
-    STATS_DASHBOARD_KEY=""" + STATS_DASHBOARD_KEY_CMD + """
-    docker run -td -p 3000:3000 --name stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """ \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
-        -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
-        --restart=unless-stopped --pull=always \
-        ${STATS_DASHBOARD_IMAGE}
-    unset STATS_DASHBOARD_KEY
-}
-
-stop() {
-    docker stop stats-dashboard-""" + VERSIONS.get('stats_dashboard') + """
-}
-
-case ${1} in
-    start|stop) ${1} ;;
-esac
-
-exit 0
-"""
-
-STATS_DASHBOARD_SERVICE_DESC="""
-[Unit]
-Description=Stats dashboard app
-
-[Service]
-Type=forking
-ExecStart=/usr/local/bin/stats_dashboard.sh start
-ExecStop=/usr/local/bin/stats_dashboard.sh stop
-RemainAfterExit=yes
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-STATS_AGENT_SCRIPT="""#!/bin/bash
-echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
-
-STATS_AGENT_IMAGE="{{ stats_agent_image }}"
-
-start() {
-    docker rm stats-agent-""" + VERSIONS.get('stats_agent') + """ &> /dev/null || echo 0
-    STATS_DASHBOARD_KEY=""" + STATS_DASHBOARD_KEY_CMD + """
-    docker run -td --name stats-agent-""" + VERSIONS.get('stats_agent') + """ \
-        --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
-        --net=host \
-        --cpus=".5" \
-        -e RPC_HOST="localhost" \
-        -e RPC_PORT="4202" \
-        -e WS_PORT="4202" \
-        -e LISTENING_PORT="3333" \
-        -e INSTANCE_NAME=""" + os.uname().nodename + """ \
-        -e CONTACT_DETAILS="devops@zilliqa.com" \
-        -e WS_SERVER="ws://stats.""" + SUBDOMAIN + """" \
-        -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
-        -e VERBOSITY="2" \
-        --restart=unless-stopped --pull=always \
-        ${STATS_AGENT_IMAGE}
-    unset STATS_DASHBOARD_KEY
-}
-
-stop() {
-    docker stop stats-agent-""" + VERSIONS.get('stats_agent') + """
-}
-
-case ${1} in
-    start|stop) ${1} ;;
-esac
-
-exit 0
-"""
-
-STATS_AGENT_SERVICE_DESC="""
-[Unit]
-Description=Stats agent app
-
-[Service]
-Type=forking
-ExecStart=/usr/local/bin/stats_agent.sh start
-ExecStop=/usr/local/bin/stats_agent.sh stop
-RemainAfterExit=yes
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-ZQ2_METRICS_SCRIPT="""#!/bin/bash
-echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
-
-ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
-
-start() {
-    cat > .env << 'EOL'
-OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4317
-ZQ2_METRICS_RPC_URL=ws://localhost:4201
-ZQ2_METRICS_VALIDATOR_IDENTITIES='{}'
-EOL
-    docker rm zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ &> /dev/null || echo 0
-    docker run -td --name zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """ \
-        --net=host --restart=unless-stopped --pull=always \
-        -v $(pwd)/.env:/.env \
-        ${ZQ2_METRICS_IMAGE} &> /dev/null &
-}
-
-stop() {
-    docker stop zq2-metrics-""" + VERSIONS.get('zq2_metrics') + """
-}
-
-case ${1} in
-    start|stop) ${1} ;;
-esac
-
-exit 0
-"""
-
-ZQ2_METRICS_SERVICE_DESC="""
-[Unit]
-Description=ZQ2 metrics app
-
-[Service]
-Type=forking
-ExecStart=/usr/local/bin/zq2_metrics.sh start
-ExecStop=/usr/local/bin/zq2_metrics.sh stop
-RemainAfterExit=yes
-Restart=on-failure
-RestartSec=10
-TimeoutStartSec=300
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-NODE_EXPORTER_SCRIPT="""#!/bin/bash
-NODE_EXPORTER_IMAGE='docker.io/prom/node-exporter:""" + VERSIONS.get('node_exporter') + """'
-
-start() {
-    docker rm node-exporter-""" + VERSIONS.get('node_exporter') + """ &> /dev/null || echo 0
-    docker run -td -p 9100:9100 --name node-exporter-""" + VERSIONS.get('node_exporter') + """ \
-        --net=host --restart=unless-stopped --pull=always \
-        ${NODE_EXPORTER_IMAGE} \
-        --collector.disable-defaults \
-        --collector.cpu \
-        --collector.meminfo \
-        --collector.filesystem \
-        &> /dev/null &
-}
-
-stop() {
-    docker stop node-exporter-""" + VERSIONS.get('node_exporter') + """
-}
-
-case ${1} in
-    start|stop) ${1} ;;
-esac
-
-exit 0
-"""
-
-NODE_EXPORTER_SERVICE_DESC="""
-[Unit]
-Description=Prometheus Node exporter
-
-[Service]
-Type=forking
-ExecStart=/usr/local/bin/node_exporter.sh start
-ExecStop=/usr/local/bin/node_exporter.sh stop
-RemainAfterExit=yes
-Restart=on-failure
-RestartSec=10
-TimeoutStartSec=300
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-PROCESS_EXPORTER_SCRIPT="""#!/bin/bash
-PROCESS_EXPORTER_IMAGE='docker.io/ncabatoff/process-exporter:""" + VERSIONS.get('process_exporter') + """'
-
-start() {
-    cat > process-exporter.yml << 'EOL'
-process_names:
-  - name: "{""" + """{.Comm}""" + """}"
-    cmdline:
-    - '.+'
-EOL
-    docker rm process-exporter-""" + VERSIONS.get('process_exporter') + """ &> /dev/null || echo 0
-    docker run -td -p 9256:9256 --name process-exporter-""" + VERSIONS.get('process_exporter') + """ \
-        --net=host --restart=unless-stopped --pull=always \
-        --privileged -v /proc:/host/proc -v `pwd`:/config \
-        ${PROCESS_EXPORTER_IMAGE} \
-        --procfs /host/proc -config.path /config/process-exporter.yml &> /dev/null &
-}
-
-stop() {
-    docker stop process-exporter-""" + VERSIONS.get('process_exporter') + """
-}
-
-case ${1} in
-    start|stop) ${1} ;;
-esac
-
-exit 0
-"""
-
-PROCESS_EXPORTER_SERVICE_DESC="""
-[Unit]
-Description=Prometheus Process exporter
-
-[Service]
-Type=forking
-ExecStart=/usr/local/bin/process_exporter.sh start
-ExecStop=/usr/local/bin/process_exporter.sh stop
-RemainAfterExit=yes
-Restart=on-failure
-RestartSec=10
-TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target
@@ -835,28 +490,11 @@ def go(role):
     a_list.extend(INSTALL_PKGS)
     run_or_die(sudo_noninteractive_apt_env(a_list))
     install_docker()
-    stop_exporters()
-    install_exporters()
-    start_exporters()
     install_ops_agent()
     install_gcloud()
     login_registry()
     match role:
-        case "api":
-            log("Configuring a not validator node")
-            stop_healthcheck()
-            install_healthcheck()
-            stop_stats_agent()
-            install_stats_agent()
-            configure_logrotate()
-            pull_zq2_image()
-            stop_zq2()
-            install_zilliqa()
-            download_persistence()
-            start_zq2()
-            start_healthcheck()
-            start_stats_agent()
-        case "checkpoint" | "persistence" | "private-api" :
+        case "api" | "checkpoint" | "persistence" | "private-api" :
             log("Configuring a not validator node")
             stop_healthcheck()
             install_healthcheck()
@@ -867,16 +505,10 @@ def go(role):
             download_persistence()
             start_zq2()
             start_healthcheck()
-            if ZQ2_METRICS_ENABLED:
-                stop_zq2_metrics()
-                install_zq2_metrics()
-                start_zq2_metrics()
         case "bootstrap" | "validator":
             log("Configuring a validator node")
             stop_healthcheck()
             install_healthcheck()
-            stop_stats_agent()
-            install_stats_agent()
             configure_logrotate()
             pull_zq2_image()
             stop_zq2()
@@ -885,17 +517,8 @@ def go(role):
             download_checkpoint()
             start_zq2()
             start_healthcheck()
-            start_stats_agent()
         case "apps":
             log("Configuring the blockchain app node")
-            stop_apps()
-            install_otterscan()
-            install_stats_dashboard()
-            start_apps()
-            if SPOUT_ENABLED:
-                stop_spout()
-                install_spout()                
-                start_spout()
         case _:
             log(f"Invalide role {role}")
             log("Provisioning aborted")
@@ -979,156 +602,6 @@ def install_zilliqa():
     run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/zilliqa.service"])
     run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/zilliqa.service", "/etc/systemd/system/multi-user.target.wants/zilliqa.service"])
     run_or_die(["sudo", "systemctl", "enable", "zilliqa.service"])
-
-def install_otterscan():
-    with open(f"/tmp/otterscan.sh", "w") as f:
-        f.write(OTTERSCAN_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/otterscan.sh", f"/usr/local/bin/otterscan-{VERSIONS.get('otterscan')}.sh"])
-    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/otterscan-{VERSIONS.get('otterscan')}.sh"])
-    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/otterscan-{VERSIONS.get('otterscan')}.sh", "/usr/local/bin/otterscan.sh"])
-
-    with open("/tmp/otterscan.service", "w") as f:
-        f.write(OTTERSCAN_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/otterscan.service","/etc/systemd/system/otterscan.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/otterscan.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/otterscan.service", "/etc/systemd/system/multi-user.target.wants/otterscan.service"])
-    run_or_die(["sudo", "systemctl", "enable", "otterscan.service"])
-
-def install_spout():
-    with open("/tmp/spout.sh", "w") as f:
-        f.write(SPOUT_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/spout.sh", f"/usr/local/bin/spout-{VERSIONS.get('spout')}.sh"])
-    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/spout-{VERSIONS.get('spout')}.sh"])
-    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/spout-{VERSIONS.get('spout')}.sh", "/usr/local/bin/spout.sh"])
-
-    with open("/tmp/spout.service", "w") as f:
-        f.write(SPOUT_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/spout.service","/etc/systemd/system/spout.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/spout.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/spout.service", "/etc/systemd/system/multi-user.target.wants/spout.service"])
-    run_or_die(["sudo", "systemctl", "enable", "spout.service"])
-
-def install_stats_dashboard():
-    with open("/tmp/stats_dashboard.sh", "w") as f:
-        f.write(STATS_DASHBOARD_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/stats_dashboard.sh", f"/usr/local/bin/stats_dashboard-{VERSIONS.get('stats_dashboard')}.sh"])
-    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/stats_dashboard-{VERSIONS.get('stats_dashboard')}.sh"])
-    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/stats_dashboard-{VERSIONS.get('stats_dashboard')}.sh", "/usr/local/bin/stats_dashboard.sh"])
-
-    with open("/tmp/stats_dashboard.service", "w") as f:
-        f.write(STATS_DASHBOARD_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/stats_dashboard.service","/etc/systemd/system/stats_dashboard.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/stats_dashboard.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/stats_dashboard.service", "/etc/systemd/system/multi-user.target.wants/stats_dashboard.service"])
-    run_or_die(["sudo", "systemctl", "enable", "stats_dashboard.service"])
-
-def install_stats_agent():
-    with open("/tmp/stats_agent.sh", "w") as f:
-        f.write(STATS_AGENT_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/stats_agent.sh", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
-    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh"])
-    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/stats_agent-{VERSIONS.get('stats_agent')}.sh", "/usr/local/bin/stats_agent.sh"])
-
-    with open("/tmp/stats_agent.service", "w") as f:
-        f.write(STATS_AGENT_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/stats_agent.service","/etc/systemd/system/stats_agent.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/stats_agent.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/stats_agent.service", "/etc/systemd/system/multi-user.target.wants/stats_agent.service"])
-    run_or_die(["sudo", "systemctl", "enable", "stats_agent.service"])
-
-def install_zq2_metrics():
-    with open(f"/tmp/zq2_metrics.sh", "w") as f:
-        f.write(ZQ2_METRICS_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/zq2_metrics.sh", f"/usr/local/bin/zq2_metrics-{VERSIONS.get('zq2_metrics')}.sh"])
-    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/zq2_metrics-{VERSIONS.get('zq2_metrics')}.sh"])
-    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/zq2_metrics-{VERSIONS.get('zq2_metrics')}.sh", "/usr/local/bin/zq2_metrics.sh"])
-
-    with open("/tmp/zq2_metrics.service", "w") as f:
-        f.write(ZQ2_METRICS_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/zq2_metrics.service","/etc/systemd/system/zq2_metrics.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/zq2_metrics.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/zq2_metrics.service", "/etc/systemd/system/multi-user.target.wants/zq2_metrics.service"])
-    run_or_die(["sudo", "systemctl", "enable", "zq2_metrics.service"])
-
-def install_node_exporter():
-    with open(f"/tmp/node_exporter.sh", "w") as f:
-        f.write(NODE_EXPORTER_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/node_exporter.sh", f"/usr/local/bin/node_exporter-{VERSIONS.get('node_exporter')}.sh"])
-    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/node_exporter-{VERSIONS.get('node_exporter')}.sh"])
-    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/node_exporter-{VERSIONS.get('node_exporter')}.sh", "/usr/local/bin/node_exporter.sh"])
-
-    with open("/tmp/node_exporter.service", "w") as f:
-        f.write(NODE_EXPORTER_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/node_exporter.service","/etc/systemd/system/node_exporter.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/node_exporter.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/node_exporter.service", "/etc/systemd/system/multi-user.target.wants/node_exporter.service"])
-    run_or_die(["sudo", "systemctl", "enable", "node_exporter.service"])
-
-def install_process_exporter():
-    with open(f"/tmp/process_exporter.sh", "w") as f:
-        f.write(PROCESS_EXPORTER_SCRIPT)
-    run_or_die(["sudo", "cp", "/tmp/process_exporter.sh", f"/usr/local/bin/process_exporter-{VERSIONS.get('process_exporter')}.sh"])
-    run_or_die(["sudo", "chmod", "+x", f"/usr/local/bin/process_exporter-{VERSIONS.get('process_exporter')}.sh"])
-    run_or_die(["sudo", "ln", "-fs", f"/usr/local/bin/process_exporter-{VERSIONS.get('process_exporter')}.sh", "/usr/local/bin/process_exporter.sh"])
-
-    with open("/tmp/process_exporter.service", "w") as f:
-        f.write(PROCESS_EXPORTER_SERVICE_DESC)
-    run_or_die(["sudo","cp","/tmp/process_exporter.service","/etc/systemd/system/process_exporter.service"])
-    run_or_die(["sudo", "chmod", "644", "/etc/systemd/system/process_exporter.service"])
-    run_or_die(["sudo", "ln", "-fs", "/etc/systemd/system/process_exporter.service", "/etc/systemd/system/multi-user.target.wants/process_exporter.service"])
-    run_or_die(["sudo", "systemctl", "enable", "process_exporter.service"])
-
-def install_exporters():
-    install_node_exporter()
-    install_process_exporter()
-
-def start_apps():
-    for app in [ "otterscan", "stats_dashboard" ]:
-        if os.path.exists(f"/etc/systemd/system/{app}.service"):
-            run_or_die(["sudo", "systemctl", "start", f"{app}"])
-    pass
-
-def stop_apps():
-    for app in [ "otterscan", "stats_dashboard" ]:
-        if os.path.exists(f"/etc/systemd/system/{app}.service"):
-            run_or_die(["sudo", "systemctl", "stop", f"{app}"])
-    pass
-
-def start_spout():
-    run_or_die(["sudo", "systemctl", "start", "spout"])
-
-def stop_spout():
-    if os.path.exists(f"/etc/systemd/system/spout.service"):
-        run_or_die(["sudo", "systemctl", "stop", "spout"])
-    pass
-
-def start_stats_agent():
-    run_or_die(["sudo", "systemctl", "start", "stats_agent"])
-
-def stop_stats_agent():
-    if os.path.exists("/etc/systemd/system/stats_agent.service"):
-        run_or_die(["sudo", "systemctl", "stop", "stats_agent"])
-    pass
-
-def start_zq2_metrics():
-    run_or_die(["sudo", "systemctl", "start", "zq2_metrics"])
-
-def stop_zq2_metrics():
-    if os.path.exists("/etc/systemd/system/zq2_metrics.service"):
-        run_or_die(["sudo", "systemctl", "stop", "zq2_metrics"])
-    pass
-
-def start_exporters():
-    for app in [ "node_exporter", "process_exporter" ]:
-        if os.path.exists(f"/etc/systemd/system/{app}.service"):
-            run_or_die(["sudo", "systemctl", "start", f"{app}"])
-    pass
-
-def stop_exporters():
-    for app in [ "node_exporter", "process_exporter" ]:
-        if os.path.exists(f"/etc/systemd/system/{app}.service"):
-            run_or_die(["sudo", "systemctl", "stop", f"{app}"])
-    pass
 
 def configure_logrotate():
     with open("/etc/logrotate.d/zilliqa.conf", "w") as f:
