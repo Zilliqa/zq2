@@ -338,14 +338,14 @@ impl TransactionsAccount {
     }
     // Must be followed by maintain()
     fn update_balance(&mut self, new_balance: u128) {
-        assert!(new_balance <= i128::MAX as u128);
+        assert!(new_balance < i128::MAX as u128);
         let balance_delta = new_balance - self.balance_account;
         self.balance_account = new_balance;
         self.balance_after_pending += balance_delta as i128;
     }
     // Must be followed by maintain()
     fn update_nonce(&mut self, new_nonce: u64) {
-        assert!(new_nonce > self.nonce_account);
+        assert!(new_nonce >= self.nonce_account);
         self.complete_txns_below_nonce(new_nonce);
     }
     fn update_with_account(&mut self, account: &Account) {
@@ -637,7 +637,7 @@ impl TransactionPoolCore {
     }
 
     fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
-        let best_account_key = match self.pending_account_queue.first() {
+        let best_account_key = match self.pending_account_queue.last() {
             Some(key) => key,
             None => return None,
         };
@@ -654,7 +654,7 @@ impl TransactionPoolCore {
         &mut self,
         predicate: impl Fn(&VerifiedTransaction) -> bool,
     ) -> Option<VerifiedTransaction> {
-        let best_account_key = match self.pending_account_queue.first() {
+        let best_account_key = match self.pending_account_queue.last() {
             Some(key) => key,
             None => return None,
         };
@@ -886,10 +886,8 @@ impl TransactionPool {
 
     pub fn pop_best_if(
         &mut self,
-        state: &State,
         predicate: impl Fn(&VerifiedTransaction) -> bool,
     ) -> Option<VerifiedTransaction> {
-        self.core.update_with_state(state);
         self.core.pop_best_if(predicate)
     }
 
@@ -1065,7 +1063,7 @@ mod tests {
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending().collect_vec(), vec![&txn1, &txn2, &txn3, &txn4]);
 
         // pop a transaction off the front and one of the next two should get added
-        pool.pop_best_if(&state, |txn| {
+        pool.pop_best_if(|txn| {
             assert_eq!(txn, &txn1);
             true
         });
@@ -1105,35 +1103,39 @@ mod tests {
 
         pool.insert_transaction(transaction(from, 1, 1), &acc, false);
 
-        let tx = pool.best_transaction(&state)?;
+        pool.update_with_state(&state);
+        let tx = pool.best_transaction()?;
         assert_eq!(tx, None);
 
         pool.insert_transaction(transaction(from, 2, 2), &acc, false);
         pool.insert_transaction(transaction(from, 0, 0), &acc, false);
 
-        let tx = pool.best_transaction(&state)?.unwrap().clone();
+        let tx = pool.best_transaction()?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 0);
         pool.mark_executed(&tx);
         state.mutate_account(from, |acc| {
             acc.nonce += 1;
             Ok(())
         })?;
+        pool.update_with_state(&state);
 
-        let tx = pool.best_transaction(&state)?.unwrap().clone();
+        let tx = pool.best_transaction()?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 1);
         pool.mark_executed(&tx);
         state.mutate_account(from, |acc| {
             acc.nonce += 1;
             Ok(())
         })?;
+        pool.update_with_state(&state);
 
-        let tx = pool.best_transaction(&state)?.unwrap().clone();
+        let tx = pool.best_transaction()?.unwrap().clone();
         assert_eq!(tx.tx.nonce().unwrap(), 2);
         pool.mark_executed(&tx);
         state.mutate_account(from, |acc| {
             acc.nonce += 1;
             Ok(())
         })?;
+        pool.update_with_state(&state);
 
         Ok(())
     }
@@ -1145,6 +1147,7 @@ mod tests {
 
         let mut state = get_in_memory_state()?;
         let acc = create_acc(&mut state, from, 100, 0)?;
+        pool.update_with_state(&state);
 
         const COUNT: u64 = 100;
 
@@ -1157,13 +1160,14 @@ mod tests {
         }
 
         for i in 0..COUNT {
-            let tx = pool.best_transaction(&state)?.unwrap().clone();
+            let tx = pool.best_transaction()?.unwrap().clone();
             assert_eq!(tx.tx.nonce().unwrap(), i);
             pool.mark_executed(&tx);
             state.mutate_account(from, |acc| {
                 acc.nonce += 1;
                 Ok(())
             })?;
+            pool.update_with_state(&state);
         }
         Ok(())
     }
@@ -1181,35 +1185,36 @@ mod tests {
         let acc1 = create_acc(&mut state, from1, 100, 0)?;
         let acc2 = create_acc(&mut state, from2, 100, 0)?;
         let acc3 = create_acc(&mut state, from3, 100, 0)?;
+        pool.update_with_state(&state);
 
         pool.insert_transaction(intershard_transaction(0, 0, 1), &acc0, false);
         pool.insert_transaction(transaction(from1, 0, 2), &acc1, false);
         pool.insert_transaction(transaction(from2, 0, 3), &acc2, false);
         pool.insert_transaction(transaction(from3, 0, 0), &acc3, false);
         pool.insert_transaction(intershard_transaction(0, 1, 5), &acc0, false);
-        assert_eq!(pool.transaction_count(&state), 5);
+        assert_eq!(pool.transaction_count(), 5);
 
-        let tx = pool.best_transaction(&state)?.unwrap().clone();
+        let tx = pool.best_transaction()?.unwrap().clone();
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 5);
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction(&state)?.unwrap().clone();
+        let tx = pool.best_transaction()?.unwrap().clone();
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 3);
 
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction(&state)?.unwrap().clone();
+        let tx = pool.best_transaction()?.unwrap().clone();
 
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 2);
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction(&state)?.unwrap().clone();
+        let tx = pool.best_transaction()?.unwrap().clone();
 
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 1);
         pool.mark_executed(&tx);
-        let tx = pool.best_transaction(&state)?.unwrap().clone();
+        let tx = pool.best_transaction()?.unwrap().clone();
 
         assert_eq!(tx.tx.gas_price_per_evm_gas(), 0);
         pool.mark_executed(&tx);
 
-        assert_eq!(pool.transaction_count(&state), 0);
+        assert_eq!(pool.transaction_count(), 0);
         Ok(())
     }
 
@@ -1220,6 +1225,7 @@ mod tests {
 
         let mut state = get_in_memory_state()?;
         let acc = create_acc(&mut state, from, 100, 0)?;
+        pool.update_with_state(&state);
 
         pool.insert_transaction(transaction(from, 0, 0), &acc, false);
         pool.insert_transaction(transaction(from, 1, 0), &acc, false);
@@ -1229,11 +1235,9 @@ mod tests {
             acc.nonce += 1;
             Ok(())
         })?;
+        pool.update_with_state(&state);
 
-        assert_eq!(
-            pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
-            1
-        );
+        assert_eq!(pool.best_transaction()?.unwrap().tx.nonce().unwrap(), 1);
         Ok(())
     }
 
@@ -1244,32 +1248,29 @@ mod tests {
 
         let mut state = get_in_memory_state()?;
         let acc = create_acc(&mut state, from, 100, 0)?;
+        pool.update_with_state(&state);
 
         pool.insert_transaction(transaction(from, 0, 1), &acc, false);
         pool.insert_transaction(transaction(from, 1, 200), &acc, false);
 
-        assert_eq!(
-            pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
-            0
-        );
+        assert_eq!(pool.best_transaction()?.unwrap().tx.nonce().unwrap(), 0);
         pool.mark_executed(&transaction(from, 0, 1));
         state.mutate_account(from, |acc| {
             acc.nonce += 1;
             Ok(())
         })?;
+        pool.update_with_state(&state);
 
         // Sender has insufficient funds at this point
-        assert_eq!(pool.best_transaction(&state)?, None);
+        assert_eq!(pool.best_transaction()?, None);
 
         // Increase funds of sender to satisfy txn fee
         let mut acc = state.must_get_account(from);
         acc.balance = 500;
         state.save_account(from, acc)?;
+        pool.update_with_state(&state);
 
-        assert_eq!(
-            pool.best_transaction(&state)?.unwrap().tx.nonce().unwrap(),
-            1
-        );
+        assert_eq!(pool.best_transaction()?.unwrap().tx.nonce().unwrap(), 1);
         Ok(())
     }
 
@@ -1280,6 +1281,7 @@ mod tests {
 
         let mut state = get_in_memory_state()?;
         let acc = create_acc(&mut state, from, 100, 0)?;
+        pool.update_with_state(&state);
 
         let txn0 = intershard_transaction(0, 0, 100);
         let txn1 = transaction(from, 0, 1);
@@ -1295,8 +1297,8 @@ mod tests {
         pool.insert_transaction(txn4.clone(), &acc, false);
         pool.insert_transaction(txn5.clone(), &acc, false);
 
-        let pending: Vec<_> = pool.pending_transactions_ordered(&state).cloned().collect();
-        let queued: Vec<_> = pool.pending_transactions_ordered(&state).cloned().collect();
+        let pending: Vec<_> = pool.pending_transactions_ordered().cloned().collect();
+        let queued: Vec<_> = pool.pending_transactions_ordered().cloned().collect();
 
         assert_eq!(pending.len(), 4);
         assert_eq!(pending[0], txn0);
@@ -1318,6 +1320,7 @@ mod tests {
 
         let mut state = get_in_memory_state()?;
         let acc = create_acc(&mut state, from, 1_000_000, 0)?;
+        pool.update_with_state(&state);
 
         // Insert 100 pending transactions
         for nonce in 0u64..100u64 {
@@ -1331,7 +1334,7 @@ mod tests {
 
         // Benchmark the preview_content method
         let start = std::time::Instant::now();
-        let content = pool.preview_content(&state);
+        let content = pool.preview_content();
         let duration = start.elapsed();
 
         // Verify the results
@@ -1353,6 +1356,7 @@ mod tests {
 
         let mut state = get_in_memory_state()?;
         let acc = create_acc(&mut state, from, 1_000_000, 0)?;
+        pool.update_with_state(&state);
 
         // Insert 100 pending transactions
         for nonce in 0u64..100u64 {
@@ -1366,7 +1370,7 @@ mod tests {
 
         // Benchmark the preview_content method
         let start = std::time::Instant::now();
-        let _result: Vec<_> = pool.pending_transactions_ordered(&state).collect();
+        let _result: Vec<_> = pool.pending_transactions_ordered().collect();
         let duration = start.elapsed();
 
         println!(

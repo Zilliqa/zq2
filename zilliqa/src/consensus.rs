@@ -1390,7 +1390,7 @@ impl Consensus {
         pool.update_with_state(&state);
 
         // Assemble new block with whatever is in the mempool
-        while let Some(tx) = pool.pop_best_if(&state, |txn| {
+        while let Some(tx) = pool.pop_best_if(|txn| {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (_, milliseconds_remaining_of_block_time, _) =
                 self.get_consensus_timeout_params().unwrap();
@@ -1570,8 +1570,9 @@ impl Consensus {
         // Clone the pool
         // This isn't perfect performance-wise, but it does mean that we aren't dealing with transactions that don't fit into the block
         let mut cloned_pool = self.transaction_pool.read().clone();
+        cloned_pool.update_with_state(&state);
 
-        while let Some(txn) = cloned_pool.pop_best_if(&state, |txn| {
+        while let Some(txn) = cloned_pool.pop_best_if(|txn| {
             // First - check if we have time left to process txns and give enough time for block propagation
             let (_, milliseconds_remaining_of_block_time, _) =
                 self.get_consensus_timeout_params().unwrap();
