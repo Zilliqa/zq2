@@ -278,9 +278,6 @@ impl TransactionsAccount {
         let nonceless_pending_count = self.nonceless_transactions_pending.len() as u64;
         nonced_pending_count + nonceless_pending_count
     }
-    fn get_queued_transaction_count(&self) -> u64 {
-        self.get_transaction_count() as u64 - self.get_pending_transaction_count()
-    }
     fn get_transaction_count(&self) -> usize {
         self.nonced_transactions.len()
             + self.nonceless_transactions_queued.len()
@@ -290,9 +287,6 @@ impl TransactionsAccount {
         self.nonceless_transactions_pending.is_empty()
             && self.nonced_transactions.is_empty()
             && self.nonceless_transactions_queued.is_empty()
-    }
-    fn has_pending_transactions(&self) -> bool {
-        self.get_pending_transaction_count() > 0
     }
     fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
         self.get_pending().next()
@@ -454,99 +448,6 @@ impl TransactionsAccount {
 
         return removed_txn_hashes;
     }
-
-    /// Debug function to pretty print the contents of TransactionsAccount
-    /// Quick and simple, delete when no longer required
-    pub fn debug_print(&self) -> String {
-        let mut output = String::new();
-
-        // Print scalar values
-        output.push_str(&format!("TransactionsAccount Debug Info:\n"));
-        output.push_str(&format!("  Address: {:?}\n", self.address));
-        output.push_str(&format!("  Balance (account): {}\n", self.balance_account));
-        output.push_str(&format!(
-            "  Balance (after pending): {}\n",
-            self.balance_after_pending
-        ));
-        output.push_str(&format!("  Nonce (account): {}\n", self.nonce_account));
-        output.push_str(&format!(
-            "  Nonce (after pending): {}\n",
-            self.nonce_after_pending
-        ));
-
-        // Print nonced transactions
-        output.push_str(&format!(
-            "  Nonced Transactions ({} total):\n",
-            self.nonced_transactions.len()
-        ));
-        for (nonce, tx) in &self.nonced_transactions {
-            let hash_suffix = format!("{:?}", tx.hash)
-                .chars()
-                .rev()
-                .take(6)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect::<String>();
-            output.push_str(&format!(
-                "    Nonce: {}, Address: {:?}, Gas Price: {}, Hash: ...{}\n",
-                nonce,
-                tx.signer,
-                tx.tx.gas_price_per_evm_gas(),
-                hash_suffix
-            ));
-        }
-
-        // Print nonceless pending transactions
-        output.push_str(&format!(
-            "  Nonceless Pending Transactions ({} total):\n",
-            self.nonceless_transactions_pending.len()
-        ));
-        for (_key, tx) in &self.nonceless_transactions_pending {
-            let hash_suffix = format!("{:?}", tx.hash)
-                .chars()
-                .rev()
-                .take(6)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect::<String>();
-            let nonce = tx.tx.nonce().map_or("None".to_string(), |n| n.to_string());
-            output.push_str(&format!(
-                "    Nonce: {}, Address: {:?}, Gas Price: {}, Hash: ...{}\n",
-                nonce,
-                tx.signer,
-                tx.tx.gas_price_per_evm_gas(),
-                hash_suffix
-            ));
-        }
-
-        // Print nonceless queued transactions
-        output.push_str(&format!(
-            "  Nonceless Queued Transactions ({} total):\n",
-            self.nonceless_transactions_queued.len()
-        ));
-        for (_key, tx) in &self.nonceless_transactions_queued {
-            let hash_suffix = format!("{:?}", tx.hash)
-                .chars()
-                .rev()
-                .take(6)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect::<String>();
-            let nonce = tx.tx.nonce().map_or("None".to_string(), |n| n.to_string());
-            output.push_str(&format!(
-                "    Nonce: {}, Address: {:?}, Gas Price: {}, Hash: ...{}\n",
-                nonce,
-                tx.signer,
-                tx.tx.gas_price_per_evm_gas(),
-                hash_suffix
-            ));
-        }
-
-        output
-    }
 }
 
 /// Private implementation of the transaction pool
@@ -607,21 +508,6 @@ impl TransactionPoolCore {
             }
         }
     }
-
-    fn pending_transactions_unordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
-        self.all_transactions
-            .values()
-            .map(|x| x.get_pending())
-            .flatten()
-    }
-
-    fn queued_transactions_unordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
-        self.all_transactions
-            .values()
-            .map(|x| x.get_queued())
-            .flatten()
-    }
-
     // Potentially slow, depending on merge behaviour
     fn pending_transactions_ordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
         self.all_transactions
