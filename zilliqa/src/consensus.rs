@@ -44,7 +44,7 @@ use crate::{
 #[derive(Clone, Debug, Serialize)]
 pub struct NewViewVote {
     signatures: Vec<BlsSignature>,
-    cosigned: BitArray,
+    pub cosigned: BitArray,
     cosigned_weight: u128,
     qcs: BTreeMap<usize, QuorumCertificate>,
 }
