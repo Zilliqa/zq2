@@ -27,21 +27,6 @@
         state: directory
         mode: '0777'
 
-    - name: Generate configuration file
-      delegate_to: localhost
-      connection: local
-      become: false
-      shell: |
-        source ../../../scripts/setenv && z2 deployer get-config-file --role {{ hostvars[inventory_hostname]['labels']['role'] }} --out /tmp/configfiles/{{ ansible_hostname }}.config.toml {{ chain_name }}.yaml
-
-    - name: Upload configuration file
-      ansible.builtin.copy:
-        src: /tmp/configfiles/{{ ansible_hostname }}.config.toml
-        dest: /config.toml
-        owner: zilliqa
-        group: zilliqa
-        mode: '0777'
-
     - name: Ensure home directory exists
       become: true
       file:
@@ -76,6 +61,21 @@
         owner: zilliqa
         group: zilliqa
         mode: '0644'
+
+    - name: Generate configuration file
+      delegate_to: localhost
+      connection: local
+      become: false
+      shell: |
+        source ../../../scripts/setenv && z2 deployer get-config-file --role {{ hostvars[inventory_hostname]['labels']['role'] }} --out /tmp/configfiles/{{ ansible_hostname }}.config.toml {{ chain_name }}.yaml
+
+    - name: Upload configuration file
+      ansible.builtin.copy:
+        src: /tmp/configfiles/{{ ansible_hostname }}.config.toml
+        dest: /config.toml
+        owner: zilliqa
+        group: zilliqa
+        mode: '0777'
 
     - name: Login to Docker registry
       ansible.builtin.shell: gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://asia-docker.pkg.dev
