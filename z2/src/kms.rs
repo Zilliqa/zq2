@@ -24,53 +24,6 @@ impl KmsService {
         }
     }
 
-    pub fn encrypt(
-        project_id: &str,
-        plaintext: &str,
-        kms_keyring: &str,
-        kms_key: &str,
-    ) -> Result<String> {
-        // Create a temporary file for the plaintext
-        let mut plaintext_file = NamedTempFile::new()?;
-        writeln!(plaintext_file, "{}", plaintext)?;
-
-        // Determine KMS project ID based on prefix
-        let kms_project_id = Self::get_kms_project_id(project_id);
-
-        // Create a temporary file for the ciphertext
-        let ciphertext_tempfile = NamedTempFile::new()?;
-
-        // Run the KMS encryption command
-        let status = Command::new("gcloud")
-            .args([
-                "kms",
-                "encrypt",
-                "--plaintext-file",
-                plaintext_file.path().to_str().unwrap(),
-                "--ciphertext-file",
-                ciphertext_tempfile.path().to_str().unwrap(),
-                "--keyring",
-                kms_keyring,
-                "--key",
-                kms_key,
-                "--location",
-                "global",
-                "--project",
-                kms_project_id,
-            ])
-            .status()?;
-
-        if !status.success() {
-            return Err(anyhow!("KMS encryption failed"));
-        }
-
-        // Read binary ciphertext and encode as base64
-        let ciphertext_bytes = std::fs::read(ciphertext_tempfile.path())?;
-        let ciphertext_base64 = general_purpose::STANDARD.encode(&ciphertext_bytes);
-
-        Ok(ciphertext_base64)
-    }
-
     pub fn decrypt(
         project_id: &str,
         base64_ciphertext: &str,

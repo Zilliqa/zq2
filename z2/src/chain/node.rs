@@ -17,7 +17,7 @@ use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::instance::ChainInstance;
-use crate::{address::EthereumAddress, chain::Chain, kms::KmsService};
+use crate::{chain::Chain, kms::KmsService};
 
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
@@ -39,16 +39,6 @@ impl NodePort {
 pub enum Components {
     #[serde(rename = "zq2")]
     ZQ2,
-    #[serde(rename = "otterscan")]
-    Otterscan,
-    #[serde(rename = "spout")]
-    Spout,
-    #[serde(rename = "stats_dashboard")]
-    StatsDashboard,
-    #[serde(rename = "stats_agent")]
-    StatsAgent,
-    #[serde(rename = "zq2_metrics")]
-    ZQ2Metrics,
 }
 
 impl FromStr for Components {
@@ -57,11 +47,6 @@ impl FromStr for Components {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "zq2" => Ok(Components::ZQ2),
-            "otterscan" => Ok(Components::Otterscan),
-            "spout" => Ok(Components::Spout),
-            "stats_dashboard" => Ok(Components::StatsDashboard),
-            "stats_agent" => Ok(Components::StatsAgent),
-            "zq2_metrics" => Ok(Components::ZQ2Metrics),
             _ => Err(anyhow!("Component not supported")),
         }
     }
@@ -87,23 +72,6 @@ pub fn docker_image(component: &str, version: &str) -> Result<String> {
                 Err(anyhow!("Invalid version for ZQ2"))
             }
         }
-        Components::Otterscan => Ok(format!("docker.io/zilliqa/otterscan:{}", version)),
-        Components::Spout => Ok(format!(
-            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:{}",
-            version
-        )),
-        Components::StatsDashboard => Ok(format!(
-            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-server:{}",
-            version
-        )),
-        Components::StatsAgent => Ok(format!(
-            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:{}",
-            version
-        )),
-        Components::ZQ2Metrics => Ok(format!(
-            "asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-private/zq2-metrics:{}",
-            version
-        )),
     }
 }
 
@@ -489,7 +457,6 @@ impl ChainNode {
         let message = format!("Installing {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());
 
-        self.tag_machine()?;
         self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
@@ -501,7 +468,6 @@ impl ChainNode {
         let message = format!("Upgrading {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());
 
-        self.tag_machine()?;
         self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
@@ -609,27 +575,6 @@ impl ChainNode {
             .get_private_key(&self.chain.name(), self.chain()?.get_enable_kms()?)
     }
 
-    fn tag_machine(&self) -> Result<()> {
-        if self.role == NodeRole::Apps {
-            return Ok(());
-        }
-
-        let private_key = self.get_private_key()?;
-        let ethereum_address = EthereumAddress::from_private_key(&private_key)?;
-
-        let mut labels = BTreeMap::<String, String>::new();
-        labels.insert("peer-id".to_string(), ethereum_address.peer_id.to_string());
-
-        self.machine.add_labels(labels)?;
-
-        println!(
-            "Tagged the machine {} with the peer-id {}",
-            self.machine.name, ethereum_address.peer_id
-        );
-
-        Ok(())
-    }
-
     async fn import_config_files(&self) -> Result<()> {
         let temp_config_toml = NamedTempFile::new()?;
         let config_toml = &self
@@ -648,33 +593,6 @@ impl ChainNode {
             .copy(&[provisioning_script], "/tmp/provision_node.py")
             .await?;
 
-        if self.role == NodeRole::Checkpoint {
-            let temp_checkpoint_cron_job = NamedTempFile::new()?;
-            let checkpoint_cron_job = &self
-                .create_checkpoint_cron_job(temp_checkpoint_cron_job.path().to_str().unwrap())
-                .await?;
-
-            self.machine
-                .copy(&[checkpoint_cron_job], "/tmp/checkpoint_cron_job.sh")
-                .await?;
-        }
-
-        if self.role == NodeRole::Persistence {
-            let temp_persistence_export_cron_job = NamedTempFile::new()?;
-            let persistence_export_cron_job = &self
-                .create_persistence_export_cron_job(
-                    temp_persistence_export_cron_job.path().to_str().unwrap(),
-                )
-                .await?;
-
-            self.machine
-                .copy(
-                    &[persistence_export_cron_job],
-                    "/tmp/persistence_export_cron_job.sh",
-                )
-                .await?;
-        }
-
         println!("Configuration files imported in the node");
 
         Ok(())
@@ -686,26 +604,6 @@ impl ChainNode {
         if !output.status.success() {
             println!("{}", String::from_utf8_lossy(&output.stderr));
             return Err(anyhow!("Error removing previous installation files"));
-        }
-
-        if self.role == NodeRole::Checkpoint {
-            let cmd = "sudo rm -f /tmp/checkpoint_cron_job.sh";
-            let output = self.machine.run(cmd, true)?;
-            if !output.status.success() {
-                println!("{}", String::from_utf8_lossy(&output.stderr));
-                return Err(anyhow!("Error removing previous checkpoint cron job"));
-            }
-        }
-
-        if self.role == NodeRole::Persistence {
-            let cmd = "sudo rm -f /tmp/persistence_export_cron_job.sh";
-            let output = self.machine.run(cmd, true)?;
-            if !output.status.success() {
-                println!("{}", String::from_utf8_lossy(&output.stderr));
-                return Err(anyhow!(
-                    "Error removing previous persistence export cron job"
-                ));
-            }
         }
 
         println!("Removed previous installation files");
@@ -721,80 +619,12 @@ impl ChainNode {
             return Err(anyhow!("Error running the provisioning script"));
         }
 
-        if self.role == NodeRole::Checkpoint {
-            let cmd = r#"
-                sudo chmod 777 /tmp/checkpoint_cron_job.sh && \
-                sudo mv /tmp/checkpoint_cron_job.sh /checkpoint_cron_job.sh && \
-                echo '*/30 * * * * /checkpoint_cron_job.sh' | sudo crontab -"#;
-
-            let output = self.machine.run(cmd, true)?;
-            if !output.status.success() {
-                println!("{}", String::from_utf8_lossy(&output.stderr));
-                return Err(anyhow!("Error creating the checkpoint cronjob"));
-            }
-        }
-
-        if self.role == NodeRole::Persistence {
-            let cmd = r#"
-                sudo chmod 777 /tmp/persistence_export_cron_job.sh && \
-                sudo mv /tmp/persistence_export_cron_job.sh /persistence_export_cron_job.sh && \
-                echo '0 */2 * * * /persistence_export_cron_job.sh' | sudo crontab -"#;
-
-            let output = self.machine.run(cmd, true)?;
-            if !output.status.success() {
-                println!("{}", String::from_utf8_lossy(&output.stderr));
-                return Err(anyhow!("Error creating the persistence export cronjob"));
-            }
-        }
-
         println!(
             "Provisioning script run successfully on {}",
             self.name().bold()
         );
 
         Ok(())
-    }
-
-    async fn create_checkpoint_cron_job(&self, filename: &str) -> Result<String> {
-        let spec_config = include_str!("../../resources/checkpoints.tera.sh");
-
-        let chain_name = self.chain.name();
-        let eth_chain_id = self.eth_chain_id.to_string();
-
-        let mut var_map = BTreeMap::<&str, &str>::new();
-        var_map.insert("network_name", &chain_name);
-        var_map.insert("eth_chain_id", &eth_chain_id);
-
-        let ctx = Context::from_serialize(var_map)?;
-        let rendered_template = Tera::one_off(spec_config, &ctx, false)?;
-        let config_file = rendered_template.as_str();
-
-        let mut fh = File::create(filename).await?;
-        fh.write_all(config_file.as_bytes()).await?;
-        println!("Checkpoint cron job file created: {filename}");
-
-        Ok(filename.to_owned())
-    }
-
-    async fn create_persistence_export_cron_job(&self, filename: &str) -> Result<String> {
-        let spec_config = include_str!("../../resources/persistence_export.tera.sh");
-
-        let chain_name = self.chain.name();
-        let eth_chain_id = self.eth_chain_id.to_string();
-
-        let mut var_map = BTreeMap::<&str, &str>::new();
-        var_map.insert("network_name", &chain_name);
-        var_map.insert("eth_chain_id", &eth_chain_id);
-
-        let ctx = Context::from_serialize(var_map)?;
-        let rendered_template = Tera::one_off(spec_config, &ctx, false)?;
-        let config_file = rendered_template.as_str();
-
-        let mut fh = File::create(filename).await?;
-        fh.write_all(config_file.as_bytes()).await?;
-        println!("Persistence export cron job file created: {filename}");
-
-        Ok(filename.to_owned())
     }
 
     pub fn get_keys_config(
@@ -1065,46 +895,24 @@ impl ChainNode {
         let provisioning_script = include_str!("../../resources/node_provision.tera.py");
         let role_name = &self.role.to_string();
         let z2_image = &docker_image("zq2", &self.chain.get_version("zq2"))?;
-        let otterscan_image = &docker_image("otterscan", &self.chain.get_version("otterscan"))?;
-        let enable_faucet = if self.chain()?.get_enable_faucet()? {
-            "true"
-        } else {
-            "false"
-        };
-        let enable_kms = if self.chain()?.get_enable_kms()? {
-            "true"
-        } else {
-            "false"
-        };
-        let spout_image = &docker_image("spout", &self.chain.get_version("spout"))?;
-        let stats_dashboard_image = &docker_image(
-            "stats_dashboard",
-            &self.chain.get_version("stats_dashboard"),
-        )?;
-        let stats_agent_image =
-            &docker_image("stats_agent", &self.chain.get_version("stats_agent"))?;
-        let zq2_metrics_image =
-            &docker_image("zq2_metrics", &self.chain.get_version("zq2_metrics"))?;
-
         let persistence_url = self.chain.persistence_url().unwrap_or_default();
         let checkpoint_url = self.chain.checkpoint_url().unwrap_or_default();
         let log_level = self.chain()?.get_log_level()?;
         let project_id = &self.machine.project_id;
         let chain_name = &self.chain.name();
         let node_name = &self.machine.name;
+        let enable_kms = if self.chain()?.get_enable_kms()? {
+            "true"
+        } else {
+            "false"
+        };
 
         let mut var_map = BTreeMap::<&str, &str>::new();
         var_map.insert("role", role_name);
         var_map.insert("docker_image", z2_image);
-        var_map.insert("otterscan_image", otterscan_image);
-        var_map.insert("enable_faucet", enable_faucet);
         var_map.insert("enable_kms", enable_kms);
-        var_map.insert("spout_image", spout_image);
-        var_map.insert("stats_dashboard_image", stats_dashboard_image);
-        var_map.insert("stats_agent_image", stats_agent_image);
         var_map.insert("persistence_url", &persistence_url);
         var_map.insert("checkpoint_url", &checkpoint_url);
-        var_map.insert("zq2_metrics_image", zq2_metrics_image);
         var_map.insert("log_level", log_level);
         var_map.insert("project_id", project_id);
         var_map.insert("chain_name", chain_name);

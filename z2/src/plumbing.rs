@@ -330,29 +330,6 @@ pub async fn run_deployer_monitor(
     Ok(())
 }
 
-pub async fn run_deployer_generate_stats_key(config_file: &str, force: bool) -> Result<()> {
-    println!("🦆 Running generate-stats-key for {config_file} .. ");
-    deployer::run_generate_stats_key(config_file, force).await?;
-    Ok(())
-}
-
-pub async fn run_deployer_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
-    println!("🦆 Running generate-genesis-key for {config_file} .. ");
-    deployer::run_generate_genesis_key(config_file, force).await?;
-    deployer::run_generate_genesis_address(config_file, force).await?;
-    Ok(())
-}
-
-pub async fn run_deployer_generate_private_keys(
-    config_file: &str,
-    node_selection: bool,
-    force: bool,
-) -> Result<()> {
-    println!("🦆 Running generate-private-keys for {config_file} .. ");
-    deployer::run_generate_private_keys(config_file, node_selection, force).await?;
-    Ok(())
-}
-
 pub async fn run_deployer_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
     println!("🦆 Running API operation '{operation}' for {config_file} .. ");
     deployer::run_api_operation(config_file, operation).await?;
