@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    ops::Add,
-    sync::Arc,
-};
+use std::{collections::HashMap, ops::Add, sync::Arc};
 
 use anyhow::Result;
 use clap::ValueEnum;

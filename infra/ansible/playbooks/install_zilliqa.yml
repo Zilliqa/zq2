@@ -67,7 +67,7 @@
       connection: local
       become: false
       shell: |
-        source ../../../scripts/setenv && z2 deployer get-config-file --role {{ hostvars[inventory_hostname]['labels']['role'] }} --out /tmp/configfiles/{{ ansible_hostname }}.config.toml {{ chain_name }}.yaml
+        bash -c "source ../../../scripts/setenv && z2 deployer get-config-file --role {{ hostvars[inventory_hostname]['labels']['role'] }} --out /tmp/configfiles/{{ ansible_hostname }}.config.toml {{ chain_name }}.yaml"
 
     - name: Upload configuration file
       ansible.builtin.copy:

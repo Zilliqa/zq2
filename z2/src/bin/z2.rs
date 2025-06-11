@@ -118,7 +118,6 @@ enum DeployerCommands {
     Monitor(DeployerMonitorArgs),
     /// Perform operation over the network API nodes
     Api(DeployerApiArgs),
-
 }
 
 #[derive(Args, Debug)]

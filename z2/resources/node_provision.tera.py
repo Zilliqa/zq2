@@ -265,78 +265,6 @@ StandardOutput=append:/zilliqa.log
 WantedBy=multi-user.target
 """
 
-OPS_AGENT_INSTALL_SCRIPT_URL="https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh"
-
-OPS_AGENT_CONFIG_FILE="/etc/google-cloud-ops-agent/config.yaml"
-
-OPS_AGENT_CONFIG="""
-combined:
-  receivers:
-    otlp:
-      type: otlp
-      metrics_mode: googlecloudmonitoring
-logging:
-  receivers:
-    zilliqa:
-      type: files
-      include_paths:
-        - /var/lib/docker/containers/*/*.log
-        - /zilliqa.log
-      record_log_file_path: true
-  processors:
-    parse_log:
-        type: parse_json
-    parse_log_with_field:
-        type: parse_json
-        field: log
-    move_fields:
-      type: modify_fields
-      fields:
-        jsonPayload."logging.googleapis.com/severity":
-          move_from: jsonPayload.level
-        jsonPayload."logging.googleapis.com/sourceLocation".function:
-          move_from: jsonPayload.target
-        sourceLocation.line:
-          move_from: jsonPayload.line_number
-        jsonPayload.timestamp:
-          move_from: jsonPayload.time
-  service:
-    pipelines:
-      zilliqa:
-        receivers: [ zilliqa ]
-        processors: [ parse_log, parse_log_with_field, move_fields ]
-metrics:
-  receivers:
-    prometheus:
-      type: prometheus
-      config:
-        scrape_configs:
-          - job_name: 'node_exporter'
-            scrape_interval: 15s
-            static_configs:
-              - targets: ['localhost:9100']
-          - job_name: 'process_exporter'
-            scrape_interval: 30s
-            static_configs:
-              - targets: ['localhost:9256']
-            metric_relabel_configs:
-              - source_labels: [__name__]
-                regex: 'namedprocess_namegroup_cpu_seconds_total|namedprocess_namegroup_memory_bytes'
-                action: keep
-  service:
-    log_level: info
-    pipelines:
-      default_pipeline:
-        receivers: [prometheus]
-      otlp:
-        receivers: [otlp]
-traces:
-  service:
-    pipelines:
-      otlp:
-        receivers: [otlp]
-"""
-
 LOGROTATE_CONFIG="""
 /zilliqa.log
 {
@@ -491,7 +419,6 @@ def go(role):
     a_list.extend(INSTALL_PKGS)
     run_or_die(sudo_noninteractive_apt_env(a_list))
     install_docker()
-    install_ops_agent()
     install_gcloud()
     login_registry()
     match role:
@@ -525,18 +452,6 @@ def go(role):
             log("Provisioning aborted")
             return 1
     log("PROVISIONING_COMPLETED")
-
-
-def install_ops_agent():
-    """
-    From https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-    """
-    run_or_die(["wget", f"{OPS_AGENT_INSTALL_SCRIPT_URL}"])
-    run_or_die(["bash", "add-google-cloud-ops-agent-repo.sh", "--also-install" ])
-    with open(OPS_AGENT_CONFIG_FILE, "w") as f:
-        f.write(OPS_AGENT_CONFIG)
-    run_or_die(sudo_noninteractive_apt_env(["systemctl", "restart", "google-cloud-ops-agent"]))
-
 
 def install_docker():
     for pkg in [ "docker.io", "docker-doc", "docker-compose", "podman-docker", "runc" ]:
