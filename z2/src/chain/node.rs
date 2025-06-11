@@ -627,7 +627,26 @@ impl ChainNode {
         Ok(())
     }
 
-  pub async fn get_config_toml(&self) -> Result<String> {
+    pub fn get_keys_config(
+        &self,
+    ) -> Result<serde_json::Map<std::string::String, serde_json::Value>> {
+        let keys_config_file = format!("/opt/zilliqa/{}-keys-config.toml", self.chain.name());
+        let output = self
+            .machine
+            .run(format!("sudo cat {keys_config_file}").as_str(), false)?;
+
+        if !output.status.success() {
+            eprintln!("Error: {}", String::from_utf8_lossy(&output.stderr));
+            return Err(anyhow!("Error getting the keys config file"));
+        }
+
+        let content = String::from_utf8_lossy(&output.stdout);
+        let nodes_info: serde_json::Value = serde_json::from_str(&content)?;
+
+        Ok(nodes_info.as_object().unwrap().to_owned())
+    }
+
+    pub async fn get_config_toml(&self) -> Result<String> {
         let spec_config = include_str!("../../resources/config.tera.toml");
         let bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
         let subdomain = self.chain()?.get_subdomain()?;
