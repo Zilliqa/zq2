@@ -270,24 +270,6 @@ impl Machine {
         }
     }
 
-    pub fn get_genesis_address(&self, chain_name: &str) -> Result<String> {
-        let cmd = format!(
-            "gcloud secrets versions access latest --project=\"{}\" --secret=\"{}-genesis-address\"",
-            self.project_id, chain_name
-        );
-
-        let output = self.run(&cmd, false)?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Error retrieving {} genesis address: {}",
-                self.name,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-
-        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
-    }
-
     pub async fn get_local_block_number(&self) -> Result<u64> {
         let inner_command = r#"curl -s http://localhost:4201 -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'"#;
         let output = self.run(inner_command, true)?;
@@ -593,10 +575,6 @@ impl ChainNode {
             .get_private_key(&self.chain.name(), self.chain()?.get_enable_kms()?)
     }
 
-    pub fn get_genesis_address(&self) -> Result<String> {
-        self.machine.get_genesis_address(&self.chain.name())
-    }
-
     async fn import_config_files(&self) -> Result<()> {
         let temp_config_toml = NamedTempFile::new()?;
         let config_toml = &self
@@ -649,10 +627,11 @@ impl ChainNode {
         Ok(())
     }
 
-    pub async fn get_config_toml(&self) -> Result<String> {
+  pub async fn get_config_toml(&self) -> Result<String> {
         let spec_config = include_str!("../../resources/config.tera.toml");
         let bootstrap_nodes = self.chain.nodes_by_role(NodeRole::Bootstrap).await?;
         let subdomain = self.chain()?.get_subdomain()?;
+        let keys_config = self.get_keys_config()?;
 
         if bootstrap_nodes.is_empty() {
             return Err(anyhow!(
@@ -663,22 +642,34 @@ impl ChainNode {
 
         let mut bootstrap_addresses = Vec::new();
         for (idx, n) in bootstrap_nodes.into_iter().enumerate() {
-            let private_key = n.get_private_key()?;
-            let eth_address = EthereumAddress::from_private_key(&private_key)?;
+            let (public_key, peer_id) = if let Some(node_keys) = keys_config.get(&n.name()) {
+                let bls_public_key = node_keys["bls_public_key"].as_str().unwrap().to_string();
+                let peer_id = node_keys["peer_id"].as_str().unwrap().to_string();
+                (bls_public_key, peer_id)
+            } else {
+                return Err(anyhow!("{} not found in keys config", n.name()));
+            };
+
             let endpoint = format!("/dns/bootstrap-{idx}.{subdomain}/tcp/3333");
-            bootstrap_addresses.push((endpoint, eth_address));
+            bootstrap_addresses.push((endpoint, (public_key, peer_id)));
         }
 
         let mut validator_addresses = Vec::new();
 
         if self.chain()? == Chain::Zq2ProtoTestnet || self.chain()? == Chain::Zq2ProtoMainnet {
-            validator_addresses.push(bootstrap_addresses[0].1);
+            validator_addresses.push(bootstrap_addresses[0].1.clone());
         } else {
             let validator_nodes = self.chain.nodes_by_role(NodeRole::Validator).await?;
             for n in validator_nodes.into_iter() {
-                let private_key = n.get_private_key()?;
-                let eth_address = EthereumAddress::from_private_key(&private_key)?;
-                validator_addresses.push(eth_address);
+                let (public_key, peer_id) = if let Some(node_keys) = keys_config.get(&n.name()) {
+                    let bls_public_key = node_keys["bls_public_key"].as_str().unwrap().to_string();
+                    let peer_id = node_keys["peer_id"].as_str().unwrap().to_string();
+                    (bls_public_key, peer_id)
+                } else {
+                    return Err(anyhow!("{} not found in keys config", n.name()));
+                };
+
+                validator_addresses.push((public_key, peer_id));
             }
         }
 
@@ -738,17 +729,22 @@ impl ChainNode {
             serde_json::to_value(
                 bootstrap_addresses
                     .iter()
-                    .map(|(e, a)| (a.peer_id, e))
+                    .map(|(e, a)| (a.1.clone(), e))
                     .collect::<Vec<_>>(),
             )?
         } else {
             serde_json::to_value((
-                bootstrap_addresses[0].1.peer_id,
+                bootstrap_addresses[0].1.1.clone(),
                 format!("/dns/bootstrap.{subdomain}/tcp/3333"),
             ))?
         };
 
-        let genesis_account_address = self.chain.genesis_address().await?;
+        let genesis_account_address = if let Some(genesis_key) = keys_config.get("genesis-key") {
+            genesis_key["control_address"].as_str().unwrap().to_string()
+        } else {
+            return Err(anyhow!("Genesis account address not found in keys config"));
+        };
+
         let validator_control_address = self
             .chain()?
             .get_validator_control_address()
@@ -760,8 +756,8 @@ impl ChainNode {
                 .iter()
                 .map(|v| {
                     (
-                        v.bls_public_key,
-                        v.peer_id,
+                        v.0.clone(),
+                        v.1.clone(),
                         &genesis_deposits_amount,
                         "0x0000000000000000000000000000000000000000",
                         &validator_control_address,
