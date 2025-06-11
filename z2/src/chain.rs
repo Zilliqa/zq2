@@ -113,7 +113,7 @@ pub enum Chain {
             subdomain = "zq2-testnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
             log_level = "zilliqa=trace",
-            enable_kms = "false"
+            enable_kms = "true"
         )
     )]
     Zq2Testnet,
