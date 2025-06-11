@@ -3368,6 +3368,51 @@ async fn get_smart_contract_sub_state(mut network: Network) {
     assert!(substate2.get("welcome_msg").is_none());
 }
 
+#[zilliqa_macros::test]
+async fn get_smart_contract_sub_state_empty_should_return_null(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
+
+    network.run_until_block_finalized(5u64, 300).await.unwrap();
+
+    // Test querying for a non-existent variable name
+    let empty_string_vec: Vec<String> = vec![];
+    let substate_nonexistent: serde_json::Value = wallet
+        .provider()
+        .request(
+            "GetSmartContractSubState",
+            (
+                contract_address,
+                "nonexistent_variable",
+                empty_string_vec.clone(),
+            ),
+        )
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+
+    // ZQ1 returns null for non-existent variables, ZQ2 should match this behavior
+    // This test will fail initially, demonstrating the bug where {} is returned instead of null
+    assert_eq!(substate_nonexistent, serde_json::Value::Null);
+
+    // Test querying for non-existent indices in an existing map
+    let substate_nonexistent_indices: serde_json::Value = wallet
+        .provider()
+        .request(
+            "GetSmartContractSubState",
+            (contract_address, "welcome_map", ["nonexistent_key"]),
+        )
+        .await
+        .expect("Failed to call GetSmartContractSubState API");
+
+    // ZQ1 returns null for non-existent map indices, ZQ2 should match this behavior
+    // This test will also fail initially, demonstrating the bug where {} is returned instead of null
+    assert_eq!(substate_nonexistent_indices, serde_json::Value::Null);
+}
+
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn nested_maps_insert_removal(mut network: Network) {
     let wallet = network.genesis_wallet().await;
