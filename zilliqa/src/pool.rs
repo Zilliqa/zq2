@@ -918,8 +918,7 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-    use std::{path::PathBuf, sync::Arc};
+    use std::{path::PathBuf, sync::Arc, time::Instant};
 
     use alloy::{
         consensus::TxLegacy,
@@ -1011,7 +1010,6 @@ mod tests {
 
     #[test]
     #[rustfmt::skip]
-    #[allow(clippy::line_too_long)]
     fn test_internal_add_txns() -> Result<()> {
         let mut state = get_in_memory_state()?;
 
