@@ -55,6 +55,8 @@ pub async fn install_or_upgrade(
             .retain(|node| node.role == NodeRole::Validator || node.role == NodeRole::Bootstrap);
     }
 
+    chain_nodes.retain(|node| node.role != NodeRole::Apps);
+
     let node_names = chain_nodes
         .iter()
         .map(|n| n.name().clone())
@@ -78,11 +80,6 @@ pub async fn install_or_upgrade(
     let mut bootstrap_nodes = chain_nodes.clone();
     bootstrap_nodes.retain(|node| {
         node.role == NodeRole::Bootstrap && selected_machines.clone().contains(&node.name())
-    });
-
-    let mut apps_nodes = chain_nodes.clone();
-    apps_nodes.retain(|node| {
-        node.role == NodeRole::Apps && selected_machines.clone().contains(&node.name())
     });
 
     chain_nodes.retain(|node| {
