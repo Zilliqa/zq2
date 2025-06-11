@@ -212,19 +212,6 @@ impl ChainInstance {
         }
     }
 
-    pub async fn genesis_address(&self) -> Result<String> {
-        let nodes = self.nodes().await?;
-
-        if let Some(node) = nodes.first() {
-            node.get_genesis_address()
-        } else {
-            Err(anyhow!(
-                "Error retrieving at least one node in the network {}",
-                &self.name()
-            ))
-        }
-    }
-
     pub fn run_rpc_call(
         &self,
         method: &str,
