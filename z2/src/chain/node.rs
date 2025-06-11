@@ -17,7 +17,7 @@ use tera::{Context, Tera};
 use tokio::{fs::File, io::AsyncWriteExt};
 
 use super::instance::ChainInstance;
-use crate::{address::EthereumAddress, chain::Chain, kms::KmsService};
+use crate::{chain::Chain, kms::KmsService};
 
 #[derive(Clone, Debug, Default, ValueEnum, PartialEq)]
 pub enum NodePort {
