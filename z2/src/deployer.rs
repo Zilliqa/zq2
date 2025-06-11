@@ -93,7 +93,6 @@ pub async fn install_or_upgrade(
 
     let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade, max_parallel).await;
     let _ = execute_install_or_upgrade(chain_nodes.clone(), is_upgrade, max_parallel).await;
-    let _ = execute_install_or_upgrade(apps_nodes, is_upgrade, max_parallel).await;
 
     if !is_upgrade {
         post_install(chain).await?;

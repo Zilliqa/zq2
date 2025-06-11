@@ -475,7 +475,6 @@ impl ChainNode {
         let message = format!("Installing {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());
 
-        self.tag_machine()?;
         self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
@@ -487,7 +486,6 @@ impl ChainNode {
         let message = format!("Upgrading {} instance {}", self.role, self.machine.name);
         println!("{}", message.bold().yellow());
 
-        self.tag_machine()?;
         self.clean_previous_install().await?;
         self.import_config_files().await?;
         self.run_provisioning_script().await?;
@@ -597,27 +595,6 @@ impl ChainNode {
 
     pub fn get_genesis_address(&self) -> Result<String> {
         self.machine.get_genesis_address(&self.chain.name())
-    }
-
-    fn tag_machine(&self) -> Result<()> {
-        if self.role == NodeRole::Apps {
-            return Ok(());
-        }
-
-        let private_key = self.get_private_key()?;
-        let ethereum_address = EthereumAddress::from_private_key(&private_key)?;
-
-        let mut labels = BTreeMap::<String, String>::new();
-        labels.insert("peer-id".to_string(), ethereum_address.peer_id.to_string());
-
-        self.machine.add_labels(labels)?;
-
-        println!(
-            "Tagged the machine {} with the peer-id {}",
-            self.machine.name, ethereum_address.peer_id
-        );
-
-        Ok(())
     }
 
     async fn import_config_files(&self) -> Result<()> {
