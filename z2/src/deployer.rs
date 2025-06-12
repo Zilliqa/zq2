@@ -8,7 +8,6 @@ use ethers::{
     prelude::{Bytes, TransactionRequest},
 };
 use primitive_types::{H160, H256, U256};
-use strum::Display;
 use tokio::{sync::Semaphore, task};
 use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 
@@ -1019,78 +1018,6 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
         let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
             let result = node.restart(&mp).await;
-            drop(permit); // Release the permit when the task is done
-            (node, result)
-        });
-        futures.push(future);
-    }
-
-    let results = futures::future::join_all(futures).await;
-
-    multi_progress.stop();
-
-    let mut failures = vec![];
-
-    for result in results {
-        if let (node, Err(err)) = result? {
-            println!("Node {} failed with error: {}", node.name(), err);
-            failures.push(node.name());
-        }
-    }
-
-    for failure in failures {
-        log::error!("FAILURE: {}", failure);
-    }
-
-    Ok(())
-}
-
-#[derive(Clone, Debug, Display, ValueEnum)]
-pub enum ApiOperation {
-    #[value(name = "attach")]
-    Attach,
-    #[value(name = "detach")]
-    Detach,
-}
-
-pub async fn run_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-    let chain_nodes = chain.nodes().await?;
-    let node_names = chain_nodes
-        .iter()
-        .filter(|n| n.role == NodeRole::Api)
-        .map(|n| n.name().clone())
-        .collect::<Vec<_>>();
-
-    let target_nodes = {
-        let mut select = cliclack::multiselect("Select target nodes");
-
-        for name in &node_names {
-            select = select.item(name.clone(), name, "");
-        }
-
-        let selection = select.interact()?;
-        let mut nodes = chain_nodes.clone();
-        nodes.retain(|n| selection.contains(&n.name()));
-        nodes
-    };
-
-    let semaphore = Arc::new(Semaphore::new(50));
-    let mut futures = vec![];
-
-    let multi_progress =
-        cliclack::multi_progress(format!("Running API operation '{}'", operation).yellow());
-
-    for node in target_nodes {
-        let permit = semaphore.clone().acquire_owned().await?;
-        let operation = operation.to_owned();
-        let mp = multi_progress.to_owned();
-        let future = task::spawn(async move {
-            let result = match operation {
-                ApiOperation::Attach => node.api_attach(&mp).await,
-                ApiOperation::Detach => node.api_detach(&mp).await,
-            };
             drop(permit); // Release the permit when the task is done
             (node, result)
         });

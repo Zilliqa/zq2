@@ -16,7 +16,7 @@ use crate::{
         self,
         node::{NodePort, NodeRole},
     },
-    deployer::{ApiOperation, Metrics},
+    deployer::Metrics,
     kpi,
     node_spec::{Composition, NodeSpec},
     utils,
@@ -317,12 +317,6 @@ pub async fn run_deployer_monitor(
 ) -> Result<()> {
     println!("🦆 Running monitor for {config_file} .. ");
     deployer::run_monitor(config_file, metric, node_selection, follow).await?;
-    Ok(())
-}
-
-pub async fn run_deployer_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
-    println!("🦆 Running API operation '{operation}' for {config_file} .. ");
-    deployer::run_api_operation(config_file, operation).await?;
     Ok(())
 }
 

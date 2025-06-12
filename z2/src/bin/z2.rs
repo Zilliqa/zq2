@@ -12,7 +12,7 @@ use libp2p::PeerId;
 use z2lib::{
     chain::{self, node::NodePort},
     components::Component,
-    deployer::{ApiOperation, Metrics},
+    deployer::Metrics,
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
@@ -114,8 +114,6 @@ enum DeployerCommands {
     Restart(DeployerActionsArgs),
     /// Monitor the network nodes specified metrics
     Monitor(DeployerMonitorArgs),
-    /// Perform operation over the network API nodes
-    Api(DeployerApiArgs),
 }
 
 #[derive(Args, Debug)]
@@ -273,15 +271,6 @@ pub struct DeployerGenerateActionsArgs {
     /// Generate and replace the existing key
     #[clap(long)]
     force: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct DeployerApiArgs {
-    /// The operation to perform over the API nodes
-    #[clap(long, short)]
-    operation: ApiOperation,
-    /// The network deployer config file
-    config_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1048,17 +1037,6 @@ async fn main() -> Result<()> {
                 .map_err(|err| {
                     anyhow::anyhow!("Failed to run deployer monitor command: {}", err)
                 })?;
-                Ok(())
-            }
-            DeployerCommands::Api(arg) => {
-                let config_file = arg.config_file.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Provide a configuration file. [--config-file] mandatory argument"
-                    )
-                })?;
-                plumbing::run_deployer_api_operation(&config_file, arg.operation.clone())
-                    .await
-                    .map_err(|err| anyhow::anyhow!("Failed to run API operation: {}", err))?;
                 Ok(())
             }
         },
