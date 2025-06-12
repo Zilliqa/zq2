@@ -813,6 +813,17 @@ impl TransactionPool {
         account: &Account,
         from_broadcast: bool,
     ) -> TxAddResult {
+        // check for duplicates
+        if self.core.hash_to_txn_map.contains_key(&txn.hash) {
+            tracing::warn!(
+                "Transaction with this hash is already in the pool. Txn hash: {:?}, from: {:?}, account nonce: {:?}",
+                txn.hash,
+                txn.signer,
+                account.nonce,
+            );
+            return TxAddResult::Duplicate(txn.hash);
+        }
+
         if let Some(transaction_nonce) = txn.tx.nonce() {
             if transaction_nonce < account.nonce {
                 debug!(
@@ -885,6 +896,17 @@ impl TransactionPool {
         account: &Account,
         from_broadcast: bool,
     ) -> TxAddResult {
+        // check for duplicates
+        if self.core.hash_to_txn_map.contains_key(&txn.hash) {
+            tracing::warn!(
+                "Transaction with this hash is already in the pool. Txn hash: {:?}, from: {:?}, account nonce: {:?}",
+                txn.hash,
+                txn.signer,
+                account.nonce,
+            );
+            return TxAddResult::Duplicate(txn.hash);
+        }
+
         if let Some(transaction_nonce) = txn.tx.nonce() {
             if transaction_nonce < account.nonce {
                 debug!(
@@ -1468,7 +1490,7 @@ mod tests {
 
         // Second insertion of same transaction should be handled gracefully
         let result2 = pool.insert_transaction(txn.clone(), &acc, false);
-        assert!(matches!(result2, TxAddResult::AddedToMempool)); // Same txn, no change
+        assert!(matches!(result2, TxAddResult::Duplicate(_))); // Same txn, no change
 
         assert_eq!(pool.transaction_count(), 1);
         Ok(())
