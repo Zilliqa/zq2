@@ -9,7 +9,7 @@ use ethers::{
 };
 use primitive_types::{H160, H256, U256};
 use strum::Display;
-use tokio::{fs, sync::Semaphore, task};
+use tokio::{sync::Semaphore, task};
 use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 
 use crate::{
@@ -26,15 +26,6 @@ use crate::{
 
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
 const ZERO_ACCOUNT: &str = "0x0000000000000000000000000000000000000000";
-
-pub async fn new(network_name: &str, eth_chain_id: u64, roles: Vec<NodeRole>) -> Result<()> {
-    let config = NetworkConfig::new(network_name.to_string(), eth_chain_id, roles).await?;
-    let content = serde_yaml::to_string(&config)?;
-    let mut file_path = std::env::current_dir()?;
-    file_path.push(format!("{network_name}.yaml"));
-    fs::write(file_path, content).await?;
-    Ok(())
-}
 
 pub async fn install_or_upgrade(
     config_file: &str,
