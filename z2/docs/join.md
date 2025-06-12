@@ -8,7 +8,7 @@ Join a ZQ2 network
 Usage: z2 join [OPTIONS] --chain <CHAIN_NAME>
 
 Options:
-      --chain <CHAIN_NAME>             Specify the ZQ2 chain you want join [possible values: zq2-richard, zq2-persistence, zq2-infratest, zq2-perftest, zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet]
+      --chain <CHAIN_NAME>             Specify the ZQ2 chain you want join [possible values: zq2-infratest, zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet]
       --image-tag <IMAGE_TAG>          Specify the tag of the image to run
       --otlp-endpoint <OTLP_ENDPOINT>  Endpoint of OTLP collector
   -v, --verbose...                     Increase logging verbosity
