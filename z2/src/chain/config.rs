@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
 use super::node::NodeRole;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
