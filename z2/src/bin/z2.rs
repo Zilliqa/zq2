@@ -119,19 +119,6 @@ enum DeployerCommands {
 }
 
 #[derive(Args, Debug)]
-pub struct DeployerNewArgs {
-    /// ZQ2 network name
-    #[clap(long)]
-    network_name: Option<String>,
-    /// ZQ2 EVM chain ID
-    #[clap(long)]
-    eth_chain_id: Option<u64>,
-    /// Virtual Machine roles
-    #[clap(long, value_enum, value_delimiter = ',')]
-    roles: Option<Vec<chain::node::NodeRole>>,
-}
-
-#[derive(Args, Debug)]
 pub struct DeployerConfigArgs {
     /// The network deployer config file
     config_file: Option<String>,
