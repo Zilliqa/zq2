@@ -28,7 +28,6 @@ Commands:
   reset                  Reset a network stopping all the nodes and cleaning the /data folder
   restart                Restart a network stopping all the nodes and starting the service again
   monitor                Monitor the network nodes specified metrics
-  api                    Perform operation over the network API nodes
   help                   Print this message or the help of the given subcommand(s)
 
 Options:
@@ -625,51 +624,6 @@ Configuration file: zq2-prototestnet.yaml
 
 ```bash
 z2 deployer restart zq2-prototestnet.yaml
-```
-
-## Perform operations over the API nodes
-
-```bash
-z2 deployer api --help
-```
-
-```bash
-Perform operation over the network API nodes
-
-Usage: z2 deployer api [OPTIONS] --operation <OPERATION> [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-  -o, --operation <OPERATION>  The operation to perform over the API nodes [possible values: attach, detach]
-  -v, --verbose...             Increase logging verbosity
-  -q, --quiet...               Decrease logging verbosity
-  -h, --help                   Print help
-```
-
-### Usage example
-
-#### Scenario detach an API node from the load balancer
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
-```bash
-z2 deployer api -o detach zq2-prototestnet.yaml
-```
-
-#### Scenario attach an API node to the load balancer
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
-```bash
-z2 deployer api -o attach zq2-prototestnet.yaml
 ```
 
 ## Monitor the network nodes specified metrics

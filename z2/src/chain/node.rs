@@ -1217,30 +1217,4 @@ impl ChainNode {
 
         Ok(())
     }
-
-    pub async fn api_attach(&self, multi_progress: &MultiProgress) -> Result<()> {
-        let machine = &self.machine;
-        let progress_bar = multi_progress.add(cliclack::progress_bar(1));
-
-        progress_bar.start(format!("{}: Starting the service", self.name()));
-        machine.run("sudo systemctl start healthcheck.service", false)?;
-        progress_bar.inc(1);
-
-        progress_bar.stop(format!("{} {}: Attach completed", "✔".green(), self.name()));
-
-        Ok(())
-    }
-
-    pub async fn api_detach(&self, multi_progress: &MultiProgress) -> Result<()> {
-        let machine = &self.machine;
-        let progress_bar = multi_progress.add(cliclack::progress_bar(1));
-
-        progress_bar.start(format!("{}: Stopping the service", self.name()));
-        machine.run("sudo systemctl stop healthcheck.service", false)?;
-        progress_bar.inc(1);
-
-        progress_bar.stop(format!("{} {}: Detach completed", "✔".green(), self.name()));
-
-        Ok(())
-    }
 }
