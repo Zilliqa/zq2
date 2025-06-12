@@ -97,11 +97,6 @@ pub enum Chain {
 impl Chain {
     pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
         match chain_name {
-            "zq2-richard" => Ok(include_str!("../resources/chain-specs/zq2-richard.toml")),
-            "zq2-persistence" => Ok(include_str!(
-                "../resources/chain-specs/zq2-persistence.toml"
-            )),
-            "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
             "zq2-infratest" => Ok(include_str!("../resources/chain-specs/zq2-infratest.toml")),
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
             "zq2-prototestnet" => Ok(include_str!(
