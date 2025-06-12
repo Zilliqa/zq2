@@ -827,7 +827,7 @@ impl Consensus {
                         let mut pool = self.transaction_pool.write();
                         for txn in txns.into_iter().rev() {
                             let account = self.state.get_account(txn.signer)?;
-                            let added = pool.insert_transaction(txn, &account, false);
+                            let added = pool.insert_transaction_forced(txn, &account, false);
                             assert!(added.was_added())
                         }
                         warn!("Early proposal exists but we are not leader. Clearing proposal");

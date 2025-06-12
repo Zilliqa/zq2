@@ -878,6 +878,57 @@ impl TransactionPool {
         TxAddResult::AddedToMempool
     }
 
+    // Like insert transaction, but if the transaction is already there, we always overwrite it
+    pub fn insert_transaction_forced(
+        &mut self,
+        txn: VerifiedTransaction,
+        account: &Account,
+        from_broadcast: bool,
+    ) -> TxAddResult {
+        if let Some(transaction_nonce) = txn.tx.nonce() {
+            if transaction_nonce < account.nonce {
+                debug!(
+                    "Nonce is too low. Txn hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {:?}",
+                    txn.hash, txn.signer, transaction_nonce, account.nonce,
+                );
+                // This transaction is permanently invalid, so there is nothing to do.
+                // unwrap() is safe because we checked above that it was some().
+                return TxAddResult::NonceTooLow(transaction_nonce, account.nonce);
+            }
+        }
+
+        let existing_transaction = match txn.tx.nonce() {
+            Some(nonce) => self.core.get_txn_by_address_and_nonce(&txn.signer, nonce),
+            None => None,
+        };
+        if let Some(_existing_txn) = existing_transaction {
+            debug!(
+                "Txn updated in mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {:?}",
+                txn.hash,
+                txn.signer,
+                txn.tx.nonce(),
+                account.nonce,
+            );
+            self.core.update_txn(txn.clone());
+        } else {
+            debug!(
+                "Txn added to mempool. Hash: {:?}, from: {:?}, nonce: {:?}, account nonce: {:?}",
+                txn.hash,
+                txn.signer,
+                txn.tx.nonce(),
+                account.nonce,
+            );
+            self.core.add_txn(txn.clone(), account);
+        }
+
+        // If this is a transaction created at this node, add it to broadcast vector
+        if !from_broadcast {
+            self.store_broadcast_txn(txn.tx.clone());
+        }
+
+        TxAddResult::AddedToMempool
+    }
+
     fn store_broadcast_txn(&mut self, txn: SignedTransaction) {
         self.transactions_to_broadcast.push_back(txn);
     }
