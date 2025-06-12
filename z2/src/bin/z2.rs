@@ -82,8 +82,6 @@ pub struct DependsUpdateOptions {
 
 #[derive(Subcommand, Debug)]
 enum DeployerCommands {
-    /// Generate the deployer config file
-    New(DeployerNewArgs),
     /// Install the network defined in the deployer config file
     Install(DeployerInstallArgs),
     /// Update the network defined in the deployer config file
@@ -118,19 +116,6 @@ enum DeployerCommands {
     Monitor(DeployerMonitorArgs),
     /// Perform operation over the network API nodes
     Api(DeployerApiArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct DeployerNewArgs {
-    /// ZQ2 network name
-    #[clap(long)]
-    network_name: Option<String>,
-    /// ZQ2 EVM chain ID
-    #[clap(long)]
-    eth_chain_id: Option<u64>,
-    /// Virtual Machine roles
-    #[clap(long, value_enum, value_delimiter = ',')]
-    roles: Option<Vec<chain::node::NodeRole>>,
 }
 
 #[derive(Args, Debug)]
@@ -836,25 +821,6 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Deployer(deployer_command) => match &deployer_command {
-            DeployerCommands::New(arg) => {
-                let network_name = arg
-                    .network_name
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("--network-name is a mandatory argument"))?;
-                let roles = arg
-                    .roles
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("--roles is a mandatory argument"))?;
-                let eth_chain_id = arg
-                    .eth_chain_id
-                    .ok_or_else(|| anyhow::anyhow!("--eth-chain-id is a mandatory argument"))?;
-                plumbing::run_deployer_new(&network_name, eth_chain_id, roles)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer new command: {}", err)
-                    })?;
-                Ok(())
-            }
             DeployerCommands::Install(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(

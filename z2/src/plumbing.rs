@@ -154,16 +154,6 @@ pub async fn run_kpi_collector(config_file: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_deployer_new(
-    network_name: &str,
-    eth_chain_id: u64,
-    roles: Vec<NodeRole>,
-) -> Result<()> {
-    println!("🦆 Generating the deployer configuration file {network_name}.yaml .. ");
-    deployer::new(network_name, eth_chain_id, roles).await?;
-    Ok(())
-}
-
 pub async fn run_deployer_install(
     config_file: &str,
     node_selection: bool,
