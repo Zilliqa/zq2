@@ -9,11 +9,8 @@ on:
         options:
           - "devnet"
           - "infratest"
-          - "perftest"
           - "protomainnet"
           - "prototestnet"
-          - "richard"
-          - "uccbtest"
         required: false
         default: "prototestnet"
       target_host:

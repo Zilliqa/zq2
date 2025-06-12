@@ -13,32 +13,6 @@ use zilliqa::cfg::{ContractUpgradeConfig, ContractUpgrades, ReinitialiseParams};
 #[derive(Clone, Debug, ValueEnum, Display, EnumString, EnumProperty, PartialEq)]
 // TODO: decomment when became available
 pub enum Chain {
-    #[value(name = "zq2-richard")]
-    #[strum(
-        serialize = "zq2-richard",
-        props(
-            genesis_amount = "900_000_000_000_000_000_000_000_000",
-            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
-            subdomain = "zq2-richard.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info",
-            enable_kms = "false"
-        )
-    )]
-    Zq2Richard,
-    #[value(name = "zq2-persistence")]
-    #[strum(
-        serialize = "zq2-persistence",
-        props(
-            genesis_amount = "900_000_000_000_000_000_000_000_000",
-            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
-            subdomain = "zq2-persistence.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info",
-            enable_kms = "false"
-        )
-    )]
-    Zq2Persistence,
     #[value(name = "zq2-infratest")]
     #[strum(
         serialize = "zq2-infratest",
@@ -52,19 +26,6 @@ pub enum Chain {
         )
     )]
     Zq2InfraTest,
-    #[value(name = "zq2-perftest")]
-    #[strum(
-        serialize = "zq2-perftest",
-        props(
-            genesis_amount = "900_000_000_000_000_000_000_000_000",
-            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
-            subdomain = "zq2-perftest.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info",
-            enable_kms = "false"
-        )
-    )]
-    Zq2PerfTest,
     #[value(name = "zq2-devnet")]
     #[strum(
         serialize = "zq2-devnet",
@@ -136,11 +97,6 @@ pub enum Chain {
 impl Chain {
     pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
         match chain_name {
-            "zq2-richard" => Ok(include_str!("../resources/chain-specs/zq2-richard.toml")),
-            "zq2-persistence" => Ok(include_str!(
-                "../resources/chain-specs/zq2-persistence.toml"
-            )),
-            "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
             "zq2-infratest" => Ok(include_str!("../resources/chain-specs/zq2-infratest.toml")),
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
             "zq2-prototestnet" => Ok(include_str!(
