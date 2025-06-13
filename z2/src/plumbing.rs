@@ -291,9 +291,17 @@ pub async fn run_deployer_restore(
     max_parallel: Option<usize>,
     name: Option<String>,
     zip: bool,
+    no_restart: bool,
 ) -> Result<()> {
     println!("🦆 Restoring process for {config_file} .. ");
-    deployer::run_restore(config_file, max_parallel.unwrap_or(50), name, zip).await?;
+    deployer::run_restore(
+        config_file,
+        max_parallel.unwrap_or(50),
+        name,
+        zip,
+        no_restart,
+    )
+    .await?;
     Ok(())
 }
 

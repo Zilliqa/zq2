@@ -539,6 +539,7 @@ Arguments:
 Options:
   -n, --name <NAME>                  The name of the backup folder. If zip is specified, it represents the name of the zip file
       --zip                          If specified, restore the persistence from a zip file
+      --no-restart                   If specified, the service will not be restarted after the restore
       --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
   -v, --verbose...                   Increase logging verbosity
   -q, --quiet...                     Decrease logging verbosity
