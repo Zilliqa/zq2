@@ -964,13 +964,18 @@ impl ChainNode {
         &self,
         name: Option<String>,
         zip: bool,
+        no_restart: bool,
         multi_progress: &MultiProgress,
     ) -> Result<()> {
         let machine = &self.machine;
 
         let backup_name = name.unwrap_or(self.name());
 
-        let bar_length = if zip { 6 } else { 4 };
+        let bar_length = if zip {
+            if no_restart { 5 } else { 6 }
+        } else {
+            if no_restart { 3 } else { 4 }
+        };
         let progress_bar = multi_progress.add(cliclack::progress_bar(bar_length));
 
         // stop the service
@@ -1020,15 +1025,23 @@ impl ChainNode {
         }
 
         // start the service
-        progress_bar.start(format!("{}: Starting the service", self.name()));
-        machine.run("sudo systemctl start zilliqa.service", false)?;
-        progress_bar.inc(1);
+        if !no_restart {
+            progress_bar.start(format!("{}: Starting the service", self.name()));
+            machine.run("sudo systemctl start zilliqa.service", false)?;
+            progress_bar.inc(1);
+        }
 
-        progress_bar.stop(format!(
-            "{} {}: Restore completed",
-            "✔".green(),
-            self.name()
-        ));
+        let completion_message = if no_restart {
+            format!(
+                "{} {}: Restore completed (service not restarted)",
+                "✔".green(),
+                self.name()
+            )
+        } else {
+            format!("{} {}: Restore completed", "✔".green(), self.name())
+        };
+
+        progress_bar.stop(completion_message);
 
         Ok(())
     }

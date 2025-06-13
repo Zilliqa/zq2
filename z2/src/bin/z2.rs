@@ -254,6 +254,9 @@ pub struct DeployerRestoreArgs {
     /// If specified, restore the persistence from a zip file
     #[clap(long)]
     zip: bool,
+    /// If specified, the service will not be restarted after the restore
+    #[clap(long)]
+    no_restart: bool,
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
@@ -988,6 +991,7 @@ async fn main() -> Result<()> {
                     arg.max_parallel,
                     arg.name.clone(),
                     arg.zip,
+                    arg.no_restart,
                 )
                 .await
                 .map_err(|err| {

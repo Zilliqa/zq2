@@ -856,6 +856,7 @@ pub async fn run_restore(
     max_parallel: usize,
     name: Option<String>,
     zip: bool,
+    no_restart: bool,
 ) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
@@ -889,7 +890,7 @@ pub async fn run_restore(
         let permit = semaphore.clone().acquire_owned().await?;
         let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
-            let result = node.restore_from(name, zip, &mp).await;
+            let result = node.restore_from(name, zip, no_restart, &mp).await;
             drop(permit); // Release the permit when the task is done
             (node, result)
         });
