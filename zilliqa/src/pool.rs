@@ -352,7 +352,16 @@ impl TransactionsAccount {
     // Must be followed by maintain()
     fn update_nonce(&mut self, new_nonce: u64) -> Vec<Hash> {
         assert!(new_nonce >= self.nonce_account);
-        self.complete_txns_below_nonce(new_nonce)
+        let old_nonce = self.nonce_account;
+        let result = self.complete_txns_below_nonce(new_nonce);
+        tracing::warn!(
+            "{} transactions dropped from account {} due to nonce increase from {} to {}",
+            result.len(),
+            self.address,
+            old_nonce,
+            new_nonce,
+        );
+        result
     }
     fn update_with_account(&mut self, account: &Account) -> Vec<Hash> {
         self.update_balance(account.balance);
@@ -394,6 +403,12 @@ impl TransactionsAccount {
     }
 
     fn mark_executed(&mut self, txn: &VerifiedTransaction) -> Vec<Hash> {
+        tracing::debug!(
+            "Transaction marked executed in pool with address {}, nonce {:?}, hash {}",
+            txn.signer,
+            txn.tx.nonce(),
+            txn.hash
+        );
         if let Some(nonce) = txn.tx.nonce() {
             let removed_txn_hashes = self.complete_txns_below_nonce(nonce + 1);
             self.maintain();
@@ -450,6 +465,7 @@ struct TransactionPoolCore {
     all_transactions: HashMap<Address, TransactionsAccount>,
     pending_account_queue: BTreeSet<PendingQueueKey>,
     hash_to_txn_map: HashMap<Hash, VerifiedTransaction>,
+    total_transactions_counter: usize,
 }
 
 impl TransactionPoolCore {
@@ -467,6 +483,7 @@ impl TransactionPoolCore {
                     self.pending_account_queue.remove(&pending_queue_key);
                 }
                 let removed_txn_hashes = transactions_account.update_with_account(&new_account);
+                self.total_transactions_counter -= removed_txn_hashes.len();
                 for hash in removed_txn_hashes {
                     self.hash_to_txn_map.remove(&hash);
                 }
@@ -476,6 +493,7 @@ impl TransactionPoolCore {
             }
         }
         self.all_transactions.retain(|_k, v| !v.is_empty());
+        self.check_transaction_count();
     }
 
     fn update_with_account(&mut self, account_address: &Address, account_data: &Account) {
@@ -490,6 +508,7 @@ impl TransactionPoolCore {
                     self.pending_account_queue.remove(&pending_queue_key);
                 }
                 let removed_txn_hashes = transactions_account.update_with_account(new_account);
+                self.total_transactions_counter -= removed_txn_hashes.len();
                 for hash in removed_txn_hashes {
                     self.hash_to_txn_map.remove(&hash);
                 }
@@ -501,6 +520,7 @@ impl TransactionPoolCore {
                 }
             }
         }
+        self.check_transaction_count();
     }
     // Potentially slow, depending on merge behaviour
     fn pending_transactions_ordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
@@ -553,6 +573,15 @@ impl TransactionPoolCore {
             .sum()
     }
 
+    fn check_transaction_count(&self) {
+        assert!(self.pending_transaction_count() <= self.total_transactions_counter as u64);
+        assert_eq!(
+            self.transaction_count(),
+            self.total_transactions_counter as u64
+        );
+        assert_eq!(self.hash_to_txn_map.len(), self.total_transactions_counter);
+    }
+
     fn get_txn_by_address_and_nonce(
         &self,
         address: &Address,
@@ -579,6 +608,7 @@ impl TransactionPoolCore {
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
+        self.check_transaction_count();
     }
 
     fn add_txn(&mut self, txn: VerifiedTransaction, account: &Account) {
@@ -599,11 +629,12 @@ impl TransactionPoolCore {
             self.pending_account_queue.remove(&pending_queue_key);
         }
         transactions_account.insert_txn(txn.clone());
-        transactions_account.update_with_account(account);
+        self.total_transactions_counter += 1;
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
         self.hash_to_txn_map.insert(txn.hash, txn);
+        self.check_transaction_count();
     }
 
     fn preview_content(&self) -> TxPoolContent {
@@ -648,6 +679,7 @@ impl TransactionPoolCore {
         self.pending_account_queue.clear();
         self.all_transactions.clear();
         self.hash_to_txn_map.clear();
+        self.total_transactions_counter = 0;
     }
 
     fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
@@ -675,6 +707,7 @@ impl TransactionPoolCore {
         let old_pending_queue_key = transactions_account.get_pending_queue_key();
         let result = transactions_account.pop_best_if(predicate);
         if let Some(ref txn) = result {
+            self.total_transactions_counter -= 1;
             if let Some(pending_queue_key) = old_pending_queue_key {
                 self.pending_account_queue.remove(&pending_queue_key);
             }
@@ -686,6 +719,7 @@ impl TransactionPoolCore {
             }
             self.hash_to_txn_map.remove(&txn.hash);
         }
+        self.check_transaction_count();
         result
     }
 
@@ -695,6 +729,7 @@ impl TransactionPoolCore {
             self.pending_account_queue
                 .remove(&account.get_pending_queue_key().unwrap());
             let removed_txn_hashes = account.mark_executed(txn);
+            self.total_transactions_counter -= removed_txn_hashes.len();
             for hash in removed_txn_hashes {
                 self.hash_to_txn_map.remove(&hash);
             }
@@ -705,6 +740,7 @@ impl TransactionPoolCore {
                 self.all_transactions.remove(&address);
             }
         }
+        self.check_transaction_count();
     }
 }
 
@@ -821,6 +857,7 @@ impl TransactionPool {
                 txn.signer,
                 account.nonce,
             );
+            self.update_with_account(&txn.signer, account);
             return TxAddResult::Duplicate(txn.hash);
         }
 
@@ -832,6 +869,7 @@ impl TransactionPool {
                 );
                 // This transaction is permanently invalid, so there is nothing to do.
                 // unwrap() is safe because we checked above that it was some().
+                self.update_with_account(&txn.signer, account);
                 return TxAddResult::NonceTooLow(transaction_nonce, account.nonce);
             }
         }
@@ -859,6 +897,7 @@ impl TransactionPool {
                     txn.tx.nonce(),
                     txn.tx.gas_price_per_evm_gas()
                 );
+                self.update_with_account(&txn.signer, account);
                 return TxAddResult::SameNonceButLowerGasPrice;
             } else {
                 debug!(
@@ -869,6 +908,7 @@ impl TransactionPool {
                     account.nonce,
                 );
                 self.core.update_txn(txn.clone());
+                self.update_with_account(&txn.signer, account);
             }
         } else {
             debug!(
@@ -879,6 +919,7 @@ impl TransactionPool {
                 account.nonce,
             );
             self.core.add_txn(txn.clone(), account);
+            self.update_with_account(&txn.signer, account);
         }
 
         // If this is a transaction created at this node, add it to broadcast vector
