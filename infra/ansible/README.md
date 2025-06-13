@@ -121,13 +121,19 @@ python scripts/generate_genesis_key.py network.yaml --project-id=your-project
 
 for example:
 ```bash
-python3 scripts/delete_gcp_secrets.py --project-id prj-d-zq2-devnet-c83bkpsd --label-key "zq2-network" --label-value "zq2-infratest" --force
+python3 scripts/delete_gcp_secrets.py --project-id prj-d-zq2-devnet-c83bkpsd --label-value "zq2-infratest" --force
 
 python3 scripts/generate_private_keys.py --project-id prj-d-zq2-devnet-c83bkpsd ../../zq2-infratest.yaml
 
 python3 scripts/generate_stats_key.py --project-id prj-d-zq2-devnet-c83bkpsd ../../zq2-infratest.yaml
 
 python3 scripts/generate_genesis_key.py --project-id prj-d-zq2-devnet-c83bkpsd ../../zq2-infratest.yaml
+```
+
+
+To backup the just created credentials, please run:
+```bash
+python3 scripts/backup_secrets.py --project-id prj-d-zq2-devnet-c83bkpsd --label-value "zq2-infratest" --vault "<VALUE_NAME>" --force
 ```
 
 ### 2. Node Deployment
