@@ -973,9 +973,7 @@ impl ChainNode {
 
         let bar_length = if zip {
             if no_restart { 5 } else { 6 }
-        } else {
-            if no_restart { 3 } else { 4 }
-        };
+        } else if no_restart { 3 } else { 4 };
         let progress_bar = multi_progress.add(cliclack::progress_bar(bar_length));
 
         // stop the service
