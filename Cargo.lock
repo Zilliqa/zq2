@@ -10712,6 +10712,7 @@ dependencies = [
  "cfg-if",
  "clap",
  "criterion",
+ "dashmap",
  "eth_trie",
  "ethabi",
  "ethers",
