@@ -362,13 +362,15 @@ impl TransactionsAccount {
     fn update_nonce(&mut self, new_nonce: u64) -> Vec<Hash> {
         let old_nonce = self.nonce_account;
         let result = self.complete_txns_below_nonce(new_nonce);
-        tracing::warn!(
-            "{} transactions dropped from account {} due to nonce increase from {} to {}",
-            result.len(),
-            self.address,
-            old_nonce,
-            new_nonce,
-        );
+        if !result.is_empty() {
+            tracing::warn!(
+                "{} transactions dropped from account {} due to nonce increase from {} to {}",
+                result.len(),
+                self.address,
+                old_nonce,
+                new_nonce,
+            );
+        }
         result
     }
     fn update_with_account(&mut self, account: &Account) -> Vec<Hash> {
