@@ -2346,4 +2346,34 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_state_update_during_fork_handling() -> Result<()> {
+        let mut pool = TransactionPool::default();
+        let addr = "0x0000000000000000000000000000000000000001".parse()?;
+        let mut state = get_in_memory_state()?;
+        let acc = create_acc(&mut state, addr, 100, 0)?;
+
+        // Insert some transactions
+        pool.insert_transaction(transaction(addr, 0, 10), &acc, false);
+        pool.insert_transaction(transaction(addr, 1, 10), &acc, false);
+        pool.insert_transaction(transaction(addr, 2, 10), &acc, false);
+
+        // Simulate what happens during fork handling:
+        // 1. Update nonce to remove some transactions (simulating block execution)
+        let new_acc = create_acc(&mut state, addr, 100, 2)?;
+        pool.update_with_account(&addr, &new_acc);
+
+        // 2. Immediately re-insert transactions (simulating fork revert)
+        // But use the OLD account state for insertion
+        let old_acc = create_acc(&mut state, addr, 100, 0)?;
+        let txn0 = transaction(addr, 0, 10);
+        let txn1 = transaction(addr, 1, 10);
+
+        // This pattern might cause counting issues
+        pool.insert_transaction(txn0, &old_acc, true);
+        pool.insert_transaction(txn1, &old_acc, true);
+
+        Ok(())
+    }
 }
