@@ -1,5 +1,4 @@
 use std::{
-    cmp::min,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     ops::Bound::*,
 };
@@ -750,7 +749,7 @@ impl TransactionPoolCore {
 pub struct TransactionPool {
     core: TransactionPoolCore,
     /// Keeps transactions created at this node that will be broadcast
-    transactions_to_broadcast: VecDeque<SignedTransaction>,
+    transactions_to_broadcast: VecDeque<(SignedTransaction, usize)>,
 }
 
 // Represents currently pending txns for inclusion in the next block(s), as well as the ones that are being scheduled for future execution.
@@ -924,7 +923,12 @@ impl TransactionPool {
 
         // If this is a transaction created at this node, add it to broadcast vector
         if !from_broadcast {
-            self.store_broadcast_txn(txn.tx.clone());
+            let size = if let Ok(e) = cbor4ii::serde::to_vec(Vec::new(), &txn.tx) {
+                e.len()
+            } else {
+                return TxAddResult::Duplicate(Hash::ZERO); // FIXME: accurate error
+            };
+            self.store_broadcast_txn(txn.tx.clone(), size);
         }
 
         TxAddResult::AddedToMempool
@@ -986,31 +990,47 @@ impl TransactionPool {
 
         // If this is a transaction created at this node, add it to broadcast vector
         if !from_broadcast {
-            self.store_broadcast_txn(txn.tx.clone());
+            let size = if let Ok(e) = cbor4ii::serde::to_vec(Vec::new(), &txn.tx) {
+                e.len()
+            } else {
+                return TxAddResult::Duplicate(Hash::ZERO); // FIXME: accurate error
+            };
+            self.store_broadcast_txn(txn.tx.clone(), size);
         }
 
         TxAddResult::AddedToMempool
     }
 
-    fn store_broadcast_txn(&mut self, txn: SignedTransaction) {
-        self.transactions_to_broadcast.push_back(txn);
+    fn store_broadcast_txn(&mut self, txn: SignedTransaction, size: usize) {
+        self.transactions_to_broadcast.push_back((txn, size));
     }
 
     pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<SignedTransaction>> {
         const MAX_BATCH_SIZE: usize = 1000;
+        const BATCH_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of max_transmit_size().
 
         if self.transactions_to_broadcast.is_empty() {
             return Ok(Vec::new());
         }
 
-        let max_take = min(self.transactions_to_broadcast.len(), MAX_BATCH_SIZE);
+        let mut batch_count = 0usize;
+        let mut batch_size = BATCH_SIZE_THRESHOLD;
 
-        let ret_vec = self
+        for (_, sz) in self.transactions_to_broadcast.iter() {
+            // batch by number or size
+            if batch_size == 0 || batch_count == MAX_BATCH_SIZE {
+                break;
+            }
+            batch_size = batch_size.saturating_sub(*sz);
+            batch_count += 1;
+        }
+
+        let selected = self
             .transactions_to_broadcast
-            .drain(..max_take)
-            .collect::<Vec<_>>();
-
-        Ok(ret_vec)
+            .drain(0..batch_count)
+            .map(|(tx, _)| tx)
+            .collect();
+        Ok(selected)
     }
 
     pub fn pop_best_if(
