@@ -199,7 +199,11 @@ impl TransactionsAccount {
         let nonce = txn.tx.nonce().unwrap();
         let gas_price = txn.tx.maximum_validation_cost().unwrap() as i128;
         assert!(!self.nonced_transactions.contains_key(&nonce));
-        self.nonced_transactions.insert(nonce, txn);
+        let existing_txn = self.nonced_transactions.insert(nonce, txn);
+        assert!(
+            existing_txn.is_none(),
+            "JCVH: Attempt to double insert a transaction"
+        );
         // If it can pend, put it in pending and then pop it again if necessary
         if nonce == self.nonce_after_pending {
             self.nonce_after_pending += 1;
@@ -211,8 +215,13 @@ impl TransactionsAccount {
         assert!(txn.tx.nonce().is_none());
         let gas_price = txn.tx.maximum_validation_cost().unwrap() as i128;
         // Put it in pending and then pop it again if necessary
-        self.nonceless_transactions_pending
+        let existing_txn = self
+            .nonceless_transactions_pending
             .insert((&txn).into(), txn.clone());
+        assert!(
+            existing_txn.is_none(),
+            "BQHN: Attempt to double insert a transaction"
+        );
         self.balance_after_pending -= gas_price;
         self.maintain();
     }
