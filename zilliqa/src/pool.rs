@@ -1007,12 +1007,12 @@ impl TransactionPool {
         let mut batch_size = BATCH_SIZE_THRESHOLD;
 
         for tx in self.transactions_to_broadcast.iter() {
+            batch_size = batch_size.saturating_sub(tx.encoded_size());
+            batch_count += 1;
             // batch by number or size
             if batch_size == 0 || batch_count == MAX_BATCH_SIZE {
                 break;
             }
-            batch_size = batch_size.saturating_sub(tx.encoded_size());
-            batch_count += 1;
         }
 
         let selected = self
