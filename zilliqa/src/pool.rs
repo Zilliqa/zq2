@@ -906,8 +906,8 @@ impl TransactionPool {
                     txn.tx.nonce(),
                     account.nonce,
                 );
-                self.core.update_txn(txn.clone());
                 self.update_with_account(&txn.signer, account);
+                self.core.update_txn(txn.clone());
             }
         } else {
             debug!(
@@ -944,6 +944,7 @@ impl TransactionPool {
                 txn.signer,
                 account.nonce,
             );
+            self.update_with_account(&txn.signer, account);
             return TxAddResult::Duplicate(txn.hash);
         }
 
@@ -955,6 +956,7 @@ impl TransactionPool {
                 );
                 // This transaction is permanently invalid, so there is nothing to do.
                 // unwrap() is safe because we checked above that it was some().
+                self.update_with_account(&txn.signer, account);
                 return TxAddResult::NonceTooLow(transaction_nonce, account.nonce);
             }
         }
@@ -971,6 +973,7 @@ impl TransactionPool {
                 txn.tx.nonce(),
                 account.nonce,
             );
+            self.update_with_account(&txn.signer, account);
             self.core.update_txn(txn.clone());
         } else {
             debug!(
@@ -981,6 +984,7 @@ impl TransactionPool {
                 account.nonce,
             );
             self.core.add_txn(txn.clone(), account);
+            self.update_with_account(&txn.signer, account);
         }
 
         // If this is a transaction created at this node, add it to broadcast vector
