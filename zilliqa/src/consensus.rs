@@ -113,7 +113,24 @@ impl From<Hash> for MissingBlockError {
     }
 }
 
-pub type BlockVotes = (Vec<BlsSignature>, BitArray, u128, bool);
+#[derive(Debug, Clone, Serialize)]
+pub struct BlockVotes {
+    pub signatures: Vec<BlsSignature>,
+    pub cosigned: BitArray,
+    pub cosigned_weight: u128,
+    pub supermajority_reached: bool,
+}
+
+impl Default for BlockVotes {
+    fn default() -> BlockVotes {
+        BlockVotes {
+            signatures: Vec::new(),
+            cosigned: bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
+            cosigned_weight: 0,
+            supermajority_reached: false,
+        }
+    }
+}
 
 type EarlyProposal = (
     Block,
@@ -1108,16 +1125,9 @@ impl Consensus {
             return Ok(None);
         };
 
-        let mut votes = self.votes.entry(block_hash).or_insert_with(|| {
-            (
-                Vec::new(),
-                bitarr![u8, Msb0; 0; MAX_COMMITTEE_SIZE],
-                0,
-                false,
-            )
-        });
+        let mut votes = self.votes.entry(block_hash).or_default();
 
-        if votes.3 {
+        if votes.supermajority_reached {
             info!(
                 "(vote) supermajority already reached in this view {}",
                 current_view
@@ -1126,34 +1136,34 @@ impl Consensus {
         }
 
         // if the vote is new, store it
-        if !votes.1[index] {
-            votes.0.push(vote.signature());
-            votes.1.set(index, true);
+        if !votes.cosigned[index] {
+            votes.signatures.push(vote.signature());
+            votes.cosigned.set(index, true);
             // Update state to root pointed by voted block (in meantime it might have changed!)
             let state = self.state.at_root(block.state_root_hash().into());
             let Some(weight) = state.get_stake(vote.public_key, executed_block)? else {
                 return Err(anyhow!("vote from validator without stake"));
             };
-            votes.2 += weight.get();
+            votes.cosigned_weight += weight.get();
 
             let total_weight = self.total_weight(&committee, executed_block);
-            votes.3 = votes.2 * 3 > total_weight * 2;
+            votes.supermajority_reached = votes.cosigned_weight * 3 > total_weight * 2;
 
             trace!(
-                cosigned_weight = votes.2,
-                supermajority_reached = votes.3,
+                cosigned_weight = votes.cosigned_weight,
+                supermajority_reached = votes.supermajority_reached,
                 total_weight,
                 current_view,
                 vote_view = block_view + 1,
                 "storing vote"
             );
             // if we are already in the round in which the vote counts and have reached supermajority
-            if votes.3 {
+            if votes.supermajority_reached {
                 // We propose new block immediately if it is the first view
                 // Otherwise the block will be proposed on timeout
-                //if current_view == 1 {
-                //    return self.propose_new_block();
-                //}
+                if current_view == 1 {
+                    return self.propose_new_block(Some(&votes));
+                }
 
                 self.early_proposal_assemble_at(None)?;
 
@@ -1199,17 +1209,17 @@ impl Consensus {
             }
             None => {
                 // Check for majority
-                let (signatures, cosigned, _, supermajority_reached) = match votes {
+                let votes = match votes {
                     Some(v) => v,
                     None => match self.votes.get(&parent_block_hash) {
-                        Some(v) => &(v.0.clone(), v.1, v.2, v.3),
+                        Some(v) => &v.clone(),
                         None => {
                             warn!("tried to finalise a proposal without any votes");
                             return Ok(None);
                         }
                     },
                 };
-                if !supermajority_reached {
+                if !votes.supermajority_reached {
                     warn!("tried to finalise a proposal without majority");
                     return Ok(None);
                 };
@@ -1221,8 +1231,8 @@ impl Consensus {
                 (
                     self.qc_from_bits(
                         parent_block_hash,
-                        signatures,
-                        *cosigned,
+                        &votes.signatures,
+                        votes.cosigned,
                         parent_block.view(),
                     ),
                     committee,

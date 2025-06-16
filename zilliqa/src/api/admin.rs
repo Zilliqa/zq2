@@ -186,7 +186,7 @@ fn votes_received(_params: Params, node: &Arc<RwLock<Node>>) -> Result<VotesRece
             (
                 *hash,
                 block_votes.clone(),
-                filter_voters_by_cosigned_bits(&block_votes.1, &committee),
+                filter_voters_by_cosigned_bits(&block_votes.cosigned, &committee),
             )
         })
         .collect();
