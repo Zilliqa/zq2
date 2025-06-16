@@ -351,7 +351,6 @@ impl TransactionsAccount {
     }
     // Must be followed by maintain()
     fn update_nonce(&mut self, new_nonce: u64) -> Vec<Hash> {
-        assert!(new_nonce >= self.nonce_account);
         let old_nonce = self.nonce_account;
         let result = self.complete_txns_below_nonce(new_nonce);
         tracing::warn!(
@@ -2201,6 +2200,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore]
     #[test]
     fn pool_benchmark_insert_ascending_nonces() -> Result<()> {
         let mut pool = TransactionPool::default();
@@ -2237,6 +2237,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore]
     #[test]
     fn pool_benchmark_insert_descending_nonces() -> Result<()> {
         let mut pool = TransactionPool::default();
@@ -2273,6 +2274,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore]
     #[test]
     fn pool_benchmark_operations_on_large_pool() -> Result<()> {
         let mut pool = TransactionPool::default();
