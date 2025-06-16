@@ -2342,7 +2342,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18e4fdb82bd54a12e42fb58a800dcae6b9e13982238ce2296dc3570b92148e1f"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -6832,6 +6832,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbe28332295ca4451b7d779aff2749b144cabe5e6e05fe86f31337831d7df232"
+dependencies = [
+ "bytes",
+ "prost-derive 0.14.0",
+]
+
+[[package]]
 name = "prost-build"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6869,6 +6879,19 @@ name = "prost-derive"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
+dependencies = [
+ "anyhow",
+ "itertools 0.14.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
+name = "prost-derive"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26ac3e3c6b0e1c219e61ceda600eaad26d7195ecc9b5c027925c904091374ab5"
 dependencies = [
  "anyhow",
  "itertools 0.14.0",
@@ -10563,7 +10586,7 @@ dependencies = [
  "log",
  "parking_lot",
  "primitive-types",
- "prost 0.13.5",
+ "prost 0.14.0",
  "prost-build",
  "rand 0.8.5",
  "regex",
@@ -10738,7 +10761,7 @@ dependencies = [
  "paste",
  "pprof",
  "primitive-types",
- "prost 0.13.5",
+ "prost 0.14.0",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "reth-ipc",
