@@ -749,7 +749,7 @@ impl TransactionPoolCore {
 pub struct TransactionPool {
     core: TransactionPoolCore,
     /// Keeps transactions created at this node that will be broadcast
-    transactions_to_broadcast: VecDeque<(SignedTransaction, usize)>,
+    transactions_to_broadcast: VecDeque<VerifiedTransaction>,
 }
 
 // Represents currently pending txns for inclusion in the next block(s), as well as the ones that are being scheduled for future execution.
@@ -923,12 +923,7 @@ impl TransactionPool {
 
         // If this is a transaction created at this node, add it to broadcast vector
         if !from_broadcast {
-            let size = if let Ok(e) = cbor4ii::serde::to_vec(Vec::new(), &txn.tx) {
-                e.len()
-            } else {
-                return TxAddResult::Duplicate(Hash::ZERO); // FIXME: accurate error
-            };
-            self.store_broadcast_txn(txn.tx.clone(), size);
+            self.store_broadcast_txn(&txn);
         }
 
         TxAddResult::AddedToMempool
@@ -990,19 +985,14 @@ impl TransactionPool {
 
         // If this is a transaction created at this node, add it to broadcast vector
         if !from_broadcast {
-            let size = if let Ok(e) = cbor4ii::serde::to_vec(Vec::new(), &txn.tx) {
-                e.len()
-            } else {
-                return TxAddResult::Duplicate(Hash::ZERO); // FIXME: accurate error
-            };
-            self.store_broadcast_txn(txn.tx.clone(), size);
+            self.store_broadcast_txn(&txn);
         }
 
         TxAddResult::AddedToMempool
     }
 
-    fn store_broadcast_txn(&mut self, txn: SignedTransaction, size: usize) {
-        self.transactions_to_broadcast.push_back((txn, size));
+    fn store_broadcast_txn(&mut self, txn: &VerifiedTransaction) {
+        self.transactions_to_broadcast.push_back(txn.clone());
     }
 
     pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<SignedTransaction>> {
@@ -1016,19 +1006,19 @@ impl TransactionPool {
         let mut batch_count = 0usize;
         let mut batch_size = BATCH_SIZE_THRESHOLD;
 
-        for (_, sz) in self.transactions_to_broadcast.iter() {
+        for tx in self.transactions_to_broadcast.iter() {
             // batch by number or size
             if batch_size == 0 || batch_count == MAX_BATCH_SIZE {
                 break;
             }
-            batch_size = batch_size.saturating_sub(*sz);
+            batch_size = batch_size.saturating_sub(tx.encoded_size());
             batch_count += 1;
         }
 
         let selected = self
             .transactions_to_broadcast
             .drain(0..batch_count)
-            .map(|(tx, _)| tx)
+            .map(|tx| tx.tx)
             .collect();
         Ok(selected)
     }
