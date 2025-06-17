@@ -4,7 +4,7 @@ echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.d
 STATS_DASHBOARD_IMAGE="{{ stats_dashboard_image }}"
 
 start() {
-    docker rm stats-dashboard-{{ stats_dashboard_version }} &> /dev/null || echo 0
+    docker ps -a --filter "name=stats-dashboard-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker rm -f &> /dev/null || echo 0
     STATS_DASHBOARD_KEY={{ stats_dashboard_key }}
     docker run -td -p 3000:3000 --name stats-dashboard-{{ stats_dashboard_version }} \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
@@ -15,7 +15,7 @@ start() {
 }
 
 stop() {
-    docker stop stats-dashboard-{{ stats_dashboard_version }}
+    docker ps --filter "name=stats-dashboard-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop
 }
 
 case ${1} in
