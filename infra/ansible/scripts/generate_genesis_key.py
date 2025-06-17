@@ -28,9 +28,6 @@ def load_config(config_path: str):
 def get_secret_name(chain_name: str, kms_enabled: bool) -> str:
     return f"{chain_name}-genesis-enckey" if kms_enabled else f"{chain_name}-genesis"
 
-def get_address_secret_name(chain_name: str) -> str:
-    return f"{chain_name}-genesis-address"
-
 def get_kms_project_id(project_id: str) -> str:
     if project_id.startswith("prj-p"):
         return "prj-p-kms-2vduab0g"
@@ -163,8 +160,6 @@ if __name__ == "__main__":
 
     # Get secret names
     secret_name = get_secret_name(chain_name, args.kms)
-    address_secret_name = get_address_secret_name(chain_name)
-    genesis_address = convert_key_rust(key_hex, config.get('eth_chain_id'))['control_address']
 
     # Encrypt with KMS if enabled
     if args.kms:
@@ -181,17 +176,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     nodes = discover_gcp_nodes(chain_name, project_id)
-
-    address_labels = {"role": "genesis-address", "zq2-network": chain_name}
-    if not create_secret_in_gcp(address_secret_name, genesis_address, project_id, address_labels, args.force, args.dry_run):
-        print("Failed to create genesis address secret.", file=sys.stderr)
-        sys.exit(1)
-
-    for node in nodes:
-        if not grant_secret_access(address_secret_name, project_id, node.get('service_account'), args.dry_run):
-            print("Failed to grant access to genesis address secret.", file=sys.stderr)
-            sys.exit(1)
-
     nodes = filter_nodes(nodes)
 
     for node in nodes:
@@ -199,4 +183,4 @@ if __name__ == "__main__":
             print("Failed to grant access to genesis key secret.", file=sys.stderr)
             sys.exit(1)
 
-    print(f"Successfully generated and stored genesis key as '{secret_name}' and address as '{address_secret_name}'")
+    print(f"Successfully generated and stored genesis key as '{secret_name}'")

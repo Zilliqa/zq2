@@ -18,6 +18,7 @@ start() {
         -e CONTACT_DETAILS="devops@zilliqa.com" \
         -e WS_SERVER="ws://stats.{{ dns_subdomain }}" \
         -e WS_SECRET="${STATS_DASHBOARD_KEY}" \
+        -e PEER_ID="{{ hostvars[inventory_hostname]['labels']['peer-id'] }}" \
         -e VERBOSITY="2" \
         --restart=unless-stopped --pull=always \
         ${STATS_AGENT_IMAGE}

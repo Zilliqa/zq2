@@ -13,34 +13,6 @@ use zilliqa::cfg::{ContractUpgradeConfig, ContractUpgrades, ReinitialiseParams};
 #[derive(Clone, Debug, ValueEnum, Display, EnumString, EnumProperty, PartialEq)]
 // TODO: decomment when became available
 pub enum Chain {
-    #[value(name = "zq2-richard")]
-    #[strum(
-        serialize = "zq2-richard",
-        props(
-            genesis_amount = "900_000_000_000_000_000_000_000_000",
-            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
-            subdomain = "zq2-richard.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info",
-            enable_faucet = "true",
-            enable_kms = "false"
-        )
-    )]
-    Zq2Richard,
-    #[value(name = "zq2-persistence")]
-    #[strum(
-        serialize = "zq2-persistence",
-        props(
-            genesis_amount = "900_000_000_000_000_000_000_000_000",
-            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
-            subdomain = "zq2-persistence.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info",
-            enable_faucet = "true",
-            enable_kms = "false"
-        )
-    )]
-    Zq2Persistence,
     #[value(name = "zq2-infratest")]
     #[strum(
         serialize = "zq2-infratest",
@@ -50,25 +22,10 @@ pub enum Chain {
             subdomain = "zq2-infratest.zilstg.dev",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=info",
-            enable_faucet = "true",
             enable_kms = "false"
         )
     )]
     Zq2InfraTest,
-    #[value(name = "zq2-perftest")]
-    #[strum(
-        serialize = "zq2-perftest",
-        props(
-            genesis_amount = "900_000_000_000_000_000_000_000_000",
-            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
-            subdomain = "zq2-perftest.zilstg.dev",
-            project_id = "prj-d-zq2-devnet-c83bkpsd",
-            log_level = "zilliqa=info",
-            enable_faucet = "true",
-            enable_kms = "false"
-        )
-    )]
-    Zq2PerfTest,
     #[value(name = "zq2-devnet")]
     #[strum(
         serialize = "zq2-devnet",
@@ -78,7 +35,6 @@ pub enum Chain {
             subdomain = "zq2-devnet.zilliqa.com",
             project_id = "prj-d-zq2-devnet-c83bkpsd",
             log_level = "zilliqa=trace",
-            enable_faucet = "true",
             enable_kms = "false"
         )
     )]
@@ -92,7 +48,6 @@ pub enum Chain {
             subdomain = "zq2-prototestnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
             log_level = "zilliqa=trace",
-            enable_faucet = "true",
             enable_kms = "false"
         )
     )]
@@ -106,7 +61,6 @@ pub enum Chain {
             subdomain = "zq2-protomainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
             log_level = "zilliqa=trace",
-            enable_faucet = "true",
             enable_kms = "false"
         )
     )]
@@ -120,7 +74,6 @@ pub enum Chain {
             subdomain = "zq2-testnet.zilliqa.com",
             project_id = "prj-d-zq2-testnet-g13pnaa8",
             log_level = "zilliqa=trace",
-            enable_faucet = "true",
             enable_kms = "true"
         )
     )]
@@ -131,11 +84,10 @@ pub enum Chain {
         props(
             genesis_amount = "100_000_000_000_000_000_000",
             genesis_deposits_amount = "80_000_000_000_000_000_000_000_000",
-            validator_control_address = "0x254eEBf02A2D5e9f57440F66E2a001B1D476ec23",
+            validator_control_address = "0xf865745c75E585718c8f115A9317E7Fc8e1195f3",
             subdomain = "zq2-mainnet.zilliqa.com",
             project_id = "prj-p-zq2-mainnet-sn5n8wfl",
             log_level = "zilliqa=trace",
-            enable_faucet = "false",
             enable_kms = "false"
         )
     )]
@@ -145,11 +97,6 @@ pub enum Chain {
 impl Chain {
     pub fn get_toml_contents(chain_name: &str) -> Result<&'static str> {
         match chain_name {
-            "zq2-richard" => Ok(include_str!("../resources/chain-specs/zq2-richard.toml")),
-            "zq2-persistence" => Ok(include_str!(
-                "../resources/chain-specs/zq2-persistence.toml"
-            )),
-            "zq2-perftest" => Ok(include_str!("../resources/chain-specs/zq2-perftest.toml")),
             "zq2-infratest" => Ok(include_str!("../resources/chain-specs/zq2-infratest.toml")),
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
             "zq2-prototestnet" => Ok(include_str!(
@@ -365,13 +312,6 @@ impl Chain {
         let log_level = self.get_str("log_level");
 
         Ok(log_level.unwrap_or("zilliqa=trace"))
-    }
-
-    pub fn get_enable_faucet(&self) -> Result<bool> {
-        let enable_faucet = self.get_str("enable_faucet");
-        let enable_faucet_bool = enable_faucet.unwrap_or("false").to_lowercase() == "true";
-
-        Ok(enable_faucet_bool)
     }
 
     pub fn get_enable_kms(&self) -> Result<bool> {

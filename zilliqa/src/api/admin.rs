@@ -11,7 +11,14 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::types::{admin::VotesReceivedReturnee, eth::QuorumCertificate, hex};
-use crate::{api::to_hex::ToHex, cfg::EnabledApi, consensus::Validator, node::Node};
+use crate::{
+    api::{to_hex::ToHex, types::admin::VoteCount},
+    cfg::EnabledApi,
+    consensus::{BlockVotes, NewViewVote, Validator},
+    crypto::NodePublicKey,
+    message::{BitArray, BlockHeader},
+    node::Node,
+};
 
 pub fn rpc_module(
     node: Arc<RwLock<Node>>,
@@ -114,23 +121,82 @@ fn get_peers(_params: Params, node: &Arc<RwLock<Node>>) -> Result<PeerInfo> {
     })
 }
 
-/// Returns information about votes
+/// Returns information about votes and voters
 fn votes_received(_params: Params, node: &Arc<RwLock<Node>>) -> Result<VotesReceivedReturnee> {
     let node = node.read();
 
-    let new_views = node.consensus.new_views.clone().into_iter().collect_vec();
-    let votes = node.consensus.votes.clone().into_iter().collect_vec();
+    let new_views = node
+        .consensus
+        .new_views
+        .iter()
+        .map(|kv| (*kv.key(), kv.value().clone()))
+        .collect_vec();
+    let votes = node
+        .consensus
+        .votes
+        .iter()
+        .map(|kv| (*kv.key(), kv.value().clone()))
+        .collect_vec();
     let buffered_votes = node
         .consensus
         .buffered_votes
         .clone()
         .into_iter()
         .collect_vec();
+
+    let head_block = node.consensus.head_block();
+    let executed_block = BlockHeader {
+        number: head_block.header.number + 1,
+        ..Default::default()
+    };
+    let committee = node
+        .consensus
+        .state()
+        .at_root(head_block.state_root_hash().into())
+        .get_stakers(executed_block)?;
+
+    // Helper fn to match NodePublicKey with cosigned bit array
+    fn filter_voters_by_cosigned_bits(bits: &BitArray, committee: &[NodePublicKey]) -> VoteCount {
+        let mut voted = vec![];
+        let mut not_voted = vec![];
+        for (i, peer) in committee.iter().enumerate() {
+            if bits[i] {
+                voted.push(*peer)
+            } else {
+                not_voted.push(*peer)
+            }
+        }
+        VoteCount { voted, not_voted }
+    }
+
+    let new_view_with_voters: Vec<(u64, NewViewVote, VoteCount)> = new_views
+        .iter()
+        .map(|(view, new_view_vote)| {
+            (
+                *view,
+                new_view_vote.clone(),
+                filter_voters_by_cosigned_bits(&new_view_vote.cosigned, &committee),
+            )
+        })
+        .collect();
+
+    let votes_with_voters: Vec<(crate::crypto::Hash, BlockVotes, VoteCount)> = votes
+        .iter()
+        .map(|(hash, block_votes)| {
+            (
+                *hash,
+                block_votes.clone(),
+                filter_voters_by_cosigned_bits(&block_votes.cosigned, &committee),
+            )
+        })
+        .collect();
+
     let returnee = VotesReceivedReturnee {
-        new_views,
-        votes,
+        new_views: new_view_with_voters,
+        votes: votes_with_voters,
         buffered_votes,
     };
+
     Ok(returnee)
 }
 

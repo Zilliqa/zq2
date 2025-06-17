@@ -12,7 +12,7 @@ use libp2p::PeerId;
 use z2lib::{
     chain::{self, node::NodePort},
     components::Component,
-    deployer::{ApiOperation, Metrics},
+    deployer::Metrics,
     node_spec::{Composition, NodeSpec},
     plumbing, utils, validators,
 };
@@ -82,8 +82,6 @@ pub struct DependsUpdateOptions {
 
 #[derive(Subcommand, Debug)]
 enum DeployerCommands {
-    /// Generate the deployer config file
-    New(DeployerNewArgs),
     /// Install the network defined in the deployer config file
     Install(DeployerInstallArgs),
     /// Update the network defined in the deployer config file
@@ -116,27 +114,6 @@ enum DeployerCommands {
     Restart(DeployerActionsArgs),
     /// Monitor the network nodes specified metrics
     Monitor(DeployerMonitorArgs),
-    /// Perform operation over the network API nodes
-    Api(DeployerApiArgs),
-    /// Generate the node private keys. --force to replace if already existing
-    GeneratePrivateKeys(DeployerGenerateActionsArgs),
-    /// Generate the genesis key. --force to replace if already existing
-    GenerateGenesisKey(DeployerGenerateGenesisArgs),
-    /// Generate the Stats Dashboard key. --force to replace if already existing
-    GenerateStatsKey(DeployerGenerateStatsArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct DeployerNewArgs {
-    /// ZQ2 network name
-    #[clap(long)]
-    network_name: Option<String>,
-    /// ZQ2 EVM chain ID
-    #[clap(long)]
-    eth_chain_id: Option<u64>,
-    /// Virtual Machine roles
-    #[clap(long, value_enum, value_delimiter = ',')]
-    roles: Option<Vec<chain::node::NodeRole>>,
 }
 
 #[derive(Args, Debug)]
@@ -277,6 +254,9 @@ pub struct DeployerRestoreArgs {
     /// If specified, restore the persistence from a zip file
     #[clap(long)]
     zip: bool,
+    /// If specified, the service will not be restarted after the restore
+    #[clap(long)]
+    no_restart: bool,
     /// Define the number of nodes to process in parallel. Default: 50
     #[clap(long)]
     max_parallel: Option<usize>,
@@ -294,33 +274,6 @@ pub struct DeployerGenerateActionsArgs {
     /// Generate and replace the existing key
     #[clap(long)]
     force: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct DeployerGenerateGenesisArgs {
-    /// The network deployer config file
-    config_file: Option<String>,
-    /// Generate and replace the existing key
-    #[clap(long)]
-    force: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct DeployerGenerateStatsArgs {
-    /// The network deployer config file
-    config_file: Option<String>,
-    /// Generate and replace the existing key
-    #[clap(long)]
-    force: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct DeployerApiArgs {
-    /// The operation to perform over the API nodes
-    #[clap(long, short)]
-    operation: ApiOperation,
-    /// The network deployer config file
-    config_file: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -860,25 +813,6 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Deployer(deployer_command) => match &deployer_command {
-            DeployerCommands::New(arg) => {
-                let network_name = arg
-                    .network_name
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("--network-name is a mandatory argument"))?;
-                let roles = arg
-                    .roles
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("--roles is a mandatory argument"))?;
-                let eth_chain_id = arg
-                    .eth_chain_id
-                    .ok_or_else(|| anyhow::anyhow!("--eth-chain-id is a mandatory argument"))?;
-                plumbing::run_deployer_new(&network_name, eth_chain_id, roles)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!("Failed to run deployer new command: {}", err)
-                    })?;
-                Ok(())
-            }
             DeployerCommands::Install(arg) => {
                 let config_file = arg.config_file.clone().ok_or_else(|| {
                     anyhow::anyhow!(
@@ -1057,6 +991,7 @@ async fn main() -> Result<()> {
                     arg.max_parallel,
                     arg.name.clone(),
                     arg.zip,
+                    arg.no_restart,
                 )
                 .await
                 .map_err(|err| {
@@ -1106,65 +1041,6 @@ async fn main() -> Result<()> {
                 .map_err(|err| {
                     anyhow::anyhow!("Failed to run deployer monitor command: {}", err)
                 })?;
-                Ok(())
-            }
-            DeployerCommands::GenerateGenesisKey(arg) => {
-                let config_file = arg.config_file.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Provide a configuration file. [--config-file] mandatory argument"
-                    )
-                })?;
-                plumbing::run_deployer_generate_genesis_key(&config_file, arg.force)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!(
-                            "Failed to run deployer generate-genesis-key command: {}",
-                            err
-                        )
-                    })?;
-                Ok(())
-            }
-            DeployerCommands::GeneratePrivateKeys(arg) => {
-                let config_file = arg.config_file.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Provide a configuration file. [--config-file] mandatory argument"
-                    )
-                })?;
-                plumbing::run_deployer_generate_private_keys(&config_file, arg.select, arg.force)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!(
-                            "Failed to run deployer generate-private-keys command: {}",
-                            err
-                        )
-                    })?;
-                Ok(())
-            }
-            DeployerCommands::GenerateStatsKey(arg) => {
-                let config_file = arg.config_file.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Provide a configuration file. [--config-file] mandatory argument"
-                    )
-                })?;
-                plumbing::run_deployer_generate_stats_key(&config_file, arg.force)
-                    .await
-                    .map_err(|err| {
-                        anyhow::anyhow!(
-                            "Failed to run deployer generate-stats-key command: {}",
-                            err
-                        )
-                    })?;
-                Ok(())
-            }
-            DeployerCommands::Api(arg) => {
-                let config_file = arg.config_file.clone().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Provide a configuration file. [--config-file] mandatory argument"
-                    )
-                })?;
-                plumbing::run_deployer_api_operation(&config_file, arg.operation.clone())
-                    .await
-                    .map_err(|err| anyhow::anyhow!("Failed to run API operation: {}", err))?;
                 Ok(())
             }
         },

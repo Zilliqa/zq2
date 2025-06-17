@@ -16,7 +16,7 @@ use crate::{
         self,
         node::{NodePort, NodeRole},
     },
-    deployer::{ApiOperation, Metrics},
+    deployer::Metrics,
     kpi,
     node_spec::{Composition, NodeSpec},
     utils,
@@ -151,16 +151,6 @@ pub async fn run_net(
 pub async fn run_kpi_collector(config_file: &str) -> Result<()> {
     println!("🦆 Running KPI collector with {config_file} config file...");
     kpi::Kpi::run(&kpi::Config::load(config_file)?).await;
-    Ok(())
-}
-
-pub async fn run_deployer_new(
-    network_name: &str,
-    eth_chain_id: u64,
-    roles: Vec<NodeRole>,
-) -> Result<()> {
-    println!("🦆 Generating the deployer configuration file {network_name}.yaml .. ");
-    deployer::new(network_name, eth_chain_id, roles).await?;
     Ok(())
 }
 
@@ -301,9 +291,17 @@ pub async fn run_deployer_restore(
     max_parallel: Option<usize>,
     name: Option<String>,
     zip: bool,
+    no_restart: bool,
 ) -> Result<()> {
     println!("🦆 Restoring process for {config_file} .. ");
-    deployer::run_restore(config_file, max_parallel.unwrap_or(50), name, zip).await?;
+    deployer::run_restore(
+        config_file,
+        max_parallel.unwrap_or(50),
+        name,
+        zip,
+        no_restart,
+    )
+    .await?;
     Ok(())
 }
 
@@ -327,35 +325,6 @@ pub async fn run_deployer_monitor(
 ) -> Result<()> {
     println!("🦆 Running monitor for {config_file} .. ");
     deployer::run_monitor(config_file, metric, node_selection, follow).await?;
-    Ok(())
-}
-
-pub async fn run_deployer_generate_stats_key(config_file: &str, force: bool) -> Result<()> {
-    println!("🦆 Running generate-stats-key for {config_file} .. ");
-    deployer::run_generate_stats_key(config_file, force).await?;
-    Ok(())
-}
-
-pub async fn run_deployer_generate_genesis_key(config_file: &str, force: bool) -> Result<()> {
-    println!("🦆 Running generate-genesis-key for {config_file} .. ");
-    deployer::run_generate_genesis_key(config_file, force).await?;
-    deployer::run_generate_genesis_address(config_file, force).await?;
-    Ok(())
-}
-
-pub async fn run_deployer_generate_private_keys(
-    config_file: &str,
-    node_selection: bool,
-    force: bool,
-) -> Result<()> {
-    println!("🦆 Running generate-private-keys for {config_file} .. ");
-    deployer::run_generate_private_keys(config_file, node_selection, force).await?;
-    Ok(())
-}
-
-pub async fn run_deployer_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
-    println!("🦆 Running API operation '{operation}' for {config_file} .. ");
-    deployer::run_api_operation(config_file, operation).await?;
     Ok(())
 }
 

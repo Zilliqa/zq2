@@ -1,20 +1,14 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    ops::Add,
-    sync::Arc,
-};
+use std::{collections::HashMap, ops::Add, sync::Arc};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use clap::ValueEnum;
-use cliclack::MultiProgress;
 use colored::Colorize;
 use ethers::{
     middleware::Middleware,
     prelude::{Bytes, TransactionRequest},
 };
 use primitive_types::{H160, H256, U256};
-use strum::Display;
-use tokio::{fs, sync::Semaphore, task};
+use tokio::{sync::Semaphore, task};
 use zilliqa::{crypto::SecretKey, exec::BLESSED_TRANSACTIONS};
 
 use crate::{
@@ -25,22 +19,12 @@ use crate::{
         instance::ChainInstance,
         node::{ChainNode, NodePort, NodeRole},
     },
-    secret::Secret,
     utils::format_amount,
     validators::{self, SignerClient},
 };
 
 const VALIDATOR_DEPOSIT_IN_MILLIONS: u8 = 20;
 const ZERO_ACCOUNT: &str = "0x0000000000000000000000000000000000000000";
-
-pub async fn new(network_name: &str, eth_chain_id: u64, roles: Vec<NodeRole>) -> Result<()> {
-    let config = NetworkConfig::new(network_name.to_string(), eth_chain_id, roles).await?;
-    let content = serde_yaml::to_string(&config)?;
-    let mut file_path = std::env::current_dir()?;
-    file_path.push(format!("{network_name}.yaml"));
-    fs::write(file_path, content).await?;
-    Ok(())
-}
 
 pub async fn install_or_upgrade(
     config_file: &str,
@@ -60,6 +44,8 @@ pub async fn install_or_upgrade(
         chain_nodes
             .retain(|node| node.role == NodeRole::Validator || node.role == NodeRole::Bootstrap);
     }
+
+    chain_nodes.retain(|node| node.role != NodeRole::Apps);
 
     let node_names = chain_nodes
         .iter()
@@ -86,11 +72,6 @@ pub async fn install_or_upgrade(
         node.role == NodeRole::Bootstrap && selected_machines.clone().contains(&node.name())
     });
 
-    let mut apps_nodes = chain_nodes.clone();
-    apps_nodes.retain(|node| {
-        node.role == NodeRole::Apps && selected_machines.clone().contains(&node.name())
-    });
-
     chain_nodes.retain(|node| {
         node.role != NodeRole::Bootstrap
             && node.role != NodeRole::Apps
@@ -99,7 +80,6 @@ pub async fn install_or_upgrade(
 
     let _ = execute_install_or_upgrade(bootstrap_nodes, is_upgrade, max_parallel).await;
     let _ = execute_install_or_upgrade(chain_nodes.clone(), is_upgrade, max_parallel).await;
-    let _ = execute_install_or_upgrade(apps_nodes, is_upgrade, max_parallel).await;
 
     if !is_upgrade {
         post_install(chain).await?;
@@ -876,6 +856,7 @@ pub async fn run_restore(
     max_parallel: usize,
     name: Option<String>,
     zip: bool,
+    no_restart: bool,
 ) -> Result<()> {
     let config = NetworkConfig::from_file(config_file).await?;
     let chain = ChainInstance::new(config).await?;
@@ -909,7 +890,7 @@ pub async fn run_restore(
         let permit = semaphore.clone().acquire_owned().await?;
         let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
-            let result = node.restore_from(name, zip, &mp).await;
+            let result = node.restore_from(name, zip, no_restart, &mp).await;
             drop(permit); // Release the permit when the task is done
             (node, result)
         });
@@ -1038,381 +1019,6 @@ pub async fn run_restart(config_file: &str, node_selection: bool) -> Result<()> 
         let mp = multi_progress.to_owned();
         let future = task::spawn(async move {
             let result = node.restart(&mp).await;
-            drop(permit); // Release the permit when the task is done
-            (node, result)
-        });
-        futures.push(future);
-    }
-
-    let results = futures::future::join_all(futures).await;
-
-    multi_progress.stop();
-
-    let mut failures = vec![];
-
-    for result in results {
-        if let (node, Err(err)) = result? {
-            println!("Node {} failed with error: {}", node.name(), err);
-            failures.push(node.name());
-        }
-    }
-
-    for failure in failures {
-        log::error!("FAILURE: {}", failure);
-    }
-
-    Ok(())
-}
-
-pub async fn run_generate_stats_key(config_file: &str, force: bool) -> Result<String> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-
-    let multi_progress = cliclack::multi_progress("Generating the Stats Dashboard key".yellow());
-
-    let secret_suffix = if chain.chain()?.get_enable_kms()? {
-        "-enckey"
-    } else {
-        ""
-    };
-    let secret_name = &format!("{}-stats-dashboard{}", chain.name(), secret_suffix);
-    let mut labels = BTreeMap::<String, String>::new();
-    labels.insert("role".to_string(), "stats-dashboard".to_owned());
-    labels.insert("zq2-network".to_string(), chain.name());
-    let result = generate_secret(
-        &multi_progress,
-        secret_name,
-        labels,
-        chain.chain()?.get_project_id()?,
-        force,
-        None,
-        chain.chain()?.get_enable_kms()?,
-    )
-    .await;
-
-    multi_progress.stop();
-
-    run_setup_secrets_grants(config_file, secret_name).await?;
-
-    result
-}
-
-pub async fn run_generate_genesis_key(config_file: &str, force: bool) -> Result<String> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-
-    let multi_progress = cliclack::multi_progress("Generating the genesis key".yellow());
-
-    let secret_suffix = if chain.chain()?.get_enable_kms()? {
-        "-enckey"
-    } else {
-        ""
-    };
-    let secret_name = &format!("{}-genesis{}", chain.name(), secret_suffix);
-    let mut labels = BTreeMap::<String, String>::new();
-    labels.insert("role".to_string(), "genesis".to_owned());
-    labels.insert("zq2-network".to_string(), chain.name());
-    let result = generate_secret(
-        &multi_progress,
-        secret_name,
-        labels,
-        chain.chain()?.get_project_id()?,
-        force,
-        None,
-        chain.chain()?.get_enable_kms()?,
-    )
-    .await;
-
-    multi_progress.stop();
-
-    run_setup_secrets_grants(config_file, secret_name).await?;
-
-    result
-}
-
-pub async fn run_generate_genesis_address(config_file: &str, force: bool) -> Result<String> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-
-    let multi_progress = cliclack::multi_progress("Generating the genesis address".yellow());
-
-    let genesis_address = EthereumAddress::from_private_key(&chain.genesis_private_key()?)?.address;
-    let secret_name = &format!("{}-genesis-address", chain.name());
-    let mut labels = BTreeMap::<String, String>::new();
-    labels.insert("role".to_string(), "genesis-address".to_owned());
-    labels.insert("zq2-network".to_string(), chain.name());
-    let result = generate_secret(
-        &multi_progress,
-        secret_name,
-        labels,
-        chain.chain()?.get_project_id()?,
-        force,
-        Some(genesis_address.to_string()),
-        false,
-    )
-    .await;
-
-    multi_progress.stop();
-
-    run_setup_secrets_grants(config_file, secret_name).await?;
-
-    result
-}
-
-pub async fn run_generate_private_keys(
-    config_file: &str,
-    node_selection: bool,
-    force: bool,
-) -> Result<()> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-
-    // Create a list of instances
-    let mut machines = chain.machines();
-    machines.retain(|m| m.labels.get("role") != Some(&NodeRole::Apps.to_string()));
-
-    let machine_names = machines.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
-
-    let target_nodes = if node_selection {
-        let mut select = cliclack::multiselect("Select target nodes");
-
-        for name in &machine_names {
-            select = select.item(name.clone(), name, "");
-        }
-
-        let selection = select.interact()?;
-        let mut machines = machines.clone();
-        machines.retain(|m| selection.contains(&m.name));
-        machines
-    } else {
-        machines.sort_by_key(|machine| machine.name.to_owned());
-        machines
-    };
-
-    let semaphore = Arc::new(Semaphore::new(50));
-    let mut futures = vec![];
-
-    let multi_progress = cliclack::multi_progress("Generating the node private keys".yellow());
-
-    for node in target_nodes {
-        let permit = semaphore.clone().acquire_owned().await?;
-        let mp = multi_progress.to_owned();
-        let chain_name = chain.name();
-        let get_enable_kms = chain.chain()?.get_enable_kms()?;
-        let service_account = node.get_service_account()?;
-        let role = node
-            .labels
-            .get("role")
-            .unwrap_or_else(|| panic!("The machine {} has no label role", node.name))
-            .clone();
-        let future = task::spawn(async move {
-            let secret_suffix = if get_enable_kms { "-enckey" } else { "-pk" };
-            let secret_name = &format!("{}{}", node.clone().name, secret_suffix);
-            let project_id = &node.clone().project_id;
-            let mut labels = BTreeMap::<String, String>::new();
-            labels.insert("is-private-key".to_string(), "true".to_string());
-            labels.insert("role".to_string(), role);
-            labels.insert("zq2-network".to_string(), chain_name.clone());
-            labels.insert("node-name".to_string(), node.clone().name);
-            let mut result = generate_secret(
-                &mp,
-                secret_name,
-                labels,
-                project_id,
-                force,
-                None,
-                get_enable_kms,
-            )
-            .await;
-
-            let private_key_result =
-                Secret::grant_service_account(secret_name, project_id, &service_account);
-
-            if result.is_ok() {
-                result = private_key_result;
-            }
-            drop(permit); // Release the permit when the task is done
-
-            (node, result)
-        });
-        futures.push(future);
-    }
-
-    let results = futures::future::join_all(futures).await;
-
-    multi_progress.stop();
-
-    let mut failures = vec![];
-
-    for result in results {
-        if let (machine, Err(err)) = result? {
-            println!("Node {} failed with error: {}", machine.name, err);
-            failures.push(machine.name);
-        }
-    }
-
-    for failure in failures {
-        log::error!("FAILURE: {}", failure);
-    }
-
-    Ok(())
-}
-
-async fn generate_secret(
-    multi_progress: &MultiProgress,
-    name: &str,
-    mut labels: BTreeMap<String, String>,
-    project_id: &str,
-    force: bool,
-    secret_value: Option<String>,
-    encrypted: bool,
-) -> Result<String> {
-    let progress_bar = multi_progress.add(cliclack::progress_bar(if force { 4 } else { 3 }));
-    let mut filters = Vec::<String>::new();
-    if encrypted {
-        labels.insert("encrypted".to_string(), "true".to_string());
-    }
-    for (k, v) in labels.clone() {
-        filters.push(format!("labels.{}={}", k, v));
-    }
-    let filters = &filters.join(" AND ");
-
-    // Retrieve existing secret
-    progress_bar.start(format!("{}: Retrieving existing secret", name));
-    let mut secrets = Secret::get_secrets(project_id, filters)?;
-    if secrets.len() > 1 {
-        return Err(anyhow!(
-            "Error: found multiple secrets with the filter {filters}"
-        ));
-    }
-    progress_bar.inc(1);
-
-    // If force and present delete the old secret before
-    if !secrets.is_empty() && force {
-        progress_bar.start(format!("{}: Deleting existing secret", name));
-        secrets[0].delete()?;
-        secrets.clear();
-        progress_bar.inc(1);
-    }
-
-    // Create secret if does not exist
-    progress_bar.start(format!("{}: Create secret if does not exist", name));
-    if secrets.is_empty() {
-        let secret = Secret::create(project_id, name, labels)?;
-        secrets.push(secret);
-    }
-    progress_bar.inc(1);
-
-    // Create a version if does not exist or replace it
-    progress_bar.start(format!(
-        "{}: Creating new secret version if not exist",
-        name
-    ));
-
-    let current_secret_value = if secrets[0].value().is_err() {
-        secrets[0].add_version(secret_value, encrypted)?
-    } else {
-        secrets[0].value()?
-    };
-    progress_bar.inc(1);
-
-    // Process completed
-    progress_bar.stop(format!("{} {}: Secret created", "✔".green(), name));
-
-    Ok(current_secret_value)
-}
-
-async fn run_setup_secrets_grants(config_file: &str, secret_name: &str) -> Result<()> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-
-    // Create a list of instances
-    let mut machines = chain.machines();
-    machines.sort_by_key(|machine| machine.name.to_owned());
-
-    let multi_progress =
-        cliclack::multi_progress("Granting the node SA to access the secrets".yellow());
-
-    let mut results = vec![];
-
-    for machine in machines {
-        log::info!(
-            "Granting the secret {} to the service account {}",
-            secret_name,
-            machine.name
-        );
-        let service_account = machine.get_service_account()?;
-        let project_id = &machine.clone().project_id;
-        let service_account = &service_account.clone();
-        let grants_result = Secret::grant_service_account(secret_name, project_id, service_account);
-
-        results.push((machine, grants_result));
-    }
-
-    multi_progress.stop();
-
-    let mut failures = vec![];
-
-    for result in results {
-        if let (machine, Err(err)) = result {
-            println!("Node {} failed with error: {}", machine.name, err);
-            failures.push(machine.name);
-        }
-    }
-
-    for failure in failures {
-        log::error!("FAILURE: {}", failure);
-    }
-
-    Ok(())
-}
-
-#[derive(Clone, Debug, Display, ValueEnum)]
-pub enum ApiOperation {
-    #[value(name = "attach")]
-    Attach,
-    #[value(name = "detach")]
-    Detach,
-}
-
-pub async fn run_api_operation(config_file: &str, operation: ApiOperation) -> Result<()> {
-    let config = NetworkConfig::from_file(config_file).await?;
-    let chain = ChainInstance::new(config).await?;
-    let chain_nodes = chain.nodes().await?;
-    let node_names = chain_nodes
-        .iter()
-        .filter(|n| n.role == NodeRole::Api)
-        .map(|n| n.name().clone())
-        .collect::<Vec<_>>();
-
-    let target_nodes = {
-        let mut select = cliclack::multiselect("Select target nodes");
-
-        for name in &node_names {
-            select = select.item(name.clone(), name, "");
-        }
-
-        let selection = select.interact()?;
-        let mut nodes = chain_nodes.clone();
-        nodes.retain(|n| selection.contains(&n.name()));
-        nodes
-    };
-
-    let semaphore = Arc::new(Semaphore::new(50));
-    let mut futures = vec![];
-
-    let multi_progress =
-        cliclack::multi_progress(format!("Running API operation '{}'", operation).yellow());
-
-    for node in target_nodes {
-        let permit = semaphore.clone().acquire_owned().await?;
-        let operation = operation.to_owned();
-        let mp = multi_progress.to_owned();
-        let future = task::spawn(async move {
-            let result = match operation {
-                ApiOperation::Attach => node.api_attach(&mp).await,
-                ApiOperation::Detach => node.api_detach(&mp).await,
-            };
             drop(permit); // Release the permit when the task is done
             (node, result)
         });

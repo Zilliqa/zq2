@@ -12,7 +12,6 @@ Group of subcommands to deploy and configure a Zilliqa 2 network
 Usage: z2 deployer [OPTIONS] <COMMAND>
 
 Commands:
-  new                    Generate the deployer config file
   install                Install the network defined in the deployer config file
   upgrade                Update the network defined in the deployer config file
   get-config-file        Generate in output the validator config file to join the network
@@ -29,10 +28,6 @@ Commands:
   reset                  Reset a network stopping all the nodes and cleaning the /data folder
   restart                Restart a network stopping all the nodes and starting the service again
   monitor                Monitor the network nodes specified metrics
-  api                    Perform operation over the network API nodes
-  generate-private-keys  Generate the node private keys. --force to replace if already existing
-  generate-genesis-key   Generate the genesis key. --force to replace if already existing
-  generate-stats-key     Generate the Stats Dashboard key. --force to replace if already existing
   help                   Print this message or the help of the given subcommand(s)
 
 Options:
@@ -44,141 +39,6 @@ Options:
 ## To use it:
 
 - Log in to Zilliqa GCP landing zone: `gcloud auth login --update-adc`
-
-## Create a new deployer upgrader configuration file
-
-The generated configuration file will be named: `zq2`-`<network-name>`.yaml
-```bash
-z2 deployer new --help
-```
-
-```bash
-Generate the deployer config file
-
-Usage: z2 deployer new [OPTIONS]
-
-Options:
-      --network-name <NETWORK_NAME>
-          ZQ2 network name
-
-      --eth-chain-id <ETH_CHAIN_ID>
-          ZQ2 EVM chain ID
-
-      --roles <ROLES>
-          Virtual Machine roles
-
-          Possible values:
-          - bootstrap:   Virtual machine bootstrap
-          - validator:   Virtual machine validator
-          - api:         Virtual machine api
-          - private-api: Virtual machine private api
-          - apps:        Virtual machine apps
-          - checkpoint:  Virtual machine checkpoint
-          - persistence: Virtual machine persistence
-          - sentry:      Virtual machine sentry
-
-  -v, --verbose...
-          Increase logging verbosity
-
-  -q, --quiet...
-          Decrease logging verbosity
-
-  -h, --help
-          Print help (see a summary with '-h')
-```
-
-### Usage example
-
-#### Scenario 1
-
-Generate the deployer configuration file to upgrade the validator nodes of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
-
-```yaml
-Network name: `zq2-prototestnet`
-Project Id: `gcp-tests`
-Roles: validators
-```
-
-```bash
-z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --roles validator
-```
-
-Output: `zq2-prototestnet.yaml`
-
-```yaml
-name: zq2-prototestnet
-eth_chain_id: 33333
-roles:
-- validator
-versions:
-  zq2: 5522b056
-  ```
-
-#### Scenario 2
-
-Generate the deployer configuration file for upgrade the app node of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
-
-```yaml
-Network name: zq2-prototestnet
-Eth Chain ID: 33333
-Project ID: gcp-tests
-Roles: apps
-```
-
-```bash
-z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --roles apps
-```
-
-Output: `zq2-prototestnet.yaml`
-
-```yaml
-name: zq2-prototestnet
-eth_chain_id: 33333
-roles:
-- apps
-versions:
-  stats_dashboard: v0.0.3
-  stats_agent: v0.0.1
-  spout: v1.3.72
-  otterscan: latest
-```
-
-#### Scenario 3
-
-Generate the deployer configuration file for upgrade both validators and app nodes of the `zq2-prototestnet` with chain ID `33333` and running on a GCP project named `gcp-tests`.
-
-```yaml
-Network name: zq2-prototestnet
-Eth Chain ID: 33333
-Project ID: gcp-tests
-Roles: apps,validator
-```
-
-```bash
-z2 deployer new --network-name zq2-prototestnet --eth-chain-id 33333 --roles apps,validator
-```
-
-Output: `zq2-prototestnet.yaml`
-
-```yaml
-name: zq2-prototestnet
-eth_chain_id: 33333
-roles:
-- validator
-- apps
-versions:
-  zq2: fbee9ec5
-  stats_dashboard: v0.0.3
-  stats_agent: v0.0.1
-  spout: v1.3.72
-  otterscan: latest
-```
-
-By default, the `z2 deployer new` will generate a configuration file with the current Github release.
-If there are no release available the value are defaulted to the 8 characters of the latest commit SHA in the `main` branch.
-
->Note: Make sure to provide the correct values when the defaults are not suitable.
-
 
 ## Upgrade the network
 
@@ -679,6 +539,7 @@ Arguments:
 Options:
   -n, --name <NAME>                  The name of the backup folder. If zip is specified, it represents the name of the zip file
       --zip                          If specified, restore the persistence from a zip file
+      --no-restart                   If specified, the service will not be restarted after the restore
       --max-parallel <MAX_PARALLEL>  Define the number of nodes to process in parallel. Default: 50
   -v, --verbose...                   Increase logging verbosity
   -q, --quiet...                     Decrease logging verbosity
@@ -764,51 +625,6 @@ Configuration file: zq2-prototestnet.yaml
 
 ```bash
 z2 deployer restart zq2-prototestnet.yaml
-```
-
-## Perform operations over the API nodes
-
-```bash
-z2 deployer api --help
-```
-
-```bash
-Perform operation over the network API nodes
-
-Usage: z2 deployer api [OPTIONS] --operation <OPERATION> [CONFIG_FILE]
-
-Arguments:
-  [CONFIG_FILE]  The network deployer config file
-
-Options:
-  -o, --operation <OPERATION>  The operation to perform over the API nodes [possible values: attach, detach]
-  -v, --verbose...             Increase logging verbosity
-  -q, --quiet...               Decrease logging verbosity
-  -h, --help                   Print help
-```
-
-### Usage example
-
-#### Scenario detach an API node from the load balancer
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
-```bash
-z2 deployer api -o detach zq2-prototestnet.yaml
-```
-
-#### Scenario attach an API node to the load balancer
-
-```yaml
-Network name: zq2-prototestnet
-Configuration file: zq2-prototestnet.yaml
-```
-
-```bash
-z2 deployer api -o attach zq2-prototestnet.yaml
 ```
 
 ## Monitor the network nodes specified metrics

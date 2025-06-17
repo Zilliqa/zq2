@@ -1521,7 +1521,11 @@ fn get_smart_contract_sub_state(params: Params, node: &Arc<RwLock<Node>>) -> Res
             }
         }
     }
-    Ok(result.into())
+    if result.is_empty() {
+        Ok(Value::Null)
+    } else {
+        Ok(result.into())
+    }
 }
 
 // GetSoftConfirmedTransaction
