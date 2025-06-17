@@ -1283,6 +1283,13 @@ impl Consensus {
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
     fn early_proposal_assemble_at(&self, agg: Option<AggregateQc>) -> Result<()> {
+        debug!("early_proposal_assemble_at");
+        let tx_pool_preview = self.transaction_pool.read().preview_content();
+        debug!(
+            "tx pool pending: {:?}, queued: {:?}",
+            tx_pool_preview.pending.len(),
+            tx_pool_preview.queued.len()
+        );
         let view = self.get_view()?;
         {
             let early_proposal = self.early_proposal.read();
@@ -2963,6 +2970,12 @@ impl Consensus {
         committee: &[NodePublicKey],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header);
+        let tx_pool_preview = self.transaction_pool.read().preview_content();
+        debug!(
+            "tx pool pending: {:?}, queued: {:?}",
+            tx_pool_preview.pending.len(),
+            tx_pool_preview.queued.len()
+        );
 
         let parent = self
             .get_block(&block.parent_hash())?
