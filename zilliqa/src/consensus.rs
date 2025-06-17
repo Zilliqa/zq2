@@ -561,7 +561,7 @@ impl Consensus {
                         error!("Failed to finalise block proposal.");
                         self.create_next_block_on_timeout
                             .store(false, Ordering::SeqCst);
-                        *self.early_proposal.write() = None;
+                        self.early_proposal_clear()?;
                     }
                     Err(e) => error!("Failed to finalise proposal: {e}"),
                 };
@@ -862,17 +862,9 @@ impl Consensus {
                     self.create_next_block_on_timeout
                         .store(false, Ordering::SeqCst);
                 }
-                {
-                    let mut early_proposal = self.early_proposal.write();
-                    if early_proposal.is_some() {
-                        let (_, txns, _, _, _) = early_proposal.take().unwrap();
-                        let mut pool = self.transaction_pool.write();
-                        for txn in txns.into_iter().rev() {
-                            pool.insert_ready_transaction(txn)?;
-                        }
-                        warn!("Early proposal exists but we are not leader. Clearing proposal");
-                    }
-                }
+
+                // Clear early_proposal in case it exists.
+                self.early_proposal_clear()?;
 
                 let Some(next_leader) = next_leader else {
                     warn!("Next leader is currently not reachable, has it joined committee yet?");
@@ -1509,6 +1501,19 @@ impl Consensus {
         }
 
         // as a future improvement, process the proposal before broadcasting it
+        Ok(())
+    }
+
+    /// Clear early_proposal and add it's transactions back to pool.
+    /// This function should be called only when something has gone wrong.
+    fn early_proposal_clear(&self) -> Result<()> {
+        if let Some((_, txns, _, _, _)) = self.early_proposal.write().take() {
+            let mut pool = self.transaction_pool.write();
+            for txn in txns.into_iter().rev() {
+                pool.insert_ready_transaction(txn)?;
+            }
+            warn!("early_proposal cleared. This is a consequence of some incorrect behaviour.");
+        }
         Ok(())
     }
 
