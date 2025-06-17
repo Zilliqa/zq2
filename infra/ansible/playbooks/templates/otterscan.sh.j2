@@ -4,7 +4,7 @@ echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.d
 OTTERSCAN_IMAGE="{{ otterscan_image }}"
 
 start() {
-    docker rm otterscan-{{ otterscan_version }} &> /dev/null || echo 0
+    docker ps -a --filter "name=otterscan-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker rm -f &> /dev/null || echo 0
     docker run -td -p 80:80 --name otterscan-{{ otterscan_version }} \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
         -e ERIGON_URL=https://api.{{ dns_subdomain }} \
@@ -13,7 +13,7 @@ start() {
 }
 
 stop() {
-    docker stop otterscan-{{ otterscan_version }}
+    docker ps --filter "name=otterscan-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop
 }
 
 case ${1} in

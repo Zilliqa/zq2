@@ -4,7 +4,7 @@ echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.d
 SPOUT_IMAGE="{{ spout_image }}"
 
 start() {
-    docker rm spout-{{ spout_version }} &> /dev/null || echo 0
+    docker ps -a --filter "name=spout-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker rm -f &> /dev/null || echo 0
     GENESIS_KEY={{ spout_genesis_key }}
     docker run -td -p 8080:80 --name spout-{{ spout_version }} \
         --log-driver json-file --log-opt max-size=1g --log-opt max-file=1 \
@@ -21,7 +21,7 @@ start() {
 }
 
 stop() {
-    docker stop spout-{{ spout_version }}
+    docker ps --filter "name=spout-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop
 }
 
 case ${1} in
