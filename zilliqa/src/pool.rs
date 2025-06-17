@@ -1,7 +1,6 @@
 use std::{
-    cmp::min,
+    cmp::{Ordering, min},
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
-    ops::Bound::*,
 };
 
 use alloy::primitives::Address;
@@ -89,10 +88,9 @@ struct TransactionsAccount {
     balance_after_pending: i128,
     // The account's actual nonce
     nonce_account: u64,
-    // The largest pending transaction nonce plus one.
-    nonce_after_pending: u64,
     // All transactions with nonces, sorted by nonce
-    nonced_transactions: BTreeMap<u64, VerifiedTransaction>,
+    nonced_transactions_pending: BTreeMap<u64, VerifiedTransaction>,
+    nonced_transactions_queued: BTreeMap<u64, VerifiedTransaction>,
     // All transactions without nonces, sorted by gas price
     nonceless_transactions_pending: BTreeMap<NoncelessTransactionKey, VerifiedTransaction>,
     nonceless_transactions_queued: BTreeMap<NoncelessTransactionKey, VerifiedTransaction>,
@@ -102,21 +100,31 @@ impl TransactionsAccount {
     // state transition functions
     // these move transactions from pending to queued and vice versa
     // they should leave everything consistent
-    fn queue_to_pending_nonced(&mut self, txn: VerifiedTransaction) {
-        let nonce = txn.tx.nonce().unwrap();
-        let gas = txn.tx.maximum_validation_cost().unwrap();
-        assert!(self.nonce_after_pending == nonce);
-        assert!(self.nonced_transactions.contains_key(&nonce));
-        self.nonce_after_pending += 1;
-        self.balance_after_pending -= gas as i128;
+    fn queue_to_pending_nonced(&mut self) {
+        let (_k, transaction) = self.nonced_transactions_queued.pop_first().unwrap();
+        if let Some(highest_pending_nonce) = self
+            .nonced_transactions_pending
+            .last_key_value()
+            .map(|(k, _v)| k)
+        {
+            assert!(
+                transaction.tx.nonce().unwrap() == highest_pending_nonce + 1,
+                "Attempt to move nonced transaction to pending with non-sequential nonce"
+            );
+        }
+        self.balance_after_pending -= transaction.tx.maximum_validation_cost().unwrap() as i128;
+        let prev_value = self
+            .nonced_transactions_pending
+            .insert(transaction.tx.nonce().unwrap(), transaction);
+        assert!(prev_value.is_none());
     }
-    fn pending_to_queue_nonced(&mut self, txn: VerifiedTransaction) {
-        let nonce = txn.tx.nonce().unwrap();
-        let gas = txn.tx.maximum_validation_cost().unwrap();
-        assert!(self.nonce_after_pending == nonce + 1);
-        assert!(self.nonced_transactions.contains_key(&nonce));
-        self.nonce_after_pending -= 1;
-        self.balance_after_pending += gas as i128;
+    fn pending_to_queue_nonced(&mut self) {
+        let (_k, transaction) = self.nonced_transactions_pending.pop_last().unwrap();
+        self.balance_after_pending += transaction.tx.maximum_validation_cost().unwrap() as i128;
+        let prev_value = self
+            .nonced_transactions_queued
+            .insert(transaction.tx.nonce().unwrap(), transaction);
+        assert!(prev_value.is_none());
     }
     fn queue_to_pending_nonceless(&mut self, key: NoncelessTransactionKey) {
         let transaction = self.nonceless_transactions_queued.remove(&key).unwrap();
@@ -131,11 +139,22 @@ impl TransactionsAccount {
         assert!(prev_value.is_none());
     }
     fn get_first_queued_nonced(&self) -> Option<&VerifiedTransaction> {
-        self.nonced_transactions.get(&(self.nonce_after_pending))
+        let next_queueable_nonce = match self
+            .get_last_pending_nonced()
+            .map(|tx| tx.tx.nonce().unwrap() + 1)
+        {
+            Some(nonce) => nonce,
+            None => self.nonce_account,
+        };
+        self.nonced_transactions_queued
+            .first_key_value()
+            .filter(|(_k, v)| v.tx.nonce().unwrap() == next_queueable_nonce)
+            .map(|(_k, v)| v)
     }
     fn get_last_pending_nonced(&self) -> Option<&VerifiedTransaction> {
-        self.nonced_transactions
-            .get(&(self.nonce_after_pending - 1))
+        self.nonced_transactions_pending
+            .last_key_value()
+            .map(|(_k, v)| v)
     }
     fn get_highest_gas_queued_nonceless(&self) -> Option<&VerifiedTransaction> {
         self.nonceless_transactions_queued
@@ -163,10 +182,10 @@ impl TransactionsAccount {
                 match (first_queued_nonced, highest_gas_queued_nonceless) {
                     (None, None) => break,
                     (None, Some(y)) => self.queue_to_pending_nonceless(y.into()),
-                    (Some(x), None) => self.queue_to_pending_nonced(x.clone()),
+                    (Some(_), None) => self.queue_to_pending_nonced(),
                     (Some(x), Some(y)) => {
                         if x.tx.gas_price_per_evm_gas() >= y.tx.gas_price_per_evm_gas() {
-                            self.queue_to_pending_nonced(x.clone())
+                            self.queue_to_pending_nonced()
                         } else {
                             self.queue_to_pending_nonceless(y.into())
                         }
@@ -181,10 +200,10 @@ impl TransactionsAccount {
                 match (last_pending_nonced, lowest_gas_pending_nonceless) {
                     (None, None) => break,
                     (None, Some(y)) => self.pending_to_queue_nonceless(y.into()),
-                    (Some(x), None) => self.pending_to_queue_nonced(x.clone()),
+                    (Some(_), None) => self.pending_to_queue_nonced(),
                     (Some(x), Some(y)) => {
                         if x.tx.gas_price_per_evm_gas() < y.tx.gas_price_per_evm_gas() {
-                            self.pending_to_queue_nonced(x.clone())
+                            self.pending_to_queue_nonced()
                         } else {
                             self.pending_to_queue_nonceless(y.into())
                         }
@@ -194,21 +213,23 @@ impl TransactionsAccount {
         }
         assert_eq!(dbg_total_txns_before, self.get_transaction_count());
     }
+    fn full_recalculate(&mut self) {
+        self.nonced_transactions_queued
+            .append(&mut self.nonced_transactions_pending);
+        self.nonceless_transactions_queued
+            .append(&mut self.nonceless_transactions_pending);
+        self.balance_after_pending = self.balance_account as i128;
+        self.maintain();
+    }
     fn insert_nonced_txn(&mut self, txn: VerifiedTransaction) {
         assert!(txn.tx.nonce().is_some());
         let nonce = txn.tx.nonce().unwrap();
-        let gas_price = txn.tx.maximum_validation_cost().unwrap() as i128;
-        assert!(!self.nonced_transactions.contains_key(&nonce));
-        let existing_txn = self.nonced_transactions.insert(nonce, txn);
+        assert!(!self.nonced_transactions_pending.contains_key(&nonce));
+        let existing_txn = self.nonced_transactions_queued.insert(nonce, txn);
         assert!(
             existing_txn.is_none(),
             "JCVH: Attempt to double insert a transaction"
         );
-        // If it can pend, put it in pending and then pop it again if necessary
-        if nonce == self.nonce_after_pending {
-            self.nonce_after_pending += 1;
-            self.balance_after_pending -= gas_price;
-        }
         self.maintain();
     }
     fn insert_unnonced_txn(&mut self, txn: VerifiedTransaction) {
@@ -235,15 +256,24 @@ impl TransactionsAccount {
     /// Returns hash of updated transaction
     fn update_txn(&mut self, new_txn: VerifiedTransaction) -> Option<Hash> {
         if let Some(nonce) = new_txn.tx.nonce() {
-            let new_gas_price = new_txn.tx.maximum_validation_cost().unwrap() as i128;
-            assert!(self.nonced_transactions.contains_key(&nonce));
-            let old_txn = self.nonced_transactions.insert(nonce, new_txn).unwrap();
-            if nonce < self.nonce_after_pending {
+            if let std::collections::btree_map::Entry::Occupied(mut entry) =
+                self.nonced_transactions_pending.entry(nonce)
+            {
+                let new_gas_price = new_txn.tx.maximum_validation_cost().unwrap() as i128;
+                let old_txn = entry.insert(new_txn);
                 self.balance_after_pending -=
                     new_gas_price - old_txn.tx.maximum_validation_cost().unwrap() as i128;
+                self.maintain();
+                return Some(old_txn.hash);
             }
-            self.maintain();
-            Some(old_txn.hash)
+            if let std::collections::btree_map::Entry::Occupied(mut entry) =
+                self.nonced_transactions_queued.entry(nonce)
+            {
+                let old_txn = entry.insert(new_txn);
+                self.maintain();
+                return Some(old_txn.hash);
+            }
+            unreachable!("YMGL: Transaction not found")
         } else {
             unreachable!("Cannot update transaction without nonce")
         }
@@ -254,10 +284,7 @@ impl TransactionsAccount {
             .iter()
             .map(|x| x.1)
             .rev();
-        let nonced_iterator = self
-            .nonced_transactions
-            .range((Unbounded, Excluded(self.nonce_after_pending)))
-            .map(|x| x.1);
+        let nonced_iterator = self.nonced_transactions_pending.iter().map(|x| x.1);
 
         nonceless_iterator.merge_by(nonced_iterator, |a, b| {
             a.tx.gas_price_per_evm_gas() > b.tx.gas_price_per_evm_gas()
@@ -265,36 +292,27 @@ impl TransactionsAccount {
     }
     fn get_queued(&self) -> impl Iterator<Item = &VerifiedTransaction> {
         let nonceless_iterator = self.nonceless_transactions_queued.iter().rev().map(|x| x.1);
-        let nonced_iterator = self
-            .nonced_transactions
-            .range((Included(self.nonce_after_pending), Unbounded))
-            .map(|x| x.1);
+        let nonced_iterator = self.nonced_transactions_queued.iter().map(|x| x.1);
 
         nonceless_iterator.merge_by(nonced_iterator, |a, b| {
             a.tx.gas_price_per_evm_gas() > b.tx.gas_price_per_evm_gas()
         })
     }
     fn get_pending_transaction_count(&self) -> u64 {
-        let nonced_pending_count = if self.nonce_after_pending > 0
-            && self
-                .nonced_transactions
-                .contains_key(&(self.nonce_after_pending - 1))
-        {
-            self.nonce_after_pending - self.nonced_transactions.first_key_value().unwrap().0
-        } else {
-            0
-        };
-        let nonceless_pending_count = self.nonceless_transactions_pending.len() as u64;
-        nonced_pending_count + nonceless_pending_count
+        let nonced_pending_count = self.nonced_transactions_pending.len();
+        let nonceless_pending_count = self.nonceless_transactions_pending.len();
+        (nonced_pending_count + nonceless_pending_count) as u64
     }
     fn get_transaction_count(&self) -> usize {
-        self.nonced_transactions.len()
+        self.nonced_transactions_queued.len()
+            + self.nonced_transactions_pending.len()
             + self.nonceless_transactions_queued.len()
             + self.nonceless_transactions_pending.len()
     }
     fn is_empty(&self) -> bool {
-        self.nonceless_transactions_pending.is_empty()
-            && self.nonced_transactions.is_empty()
+        self.nonced_transactions_queued.is_empty()
+            && self.nonced_transactions_pending.is_empty()
+            && self.nonceless_transactions_pending.is_empty()
             && self.nonceless_transactions_queued.is_empty()
     }
     fn peek_best_txn(&self) -> Option<&VerifiedTransaction> {
@@ -304,52 +322,12 @@ impl TransactionsAccount {
         &mut self,
         predicate: impl Fn(&VerifiedTransaction) -> bool,
     ) -> Option<VerifiedTransaction> {
-        // // Get the best entry
-        let best_nonced_entry = match self.nonced_transactions.first_entry() {
-            Some(entry) if *entry.key() < self.nonce_after_pending => Some(entry),
-            Some(_) => None,
-            None => None,
+        let transaction = match self.peek_best_txn() {
+            Some(txn) if predicate(txn) => txn.clone(),
+            _ => return None,
         };
-        let best_nonceless_entry = self.nonceless_transactions_pending.last_entry();
-
-        if best_nonced_entry.is_none() && best_nonceless_entry.is_none() {
-            None
-        } else {
-            let best_nonced_gas = best_nonced_entry
-                .as_ref()
-                .map_or(0, |x| x.get().tx.gas_price_per_evm_gas());
-            let best_nonceless_gas = best_nonceless_entry
-                .as_ref()
-                .map_or(0, |x| x.get().tx.gas_price_per_evm_gas());
-            if best_nonced_gas < best_nonceless_gas {
-                if let Some(best_nonceless_entry) = best_nonceless_entry {
-                    if predicate(best_nonceless_entry.get()) {
-                        let result = best_nonceless_entry.remove();
-                        self.balance_after_pending +=
-                            result.tx.maximum_validation_cost().unwrap() as i128;
-                        self.maintain();
-                        Some(result)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else if let Some(best_nonced_entry) = best_nonced_entry {
-                if predicate(best_nonced_entry.get()) {
-                    let result = best_nonced_entry.remove();
-                    self.nonce_account = result.tx.nonce().unwrap();
-                    self.balance_after_pending +=
-                        result.tx.maximum_validation_cost().unwrap() as i128;
-                    self.maintain();
-                    Some(result)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
+        self.mark_executed(&transaction);
+        Some(transaction)
     }
     // Must be followed by maintain()
     fn update_balance(&mut self, new_balance: u128) {
@@ -361,17 +339,35 @@ impl TransactionsAccount {
     // Must be followed by maintain()
     fn update_nonce(&mut self, new_nonce: u64) -> Vec<Hash> {
         let old_nonce = self.nonce_account;
-        let result = self.complete_txns_below_nonce(new_nonce);
-        if !result.is_empty() {
-            tracing::warn!(
-                "{} transactions dropped from account {} due to nonce increase from {} to {}",
-                result.len(),
-                self.address,
-                old_nonce,
-                new_nonce,
-            );
+        let lowest_existing_nonce = self
+            .nonced_transactions_pending
+            .first_key_value()
+            .or(self.nonced_transactions_queued.first_key_value())
+            .and_then(|x| x.1.tx.nonce());
+        match new_nonce.cmp(&old_nonce) {
+            Ordering::Less => {
+                self.nonce_account = new_nonce;
+                if Some(old_nonce) == lowest_existing_nonce {
+                    self.full_recalculate();
+                }
+            }
+            Ordering::Equal => (),
+            Ordering::Greater => {
+                if let Some(lowest_existing_nonce) = lowest_existing_nonce {
+                    match new_nonce.cmp(&lowest_existing_nonce) {
+                        std::cmp::Ordering::Less => self.nonce_account = new_nonce,
+                        std::cmp::Ordering::Equal => {
+                            self.nonce_account = new_nonce;
+                            self.full_recalculate();
+                        }
+                        std::cmp::Ordering::Greater => panic!(
+                            "Nonce cannot be increased above lowest transaction nonce in pool"
+                        ),
+                    }
+                }
+            }
         }
-        result
+        vec![]
     }
     fn update_with_account(&mut self, account: &Account) -> Vec<Hash> {
         self.update_balance(account.balance);
@@ -381,28 +377,29 @@ impl TransactionsAccount {
     }
     fn get_pending_or_queued(&self, txn: &VerifiedTransaction) -> Option<PendingOrQueued> {
         assert!(txn.signer == self.address);
-        if self.nonceless_transactions_queued.contains_key(&txn.into()) {
-            return Some(PendingOrQueued::Queued);
-        }
         if self
             .nonceless_transactions_pending
             .contains_key(&txn.into())
         {
             return Some(PendingOrQueued::Pending);
         }
-        if !self
-            .nonced_transactions
-            .contains_key(&txn.tx.nonce().unwrap())
-        {
-            None
-        } else if txn.tx.nonce().unwrap() < self.nonce_after_pending {
-            Some(PendingOrQueued::Pending)
-        } else {
-            Some(PendingOrQueued::Queued)
+        if self.nonceless_transactions_queued.contains_key(&txn.into()) {
+            return Some(PendingOrQueued::Queued);
         }
+        if let Some(nonce) = txn.tx.nonce() {
+            if self.nonced_transactions_pending.contains_key(&nonce) {
+                return Some(PendingOrQueued::Pending);
+            }
+            if self.nonced_transactions_queued.contains_key(&nonce) {
+                return Some(PendingOrQueued::Queued);
+            }
+        }
+        None
     }
     fn get_txn_by_nonce(&self, nonce: u64) -> Option<&VerifiedTransaction> {
-        self.nonced_transactions.get(&nonce)
+        self.nonced_transactions_pending
+            .get(&nonce)
+            .or_else(|| self.nonced_transactions_queued.get(&nonce))
     }
     fn get_pending_queue_key(&self) -> Option<PendingQueueKey> {
         self.peek_best_txn()
@@ -413,56 +410,63 @@ impl TransactionsAccount {
     }
 
     fn mark_executed(&mut self, txn: &VerifiedTransaction) -> Vec<Hash> {
-        tracing::debug!(
-            "Transaction marked executed in pool with address {}, nonce {:?}, hash {}",
-            txn.signer,
-            txn.tx.nonce(),
-            txn.hash
-        );
-        if let Some(nonce) = txn.tx.nonce() {
-            let removed_txn_hashes = self.complete_txns_below_nonce(nonce + 1);
+        if let std::collections::btree_map::Entry::Occupied(entry) =
+            self.nonceless_transactions_pending.entry(txn.into())
+        {
+            let old_txn = entry.remove();
+            let gas = old_txn.tx.gas_price_per_evm_gas();
+            self.balance_after_pending += gas as i128;
             self.maintain();
-            removed_txn_hashes
-        } else if let Some(txn) = self.nonceless_transactions_pending.remove(&txn.into()) {
-            self.balance_after_pending += txn.tx.maximum_validation_cost().unwrap() as i128;
+            return vec![old_txn.hash];
+        }
+        if let std::collections::btree_map::Entry::Occupied(entry) =
+            self.nonceless_transactions_queued.entry(txn.into())
+        {
+            let old_txn = entry.remove();
             self.maintain();
-            vec![txn.hash]
+            return vec![old_txn.hash];
+        }
+        let Some(nonce_to_remove) = txn.tx.nonce() else {
+            panic!(
+                "Transaction could not be marked executed since it was not in pool: {:?}",
+                txn
+            );
+        };
+        if let Some(lowest_nonce_txn) = self
+            .nonced_transactions_pending
+            .first_key_value()
+            .or(self.nonced_transactions_queued.first_key_value())
+            .map(|x| x.1)
+        {
+            if lowest_nonce_txn.hash == txn.hash {
+                if let Some(txn) = self.nonced_transactions_pending.remove(&nonce_to_remove) {
+                    self.nonce_account = txn.tx.nonce().unwrap() + 1;
+                    self.full_recalculate();
+                    vec![txn.hash]
+                } else if let Some(txn) = self.nonced_transactions_queued.remove(&nonce_to_remove) {
+                    vec![txn.hash]
+                } else {
+                    panic!(
+                        "Transaction could not be marked executed since it was not in pool: {:?}",
+                        txn
+                    );
+                }
+            } else if self
+                .nonced_transactions_pending
+                .contains_key(&nonce_to_remove)
+                || self
+                    .nonced_transactions_queued
+                    .contains_key(&nonce_to_remove)
+            {
+                panic!(
+                    "Transaction could not be marked executed since it did not have the lowest nonce"
+                )
+            } else {
+                panic!("Transaction could not be found in pool")
+            }
         } else {
-            self.nonceless_transactions_queued.remove(&txn.into());
-            vec![txn.hash]
+            panic!("No nonced transactions in pool");
         }
-    }
-    /// Remove all transactions with nonces less than to the given nonce
-    /// Must be followed by maintain()
-    fn complete_txns_below_nonce(&mut self, nonce: u64) -> Vec<Hash> {
-        // Optimisation for when there's nothing to do
-        if nonce == self.nonce_account {
-            return Vec::new();
-        }
-        // split the transactions into ones to keep and ones to discard (which are annoyingly returned the wrong way round)
-        let transactions_to_retain = self.nonced_transactions.split_off(&(nonce));
-        // Get removed transaction hashes to return
-        let removed_txn_hashes = self
-            .nonced_transactions
-            .values()
-            .map(|tx| tx.hash)
-            .collect();
-        // discard transactions which were queued but now aren't
-        // since we only need to adjust for previously pending transactions
-        self.nonced_transactions
-            .split_off(&self.nonce_after_pending);
-        // removed discarded transactions from balance
-        for discarded_tx in self.nonced_transactions.values() {
-            self.balance_after_pending +=
-                discarded_tx.tx.maximum_validation_cost().unwrap() as i128;
-        }
-        // Put the cut down transaction list back in place
-        self.nonced_transactions = transactions_to_retain;
-        // put the counters right again
-        self.nonce_after_pending = std::cmp::max(self.nonce_after_pending, nonce);
-        self.nonce_account = std::cmp::max(self.nonce_account, nonce);
-
-        removed_txn_hashes
     }
 }
 
@@ -630,8 +634,8 @@ impl TransactionPoolCore {
                     balance_account: account.balance,
                     balance_after_pending: account.balance as i128,
                     nonce_account: account.nonce,
-                    nonce_after_pending: account.nonce,
-                    nonced_transactions: BTreeMap::new(),
+                    nonced_transactions_pending: BTreeMap::new(),
+                    nonced_transactions_queued: BTreeMap::new(),
                     nonceless_transactions_pending: BTreeMap::new(),
                     nonceless_transactions_queued: BTreeMap::new(),
                 });
@@ -727,7 +731,7 @@ impl TransactionPoolCore {
             if transactions_account.is_empty() {
                 self.all_transactions.remove(&best_account_key.address);
             }
-            self.hash_to_txn_map.remove(&txn.hash);
+            self.hash_to_txn_map.remove(&txn.hash).unwrap();
         }
         self.check_transaction_count();
         result
@@ -1163,19 +1167,17 @@ mod tests {
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_account, 30);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_account, 0);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_after_pending, 30);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_after_pending, 0);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions.len(), 3);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions_pending.len(), 0);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions_queued.len(), 3);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending_transaction_count(), 0);
 
         // Add the lowest transaction and now they should get added up to the balance
         pool.insert_transaction(txn1.clone(), &acc1, false);
         pool.core.update_with_state(&state);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions.len(), 4);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending_transaction_count(), 3);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_account, 30);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_account, 0);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_after_pending, 0);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_after_pending, 3);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending().collect_vec(), vec![&txn1, &txn2, &txn3]);
 
         // Increase the balance by 5 and nothing else should change
@@ -1185,12 +1187,10 @@ mod tests {
         })?;
         assert_eq!(state.get_account(acc1_addr).unwrap().balance, 35);
         pool.core.update_with_state(&state);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions.len(), 4);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending_transaction_count(), 3);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_account, 35);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_account, 0);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_after_pending, 5);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_after_pending, 3);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending().collect_vec(), vec![&txn1, &txn2, &txn3]);
 
         // increase the balance by another 5 and now they should all be pending
@@ -1203,8 +1203,6 @@ mod tests {
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_account, 40);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_account, 0);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_after_pending, 0);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_after_pending, 4);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions.len(), 4);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending_transaction_count(), 4);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending().collect_vec(), vec![&txn1, &txn2, &txn3, &txn4]);
 
@@ -1215,8 +1213,6 @@ mod tests {
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_account, 40);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_account, 0);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_after_pending, 0);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_after_pending, 4);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions.len(), 6);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending_transaction_count(), 4);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending().collect_vec(), vec![&txn1, &txn2, &txn3, &txn4]);
 
@@ -1225,28 +1221,11 @@ mod tests {
             assert_eq!(txn, &txn1);
             true
         });
-        pool.core.update_with_state(&state);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_account, 40);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_account, 0);
+        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_account, 1);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_after_pending, 0);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_after_pending, 5);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions.len(), 5);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending_transaction_count(), 4);
         assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending().collect_vec(), vec![&txn2, &txn3, &txn4, &txn5]);
-
-        // increase the nonce and the last one should get added
-        state.mutate_account(acc1_addr, |acc| {
-            acc.nonce =2;
-            Ok(())
-        })?;
-        pool.core.update_with_state(&state);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_account, 40);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_account, 2);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().balance_after_pending, 0);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonce_after_pending, 6);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().nonced_transactions.len(), 4);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending_transaction_count(), 4);
-        assert_eq!(pool.core.all_transactions.get(&acc1_addr).unwrap().get_pending().collect_vec(), vec![&txn3, &txn4, &txn5, &txn6]);
 
         Ok(())
     }
@@ -1697,32 +1676,6 @@ mod tests {
     }
 
     #[test]
-    fn test_account_nonce_updates() -> Result<()> {
-        let mut pool = TransactionPool::default();
-        let addr = "0x0000000000000000000000000000000000000001".parse()?;
-        let mut state = get_in_memory_state()?;
-        let acc = create_acc(&mut state, addr, 100, 0)?;
-
-        let txn1 = transaction(addr, 0, 10);
-        let txn2 = transaction(addr, 1, 10);
-        let txn3 = transaction(addr, 2, 10);
-
-        pool.insert_transaction(txn1.clone(), &acc, false);
-        pool.insert_transaction(txn2.clone(), &acc, false);
-        pool.insert_transaction(txn3.clone(), &acc, false);
-
-        assert_eq!(pool.transaction_count(), 3);
-
-        // Update account nonce to 2 (should remove txn1 and txn2)
-        let new_acc = create_acc(&mut state, addr, 100, 2)?;
-        pool.update_with_account(&addr, &new_acc);
-
-        assert_eq!(pool.transaction_count(), 1);
-        assert_eq!(pool.best_transaction().unwrap().tx.nonce().unwrap(), 2);
-        Ok(())
-    }
-
-    #[test]
     fn test_pop_best_with_predicate() -> Result<()> {
         let mut pool = TransactionPool::default();
         let addr = "0x0000000000000000000000000000000000000001".parse()?;
@@ -1744,6 +1697,7 @@ mod tests {
         assert!(popped.is_some());
         assert_eq!(popped.unwrap().hash, txn1.hash);
 
+        dbg!(&pool);
         assert_eq!(pool.transaction_count(), 1);
         assert_eq!(pool.best_transaction().unwrap().hash, txn2.hash);
         Ok(())
@@ -2032,42 +1986,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_transaction_by_hash_after_nonce_update() -> Result<()> {
-        let mut pool = TransactionPool::default();
-        let addr = "0x0000000000000000000000000000000000000001".parse()?;
-        let mut state = get_in_memory_state()?;
-        let acc = create_acc(&mut state, addr, 100, 0)?;
-
-        let txn0 = transaction(addr, 0, 10);
-        let txn1 = transaction(addr, 1, 20);
-        let txn2 = transaction(addr, 2, 30);
-        let txn3 = transaction(addr, 3, 40);
-
-        pool.insert_transaction(txn0.clone(), &acc, false);
-        pool.insert_transaction(txn1.clone(), &acc, false);
-        pool.insert_transaction(txn2.clone(), &acc, false);
-        pool.insert_transaction(txn3.clone(), &acc, false);
-
-        // All should be retrievable initially
-        assert!(pool.get_transaction(&txn0.hash).is_some());
-        assert!(pool.get_transaction(&txn1.hash).is_some());
-        assert!(pool.get_transaction(&txn2.hash).is_some());
-        assert!(pool.get_transaction(&txn3.hash).is_some());
-
-        // Update account nonce to 2 (should remove txn0 and txn1)
-        let new_acc = create_acc(&mut state, addr, 100, 2)?;
-        pool.update_with_account(&addr, &new_acc);
-
-        // Transactions with nonces < 2 should no longer be retrievable
-        assert!(pool.get_transaction(&txn0.hash).is_none());
-        assert!(pool.get_transaction(&txn1.hash).is_none());
-        assert!(pool.get_transaction(&txn2.hash).is_some());
-        assert!(pool.get_transaction(&txn3.hash).is_some());
-
-        Ok(())
-    }
-
-    #[test]
     fn test_get_transaction_by_hash_after_replacement() -> Result<()> {
         let mut pool = TransactionPool::default();
         let addr = "0x0000000000000000000000000000000000000001".parse()?;
@@ -2179,13 +2097,25 @@ mod tests {
 
         let txn1_acc1 = transaction(addr1, 0, 10);
         let txn2_acc1 = transaction(addr1, 1, 20);
-        let txn1_acc2 = transaction(addr2, 0, 15);
-        let txn2_acc2 = intershard_transaction(1, 1, 25);
+        let txn1_acc2 = transaction(addr2, 1, 15);
+        let txn2_acc2 = intershard_transaction(1, 1, 5);
 
-        pool.insert_transaction(txn1_acc1.clone(), &acc1, false);
-        pool.insert_transaction(txn2_acc1.clone(), &acc1, false);
-        pool.insert_transaction(txn1_acc2.clone(), &acc2, false);
-        pool.insert_transaction(txn2_acc2.clone(), &acc2, false);
+        assert!(matches!(
+            pool.insert_transaction(txn1_acc1.clone(), &acc1, false),
+            TxAddResult::AddedToMempool
+        ));
+        assert!(matches!(
+            pool.insert_transaction(txn2_acc1.clone(), &acc1, false),
+            TxAddResult::AddedToMempool
+        ));
+        assert!(matches!(
+            pool.insert_transaction(txn1_acc2.clone(), &acc2, false),
+            TxAddResult::AddedToMempool
+        ));
+        assert!(matches!(
+            pool.insert_transaction(txn2_acc2.clone(), &acc2, false),
+            TxAddResult::AddedToMempool
+        ));
 
         // All transactions from both accounts should be retrievable
         assert!(pool.get_transaction(&txn1_acc1.hash).is_some());
@@ -2202,13 +2132,19 @@ mod tests {
         assert!(pool.get_transaction(&txn1_acc2.hash).is_some());
         assert!(pool.get_transaction(&txn2_acc2.hash).is_some());
 
-        // Update nonce for account 2 to remove its first transaction
+        // Remove first transaction from account 2
         let new_acc2 = create_acc(&mut state, addr2, 100, 1)?;
         pool.update_with_account(&addr2, &new_acc2);
+        pool.mark_executed(&txn1_acc2);
 
         // Account 2's first transaction should be removed, others should remain
         assert!(pool.get_transaction(&txn1_acc1.hash).is_none());
         assert!(pool.get_transaction(&txn2_acc1.hash).is_some());
+        assert!(
+            pool.core
+                .get_txn_by_address_and_nonce(&txn1_acc2.signer, txn1_acc2.tx.nonce().unwrap())
+                .is_none()
+        );
         assert!(pool.get_transaction(&txn1_acc2.hash).is_none());
         assert!(pool.get_transaction(&txn2_acc2.hash).is_some());
 
@@ -2362,9 +2298,9 @@ mod tests {
         pool.insert_transaction(transaction(addr, 2, 10), &acc, false);
 
         // Simulate what happens during fork handling:
-        // 1. Update nonce to remove some transactions (simulating block execution)
-        let new_acc = create_acc(&mut state, addr, 100, 2)?;
-        pool.update_with_account(&addr, &new_acc);
+        // 1. remove some transactions (simulating block execution)
+        pool.pop_best_if(|_| true);
+        pool.pop_best_if(|_| true);
 
         // 2. Immediately re-insert transactions (simulating fork revert)
         // But use the OLD account state for insertion
