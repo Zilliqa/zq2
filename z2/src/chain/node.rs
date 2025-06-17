@@ -812,6 +812,10 @@ impl ChainNode {
             }
         }
 
+        if let Some(new_view_interval) = self.chain()?.get_new_view_broadcast_interval() {
+            ctx.insert("new_view_broadcast_interval", &new_view_interval.as_secs());
+        }
+
         Ok(Tera::one_off(spec_config, &ctx, false)?)
     }
 

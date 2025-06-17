@@ -23,6 +23,9 @@ consensus.gas_price = "4_761_904_800_000"
 {%- if contract_upgrades %}
 consensus.contract_upgrades = {{ contract_upgrades }}
 {%- endif %}
+{%- if new_view_broadcast_interval %}
+consensus.new_view_broadcast_interval = { secs = {{ new_view_broadcast_interval }}, nanos = 0 }
+{%- endif %}
 
 {%- if role == "checkpoint" %}
 # Checkpoint configuration
