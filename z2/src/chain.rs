@@ -2,6 +2,8 @@ pub mod config;
 pub mod instance;
 pub mod node;
 
+use std::time::Duration;
+
 use anyhow::{Result, anyhow};
 use clap::ValueEnum;
 use colored::Colorize;
@@ -323,5 +325,9 @@ impl Chain {
 
     pub fn get_validator_control_address(&self) -> Option<&'static str> {
         self.get_str("validator_control_address")
+    }
+
+    pub fn get_new_view_broadcast_interval(&self) -> Option<Duration> {
+        Some(Duration::from_secs(30))
     }
 }
