@@ -228,7 +228,8 @@ impl NodeLauncher {
                             self.node.write().handle_broadcast_transactions(verified)?;
                         }
                         // Try to assemble block even for the origin of this batch
-                        self.node.write().try_to_apply_transactions()?;
+                        // For now, we don't add new transactions to the block after initial creation
+                        // self.node.write().try_to_apply_transactions()?;
                     }
                     else if let Err(e) = self.node.write().handle_broadcast(source, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));

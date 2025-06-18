@@ -326,7 +326,15 @@ impl TransactionsAccount {
             Some(txn) if predicate(txn) => txn.clone(),
             _ => return None,
         };
-        self.mark_executed(&transaction);
+        if transaction.tx.nonce().is_some() {
+            self.nonced_transactions_pending.pop_first().unwrap();
+            self.balance_after_pending += transaction.tx.maximum_validation_cost().unwrap() as i128;
+            self.nonce_account += 1;
+        } else {
+            self.nonceless_transactions_pending.pop_last().unwrap();
+            self.balance_after_pending += transaction.tx.maximum_validation_cost().unwrap() as i128;
+        }
+        self.maintain();
         Some(transaction)
     }
     // Must be followed by maintain()
@@ -432,37 +440,36 @@ impl TransactionsAccount {
                 txn
             );
         };
-        if let Some(lowest_nonce_txn) = self
+        if let Some(lowest_nonce) = self
             .nonced_transactions_pending
             .first_key_value()
             .or(self.nonced_transactions_queued.first_key_value())
-            .map(|x| x.1)
+            .map(|x| x.1.tx.nonce().unwrap())
         {
-            if lowest_nonce_txn.hash == txn.hash {
-                if let Some(txn) = self.nonced_transactions_pending.remove(&nonce_to_remove) {
-                    self.nonce_account = txn.tx.nonce().unwrap() + 1;
-                    self.full_recalculate();
-                    vec![txn.hash]
-                } else if let Some(txn) = self.nonced_transactions_queued.remove(&nonce_to_remove) {
-                    vec![txn.hash]
+            if let Some(txn) = self.nonced_transactions_pending.remove(&nonce_to_remove) {
+                self.nonce_account = txn.tx.nonce().unwrap() + 1;
+                if txn.tx.nonce().unwrap() == lowest_nonce {
+                    self.nonce_account += 1;
+                    self.balance_after_pending += txn.tx.maximum_validation_cost().unwrap() as i128;
+                    self.maintain();
                 } else {
-                    panic!(
-                        "Transaction could not be marked executed since it was not in pool: {:?}",
-                        txn
-                    );
+                    self.full_recalculate();
+                    tracing::warn!("Pending transaction remove was not lowest nonce")
                 }
-            } else if self
-                .nonced_transactions_pending
-                .contains_key(&nonce_to_remove)
-                || self
-                    .nonced_transactions_queued
-                    .contains_key(&nonce_to_remove)
-            {
-                panic!(
-                    "Transaction could not be marked executed since it did not have the lowest nonce"
-                )
+                vec![txn.hash]
+            } else if let Some(txn) = self.nonced_transactions_queued.remove(&nonce_to_remove) {
+                if txn.tx.nonce().unwrap() == lowest_nonce {
+                    self.maintain();
+                } else {
+                    self.maintain();
+                    tracing::warn!("Queued transaction removed was not lowest nonce")
+                }
+                vec![txn.hash]
             } else {
-                panic!("Transaction could not be found in pool")
+                panic!(
+                    "Transaction could not be marked executed since it was not in pool: {:?}",
+                    txn
+                );
             }
         } else {
             panic!("No nonced transactions in pool");
@@ -1050,7 +1057,11 @@ impl TransactionPool {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc, time::Instant};
+    use std::{
+        path::PathBuf,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use alloy::{
         consensus::TxLegacy,
@@ -2151,7 +2162,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
     #[test]
     fn pool_benchmark_insert_ascending_nonces() -> Result<()> {
         let mut pool = TransactionPool::default();
@@ -2166,19 +2176,33 @@ mod tests {
         }
 
         let start = Instant::now();
+        let target_duration = Duration::from_secs(1);
+        let mut transaction_count = 0;
+        let mut account_idx = 0;
+        let mut nonce = 0;
 
-        // Insert 1000 transactions per account in ascending nonce order
-        for (addr, acc) in &accounts {
-            for nonce in 0..1000 {
-                let txn = transaction(*addr, nonce, 10);
-                pool.insert_transaction(txn, acc, false);
+        // Insert transactions for 1 second in ascending nonce order
+        while start.elapsed() < target_duration {
+            let (addr, acc) = &accounts[account_idx % accounts.len()];
+            let txn = transaction(*addr, nonce, 10);
+            pool.insert_transaction(txn, acc, false);
+
+            transaction_count += 1;
+            nonce += 1;
+
+            // Move to next account after every 1000 transactions to simulate realistic usage
+            if nonce % 1000 == 0 {
+                account_idx += 1;
+                nonce = 0;
             }
         }
 
         let duration = start.elapsed();
+        let time_per_op = duration.as_micros() / transaction_count as u128;
+
         println!(
-            "NEW: Insert 1000x1000 transactions (ascending nonces) took {:?}",
-            duration
+            "NEW: Insert transactions (ascending nonces) - {} ops in {:?} = {} μs/op",
+            transaction_count, duration, time_per_op
         );
         println!(
             "NEW: Total transactions in pool: {}",
@@ -2188,7 +2212,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
     #[test]
     fn pool_benchmark_insert_descending_nonces() -> Result<()> {
         let mut pool = TransactionPool::default();
@@ -2203,19 +2226,34 @@ mod tests {
         }
 
         let start = Instant::now();
+        let target_duration = Duration::from_secs(1);
+        let mut transaction_count = 0;
+        let mut account_idx = 0;
+        let mut nonce = 999; // Start from high nonce and go down
 
-        // Insert 1000 transactions per account in descending nonce order
-        for (addr, acc) in &accounts {
-            for nonce in (0..1000).rev() {
-                let txn = transaction(*addr, nonce, 10);
-                pool.insert_transaction(txn, acc, false);
+        // Insert transactions for 1 second in descending nonce order
+        while start.elapsed() < target_duration {
+            let (addr, acc) = &accounts[account_idx % accounts.len()];
+            let txn = transaction(*addr, nonce, 10);
+            pool.insert_transaction(txn, acc, false);
+
+            transaction_count += 1;
+
+            if nonce > 0 {
+                nonce -= 1;
+            } else {
+                // Move to next account and reset nonce
+                account_idx += 1;
+                nonce = 999;
             }
         }
 
         let duration = start.elapsed();
+        let time_per_op = duration.as_micros() / transaction_count as u128;
+
         println!(
-            "NEW: Insert 1000x1000 transactions (descending nonces) took {:?}",
-            duration
+            "NEW: Insert transactions (descending nonces) - {} ops in {:?} = {} μs/op",
+            transaction_count, duration, time_per_op
         );
         println!(
             "NEW: Total transactions in pool: {}",
@@ -2225,15 +2263,14 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
     #[test]
     fn pool_benchmark_operations_on_large_pool() -> Result<()> {
         let mut pool = TransactionPool::default();
         let mut state = get_in_memory_state()?;
 
-        // Create 1000 accounts with 1000 transactions each
+        // Create 100 accounts with 100 transactions each
         let mut accounts = Vec::new();
-        for i in 0..1000 {
+        for i in 0..100 {
             let addr: Address = format!("0x{:040x}", i).parse()?;
             let acc = create_acc(&mut state, addr, 1_000_000, 0)?;
             accounts.push((addr, acc));
@@ -2241,7 +2278,7 @@ mod tests {
 
         // Insert transactions
         for (addr, acc) in &accounts {
-            for nonce in 0..1000 {
+            for nonce in 0..100 {
                 let txn = transaction(*addr, nonce, 10);
                 pool.insert_transaction(txn, acc, false);
             }
@@ -2252,35 +2289,70 @@ mod tests {
             pool.transaction_count()
         );
 
-        // Benchmark getting all pending transactions 1000 times
+        let target_duration = Duration::from_secs(1);
+
+        // Benchmark getting all pending transactions for 1 second
         let start = Instant::now();
-        for _ in 0..1000 {
+        let mut operations = 0;
+        while start.elapsed() < target_duration {
             let _pending: Vec<_> = pool.pending_transactions_ordered().collect();
+            operations += 1;
         }
         let duration = start.elapsed();
+        let time_per_op = duration.as_micros() / operations as u128;
         println!(
-            "NEW: Get all pending transactions 1000 times took {:?}",
-            duration
+            "NEW: Get all pending transactions - {} ops in {:?} = {} μs/op",
+            operations, duration, time_per_op
         );
 
-        // Benchmark getting pending transaction count 1000 times
+        // Benchmark getting pending transaction count for 1 second
         let start = Instant::now();
-        for _ in 0..1000 {
+        let mut operations = 0;
+        while start.elapsed() < target_duration {
             let _count = pool.pending_transaction_count();
+            operations += 1;
         }
         let duration = start.elapsed();
+        let time_per_op = duration.as_micros() / operations as u128;
         println!(
-            "NEW: Get pending transaction count 1000 times took {:?}",
-            duration
+            "NEW: Get pending transaction count - {} ops in {:?} = {} μs/op",
+            operations, duration, time_per_op
         );
 
-        // Benchmark getting best transaction 1000 times
+        // Benchmark getting best transaction for 1 second
         let start = Instant::now();
-        for _ in 0..1000 {
+        let mut operations = 0;
+        while start.elapsed() < target_duration {
             let _best = pool.best_transaction();
+            operations += 1;
         }
         let duration = start.elapsed();
-        println!("NEW: Get best transaction 1000 times took {:?}", duration);
+        let time_per_op = duration.as_micros() / operations as u128;
+        println!(
+            "NEW: Get best transaction - {} ops in {:?} = {} μs/op",
+            operations, duration, time_per_op
+        );
+
+        // Benchmark popping transactions for 1 second
+        let mut test_pool = pool.clone();
+        let start = Instant::now();
+        let mut operations = 0;
+        let mut transactions = Vec::new();
+        while start.elapsed() < target_duration {
+            let best = test_pool.pop_best_if(|_| true);
+            operations += 1;
+            if let Some(tx) = best {
+                transactions.push(tx);
+            } else {
+                break;
+            }
+        }
+        let duration = start.elapsed();
+        let time_per_op = duration.as_micros() / operations as u128;
+        println!(
+            "NEW: Popping best transaction - {} ops in {:?} = {} μs/op",
+            operations, duration, time_per_op
+        );
 
         Ok(())
     }
