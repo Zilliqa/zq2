@@ -605,6 +605,14 @@ pub struct VerifiedTransaction {
     pub hash: crypto::Hash,
 }
 
+impl VerifiedTransaction {
+    pub fn encoded_size(&self) -> usize {
+        cbor4ii::serde::to_vec(Vec::with_capacity(4096), &self.tx)
+            .map(|b| b.len())
+            .unwrap_or_default()
+    }
+}
+
 /// The core information of a transaction.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Transaction {

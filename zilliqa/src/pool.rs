@@ -1,5 +1,5 @@
 use std::{
-    cmp::{Ordering, min},
+    cmp::Ordering,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
 };
 
@@ -96,7 +96,7 @@ pub struct TransactionPool {
     /// These are candidates to be included in the next block
     gas_index: GasCollection,
     /// Keeps transactions created at this node that will be broadcast
-    transactions_to_broadcast: VecDeque<SignedTransaction>,
+    transactions_to_broadcast: VecDeque<VerifiedTransaction>,
 }
 
 /// A wrapper for (gas price, sender, nonce), stored in the `ready` heap of [TransactionPool].
@@ -331,7 +331,7 @@ impl TransactionPool {
 
         // If this is a transaction created at this node, add it to broadcast vector
         if !from_broadcast {
-            self.store_broadcast_txn(txn.tx.clone());
+            self.store_broadcast_txn(&txn);
         }
 
         debug!(
@@ -348,25 +348,36 @@ impl TransactionPool {
         TxAddResult::AddedToMempool
     }
 
-    fn store_broadcast_txn(&mut self, txn: SignedTransaction) {
-        self.transactions_to_broadcast.push_back(txn);
+    fn store_broadcast_txn(&mut self, txn: &VerifiedTransaction) {
+        self.transactions_to_broadcast.push_back(txn.clone());
     }
 
     pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<SignedTransaction>> {
         const MAX_BATCH_SIZE: usize = 1000;
+        const BATCH_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of max_transmit_size().
 
         if self.transactions_to_broadcast.is_empty() {
             return Ok(Vec::new());
         }
 
-        let max_take = min(self.transactions_to_broadcast.len(), MAX_BATCH_SIZE);
+        let mut batch_count = 0usize;
+        let mut batch_size = BATCH_SIZE_THRESHOLD;
 
-        let ret_vec = self
+        for tx in self.transactions_to_broadcast.iter() {
+            batch_size = batch_size.saturating_sub(tx.encoded_size());
+            batch_count += 1;
+            // batch by number or size
+            if batch_size == 0 || batch_count == MAX_BATCH_SIZE {
+                break;
+            }
+        }
+
+        let selected = self
             .transactions_to_broadcast
-            .drain(..max_take)
-            .collect::<Vec<_>>();
-
-        Ok(ret_vec)
+            .drain(0..batch_count)
+            .map(|tx| tx.tx)
+            .collect();
+        Ok(selected)
     }
 
     fn remove_from_gas_index(gas_index: &mut GasCollection, txn: &VerifiedTransaction) {
