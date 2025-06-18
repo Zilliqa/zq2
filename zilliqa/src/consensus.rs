@@ -242,6 +242,8 @@ pub struct Consensus {
 }
 
 impl Consensus {
+    const PROP_SIZE_THRESHOLD: usize = 717 * 1024; // ~70% of 1MB; FIXME: Determine a more accurate threshold.
+
     pub fn new(
         secret_key: SecretKey,
         config: NodeConfig,
@@ -1387,6 +1389,7 @@ impl Consensus {
         // Use state root hash of current early proposal
         state.set_to_root(proposal.state_root_hash().into());
         // Internal states
+        let mut threshold_size = Self::PROP_SIZE_THRESHOLD;
         let mut gas_left = proposal.header.gas_limit - proposal.header.gas_used;
         let mut tx_index_in_block = proposal.transactions.len();
 
@@ -1410,6 +1413,11 @@ impl Consensus {
                 break;
             }
 
+            if threshold_size == 0 {
+                debug!("ran out of size");
+                break;
+            }
+
             // Apply specific txn
             let mut inspector = TouchedAddressInspector::default();
             let result = Self::apply_transaction_at(
@@ -1426,6 +1434,8 @@ impl Consensus {
                 pool.mark_executed(&tx);
                 continue;
             };
+
+            threshold_size = threshold_size.saturating_sub(tx.encoded_size());
 
             // Reduce remaining gas in this block
             gas_left = gas_left
@@ -1570,6 +1580,7 @@ impl Consensus {
         state.set_to_root(block.state_root_hash().into());
 
         // Internal states
+        let mut threshold_size = Self::PROP_SIZE_THRESHOLD;
         let mut gas_left = self.config.consensus.eth_block_gas_limit;
         let mut receipts_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
         let mut transactions_trie = EthTrie::new(Arc::new(MemoryDB::new(true)));
@@ -1604,6 +1615,11 @@ impl Consensus {
                 break;
             }
 
+            if threshold_size == 0 {
+                debug!("ran out of size");
+                break;
+            }
+
             // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
@@ -1623,6 +1639,9 @@ impl Consensus {
             gas_left = gas_left
                 .checked_sub(result.gas_used())
                 .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
+
+            // Reduce balance size threshold
+            threshold_size = threshold_size.saturating_sub(txn.encoded_size());
 
             // Do necessary work to assemble the transaction
             transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
