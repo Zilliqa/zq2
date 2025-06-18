@@ -140,12 +140,54 @@ async fn handle_forking_correctly(mut network: Network) {
         .await
         .unwrap();
 
-    // Send a single TX to the network
+    let init_nonce = wallet.get_transaction_count(wallet.address(), None).await.unwrap();
+
+    let gap_nonce = init_nonce + 3;
+    let gap_txn_count = 10;
+    for num in 0..gap_txn_count {
+        wallet
+            .send_transaction(TransactionRequest::pay(H160::random(), 0).nonce(gap_nonce + num), None)
+            .await
+            .unwrap()
+            .tx_hash();
+    }
+
+    let next_block_threshold = 7;
+
+    // wait until another blocks have been produced
+    network
+        .run_until(
+            |n| {
+                let index = n.random_index();
+                n.get_node(index).get_finalized_height().unwrap() >= next_block_threshold
+            },
+            100,
+        )
+        .await
+        .unwrap();
+
+    fn verify_queued(network: &Network, expected_count: usize, index: usize) {
+        let node_state = network.get_node(index).consensus.state().clone();
+        let queued_count = {
+            let node = network.get_node(index);
+            let pool = node.consensus.transaction_pool.read();
+            pool.preview_content(&node_state).unwrap().queued.len()
+        };
+        assert_eq!(queued_count, expected_count);
+    }
+
+    // Ensure txns are queued on both nodes
+    verify_queued(&network, gap_txn_count, 0);
+    verify_queued(&network, gap_txn_count, 1);
+
+
+    // Send a single TX to the network that triggers txns inclusion
     let hash: H256 = wallet
-        .send_transaction(TransactionRequest::pay(H160::random(), 10), None)
+        .send_transaction(TransactionRequest::pay(H160::random(), 10).nonce(init_nonce), None)
         .await
         .unwrap()
         .tx_hash();
+
 
     network.drop_propose_messages_except_one().await;
 
@@ -182,6 +224,12 @@ async fn handle_forking_correctly(mut network: Network) {
         )
         .await
         .unwrap();
+
+
+    // Verify txns are still queued on both nodes
+    verify_queued(&network, gap_txn_count, 0);
+    verify_queued(&network, gap_txn_count, 1);
+
 }
 
 // Test that zero account has correct initial funds, is the source of rewards and is the sink of gas
