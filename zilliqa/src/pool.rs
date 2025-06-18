@@ -363,7 +363,7 @@ impl TransactionPool {
         let mut batch_count = 0usize;
         let mut batch_size = BATCH_SIZE_THRESHOLD;
 
-        for tx in self.transactions_to_broadcast.iter_mut() {
+        for tx in self.transactions_to_broadcast.iter() {
             batch_size = batch_size.saturating_sub(tx.encoded_size());
             batch_count += 1;
             // batch by number or size
@@ -494,7 +494,6 @@ mod tests {
 
     fn transaction(from_addr: Address, nonce: u8, gas_price: u128) -> VerifiedTransaction {
         VerifiedTransaction {
-            cbor_size: 0,
             tx: SignedTransaction::Legacy {
                 tx: TxLegacy {
                     chain_id: Some(0),
@@ -521,7 +520,6 @@ mod tests {
         gas_price: u128,
     ) -> VerifiedTransaction {
         VerifiedTransaction {
-            cbor_size: 0,
             tx: SignedTransaction::Intershard {
                 tx: TxIntershard {
                     chain_id: 0,

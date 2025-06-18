@@ -421,12 +421,7 @@ impl SignedTransaction {
             }
         };
 
-        Ok(VerifiedTransaction {
-            tx,
-            signer,
-            hash,
-            cbor_size: 0,
-        })
+        Ok(VerifiedTransaction { tx, signer, hash })
     }
 
     /// Calculate the hash of this transaction. If you need to do this more than once, consider caching the result
@@ -608,18 +603,13 @@ pub struct VerifiedTransaction {
     pub tx: SignedTransaction,
     pub signer: Address,
     pub hash: crypto::Hash,
-    pub cbor_size: usize,
 }
 
 impl VerifiedTransaction {
-    pub fn encoded_size(&mut self) -> usize {
-        // compute lazily, when needed
-        if self.cbor_size == 0 {
-            self.cbor_size = cbor4ii::serde::to_vec(Vec::with_capacity(4096), &self.tx)
-                .map(|b| b.len())
-                .unwrap_or_default();
-        }
-        self.cbor_size
+    pub fn encoded_size(&self) -> usize {
+        cbor4ii::serde::to_vec(Vec::with_capacity(4096), &self.tx)
+            .map(|b| b.len())
+            .unwrap_or_default()
     }
 }
 

@@ -1395,7 +1395,7 @@ impl Consensus {
 
         // Assemble new block with whatever is in the mempool
         while let Some(tx) = pool.best_transaction(&state)? {
-            let mut tx = tx.clone();
+            let tx = tx.clone();
             // First - check if we have time left to process txns and give enough time for block propagation
             let (_, milliseconds_remaining_of_block_time, _) =
                 self.get_consensus_timeout_params()?;
@@ -1620,13 +1620,10 @@ impl Consensus {
                 break;
             }
 
-            let mut txn_clone = txn.clone();
-            let encoded_size = txn_clone.encoded_size();
-
             // Apply specific txn
             let result = Self::apply_transaction_at(
                 state,
-                txn_clone,
+                txn.clone(),
                 executed_block_header,
                 inspector::noop(),
                 false,
@@ -1644,7 +1641,7 @@ impl Consensus {
                 .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
             // Reduce balance size threshold
-            threshold_size = threshold_size.saturating_sub(encoded_size);
+            threshold_size = threshold_size.saturating_sub(txn.encoded_size());
 
             // Do necessary work to assemble the transaction
             transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
