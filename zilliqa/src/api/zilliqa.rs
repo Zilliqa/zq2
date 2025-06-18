@@ -480,7 +480,7 @@ fn get_current_mini_epoch(_: Params, node: &Arc<RwLock<Node>>) -> Result<String>
 fn get_latest_tx_block(_: Params, node: &Arc<RwLock<Node>>) -> Result<zil::TxBlock> {
     let node = node.read();
     let block = node
-        .get_block(BlockId::latest())?
+        .get_block(BlockId::finalized())?
         .ok_or_else(|| anyhow!("no blocks"))?;
 
     let txn_fees = get_txn_fees_for_block(&node, block.hash())?;
