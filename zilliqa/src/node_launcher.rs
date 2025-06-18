@@ -222,13 +222,19 @@ impl NodeLauncher {
                         if source != my_peer_id {
                             let mut verified = Vec::with_capacity(transactions.len());
                             for txn in transactions {
-                                let txn = txn.verify()?;
-                                verified.push(txn);
+                                match txn.verify() {
+                                    Ok(txn) => verified.push(txn),
+                                    Err(e) => error!("Skipping transaction {e}"),
+                                }
                             }
-                            self.node.write().handle_broadcast_transactions(verified)?;
+                            if let Err(e)= self.node.write().handle_broadcast_transactions(verified) {
+                                error!("Failed to handle broadcast transactions {e}");
+                            }
                         }
                         // Try to assemble block even for the origin of this batch
-                        self.node.write().try_to_apply_transactions()?;
+                        if let Err(e) = self.node.write().try_to_apply_transactions() {
+                            error!("Failed to try to apply transactions {e}");
+                        }
                     }
                     else if let Err(e) = self.node.write().handle_broadcast(source, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
