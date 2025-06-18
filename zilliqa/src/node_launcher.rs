@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use http::{Method, header};
+use jsonrpsee::server::BatchRequestConfig;
 use libp2p::{PeerId, futures::StreamExt};
 use node::Node;
 use opentelemetry::KeyValue;
@@ -142,6 +143,7 @@ impl NodeLauncher {
                 .allow_headers([header::CONTENT_TYPE]);
             let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
             let server = jsonrpsee::server::ServerBuilder::new()
+                .set_batch_request_config(BatchRequestConfig::Disabled) // disable batched RPC
                 .max_response_body_size(config.max_rpc_response_size)
                 .set_http_middleware(middleware)
                 .set_id_provider(EthIdProvider)
