@@ -291,9 +291,8 @@ impl Node {
         transactions: Vec<VerifiedTransaction>,
     ) -> Result<()> {
         let from_broadcast = true;
-        for txn in transactions {
-            self.consensus.handle_new_transaction(txn, from_broadcast)?;
-        }
+        self.consensus
+            .handle_new_transactions(transactions, from_broadcast)?;
         Ok(())
     }
 
@@ -485,12 +484,14 @@ impl Node {
         let hash = txn.hash;
 
         let from_broadcast = false;
-        let result = self.consensus.handle_new_transaction(txn, from_broadcast)?;
-        if !result.was_added() {
+        let result = self
+            .consensus
+            .handle_new_transactions(vec![txn], from_broadcast)?;
+        if !result[0].was_added() {
             debug!(?result, "Transaction cannot be added to mempool");
         }
 
-        Ok((hash, result))
+        Ok((hash, result[0]))
     }
 
     pub fn process_transactions_to_broadcast(&mut self) -> Result<()> {

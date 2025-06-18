@@ -447,7 +447,6 @@ impl Consensus {
         Ok(consensus)
     }
 
-    /// Build NewView message for this view
     fn build_new_view(&mut self) -> Result<NetworkMessage> {
         let view = self.get_view()?;
         let block = self.get_block(&self.high_qc.block_hash)?.ok_or_else(|| {
@@ -466,6 +465,12 @@ impl Consensus {
 
         self.network_message_cache = Some(new_view_message.clone());
         Ok(new_view_message)
+    }
+
+    fn build_vote(&mut self, peer_id: PeerId, vote: Vote) -> NetworkMessage {
+        let network_msg = (Some(peer_id), ExternalMessage::Vote(Box::new(vote)));
+        self.network_message_cache = Some(network_msg.clone());
+        network_msg
     }
 
     pub fn public_key(&self) -> NodePublicKey {
@@ -491,6 +496,10 @@ impl Consensus {
             .unwrap()
     }
 
+    /// Function is called when the node has no other work to do. Check if:
+    ///     - Block should be proposed if we are leader
+    ///     - View should be timed out because no proposal received in time
+    ///     - Current view's NewView or Vote should be re-published
     pub fn timeout(&mut self) -> Result<Option<NetworkMessage>> {
         let view = self.get_view()?;
         // We never want to timeout while on view 1
@@ -552,7 +561,7 @@ impl Consensus {
                         error!("Failed to finalise block proposal.");
                         self.create_next_block_on_timeout
                             .store(false, Ordering::SeqCst);
-                        *self.early_proposal.write() = None;
+                        self.early_proposal_clear()?;
                     }
                     Err(e) => error!("Failed to finalise proposal: {e}"),
                 };
@@ -686,6 +695,7 @@ impl Consensus {
         self.secret_key.to_libp2p_keypair().public().to_peer_id()
     }
 
+    /// Validate and process a fully formed proposal
     pub fn proposal(
         &mut self,
         from: PeerId,
@@ -852,17 +862,9 @@ impl Consensus {
                     self.create_next_block_on_timeout
                         .store(false, Ordering::SeqCst);
                 }
-                {
-                    let mut early_proposal = self.early_proposal.write();
-                    if early_proposal.is_some() {
-                        let (_, txns, _, _, _) = early_proposal.take().unwrap();
-                        let mut pool = self.transaction_pool.write();
-                        for txn in txns.into_iter().rev() {
-                            pool.insert_ready_transaction(txn)?;
-                        }
-                        warn!("Early proposal exists but we are not leader. Clearing proposal");
-                    }
-                }
+
+                // Clear early_proposal in case it exists.
+                self.early_proposal_clear()?;
 
                 let Some(next_leader) = next_leader else {
                     warn!("Next leader is currently not reachable, has it joined committee yet?");
@@ -882,13 +884,7 @@ impl Consensus {
         Ok(None)
     }
 
-    fn build_vote(&mut self, peer_id: PeerId, vote: Vote) -> NetworkMessage {
-        let network_msg = (Some(peer_id), ExternalMessage::Vote(Box::new(vote)));
-        self.network_message_cache = Some(network_msg.clone());
-        network_msg
-    }
-
-    /// Apply the rewards at the tail-end of the Proposal.
+    /// For a given State apply a Proposal's rewards. Must be performed at the tail-end of the Proposal's processing.
     /// Note that the algorithm below is mentioned in cfg.rs - if you change the way
     /// rewards are calculated, please change the comments in the configuration structure there.
     fn apply_rewards_late_at(
@@ -972,6 +968,7 @@ impl Consensus {
         Ok(())
     }
 
+    /// For a given State apply the given transaction
     pub fn apply_transaction_at<I: Inspector<PendingState> + ScillaInspector>(
         state: &mut State,
         txn: VerifiedTransaction,
@@ -1063,6 +1060,7 @@ impl Consensus {
         Ok(())
     }
 
+    /// Process a Vote message
     pub fn vote(&self, peer_id: PeerId, vote: Vote) -> Result<Option<NetworkMessage>> {
         let block_hash = vote.block_hash;
         let block_view = vote.view;
@@ -1184,7 +1182,7 @@ impl Consensus {
         Ok(None)
     }
 
-    /// Finalise the early Proposal.
+    /// Finalise self.early_proposal.
     /// This should only run after majority QC or aggQC are available.
     /// It applies the rewards and produces the final Proposal.
     fn early_proposal_finish_at(
@@ -1274,7 +1272,7 @@ impl Consensus {
         Ok(Some(proposal))
     }
 
-    /// Assembles the Proposal block early.
+    /// Assemble self.early_proposal.
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
     fn early_proposal_assemble_at(&self, agg: Option<AggregateQc>) -> Result<()> {
@@ -1506,7 +1504,20 @@ impl Consensus {
         Ok(())
     }
 
-    /// Called when consensus will accept our early_block.
+    /// Clear early_proposal and add it's transactions back to pool.
+    /// This function should be called only when something has gone wrong.
+    fn early_proposal_clear(&self) -> Result<()> {
+        if let Some((_, txns, _, _, _)) = self.early_proposal.write().take() {
+            let mut pool = self.transaction_pool.write();
+            for txn in txns.into_iter().rev() {
+                pool.insert_ready_transaction(txn)?;
+            }
+            warn!("early_proposal cleared. This is a consequence of some incorrect behaviour.");
+        }
+        Ok(())
+    }
+
+    /// Called when node has become leader and is ready to publish a Proposal.
     /// Either propose now or set timeout to allow for txs to come in.
     fn ready_for_block_proposal(
         &self,
@@ -1537,7 +1548,8 @@ impl Consensus {
 
         Ok(None)
     }
-    /// Assembles a Pending block.
+
+    /// Assembles a Pending block: the block which the node _would_ propose if they were leader.
     fn assemble_pending_block_at(&self, state: &mut State) -> Result<Option<Block>> {
         // Start with highest canonical block
         let num = self
@@ -1648,7 +1660,7 @@ impl Consensus {
         Ok(Some(proposal))
     }
 
-    /// Produces the Proposal block.
+    /// Produces the Proposal block by taking and finalising early_proposal.
     /// It must return a final Proposal with correct QC, regardless of whether it is empty or not.
     fn propose_new_block(&self, votes: Option<&BlockVotes>) -> Result<Option<NetworkMessage>> {
         // We expect early_proposal to exist already but try create incase it doesn't
@@ -1695,31 +1707,34 @@ impl Consensus {
         )))
     }
 
-    /// Insert transaction and add to early_proposal if possible.
-    pub fn handle_new_transaction(
+    /// Insert transaction and add to transaction pool.
+    pub fn handle_new_transactions(
         &self,
-        verified: VerifiedTransaction,
+        verified_transactions: Vec<VerifiedTransaction>,
         from_broadcast: bool,
-    ) -> Result<TxAddResult> {
-        info!(?verified, "seen new txn");
-
+    ) -> Result<Vec<TxAddResult>> {
+        let mut inserted = Vec::with_capacity(verified_transactions.len());
         let mut pool = self.transaction_pool.write();
-        let inserted = self.new_transaction(verified, from_broadcast, &mut pool)?;
+        for txn in verified_transactions {
+            info!(?txn, "seen new txn");
+            inserted.push(self.new_transaction(txn, from_broadcast, &mut pool)?);
+        }
         Ok(inserted)
     }
 
     pub fn try_early_proposal_after_txn_batch(&self) -> Result<()> {
-        let early_proposal = self.early_proposal.write();
+        if self.create_next_block_on_timeout.load(Ordering::SeqCst) {
+            let early_proposal = self.early_proposal.write();
+            if early_proposal.is_some() {
+                let pool = self.transaction_pool.write();
+                if pool.has_txn_ready() {
+                    trace!(
+                        "add transaction to early proposal {}",
+                        early_proposal.as_ref().unwrap().0.header.view
+                    );
 
-        if self.create_next_block_on_timeout.load(Ordering::SeqCst) && early_proposal.is_some() {
-            let pool = self.transaction_pool.write();
-            if pool.has_txn_ready() {
-                trace!(
-                    "add transaction to early proposal {}",
-                    early_proposal.as_ref().unwrap().0.header.view
-                );
-
-                self.early_proposal_apply_transactions(pool, early_proposal)?;
+                    self.early_proposal_apply_transactions(pool, early_proposal)?;
+                }
             }
         }
         Ok(())
@@ -1780,6 +1795,7 @@ impl Consensus {
         Ok(committee)
     }
 
+    /// Process a NewView message
     pub fn new_view(&mut self, from: PeerId, new_view: NewView) -> Result<Option<NetworkMessage>> {
         info!(
             "Received new view for view: {:?} from: {:?}",
