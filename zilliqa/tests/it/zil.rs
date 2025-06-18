@@ -46,12 +46,12 @@ pub async fn zilliqa_account_with_funds(
         .run_until_async(
             || async {
                 wallet
-                    .get_transaction_receipt(hash)
+                    .provider()
+                    .request::<[_; 1], Option<Value>>("GetTransaction", [hash])
                     .await
-                    .unwrap()
-                    .is_some()
+                    .is_ok()
             },
-            50,
+            200,
         )
         .await
         .unwrap();
