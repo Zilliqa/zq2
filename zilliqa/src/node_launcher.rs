@@ -312,7 +312,9 @@ impl NodeLauncher {
 
                     let start = SystemTime::now();
                     // No messages for a while, so check if consensus wants to timeout
-                    self.node.write().handle_timeout().unwrap();
+                    if let Err(e) = self.node.write().handle_timeout() {
+                        error!("Failed to handle timeout {e}");
+                    }
                     consensus_sleep.as_mut().reset(Instant::now() + Duration::from_millis(500));
                     messaging_process_duration.record(
                         start.elapsed().map_or(0.0, |d| d.as_secs_f64()),
