@@ -1035,8 +1035,21 @@ impl Network {
             }
             AnyMessage::External(external_message) => {
                 info!(%external_message, "external");
+
+                let cbor_size =
+                    cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024 * 1), &external_message)
+                        .unwrap()
+                        .len();
+
                 match destination {
                     Some((destination, _)) => {
+                        assert!(
+                            cbor_size < 1024 * 1024 * 1,
+                            "request overflow {} {:?}",
+                            cbor_size,
+                            external_message
+                        );
+
                         // Direct message
                         let (index, node) = self
                             .nodes
@@ -1082,6 +1095,13 @@ impl Network {
                         }
                     }
                     None => {
+                        assert!(
+                            cbor_size < 1024 * 1024 * 1,
+                            "broadcast overflow {} {:?}",
+                            cbor_size,
+                            external_message
+                        );
+
                         // Broadcast
                         for (index, node) in self.nodes.iter().enumerate() {
                             if self.disconnected.contains(&index) {
@@ -1127,6 +1147,18 @@ impl Network {
             }
             AnyMessage::Response { channel, message } => {
                 info!(%message, ?channel, "response");
+
+                let cbor_size =
+                    cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024 * 10), &message)
+                        .unwrap()
+                        .len();
+                assert!(
+                    cbor_size < 1024 * 1024 * 10,
+                    "response overflow {} {:?}",
+                    cbor_size,
+                    message
+                );
+
                 // skip on faux response
                 if let Some(destination) = self.pending_responses.remove(channel) {
                     let (index, node) = self
