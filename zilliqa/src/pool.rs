@@ -493,19 +493,24 @@ mod tests {
     };
 
     fn transaction(from_addr: Address, nonce: u8, gas_price: u128) -> VerifiedTransaction {
-        VerifiedTransaction {
-            tx: SignedTransaction::Legacy {
-                tx: TxLegacy {
-                    chain_id: Some(0),
-                    nonce: nonce as u64,
-                    gas_price,
-                    gas_limit: 1,
-                    to: TxKind::Create,
-                    value: U256::ZERO,
-                    input: Bytes::new(),
-                },
-                sig: PrimitiveSignature::new(U256::from(1), U256::from(1), false),
+        let tx = SignedTransaction::Legacy {
+            tx: TxLegacy {
+                chain_id: Some(0),
+                nonce: nonce as u64,
+                gas_price,
+                gas_limit: 1,
+                to: TxKind::Create,
+                value: U256::ZERO,
+                input: Bytes::new(),
             },
+            sig: PrimitiveSignature::new(U256::from(1), U256::from(1), false),
+        };
+        let cbor_size = cbor4ii::serde::to_vec(Vec::with_capacity(4096), &tx)
+            .map(|b| b.len())
+            .unwrap_or_default();
+        VerifiedTransaction {
+            cbor_size,
+            tx,
             signer: from_addr,
             hash: Hash::builder()
                 .with(from_addr.as_slice())
@@ -519,19 +524,24 @@ mod tests {
         shard_nonce: u8,
         gas_price: u128,
     ) -> VerifiedTransaction {
-        VerifiedTransaction {
-            tx: SignedTransaction::Intershard {
-                tx: TxIntershard {
-                    chain_id: 0,
-                    bridge_nonce: shard_nonce as u64,
-                    source_chain: from_shard as u64,
-                    gas_price,
-                    gas_limit: EvmGas(0),
-                    to_addr: None,
-                    payload: vec![],
-                },
-                from: Address::ZERO,
+        let tx = SignedTransaction::Intershard {
+            tx: TxIntershard {
+                chain_id: 0,
+                bridge_nonce: shard_nonce as u64,
+                source_chain: from_shard as u64,
+                gas_price,
+                gas_limit: EvmGas(0),
+                to_addr: None,
+                payload: vec![],
             },
+            from: Address::ZERO,
+        };
+        let cbor_size = cbor4ii::serde::to_vec(Vec::with_capacity(4096), &tx)
+            .map(|b| b.len())
+            .unwrap_or_default();
+        VerifiedTransaction {
+            cbor_size,
+            tx,
             signer: Address::ZERO,
             hash: Hash::builder()
                 .with([shard_nonce])
