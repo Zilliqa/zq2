@@ -472,7 +472,7 @@ fn full_blocks_giant_deploy(c: &mut Criterion) {
         address,
         iter::empty(),
         txns,
-        365,
+        330,
     );
 }
 
