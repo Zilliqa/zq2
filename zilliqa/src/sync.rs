@@ -1029,8 +1029,8 @@ impl Sync {
                 let response = self.p1_response.remove(&peer_id).unwrap();
                 if let Some(response) = response {
                     // Only process a full response
-                    if response.is_empty() {
-                        warn!(from = %peer_id, "sync::ActiveResponse : empty");
+                    if response.is_empty() || response.len() > self.max_batch_size {
+                        warn!(from = %peer_id, "sync::ActiveResponse : invalid");
                         self.peers
                             .done_with_peer(self.in_flight.pop_front(), DownGrade::Empty);
                     } else {
