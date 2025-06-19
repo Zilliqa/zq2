@@ -1037,14 +1037,14 @@ impl Network {
                 info!(%external_message, "external");
 
                 let cbor_size =
-                    cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024 * 1), &external_message)
+                    cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &external_message)
                         .unwrap()
                         .len();
 
                 match destination {
                     Some((destination, _)) => {
                         assert!(
-                            cbor_size < 1024 * 1024 * 1,
+                            cbor_size < 1024 * 1024,
                             "request overflow {} {:?}",
                             cbor_size,
                             external_message
@@ -1096,7 +1096,7 @@ impl Network {
                     }
                     None => {
                         assert!(
-                            cbor_size < 1024 * 1024 * 1,
+                            cbor_size < 1024 * 1024,
                             "broadcast overflow {} {:?}",
                             cbor_size,
                             external_message
