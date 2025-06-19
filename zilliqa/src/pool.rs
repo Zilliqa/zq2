@@ -354,7 +354,7 @@ impl TransactionPool {
 
     pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<SignedTransaction>> {
         const MAX_BATCH_SIZE: usize = 1000;
-        const BATCH_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of max_transmit_size().
+        const BATCH_SIZE_THRESHOLD: usize = 972 * 1024; // 95% of max_transmit_size().
 
         if self.transactions_to_broadcast.is_empty() {
             return Ok(Vec::new());
@@ -364,12 +364,16 @@ impl TransactionPool {
         let mut batch_size = BATCH_SIZE_THRESHOLD;
 
         for tx in self.transactions_to_broadcast.iter() {
-            batch_size = batch_size.saturating_sub(tx.encoded_size());
-            batch_count += 1;
             // batch by number or size
-            if batch_size == 0 || batch_count == MAX_BATCH_SIZE {
+            if let Some(balance_size) = batch_size.checked_sub(tx.encoded_size()) {
+                batch_size = balance_size;
+                batch_count += 1;
+                if batch_count == MAX_BATCH_SIZE {
+                    break;
+                }
+            } else {
                 break;
-            }
+            };
         }
 
         let selected = self
@@ -493,19 +497,24 @@ mod tests {
     };
 
     fn transaction(from_addr: Address, nonce: u8, gas_price: u128) -> VerifiedTransaction {
-        VerifiedTransaction {
-            tx: SignedTransaction::Legacy {
-                tx: TxLegacy {
-                    chain_id: Some(0),
-                    nonce: nonce as u64,
-                    gas_price,
-                    gas_limit: 1,
-                    to: TxKind::Create,
-                    value: U256::ZERO,
-                    input: Bytes::new(),
-                },
-                sig: PrimitiveSignature::new(U256::from(1), U256::from(1), false),
+        let tx = SignedTransaction::Legacy {
+            tx: TxLegacy {
+                chain_id: Some(0),
+                nonce: nonce as u64,
+                gas_price,
+                gas_limit: 1,
+                to: TxKind::Create,
+                value: U256::ZERO,
+                input: Bytes::new(),
             },
+            sig: PrimitiveSignature::new(U256::from(1), U256::from(1), false),
+        };
+        let cbor_size = cbor4ii::serde::to_vec(Vec::with_capacity(4096), &tx)
+            .map(|b| b.len())
+            .unwrap_or_default();
+        VerifiedTransaction {
+            cbor_size,
+            tx,
             signer: from_addr,
             hash: Hash::builder()
                 .with(from_addr.as_slice())
@@ -519,19 +528,24 @@ mod tests {
         shard_nonce: u8,
         gas_price: u128,
     ) -> VerifiedTransaction {
-        VerifiedTransaction {
-            tx: SignedTransaction::Intershard {
-                tx: TxIntershard {
-                    chain_id: 0,
-                    bridge_nonce: shard_nonce as u64,
-                    source_chain: from_shard as u64,
-                    gas_price,
-                    gas_limit: EvmGas(0),
-                    to_addr: None,
-                    payload: vec![],
-                },
-                from: Address::ZERO,
+        let tx = SignedTransaction::Intershard {
+            tx: TxIntershard {
+                chain_id: 0,
+                bridge_nonce: shard_nonce as u64,
+                source_chain: from_shard as u64,
+                gas_price,
+                gas_limit: EvmGas(0),
+                to_addr: None,
+                payload: vec![],
             },
+            from: Address::ZERO,
+        };
+        let cbor_size = cbor4ii::serde::to_vec(Vec::with_capacity(4096), &tx)
+            .map(|b| b.len())
+            .unwrap_or_default();
+        VerifiedTransaction {
+            cbor_size,
+            tx,
             signer: Address::ZERO,
             hash: Hash::builder()
                 .with([shard_nonce])

@@ -242,7 +242,8 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    const PROP_SIZE_THRESHOLD: usize = 717 * 1024; // ~70% of 1MB; FIXME: Determine a more accurate threshold.
+    // determined empirically
+    const PROP_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of 1MB
 
     pub fn new(
         secret_key: SecretKey,
@@ -1413,10 +1414,10 @@ impl Consensus {
                 break;
             }
 
-            if threshold_size == 0 {
+            let Some(threshold_balance) = threshold_size.checked_sub(tx.encoded_size()) else {
                 debug!("ran out of size");
                 break;
-            }
+            };
 
             // Apply specific txn
             let mut inspector = TouchedAddressInspector::default();
@@ -1435,7 +1436,8 @@ impl Consensus {
                 continue;
             };
 
-            threshold_size = threshold_size.saturating_sub(tx.encoded_size());
+            // Reduce balance size threshold
+            threshold_size = threshold_balance;
 
             // Reduce remaining gas in this block
             gas_left = gas_left
@@ -1615,10 +1617,10 @@ impl Consensus {
                 break;
             }
 
-            if threshold_size == 0 {
+            let Some(threshold_balance) = threshold_size.checked_sub(txn.encoded_size()) else {
                 debug!("ran out of size");
                 break;
-            }
+            };
 
             // Apply specific txn
             let result = Self::apply_transaction_at(
@@ -1641,7 +1643,7 @@ impl Consensus {
                 .ok_or_else(|| anyhow!("gas_used > gas_limit"))?;
 
             // Reduce balance size threshold
-            threshold_size = threshold_size.saturating_sub(txn.encoded_size());
+            threshold_size = threshold_balance;
 
             // Do necessary work to assemble the transaction
             transactions_trie.insert(txn.hash.as_bytes(), txn.hash.as_bytes())?;
