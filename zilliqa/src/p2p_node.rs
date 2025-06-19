@@ -366,7 +366,7 @@ impl P2pNode {
                             }, ..
                         })) => {
                             let source = source.expect("message should have a source");
-                            let message = match cbor4ii::serde::from_slice::<ExternalMessage>(&data) {
+                            let external_message = match cbor4ii::serde::from_slice::<ExternalMessage>(&data) {
                                 Ok(m) => m,
                                 Err(e) => {
                                     let data = hex::encode(&data);
@@ -375,15 +375,17 @@ impl P2pNode {
                                 }
                             };
                             let to = self.peer_id;
-                            debug!(%source, %to, %message, %topic_hash, "broadcast received");
+                            debug!(%source, %to, %external_message, %topic_hash, "broadcast received");
 
-                            match message {
+                            match external_message {
                                 // Route broadcasts to speed-up Proposal processing, with faux request-id
-                                ExternalMessage::Proposal(_) => {
-                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), message, ResponseChannel::Local)))?;
-                                },
+                                ExternalMessage::Proposal(_) =>
+                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), external_message, ResponseChannel::Local)))?,
+                                ExternalMessage::BatchedTransactions(_) | ExternalMessage::NewView(_) =>
+                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, external_message, ResponseChannel::Local)))?,
+                                // Drop invalid libp2p gossips
                                 _ => {
-                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, message, ResponseChannel::Local)))?;
+                                    error!(%source, %to, %external_message, %topic_hash, "unhandled libp2p broadcast");
                                 }
                             }
                         }
@@ -403,7 +405,9 @@ impl P2pNode {
                                                 | ExternalMessage::BlockRequest(_)
                                                 | ExternalMessage::PassiveSyncRequest(_) => self
                                                     .send_to(&_topic.hash(), |c| c.broadcasts.send((_source, _external_message, ResponseChannel::Remote(_channel))))?,
-                                                _ => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?,
+                                                ExternalMessage::Vote(_)
+                                                | ExternalMessage::NewView(_) => self.send_to(&_topic.hash(), |c| c.requests.send((_source, _id, _external_message, ResponseChannel::Remote(_channel))))?,
+                                                _ => error!(source = %_source, %to, external_message = %_external_message, request_id = %_request_id, "unhandled libp2p request"),
                                             }
                                         } else {
                                             panic!("fake_response_channel is enabled and you are trying to use a real libp2p network");

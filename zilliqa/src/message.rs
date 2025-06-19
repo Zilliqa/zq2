@@ -255,6 +255,7 @@ pub struct IntershardCall {
 
 /// A message intended to be sent over the network as part of p2p communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Keep this in-sync with the routing in P2pNode::start()
 pub enum ExternalMessage {
     Proposal(Proposal),
     Vote(Box<Vote>),

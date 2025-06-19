@@ -1,12 +1,12 @@
 name: zq2-protomainnet
 eth_chain_id: 32770
 roles:
-- bootstrap
-- validator
-- api
-- apps
-- checkpoint
-- persistence
-- private-api
+  - bootstrap
+  - validator
+  - api
+  - apps
+  - checkpoint
+  - persistence
+  - private-api
 versions:
-  zq2: v0.9.3
+  zq2: v0.10.0

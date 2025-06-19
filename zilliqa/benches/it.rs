@@ -295,7 +295,7 @@ fn full_blocks_zil_transfers(c: &mut Criterion) {
         address,
         iter::empty(),
         txns,
-        4000,
+        2300,
     );
 }
 
@@ -472,7 +472,7 @@ fn full_blocks_giant_deploy(c: &mut Criterion) {
         address,
         iter::empty(),
         txns,
-        365,
+        330,
     );
 }
 
@@ -702,6 +702,7 @@ fn a_big_process_vote(big: &mut Consensus, vote: Vote, txns_per_block: usize) ->
         };
         p
     });
+
     assert_eq!(
         proposal.transactions.len(),
         txns_per_block,
