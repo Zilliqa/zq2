@@ -703,19 +703,6 @@ fn a_big_process_vote(big: &mut Consensus, vote: Vote, txns_per_block: usize) ->
         p
     });
 
-    // let external_message = ExternalMessage::Proposal(proposal.clone());
-    // let proposal_size = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &external_message)
-    //     .unwrap()
-    //     .len();
-
-    // assert!(
-    //     proposal_size < 100 * 1024,
-    //     "proposal {} is larger than 1MB {}/{}",
-    //     proposal.view(),
-    //     proposal_size,
-    //     proposal.transactions.len(),
-    // );
-
     assert_eq!(
         proposal.transactions.len(),
         txns_per_block,
