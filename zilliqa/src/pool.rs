@@ -2201,12 +2201,8 @@ mod tests {
         let time_per_op = duration.as_micros() / transaction_count as u128;
 
         println!(
-            "NEW: Insert transactions (ascending nonces) - {} ops in {:?} = {} μs/op",
+            "Timing: Insert transactions (ascending nonces) - {} ops in {:?} = {} μs/op",
             transaction_count, duration, time_per_op
-        );
-        println!(
-            "NEW: Total transactions in pool: {}",
-            pool.transaction_count()
         );
 
         Ok(())
@@ -2252,12 +2248,8 @@ mod tests {
         let time_per_op = duration.as_micros() / transaction_count as u128;
 
         println!(
-            "NEW: Insert transactions (descending nonces) - {} ops in {:?} = {} μs/op",
+            "Timing: Insert transactions (descending nonces) - {} ops in {:?} = {} μs/op",
             transaction_count, duration, time_per_op
-        );
-        println!(
-            "NEW: Total transactions in pool: {}",
-            pool.transaction_count()
         );
 
         Ok(())
@@ -2284,11 +2276,6 @@ mod tests {
             }
         }
 
-        println!(
-            "NEW: Pool setup complete with {} transactions",
-            pool.transaction_count()
-        );
-
         let target_duration = Duration::from_secs(1);
 
         // Benchmark getting all pending transactions for 1 second
@@ -2301,7 +2288,7 @@ mod tests {
         let duration = start.elapsed();
         let time_per_op = duration.as_micros() / operations as u128;
         println!(
-            "NEW: Get all pending transactions - {} ops in {:?} = {} μs/op",
+            "Timing: Get all pending transactions - {} ops in {:?} = {} μs/op",
             operations, duration, time_per_op
         );
 
@@ -2315,7 +2302,7 @@ mod tests {
         let duration = start.elapsed();
         let time_per_op = duration.as_micros() / operations as u128;
         println!(
-            "NEW: Get pending transaction count - {} ops in {:?} = {} μs/op",
+            "Timing: Get pending transaction count - {} ops in {:?} = {} μs/op",
             operations, duration, time_per_op
         );
 
@@ -2329,7 +2316,7 @@ mod tests {
         let duration = start.elapsed();
         let time_per_op = duration.as_micros() / operations as u128;
         println!(
-            "NEW: Get best transaction - {} ops in {:?} = {} μs/op",
+            "Timing: Get best transaction - {} ops in {:?} = {} μs/op",
             operations, duration, time_per_op
         );
 
@@ -2350,7 +2337,7 @@ mod tests {
         let duration = start.elapsed();
         let time_per_op = duration.as_micros() / operations as u128;
         println!(
-            "NEW: Popping best transaction - {} ops in {:?} = {} μs/op",
+            "Timing: Popping best transaction - {} ops in {:?} = {} μs/op",
             operations, duration, time_per_op
         );
 
