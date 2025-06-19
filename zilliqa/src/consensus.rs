@@ -242,7 +242,8 @@ pub struct Consensus {
 }
 
 impl Consensus {
-    const PROP_SIZE_THRESHOLD: usize = 717 * 1024; // ~70% of 1MB; FIXME: Determine a more accurate threshold.
+    // determined empirically
+    const PROP_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of 1MB
 
     pub fn new(
         secret_key: SecretKey,

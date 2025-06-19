@@ -354,7 +354,7 @@ impl TransactionPool {
 
     pub fn pull_txns_to_broadcast(&mut self) -> Result<Vec<SignedTransaction>> {
         const MAX_BATCH_SIZE: usize = 1000;
-        const BATCH_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of max_transmit_size().
+        const BATCH_SIZE_THRESHOLD: usize = 972 * 1024; // 95% of max_transmit_size().
 
         if self.transactions_to_broadcast.is_empty() {
             return Ok(Vec::new());
