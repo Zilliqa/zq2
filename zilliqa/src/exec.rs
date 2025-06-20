@@ -1491,7 +1491,16 @@ impl PendingState {
         // Un-flatten the values from disk into their true representation.
         for (k, v) in values_from_disk {
             let (disk_var_name, disk_indices) = split_storage_key(&k)?;
-            assert_eq!(var_name, disk_var_name);
+            if var_name != disk_var_name {
+                // There is a hazard caused by the storage key format when a contract contains a variable which is a
+                // prefix of another variable. For example, if a contract has a variable "foo" and another variable
+                // "foobar", we call `.iter_by_prefix(storage_key("foo", [])) -> .iter_by_prefix("foo")` and mistakenly
+                // obtain the values from both "foo" and "foobar". A more sensible format would have suffixed the
+                // variable name with a `SEPARATOR` too, but it is awkward to change the format now. Instead, we filter
+                // the results of the `iter_by_prefix` call here to exclude the 'extra' returned variables.
+                trace!(var_name, disk_var_name, "scilla var name mismatch");
+                continue;
+            }
             assert!(disk_indices.starts_with(indices));
 
             let mut current_value = &mut map;

@@ -341,6 +341,10 @@ pub fn scilla_test_contract_code() -> String {
         field welcome_msg : String = "default"
         field welcome_map : Map Uint32 (Map Uint32 String) = Emp Uint32 (Map Uint32 String)
 
+        (* Test variable which is a prefix of another variable *)
+        field foo : Map Uint32 String = Emp Uint32 String
+        field foobar : String = "goodbye"
+
         transition removeHello()
           delete welcome_map[one];
           e = {_eventname : "removeHello"};
@@ -354,6 +358,8 @@ pub fn scilla_test_contract_code() -> String {
             e = {_eventname : "setHello"; code : "1"};
             event e
         | True =>
+            hello = "hello";
+            foo[one] := hello;
             welcome_msg := msg;
             welcome_map[one][two] := msg;
             e = {_eventname : "setHello"; code : "2"};
@@ -374,6 +380,14 @@ pub fn scilla_test_contract_code() -> String {
             e = {_eventname: "getHello"; msg: s};
             event e
         end
+        end
+
+        transition getFields ()
+        a <- foo;
+        a_one = builtin get a one;
+        b <- foobar;
+        e = {_eventname: "fields"; a_one: a_one; b: b};
+        event e
         end
     "#,
     )
@@ -1049,7 +1063,7 @@ async fn create_contract(mut network: Network) {
             .unwrap()
     };
     // Let's check that we charged the right amount of gas.
-    assert_eq!(old_balance - new_balance, 690000005520u128);
+    assert_eq!(old_balance - new_balance, 696000005568u128);
 
     let call = r#"{
         "_tag": "getHello",
@@ -1078,6 +1092,31 @@ async fn create_contract(mut network: Network) {
         .await
         .unwrap();
     assert_eq!(state["welcome_msg"], "foobar");
+
+    let call = r#"{
+        "_tag": "getFields",
+        "params": []
+    }"#;
+    let (_, txn) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        4,
+        ToAddr::Address(contract_address),
+        0,
+        50_000,
+        None,
+        Some(call),
+    )
+    .await;
+    assert_eq!(
+        txn["receipt"]["event_logs"][0]["params"][0]["value"]["arguments"][0],
+        "hello"
+    );
+    assert_eq!(
+        txn["receipt"]["event_logs"][0]["params"][1]["value"],
+        "goodbye"
+    );
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
