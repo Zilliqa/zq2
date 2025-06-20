@@ -114,8 +114,8 @@ macro_rules! declare_module {
                     let start = std::time::SystemTime::now();
 
                     #[allow(clippy::redundant_closure_call)]
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params, context))).unwrap_or_else(|_| {
-                        Err(anyhow::anyhow!("Unhandled panic in RPC handler {}", $name))
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $method(params, context))).unwrap_or_else(|cause| {
+                        Err(anyhow::anyhow!("Unhandled panic in RPC handler {} : {:?}", $name, cause))
                     });
 
                     let result = result.map_err(|e| {

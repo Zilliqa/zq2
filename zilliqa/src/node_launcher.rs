@@ -232,9 +232,10 @@ impl NodeLauncher {
                             }
                         }
                         // Try to assemble block even for the origin of this batch
-                        if let Err(e) = self.node.write().try_to_apply_transactions() {
-                            error!("Failed to try to apply transactions {e}");
-                        }
+                        // // For now, we don't add new transactions to the block after initial creation
+                        // if let Err(e) = self.node.write().try_to_apply_transactions() {
+                        //     error!("Failed to try to apply transactions {e}");
+                        // }
                     }
                     else if let Err(e) = self.node.write().handle_broadcast(source, message, response_channel) {
                         attributes.push(KeyValue::new(ERROR_TYPE, "process-error"));
