@@ -157,6 +157,7 @@ pub enum SignedTransaction {
         sig: PrimitiveSignature,
     },
     Zilliqa {
+        #[serde(with = "ser_rlp")]
         tx: TxZilliqa,
         key: schnorr::PublicKey,
         sig: schnorr::Signature,
@@ -827,7 +828,9 @@ impl TxIntershard {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TxZilliqa {
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: u16,
+    #[serde(with = "alloy::serde::quantity")]
     pub nonce: u64,
     pub gas_price: ZilAmount,
     pub gas_limit: ScillaGas,
@@ -870,6 +873,45 @@ impl TxZilliqa {
         }
         let hashed = hasher.finalize();
         Ok(Address::from_slice(&hashed[12..]))
+    }
+}
+
+impl alloy::rlp::Encodable for TxZilliqa {
+    fn encode(&self, out: &mut dyn BufMut) {
+        self.chain_id.encode(out);
+        self.nonce.encode(out);
+        self.gas_price.encode(out);
+        self.gas_limit.encode(out);
+        self.to_addr.encode(out);
+        self.amount.encode(out);
+        self.code.encode(out);
+        self.data.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        self.chain_id.length()
+            + self.nonce.length()
+            + self.gas_price.length()
+            + self.gas_limit.length()
+            + self.to_addr.length()
+            + self.amount.length()
+            + self.code.length()
+            + self.data.length()
+    }
+}
+
+impl alloy::rlp::Decodable for TxZilliqa {
+    fn decode(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
+        Ok(Self {
+            chain_id: alloy::rlp::Decodable::decode(buf)?,
+            nonce: alloy::rlp::Decodable::decode(buf)?,
+            gas_price: alloy::rlp::Decodable::decode(buf)?,
+            gas_limit: alloy::rlp::Decodable::decode(buf)?,
+            to_addr: alloy::rlp::Decodable::decode(buf)?,
+            amount: alloy::rlp::Decodable::decode(buf)?,
+            code: alloy::rlp::Decodable::decode(buf)?,
+            data: alloy::rlp::Decodable::decode(buf)?,
+        })
     }
 }
 
@@ -924,6 +966,22 @@ impl ZilAmount {
     }
 }
 
+impl alloy::rlp::Decodable for ZilAmount {
+    fn decode(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
+        Ok(ZilAmount(<u128 as alloy::rlp::Decodable>::decode(buf)?))
+    }
+}
+
+impl alloy::rlp::Encodable for ZilAmount {
+    fn encode(&self, out: &mut dyn BufMut) {
+        self.0.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        self.0.length()
+    }
+}
+
 impl Add for ZilAmount {
     type Output = ZilAmount;
 
@@ -973,6 +1031,22 @@ pub struct ScillaGas(pub u64);
 impl ScillaGas {
     pub fn checked_sub(self, rhs: ScillaGas) -> Option<ScillaGas> {
         Some(ScillaGas(self.0.checked_sub(rhs.0)?))
+    }
+}
+
+impl alloy::rlp::Decodable for ScillaGas {
+    fn decode(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
+        Ok(ScillaGas(<u64 as alloy::rlp::Decodable>::decode(buf)?))
+    }
+}
+
+impl alloy::rlp::Encodable for ScillaGas {
+    fn encode(&self, out: &mut dyn BufMut) {
+        self.0.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        self.0.length()
     }
 }
 
