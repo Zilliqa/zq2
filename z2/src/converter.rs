@@ -439,8 +439,6 @@ pub async fn convert_persistence(
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();
 
-    let current_block = zq2_db.get_finalized_view()?.unwrap_or(1);
-
     let progress = ProgressBar::new(max_block)
         .with_style(style.clone())
         .with_message("collect blocks")
@@ -457,10 +455,7 @@ pub async fn convert_persistence(
         .with_message("convert blocks")
         .with_finish(ProgressFinish::AndLeave);
 
-    let tx_blocks_iter = tx_blocks
-        .into_iter()
-        .progress_with(progress)
-        .skip_while(|(n, _)| *n <= current_block);
+    let tx_blocks_iter = tx_blocks.into_iter().progress_with(progress);
 
     let mut parent_hash = Hash::ZERO;
 
@@ -471,7 +466,6 @@ pub async fn convert_persistence(
         let mut receipts = Vec::new();
 
         let zq1_block = zq1::TxBlock::from_proto(block)?;
-        // TODO: Retain ZQ1 block hash, so we can return it in APIs.
 
         let txn_hashes: Vec<_> = zq1_block
             .mb_infos
