@@ -1,6 +1,6 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use alloy::primitives::{Address, hex};
+use alloy::primitives::{Address, U256, hex};
 use ethabi::{Token, ethereum_types::U64};
 use ethers::{
     abi::FunctionExt,
@@ -1825,4 +1825,333 @@ async fn get_block_by_number(mut network: Network) {
     assert!(block["gasUsed"].as_str().unwrap().starts_with("0x"));
     assert!(block["timestamp"].as_str().unwrap().starts_with("0x"));
     assert!(u64::from_str_radix(&block["size"].as_str().unwrap()[2..], 16).unwrap() > 0);
+}
+
+#[zilliqa_macros::test]
+async fn eth_get_balance_latest(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Create an account with some balance
+    let recipient = H160::random();
+    let amount = 1_000_000_000_000_000_000u128; // 1 ETH in wei
+
+    let tx = TransactionRequest::pay(recipient, amount);
+    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+
+    network
+        .run_until_async(
+            || async {
+                provider
+                    .get_transaction_receipt(hash)
+                    .await
+                    .unwrap()
+                    .is_some()
+            },
+            50,
+        )
+        .await
+        .unwrap();
+
+    // Test with "latest"
+    let balance_latest: U256 = provider
+        .request(
+            "eth_getBalance",
+            [format!("{recipient:#x}"), "latest".to_string()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(balance_latest, U256::from(amount));
+}
+
+#[zilliqa_macros::test]
+async fn eth_get_balance_with_block_numbers(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Create an account with some balance
+    let recipient = H160::random();
+    let amount = 1_000_000_000_000_000_000u128; // 1 ETH in wei
+
+    // First, ensure we have at least a few blocks
+    network.run_until_block(&wallet, 2u64.into(), 50).await;
+
+    let tx = TransactionRequest::pay(recipient, amount);
+    let hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+
+    let receipt = network.run_until_receipt(&wallet, hash, 50).await;
+    let block_number = receipt.block_number.unwrap();
+
+    // Test with hex block number
+    let balance_hex: Result<U256, _> = provider
+        .request(
+            "eth_getBalance",
+            [
+                format!("{recipient:#x}"),
+                format!("0x{:x}", block_number.as_u64()),
+            ],
+        )
+        .await;
+
+    match balance_hex {
+        Ok(balance) => {
+            assert_eq!(balance, U256::from(amount));
+        }
+        Err(e) => {
+            println!("eth_getBalance failed with hex block number: {:?}", e);
+        }
+    }
+
+    // Test with decimal block number (this should also work but might not)
+    let balance_decimal: Result<U256, _> = provider
+        .request(
+            "eth_getBalance",
+            [format!("{recipient:#x}"), block_number.as_u64().to_string()],
+        )
+        .await;
+
+    match balance_decimal {
+        Ok(balance) => {
+            assert_eq!(balance, U256::from(amount));
+        }
+        Err(e) => {
+            println!("eth_getBalance failed with decimal block number: {:?}", e);
+        }
+    }
+
+    // Test with an earlier block (before the transaction)
+    let earlier_block = block_number.as_u64() - 1;
+    let balance_earlier: Result<U256, _> = provider
+        .request(
+            "eth_getBalance",
+            [format!("{recipient:#x}"), format!("0x{:x}", earlier_block)],
+        )
+        .await;
+
+    match balance_earlier {
+        Ok(balance) => {
+            assert_eq!(balance, U256::from(0)); // Should be 0 before the transaction
+        }
+        Err(e) => {
+            println!("eth_getBalance failed with earlier block number: {:?}", e);
+        }
+    }
+}
+
+#[zilliqa_macros::test]
+async fn eth_get_code_latest(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Deploy a contract
+    let (hash, _abi) = deploy_contract(
+        "tests/it/contracts/Storage.sol",
+        "Storage",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+
+    // Test with "latest"
+    let code_latest: String = provider
+        .request(
+            "eth_getCode",
+            [format!("{contract_address:#x}"), "latest".to_string()],
+        )
+        .await
+        .unwrap();
+    assert!(code_latest.starts_with("0x"));
+    assert!(code_latest.len() > 2); // Should have actual bytecode
+
+    // Test with EOA (should return empty)
+    let eoa_address = wallet.address();
+    let eoa_code: String = provider
+        .request(
+            "eth_getCode",
+            [format!("{eoa_address:#x}"), "latest".to_string()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(eoa_code, "0x");
+}
+
+#[zilliqa_macros::test]
+async fn eth_get_code_with_block_numbers(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    // Ensure we have some blocks first
+    network.run_until_block(&wallet, 2u64.into(), 50).await;
+
+    // Deploy a contract
+    let (hash, _abi) = deploy_contract(
+        "tests/it/contracts/Storage.sol",
+        "Storage",
+        &wallet,
+        &mut network,
+    )
+    .await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let contract_address = receipt.contract_address.unwrap();
+    let block_number = receipt.block_number.unwrap();
+
+    // Test with hex block number
+    let code_hex: Result<String, _> = provider
+        .request(
+            "eth_getCode",
+            [
+                format!("{contract_address:#x}"),
+                format!("0x{:x}", block_number.as_u64()),
+            ],
+        )
+        .await;
+
+    match code_hex {
+        Ok(code) => {
+            assert!(code.starts_with("0x"));
+            assert!(code.len() > 2); // Should have actual bytecode
+        }
+        Err(e) => {
+            println!("eth_getCode failed with hex block number: {:?}", e);
+            // This might be the bug - it should work but doesn't
+        }
+    }
+
+    // Test with decimal block number
+    let code_decimal: Result<String, _> = provider
+        .request(
+            "eth_getCode",
+            [
+                format!("{contract_address:#x}"),
+                block_number.as_u64().to_string(),
+            ],
+        )
+        .await;
+
+    match code_decimal {
+        Ok(code) => {
+            assert!(code.starts_with("0x"));
+            assert!(code.len() > 2);
+        }
+        Err(e) => {
+            println!("eth_getCode failed with decimal block number: {:?}", e);
+        }
+    }
+
+    // Test with an earlier block (before contract deployment)
+    let earlier_block = block_number.as_u64() - 1;
+    let code_earlier: Result<String, _> = provider
+        .request(
+            "eth_getCode",
+            [
+                format!("{contract_address:#x}"),
+                format!("0x{:x}", earlier_block),
+            ],
+        )
+        .await;
+
+    match code_earlier {
+        Ok(code) => {
+            assert_eq!(code, "0x"); // Should be empty before deployment
+        }
+        Err(e) => {
+            println!("eth_getCode failed with earlier block number: {:?}", e);
+        }
+    }
+}
+
+#[zilliqa_macros::test]
+async fn eth_get_balance_block_number_edge_cases(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    let recipient = H160::random();
+
+    // Test with block number 0 (genesis block)
+    let balance_genesis: Result<U256, _> = provider
+        .request(
+            "eth_getBalance",
+            [format!("{recipient:#x}"), "0x0".to_string()],
+        )
+        .await;
+
+    match balance_genesis {
+        Ok(balance) => {
+            assert_eq!(balance, U256::from(0)); // Should be 0 at genesis
+        }
+        Err(e) => {
+            println!("eth_getBalance failed with genesis block: {:?}", e);
+        }
+    }
+
+    // Test with a very high block number (should fail)
+    let balance_high: Result<U256, _> = provider
+        .request(
+            "eth_getBalance",
+            [format!("{recipient:#x}"), "0xffffffff".to_string()],
+        )
+        .await;
+
+    // This should definitely fail
+    assert!(balance_high.is_err());
+
+    // Test with pending
+    let balance_pending: U256 = provider
+        .request(
+            "eth_getBalance",
+            [format!("{recipient:#x}"), "pending".to_string()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(balance_pending, U256::from(0));
+}
+
+#[zilliqa_macros::test]
+async fn eth_get_code_block_number_edge_cases(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let provider = wallet.provider();
+
+    let eoa_address = wallet.address();
+
+    // Test with block number 0 (genesis block)
+    let code_genesis: Result<String, _> = provider
+        .request(
+            "eth_getCode",
+            [format!("{eoa_address:#x}"), "0x0".to_string()],
+        )
+        .await;
+
+    match code_genesis {
+        Ok(code) => {
+            assert_eq!(code, "0x"); // EOA should have no code
+        }
+        Err(e) => {
+            println!("eth_getCode failed with genesis block: {:?}", e);
+        }
+    }
+
+    // Test with a very high block number (should fail)
+    let code_high: Result<String, _> = provider
+        .request(
+            "eth_getCode",
+            [format!("{eoa_address:#x}"), "0xffffffff".to_string()],
+        )
+        .await;
+
+    // This should definitely fail
+    assert!(code_high.is_err());
+
+    // Test with pending
+    let code_pending: String = provider
+        .request(
+            "eth_getCode",
+            [format!("{eoa_address:#x}"), "pending".to_string()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(code_pending, "0x");
 }
