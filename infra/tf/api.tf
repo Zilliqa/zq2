@@ -109,12 +109,12 @@ resource "google_compute_url_map" "api" {
   default_service = google_compute_backend_service.api.id
 
   host_rule {
-    hosts        = ["api.${var.subdomain}"]
+    hosts        = concat(["api.${var.subdomain}"], var.api.alternative_ssl_domains.api)
     path_matcher = "api"
   }
 
   host_rule {
-    hosts        = ["health.${var.subdomain}"]
+    hosts        = concat(["health.${var.subdomain}"], var.api.alternative_ssl_domains.health)
     path_matcher = "health"
   }
 
@@ -151,7 +151,11 @@ resource "google_compute_managed_ssl_certificate" "api" {
   name = "${var.chain_name}-api"
 
   managed {
-    domains = ["api.${var.subdomain}", "health.${var.subdomain}"]
+    domains = concat(
+      ["api.${var.subdomain}", "health.${var.subdomain}"],
+      var.api.alternative_ssl_domains.api,
+      var.api.alternative_ssl_domains.health
+    )
   }
 }
 
