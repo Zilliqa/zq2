@@ -175,24 +175,24 @@ pub enum SignedTransaction {
 // Custom serialization to avoid double-byte encodings.
 // https://github.com/Zilliqa/zq2/issues/2922
 mod ser_signature {
-    pub fn serialize<S>(
-        signature: &k256::ecdsa::Signature,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    use super::schnorr::Signature;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(signature: &Signature, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
         let bytes = signature.to_bytes();
         serializer.serialize_bytes(bytes.as_slice())
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<k256::ecdsa::Signature, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Signature, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         struct SignatureVisitor;
-        impl<'de> serde::de::Visitor<'de> for SignatureVisitor {
-            type Value = k256::ecdsa::Signature;
+        impl serde::de::Visitor<'_> for SignatureVisitor {
+            type Value = Signature;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("a byte array representing a signature")
@@ -219,24 +219,26 @@ mod ser_signature {
 }
 
 mod ser_pubkey {
+    use super::schnorr::PublicKey;
     use k256::elliptic_curve::sec1::ToEncodedPoint;
+    use serde::{Deserializer, Serializer};
 
-    pub fn serialize<S>(public_key: &k256::PublicKey, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(public_key: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
         let bytes = public_key.to_encoded_point(false);
         serializer.serialize_bytes(bytes.as_bytes())
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<k256::PublicKey, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PublicKey, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         struct PublicKeyVisitor;
 
-        impl<'de> serde::de::Visitor<'de> for PublicKeyVisitor {
-            type Value = k256::PublicKey;
+        impl serde::de::Visitor<'_> for PublicKeyVisitor {
+            type Value = PublicKey;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("a byte array representing a public key")
