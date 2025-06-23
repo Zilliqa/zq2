@@ -159,7 +159,9 @@ pub enum SignedTransaction {
     Zilliqa {
         #[serde(with = "ser_rlp")]
         tx: TxZilliqa,
+        #[serde(with = "ser_pubkey")]
         key: schnorr::PublicKey,
+        #[serde(with = "ser_signature")]
         sig: schnorr::Signature,
     },
     Intershard {
@@ -168,6 +170,96 @@ pub enum SignedTransaction {
         // instead use raw from-address
         from: Address,
     },
+}
+
+// Custom serialization to avoid double-byte encodings.
+// https://github.com/Zilliqa/zq2/issues/2922
+mod ser_signature {
+    pub fn serialize<S>(
+        signature: &k256::ecdsa::Signature,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes = signature.to_bytes();
+        serializer.serialize_bytes(bytes.as_slice())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<k256::ecdsa::Signature, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SignatureVisitor;
+        impl<'de> serde::de::Visitor<'de> for SignatureVisitor {
+            type Value = k256::ecdsa::Signature;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a byte array representing a signature")
+            }
+
+            fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                k256::ecdsa::Signature::from_slice(value)
+                    .map_err(|e| E::custom(format!("Invalid signature bytes: {}", e)))
+            }
+
+            fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                self.visit_bytes(&value)
+            }
+        }
+
+        deserializer.deserialize_bytes(SignatureVisitor)
+    }
+}
+
+mod ser_pubkey {
+    use k256::elliptic_curve::sec1::ToEncodedPoint;
+
+    pub fn serialize<S>(public_key: &k256::PublicKey, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes = public_key.to_encoded_point(false);
+        serializer.serialize_bytes(bytes.as_bytes())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<k256::PublicKey, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct PublicKeyVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PublicKeyVisitor {
+            type Value = k256::PublicKey;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a byte array representing a public key")
+            }
+
+            fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                k256::PublicKey::from_sec1_bytes(value)
+                    .map_err(|e| E::custom(format!("Invalid public key bytes: {}", e)))
+            }
+
+            fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                self.visit_bytes(&value)
+            }
+        }
+
+        deserializer.deserialize_bytes(PublicKeyVisitor)
+    }
 }
 
 // alloy's transaction types contain annotations (such as `skip_serializing_if`) which cause issues when
