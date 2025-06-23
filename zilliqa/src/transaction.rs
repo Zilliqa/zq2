@@ -175,8 +175,9 @@ pub enum SignedTransaction {
 // Custom serialization to avoid double-byte encodings.
 // https://github.com/Zilliqa/zq2/issues/2922
 mod ser_signature {
-    use super::schnorr::Signature;
     use serde::{Deserializer, Serializer};
+
+    use super::schnorr::Signature;
 
     pub fn serialize<S>(signature: &Signature, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -219,9 +220,10 @@ mod ser_signature {
 }
 
 mod ser_pubkey {
-    use super::schnorr::PublicKey;
     use k256::elliptic_curve::sec1::ToEncodedPoint;
     use serde::{Deserializer, Serializer};
+
+    use super::schnorr::PublicKey;
 
     pub fn serialize<S>(public_key: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
     where
