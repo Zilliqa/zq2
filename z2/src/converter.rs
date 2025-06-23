@@ -437,8 +437,6 @@ pub async fn convert_persistence(
         .get_tx_blocks_aux("MaxTxBlockNumber")?
         .unwrap_or_default();
 
-    let current_block = zq2_db.get_finalized_view()?;
-
     let progress = ProgressBar::new(max_block)
         .with_style(style.clone())
         .with_message("collect blocks")
@@ -455,16 +453,7 @@ pub async fn convert_persistence(
         .with_message("convert blocks")
         .with_finish(ProgressFinish::AndLeave);
 
-    let tx_blocks_iter = tx_blocks
-        .into_iter()
-        .progress_with(progress)
-        .skip_while(|(n, _)| {
-            if let Some(current_block) = current_block {
-                *n <= current_block
-            } else {
-                false
-            }
-        });
+    let tx_blocks_iter = tx_blocks.into_iter().progress_with(progress);
 
     let mut parent_hash = Hash::ZERO;
 
