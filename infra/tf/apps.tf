@@ -154,20 +154,20 @@ resource "google_compute_url_map" "apps" {
   default_service = google_compute_backend_service.otterscan.id
 
   host_rule {
-    hosts        = ["otterscan.${var.subdomain}"]
+    hosts        = concat(["otterscan.${var.subdomain}"], var.apps.alternative_ssl_domains.otterscan)
     path_matcher = "otterscan"
   }
 
   dynamic "host_rule" {
     for_each = var.apps.enable_faucet ? [1] : []
     content {
-      hosts        = ["faucet.${var.subdomain}"]
+      hosts        = concat(["faucet.${var.subdomain}"], var.apps.alternative_ssl_domains.faucet)
       path_matcher = "faucet"
     }
   }
 
   host_rule {
-    hosts        = ["stats.${var.subdomain}"]
+    hosts        = concat(["stats.${var.subdomain}"], var.apps.alternative_ssl_domains.stats)
     path_matcher = "stats"
   }
 
@@ -197,7 +197,10 @@ resource "google_compute_managed_ssl_certificate" "apps" {
     domains = concat(
       ["otterscan.${var.subdomain}"],
       var.apps.enable_faucet ? ["faucet.${var.subdomain}"] : [],
-      ["stats.${var.subdomain}"]
+      ["stats.${var.subdomain}"],
+      var.apps.alternative_ssl_domains.otterscan,
+      var.apps.enable_faucet ? var.apps.alternative_ssl_domains.faucet : [],
+      var.apps.alternative_ssl_domains.stats
     )
   }
 }
