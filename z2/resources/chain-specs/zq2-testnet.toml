@@ -1,7 +1,8 @@
+network = "zq2-testnet"
 p2p_port = 3333
 
 bootstrap_address = [
-  "12D3KooWMynWYePdUdf7YVj2Wfs2h7RcKbPGNywx6gVZowpEUWiv",
+  "12D3KooWPFzgn8XUdrvRMuJmSPXRZPBBzv2ZmDmeKM8HGE8gKDJP",
   "/dns/bootstrap.zq2-testnet.zilliqa.com/tcp/3333"
 ]
 
@@ -9,56 +10,56 @@ bootstrap_address = [
 eth_chain_id = 33101
 allowed_timestamp_skew = { secs = 60, nanos = 0 }
 data_dir = "/data"
-consensus.genesis_accounts = [ ["0xbd2eF1a428eE818dC47481b05EBc5dFEEdD0E061", "900_000_000_000_000_000_000_000_000" ] ]
+consensus.genesis_accounts = [ ["0x214695413d1ea6a4a4453cd24ffd151fbc95496a", "900_000_000_000_000_000_000_000_000" ] ]
 consensus.genesis_deposits = [
   [
-    "b9f21e38509e9a278bf3f8384b747e287a09a57caa936e42df4627786e8cebaf3eed887fc9aa9b871160a12409aa3183",
-    "12D3KooWDHasWXfyCkU6SQvfqpHLDPMM4926u6jvWmhVb1TWD1P8",
+    "94ce9650426f5c5b7eeb8499b94bc2cc6b82b423f3bb235889d3120aedc75a1d8236c2912dda45b75a3226731a776cbf",
+    "12D3KooWQPkr3EGzqiVdRcLTBo3sjBA5J2HRbBR6kcxY3QNCDF1M",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0xbd2eF1a428eE818dC47481b05EBc5dFEEdD0E061"
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
   ],
   [
-    "b17ce8383d685a4a333bac57d67218821199ab14c57577be05777d425efa7941c2fa85754b6d9d7a65af4bf35168e91d",
-    "12D3KooWHuDThNFwbndTkt2TQp9ysa2qQGWRry3UqaxVE8mxzvYK",
+    "b2ba01dbc1989399ffca35c1e9c73613bbe678c94740feb035538d7299c4bd8ba98b28292982857534f60289ca2b663c",
+    "12D3KooWRuSPXcoiFHaFkxgfy3P4UnhB5vKtgShkXTWL9xfdVZ1V",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0xbd2eF1a428eE818dC47481b05EBc5dFEEdD0E061"
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
   ],
   [
-    "b48695a863509a69d6bd6351f0f8941d0a7fc8a7c16eb1b3168188565b696fa8bf0d146d3f0fac4358d8f882f94ff0c7",
-    "12D3KooWS3QtNyXHb4VSLfrGUEvyeP4afM7YrPiWFK7qXjizLbAe",
+    "ae776c587e6869d41331529c6dd0f59c31d1ef4c47f8b5ecb1acc54fa7452d9b2ba6f56bdad08a606d25761c8522b367",
+    "12D3KooWJyH1r2UfcFPiHbEFBYB3xWufR1va8cRK3veMwfUunfRD",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0xbd2eF1a428eE818dC47481b05EBc5dFEEdD0E061"
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
   ],
   [
-    "b4b97dc1ecabf1f8b08fab6a421a603f3341b3805be35e9ea90c27cdcb9472005f1313a4649687d5c503e095ac11a475",
-    "12D3KooWAzj1D2nUDPR1mUSM9gBtAgQiWuhjhkDdMAnxr3heS1Kh",
+    "95de7dae002295bba9c4cffd1b0df70a7ccd0cc68e6b10da06b1b91f8a7e9b305e19431fc42b7413c65a8ab6959e41c6",
+    "12D3KooWM5L182sQtJuARf5Xfg517xVqZRaPM9583BsmLcv5Ma2o",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0xbd2eF1a428eE818dC47481b05EBc5dFEEdD0E061"
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
   ],
   [
-    "83a78933213e41c842b73183f527965cce794d64c42c0604b48cbc76fecd326445db848c03a639810fa9b2c2d432a553",
-    "12D3KooWD2azz976kB6PCa1zqk76Fw1zhDi1dzJ2zZBHSNY1hvAi",
+    "ae96338209ec4f1ad446a131e687bde02506207b750465cbc43d1ea4f5b32daa51ff060e8451c903d6de7f1c89951b1d",
+    "12D3KooWQpAM4F19CwJAAhHFgeD7feyQLHDTxzKu2hsVH4BQceSQ",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0xbd2eF1a428eE818dC47481b05EBc5dFEEdD0E061"
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
   ],
   [
-    "82f670befa613bf8f3a683b0e0306e7085e99d1940832fde03dc6756b326d380242cab54921e258288e735456aa45d99",
-    "12D3KooWGfeuiNkNVRcwvcf1R7mogcukcSzxbTF8VVWadwTCpqy5",
+    "a3a2419fba7962021d730f4e1eb087b5bf0d66140ef7d4ba758348b13fb2ffa9a75afbdbef988c65ce625544360dea42",
+    "12D3KooWAWoMVZAXJDkuhyzyBJHGHn2gYFyTbbdZGhHs4BuEN5Fe",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0xbd2eF1a428eE818dC47481b05EBc5dFEEdD0E061"
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
   ],
   [
-    "b0b9fcaf346bf38afb02809c0e1b85e4d7600da00970f968cf92d52123728cdf02b6ee2f2149c0c51cbe41bdfaca2317",
-    "12D3KooWCQ6LkxNDfqVn79Qx397GyMhPFmyp2MKFu8JsaeBrxbKo",
+    "8093ea6fa4720ca0975559a5f9d3a2694c6ab8e63a8c54e986d11a28f9e958f006420e30a8d6f04d6b2df63fe6e0563d",
+    "12D3KooWNqZxaW4ZirvWUNj9KSRgTp55RsZHSFumDeRdCLZAjNNA",
     "20_000_000_000_000_000_000_000_000",
     "0x0000000000000000000000000000000000000000",
-    "0xbd2eF1a428eE818dC47481b05EBc5dFEEdD0E061"
+    "0x214695413d1ea6a4a4453cd24ffd151fbc95496a"
   ]
 ]
 
@@ -70,5 +71,6 @@ consensus.minimum_stake = "10_000_000_000_000_000_000_000_000"
 consensus.eth_block_gas_limit = 84000000
 consensus.gas_price = "4_761_904_800_000"
 consensus.contract_upgrades = { deposit_v5 = { height = 0, reinitialise_params = { withdrawal_period = 1209600 } } }
+consensus.new_view_broadcast_interval = { secs = 30, nanos = 0 }
 
 api_servers = [{ port = 4201, enabled_apis = [{ namespace = "eth", apis = ["blockNumber"] }] }, { port = 4202, enabled_apis = ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] }]
