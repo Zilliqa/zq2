@@ -14,6 +14,11 @@ use crate::{
     transaction::{SignedTransaction, ValidationOutcome, VerifiedTransaction},
 };
 
+/// Transaction pool limits
+const GLOBAL_TXN_POOL_SIZE: usize = 1_000_000;
+const TOTAL_SENDERS_COUNT: usize = 50_000;
+const MAX_TXNS_PER_SENDER: u64 = 200;
+
 /// The result of trying to add a transaction to the mempool. The argument is
 /// a human-readable string to be returned to the user.
 #[derive(Debug, Copy, Clone)]
@@ -594,6 +599,10 @@ impl TransactionPoolCore {
             .sum()
     }
 
+    fn transaction_counter(&self) -> usize {
+        self.total_transactions_counter
+    }
+
     fn check_transaction_count(&self) {
         assert!(self.pending_transaction_count() <= self.total_transactions_counter as u64);
         assert_eq!(
@@ -763,6 +772,10 @@ impl TransactionPoolCore {
         }
         self.check_transaction_count();
     }
+
+    pub fn senders_count(&self) -> usize {
+        self.all_transactions.len()
+    }
 }
 
 /// This struct wraps the transaction pool to separate the methods needed by the wider application
@@ -858,6 +871,14 @@ impl TransactionPool {
         self.core.transaction_count()
     }
 
+    fn transaction_counter(&self) -> usize {
+        self.core.transaction_counter()
+    }
+
+    fn senders_count(&self) -> usize {
+        self.core.senders_count()
+    }
+
     pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
         self.core.mark_executed(txn);
     }
@@ -893,6 +914,25 @@ impl TransactionPool {
                 self.update_with_account(&txn.signer, account);
                 return TxAddResult::NonceTooLow(transaction_nonce, account.nonce);
             }
+        }
+
+        // Check global size
+        if self.transaction_counter() + 1 > GLOBAL_TXN_POOL_SIZE {
+            return TxAddResult::ValidationFailed(
+                ValidationOutcome::GlobalTransactionCountExceeded,
+            );
+        }
+
+        // Check total number of senders
+        if self.senders_count() + 1 > TOTAL_SENDERS_COUNT {
+            return TxAddResult::ValidationFailed(ValidationOutcome::TotalNumberOfSlotsExceeded);
+        }
+
+        // Check total number of slots for senders
+        if self.account_total_transaction_count(&txn.signer) + 1 > MAX_TXNS_PER_SENDER {
+            return TxAddResult::ValidationFailed(
+                ValidationOutcome::TransactionCountExceededForSender,
+            );
         }
 
         let existing_transaction = match txn.tx.nonce() {
