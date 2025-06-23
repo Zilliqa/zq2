@@ -1422,3 +1422,28 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
     };
     prost::Message::encode_to_vec(&proto)
 }
+
+#[test]
+fn test_encode_zilliqa_transaction() {
+    // dummy data
+    let tx = TxZilliqa {
+        chain_id: 1,
+        to_addr: Address::default(),
+        amount: ZilAmount::ZERO,
+        gas_price: ZilAmount::ZERO,
+        gas_limit: SCILLA_INVOKE_RUNNER,
+        nonce: 1,
+        code: "123".to_string(),
+        data: "456".to_string(),
+    };
+    let secret_key = schnorr::SecretKey::random(&mut k256::elliptic_curve::rand_core::OsRng);
+    let key = secret_key.public_key();
+    let sig = schnorr::sign(&bincode::serialize(&tx).unwrap(), &secret_key);
+    let o_data = SignedTransaction::Zilliqa { tx, key, sig };
+
+    let encoded = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &o_data).unwrap();
+    let r_data = cbor4ii::serde::from_slice::<SignedTransaction>(&encoded).unwrap();
+
+    assert_eq!(encoded.len(), 192);
+    assert_eq!(o_data, r_data);
+}
