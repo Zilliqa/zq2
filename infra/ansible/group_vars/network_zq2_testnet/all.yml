@@ -6,7 +6,8 @@ ansible_scp_extra_args: --tunnel-through-iap --zone={{ zone }} --quiet
 # Node Configuration
 eth_chain_id: 33101
 chain_name: "zq2-testnet"
-dns_subdomain: "zq2-testnet.zilliqa.com"
+dns_subdomain: "testnet.zilliqa.com"
+stats_endpoint: "stats.zq2-testnet.zilliqa.com"
 project_id: prj-d-zq2-testnet-g13pnaa8
 log_level: "zilliqa=trace"
 enable_faucet: true

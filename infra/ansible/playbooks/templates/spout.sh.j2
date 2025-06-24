@@ -12,7 +12,7 @@ start() {
         -e NATIVE_TOKEN_SYMBOL="ZIL" \
         -e PRIVATE_KEY="${GENESIS_KEY}" \
         -e ETH_AMOUNT=100 \
-        -e EXPLORER_URL="https://explorer.{{ dns_subdomain }}" \
+        -e EXPLORER_URL="https://otterscan.{{ dns_subdomain }}" \
         -e MINIMUM_SECONDS_BETWEEN_REQUESTS=60 \
         -e BECH32_HRP="zil" \
         --restart=unless-stopped --pull=always \
