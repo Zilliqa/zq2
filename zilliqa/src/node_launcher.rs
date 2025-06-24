@@ -139,7 +139,8 @@ impl NodeLauncher {
             let cors = CorsLayer::new()
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
-                .allow_headers([header::CONTENT_TYPE]);
+                .allow_headers([header::CONTENT_TYPE, header::FORWARDED]);
+                // .allow_headers(Any);
             let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
             let server = jsonrpsee::server::ServerBuilder::new()
                 .max_response_body_size(config.max_rpc_response_size)

@@ -94,6 +94,9 @@ macro_rules! declare_module {
                 .build();
             module
                 .register_method($name, move |params, context, metadata| {
+                    tracing::debug!("Full metadata: {:?}", metadata);
+                    let a = metadata.get::<http::HeaderMap>();
+                    tracing::debug!("all metadata HeaderMap: {:?}", a);
                     let forwarded_for = if let Some(headers) = metadata.get::<http::HeaderMap>() {
                         headers.get("x-forwarded-for")
                         .and_then(|h| h.to_str().ok())
