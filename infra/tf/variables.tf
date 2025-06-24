@@ -163,12 +163,15 @@ variable "bootstrap" {
 variable "checkpoint" {
   description = "(Optional) The configuration of the checkpoint nodes"
   type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    bucket_force_destroy = optional(bool, true)
-    bucket_versioning    = optional(bool, true)
+    disk_size               = optional(number, 256)
+    instance_type           = optional(string, "e2-standard-2")
+    provisioning_model      = optional(string, "STANDARD")
+    generate_external_ip    = optional(bool, false)
+    bucket_force_destroy    = optional(bool, true)
+    bucket_versioning       = optional(bool, true)
+    alternative_ssl_domains = optional(object({
+      default = optional(list(string), [])
+    }), {})
     nodes = optional(list(object({
       count  = number
       region = optional(string)
