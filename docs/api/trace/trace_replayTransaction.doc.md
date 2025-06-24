@@ -1,53 +1,33 @@
-# trace_replayTransaction RPC Method
+# Title
+
+trace_replayTransaction
+
+# Keywords
+
+transaction,trace,replay,parity
+
+# Description
 
 Replays a transaction with the exact same state it had when executed originally, returning the trace results.
+This method requires the trace API to be enabled on the node and replays the transaction exactly as it was executed originally, with the same state and environment.
+Can be particularly useful for debugging transactions that failed or behaved unexpectedly.
+Tracing large or complex transactions may be resource-intensive and could take longer to execute.
 
-## Parameters
+# Curl
 
-1. `transaction_hash` - A 32-byte transaction hash, encoded as a hex string prefixed with "0x".
-2. `trace_types` - Array of trace types to be returned. Available options include:
-   - `"trace"` - Basic transaction execution trace
-   - `"vmTrace"` - Full virtual machine execution trace
-   - `"stateDiff"` - Information about state changes during execution
-
-## Returns
-
-`Object` - Trace results object containing:
-- `output` (string): The return value of the transaction, encoded in hexadecimal
-- `trace` (array of objects): Execution traces if requested, containing:
-  - `action`: Object describing the action taken in this step
-    - `callType`: Type of call (e.g., "call", "delegatecall", "staticcall")
-    - `from`: Address of the sender
-    - `gas`: Gas provided for the call
-    - `input`: Data sent with the call
-    - `to`: Address of the receiver
-    - `value`: Value transferred
-  - `result`:
-    - `gasUsed`: Gas used in this step
-    - `output`: Return data from the call
-  - `subtraces`: Number of child calls
-  - `traceAddress`: Path to this call in the call tree
-  - `type`: Type of operation
-- `vmTrace` (object, optional): Detailed VM execution steps if requested
-- `stateDiff` (object, optional): State changes if requested
-
-## Example
-
-### Request
-
-```json
-{
+```shell
+curl -d '{
+  "id": "1",
   "jsonrpc": "2.0",
   "method": "trace_replayTransaction",
   "params": [
     "0x9c8c7f37fc9c474f3bb5143697d41607b9c882a9f6f8f549d37220abfadf11e4",
     ["trace", "stateDiff"]
-  ],
-  "id": 1
-}
+  ]
+}' -H "Content-Type: application/json" -X POST "{{ _api_url }}"
 ```
 
-### Response
+# Response
 
 ```json
 {
@@ -97,9 +77,24 @@ Replays a transaction with the exact same state it had when executed originally,
 }
 ```
 
-## Notes
+# Arguments
 
-- This method requires the trace API to be enabled on the node.
-- This method replays the transaction exactly as it was executed originally, with the same state and environment.
-- Can be particularly useful for debugging transactions that failed or behaved unexpectedly.
-- Tracing large or complex transactions may be resource-intensive and could take longer to execute.
+| Parameter | Type   | Required | Description                                                                           |
+|-----------|--------|----------|---------------------------------------------------------------------------------------|
+| `id`      | string | Required | `"1"`                                                                                |
+| `jsonrpc` | string | Required | `"2.0"`                                                                              |
+| `method`  | string | Required | `"trace_replayTransaction"`                                                          |
+| `params`  | array  | Required | `[transaction_hash, trace_types]` Transaction hash (32-byte hex string) and array of trace types to return |
+
+The `transaction_hash` parameter is a 32-byte transaction hash, encoded as a hex string prefixed with "0x".
+
+The `trace_types` parameter is an array of trace types to be returned. Available options include:
+- `"trace"` - Basic transaction execution trace
+- `"vmTrace"` - Full virtual machine execution trace
+- `"stateDiff"` - Information about state changes during execution
+
+The response object contains:
+- `output` (string): The return value of the transaction, encoded in hexadecimal
+- `trace` (array): Execution traces if requested, containing action details, results, subtraces count, trace address path, and operation type
+- `vmTrace` (object, optional): Detailed VM execution steps if requested
+- `stateDiff` (object, optional): State changes if requested
