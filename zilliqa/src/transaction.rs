@@ -175,16 +175,28 @@ pub enum SignedTransaction {
 // Custom serialization to avoid double-byte encodings.
 // https://github.com/Zilliqa/zq2/issues/2922
 mod ser_signature {
-    use serde::{Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::RwLock;
 
     use super::schnorr::Signature;
+
+    static NEW_FORMAT: RwLock<bool> = RwLock::new(true);
+
+    pub fn serialize_format(new: bool) {
+        let mut current = NEW_FORMAT.write().unwrap();
+        *current = new;
+    }
 
     pub fn serialize<S>(signature: &Signature, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let bytes = signature.to_bytes();
-        serializer.serialize_bytes(bytes.as_slice())
+        if *NEW_FORMAT.read().unwrap() {
+            let bytes = signature.to_bytes();
+            serializer.serialize_bytes(bytes.as_slice())
+        } else {
+            signature.serialize(serializer) // default format
+        }
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Signature, D::Error>
@@ -215,22 +227,38 @@ mod ser_signature {
             }
         }
 
-        deserializer.deserialize_bytes(SignatureVisitor)
+        if *NEW_FORMAT.read().unwrap() {
+            deserializer.deserialize_bytes(SignatureVisitor)
+        } else {
+            k256::ecdsa::Signature::deserialize(deserializer) // default format
+        }
     }
 }
 
 mod ser_pubkey {
     use k256::elliptic_curve::sec1::ToEncodedPoint;
-    use serde::{Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::RwLock;
 
     use super::schnorr::PublicKey;
+
+    static NEW_FORMAT: RwLock<bool> = RwLock::new(true);
+
+    pub fn serialize_format(new: bool) {
+        let mut current = NEW_FORMAT.write().unwrap();
+        *current = new;
+    }
 
     pub fn serialize<S>(public_key: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let bytes = public_key.to_encoded_point(false);
-        serializer.serialize_bytes(bytes.as_bytes())
+        if *NEW_FORMAT.read().unwrap() {
+            let bytes = public_key.to_encoded_point(true);
+            serializer.serialize_bytes(bytes.as_bytes())
+        } else {
+            public_key.serialize(serializer)
+        }
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PublicKey, D::Error>
@@ -261,8 +289,11 @@ mod ser_pubkey {
                 self.visit_bytes(&value)
             }
         }
-
-        deserializer.deserialize_bytes(PublicKeyVisitor)
+        if *NEW_FORMAT.read().unwrap() {
+            deserializer.deserialize_bytes(PublicKeyVisitor)
+        } else {
+            k256::PublicKey::deserialize(deserializer)
+        }
     }
 }
 
@@ -1446,6 +1477,14 @@ fn test_encode_zilliqa_transaction() {
     let encoded = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &o_data).unwrap();
     let r_data = cbor4ii::serde::from_slice::<SignedTransaction>(&encoded).unwrap();
 
-    assert_eq!(encoded.len(), 192);
+    ser_signature::serialize_format(false);
+    let partial = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &o_data).unwrap();
+    ser_pubkey::serialize_format(false);
+    let original = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &o_data).unwrap();
+
+    // check for difference
+    assert!(original.len() > 300);
+    assert!(partial.len() < 300);
+    assert!(encoded.len() < 200);
     assert_eq!(o_data, r_data);
 }
