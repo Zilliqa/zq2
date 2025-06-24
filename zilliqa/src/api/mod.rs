@@ -93,8 +93,16 @@ macro_rules! declare_module {
                 .with_unit("s")
                 .build();
             module
-                .register_method($name, move |params, context, _| {
-                    tracing::debug!("{}: params: {:?}", $name, params);
+                .register_method($name, move |params, context, metadata| {
+                    let forwarded_for = if let Some(headers) = metadata.get::<http::HeaderMap>() {
+                        headers.get("x-forwarded-for")
+                        .and_then(|h| h.to_str().ok())
+                        .unwrap_or("not provided")
+                    } else {
+                        "not provided"
+                    };
+                    tracing::debug!("{}: params: {:?}, X-Forwarded-For: {}", $name, params, forwarded_for);
+
                     if !enabled {
                         return Err(jsonrpsee::types::ErrorObject::owned(
                             jsonrpsee::types::error::ErrorCode::InvalidRequest.code(),
