@@ -676,7 +676,7 @@ pub struct TransactionReceiptResponse {
 }
 
 // From https://github.com/Zilliqa/Zilliqa/blob/master/src/common/TxnStatus.h#L23
-#[derive(Serialize_repr, Deserialize_repr, Clone)]
+#[derive(Serialize_repr, Debug, Deserialize_repr, Clone)]
 #[repr(u8)] // Because otherwise it's weird that 255 is a special case
 pub enum TxnStatusCode {
     Dispatched = 1,
@@ -685,7 +685,7 @@ pub enum TxnStatusCode {
     Error = 255, // MiscError
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Debug, Deserialize, Clone)]
 pub struct TransactionStatusResponse {
     #[serde(rename = "ID")]
     pub id: String,

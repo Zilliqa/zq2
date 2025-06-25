@@ -1020,7 +1020,7 @@ impl Consensus {
     ) -> Result<Option<PendingOrQueued>> {
         let mut pool = self.transaction_pool.write();
         pool.update_with_state(&self.state);
-        self.transaction_pool.write().get_pending_or_queued(txn)
+        pool.get_pending_or_queued(txn)
     }
 
     /// This is total transactions for the account, including both executed and pending

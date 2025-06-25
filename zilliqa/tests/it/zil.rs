@@ -3520,6 +3520,112 @@ async fn get_transaction_status(mut network: Network) {
 }
 
 #[zilliqa_macros::test]
+async fn get_transaction_status_pending(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Test 1: Create a transaction and check it while pending
+    let (secret_key_1, _address_1) = zilliqa_account(&mut network, &wallet).await;
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    // Get the gas price via the Zilliqa API.
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+
+    let response = issue_create_transaction(
+        &wallet,
+        &secret_key_1.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key_1,
+        1,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_001,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let txn_hash: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+
+    // Check status immediately - should be pending or dispatched
+    let response_pending: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [txn_hash])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_pending: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_pending).expect("Failed to deserialize response");
+
+    // Should be dispatched (pending) initially
+    assert!(matches!(
+        tx_status_pending.status,
+        zilliqa::api::types::zil::TxnStatusCode::Dispatched
+    ));
+    assert_eq!(tx_status_pending.modification_state, 1);
+}
+
+#[zilliqa_macros::test]
+async fn get_transaction_status_queued(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+
+    // Test 1: Create a transaction and check it while pending
+    let (secret_key_1, _address_1) = zilliqa_account(&mut network, &wallet).await;
+    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
+        .parse()
+        .unwrap();
+
+    // Get the gas price via the Zilliqa API.
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+
+    let response = issue_create_transaction(
+        &wallet,
+        &secret_key_1.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key_1,
+        2,
+        ToAddr::Address(to_addr),
+        200u128 * 10u128.pow(12),
+        50_001,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let txn_hash: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+
+    // Check status immediately - should be pending or dispatched
+    let response_pending: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [txn_hash])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_queued: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_pending).expect("Failed to deserialize response");
+
+    // Should be dispatched (pending) initially
+    assert!(matches!(
+        tx_status_queued.status,
+        zilliqa::api::types::zil::TxnStatusCode::PresentNonceHigh
+    ));
+    assert_eq!(tx_status_queued.modification_state, 1);
+}
+
+#[zilliqa_macros::test]
 async fn get_blockchain_info_structure(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
