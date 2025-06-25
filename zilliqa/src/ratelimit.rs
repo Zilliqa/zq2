@@ -1,8 +1,13 @@
-use jsonrpsee::MethodResponse;
-use jsonrpsee::server::middleware::rpc::{ResponseFuture, RpcServiceT};
-use jsonrpsee::types::{ErrorObject, Request};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+use jsonrpsee::{
+    MethodResponse,
+    server::middleware::rpc::{ResponseFuture, RpcServiceT},
+    types::{ErrorObject, Request},
+};
 
 /// Derived from
 /// https://github.com/paritytech/jsonrpsee/blob/master/examples/examples/rpc_middleware_rate_limiting.rs
@@ -29,9 +34,6 @@ enum State {
 /// it's possible to select whether the rate limit
 /// is be applied per connection or shared by
 /// all connections.
-///
-/// Have a look at `async fn run_server` below which
-/// shows how do it.
 #[derive(Clone)]
 pub struct RateLimit<S> {
     service: S,
