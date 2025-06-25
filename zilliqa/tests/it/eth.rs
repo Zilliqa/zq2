@@ -1,6 +1,6 @@
 use std::{fmt::Debug, ops::DerefMut};
 
-use alloy::primitives::{Address, U256, hex};
+use alloy::primitives::{Address, hex};
 use ethabi::{Token, ethereum_types::U64};
 use ethers::{
     abi::FunctionExt,
@@ -1829,9 +1829,7 @@ async fn get_block_by_number(mut network: Network) {
 
 #[zilliqa_macros::test]
 async fn eth_get_balance(mut network: Network) {
-    let now = Instant::now();
     let wallet = network.genesis_wallet().await;
-    let provider = wallet.provider();
 
     // Create an account with some balance
     let recipient = H160::random();
@@ -1844,112 +1842,68 @@ async fn eth_get_balance(mut network: Network) {
     let receipt = network.run_until_receipt(&wallet, hash, 50).await;
     let block_number = receipt.block_number.unwrap();
 
-    println!("Transaction included in block: {}", block_number.as_u64());
-
-    println!("Setup time taken eth_get_balance: {:?}", now.elapsed());
-
     // Test 1: "latest" block tag
-    println!("Testing 'latest' block tag...");
-    let balance_latest: U256 = provider
-        .request(
-            "eth_getBalance",
-            [format!("{recipient:#x}"), "latest".to_string()],
+    let balance_latest = wallet.get_balance(recipient, None).await.unwrap();
+    assert_eq!(balance_latest, primitive_types::U256::from(amount));
+
+    // Test 2: Specific block number
+    let balance_at_block = wallet
+        .get_balance(
+            recipient,
+            Some(BlockId::Number(BlockNumber::Number(block_number))),
         )
         .await
         .unwrap();
-    assert_eq!(balance_latest, U256::from(amount));
-
-    // Test 2: Hex block number
-    println!("Testing hex block number...");
-    let balance_hex: Result<U256, _> = provider
-        .request(
-            "eth_getBalance",
-            [
-                format!("{recipient:#x}"),
-                format!("0x{:x}", block_number.as_u64()),
-            ],
-        )
-        .await;
-
-    match balance_hex {
-        Ok(balance) => {
-            assert_eq!(balance, U256::from(amount));
-            println!("✓ Hex block number works");
-        }
-        Err(e) => {
-            println!("✗ eth_getBalance failed with hex block number: {:?}", e);
-        }
-    }
+    assert_eq!(balance_at_block, primitive_types::U256::from(amount));
 
     // Test 3: Earlier block (before the transaction)
-    println!("Testing earlier block (before transaction)...");
     let earlier_block = block_number.as_u64() - 1;
-    let balance_earlier: Result<U256, _> = provider
-        .request(
-            "eth_getBalance",
-            [format!("{recipient:#x}"), format!("0x{:x}", earlier_block)],
-        )
-        .await;
-
-    match balance_earlier {
-        Ok(balance) => {
-            assert_eq!(balance, U256::from(0)); // Should be 0 before the transaction
-            println!("✓ Earlier block query works");
-        }
-        Err(e) => {
-            println!("✗ eth_getBalance failed with earlier block number: {:?}", e);
-        }
-    }
-
-    // Test 4: Genesis block (block 0)
-    println!("Testing genesis block...");
-    let balance_genesis: Result<U256, _> = provider
-        .request(
-            "eth_getBalance",
-            [format!("{recipient:#x}"), "0x0".to_string()],
-        )
-        .await;
-
-    match balance_genesis {
-        Ok(balance) => {
-            assert_eq!(balance, U256::from(0)); // Should be 0 at genesis
-            println!("✓ Genesis block query works");
-        }
-        Err(e) => {
-            println!("✗ eth_getBalance failed with genesis block: {:?}", e);
-        }
-    }
-
-    // Test 5: "pending" block tag
-    println!("Testing 'pending' block tag...");
-    let balance_pending: U256 = provider
-        .request(
-            "eth_getBalance",
-            [format!("{recipient:#x}"), "pending".to_string()],
+    let balance_earlier = wallet
+        .get_balance(
+            recipient,
+            Some(BlockId::Number(BlockNumber::Number(earlier_block.into()))),
         )
         .await
         .unwrap();
-    assert_eq!(balance_pending, U256::from(amount));
+    assert_eq!(balance_earlier, primitive_types::U256::from(0)); // Should be 0 before the transaction
+
+    // Test 4: Genesis block (block 0)
+    let balance_genesis = wallet
+        .get_balance(
+            recipient,
+            Some(BlockId::Number(BlockNumber::Number(0u64.into()))),
+        )
+        .await
+        .unwrap();
+    assert_eq!(balance_genesis, primitive_types::U256::from(0)); // Should be 0 at genesis
+
+    // Test 5: "pending" block tag
+    let balance_pending = wallet
+        .get_balance(recipient, Some(BlockId::Number(BlockNumber::Pending)))
+        .await
+        .unwrap();
+    assert_eq!(balance_pending, primitive_types::U256::from(amount));
+
+    // Test 6: "earliest" block tag
+    let balance_earliest = wallet
+        .get_balance(recipient, Some(BlockId::Number(BlockNumber::Earliest)))
+        .await
+        .unwrap();
+    assert_eq!(balance_earliest, primitive_types::U256::from(0));
 
     // Test 7: Invalid high block number (should fail)
-    println!("Testing invalid high block number (should fail)...");
-    let balance_high: Result<U256, _> = provider
-        .request(
-            "eth_getBalance",
-            [format!("{recipient:#x}"), "0xffffffff".to_string()],
+    let balance_high = wallet
+        .get_balance(
+            recipient,
+            Some(BlockId::Number(BlockNumber::Number(0xffffffffu64.into()))),
         )
         .await;
-
     assert!(balance_high.is_err(), "High block number should fail");
-    println!("✓ Invalid high block number correctly failed");
-    println!("Time taken eth_get_balance: {:?}", now.elapsed());
 }
 
 #[zilliqa_macros::test]
 async fn eth_get_code(mut network: Network) {
-    let now = Instant::now();
     let wallet = network.genesis_wallet().await;
-    let provider = wallet.provider();
 
     // Deploy a contract
     let (hash, _abi) = deploy_contract(
@@ -1965,123 +1919,76 @@ async fn eth_get_code(mut network: Network) {
     let block_number = receipt.block_number.unwrap();
     let eoa_address = wallet.address();
 
-    println!(
-        "Contract deployed at: {:#x} in block: {}",
-        contract_address,
-        block_number.as_u64()
-    );
-
-    println!("Setup time taken eth_get_code: {:?}", now.elapsed());
-
     // Test 1: "latest" block tag - contract code
-    println!("Testing 'latest' block tag for contract...");
-    let code_latest: String = provider
-        .request(
-            "eth_getCode",
-            [format!("{contract_address:#x}"), "latest".to_string()],
-        )
-        .await
-        .unwrap();
-    assert!(code_latest.starts_with("0x"));
-    assert!(code_latest.len() > 2); // Should have actual bytecode
+    let code_latest = wallet.get_code(contract_address, None).await.unwrap();
+    assert!(!code_latest.is_empty()); // Should have actual bytecode
 
     // Test 2: "latest" block tag - EOA (should return empty)
-    println!("Testing 'latest' block tag for EOA...");
-    let eoa_code_latest: String = provider
-        .request(
-            "eth_getCode",
-            [format!("{eoa_address:#x}"), "latest".to_string()],
+    let eoa_code_latest = wallet.get_code(eoa_address, None).await.unwrap();
+    assert!(eoa_code_latest.is_empty());
+
+    // Test 3: Specific block number - contract
+    let code_at_block = wallet
+        .get_code(
+            contract_address,
+            Some(BlockId::Number(BlockNumber::Number(block_number))),
         )
         .await
         .unwrap();
-    assert_eq!(eoa_code_latest, "0x");
-
-    // Test 3: Hex block number - contract
-    println!("Testing hex block number for contract...");
-    let code_hex: Result<String, _> = provider
-        .request(
-            "eth_getCode",
-            [
-                format!("{contract_address:#x}"),
-                format!("0x{:x}", block_number.as_u64()),
-            ],
-        )
-        .await;
-
-    match code_hex {
-        Ok(code) => {
-            assert!(code.starts_with("0x"));
-            assert!(code.len() > 2); // Should have actual bytecode
-            println!("✓ Hex block number works for contract");
-        }
-        Err(e) => {
-            println!("✗ eth_getCode failed with hex block number: {:?}", e);
-        }
-    }
+    assert!(!code_at_block.is_empty()); // Should have actual bytecode
+    assert_eq!(code_latest, code_at_block); // Should be the same
 
     // Test 4: Earlier block (before contract deployment)
-    println!("Testing earlier block (before contract deployment)...");
     let earlier_block = block_number.as_u64() - 1;
-    let code_earlier: Result<String, _> = provider
-        .request(
-            "eth_getCode",
-            [
-                format!("{contract_address:#x}"),
-                format!("0x{:x}", earlier_block),
-            ],
-        )
-        .await;
-
-    match code_earlier {
-        Ok(code) => {
-            assert_eq!(code, "0x"); // Should be empty before deployment
-            println!("✓ Earlier block query works");
-        }
-        Err(e) => {
-            println!("✗ eth_getCode failed with earlier block number: {:?}", e);
-        }
-    }
-
-    // Test 5: Genesis block (block 0) - EOA
-    println!("Testing genesis block for EOA...");
-    let code_genesis: Result<String, _> = provider
-        .request(
-            "eth_getCode",
-            [format!("{eoa_address:#x}"), "0x0".to_string()],
-        )
-        .await;
-
-    match code_genesis {
-        Ok(code) => {
-            assert_eq!(code, "0x"); // EOA should have no code
-            println!("✓ Genesis block query works");
-        }
-        Err(e) => {
-            println!("✗ eth_getCode failed with genesis block: {:?}", e);
-        }
-    }
-
-    // Test 6: "pending" block tag
-    println!("Testing 'pending' block tag...");
-    let code_pending: String = provider
-        .request(
-            "eth_getCode",
-            [format!("{eoa_address:#x}"), "pending".to_string()],
+    let code_earlier = wallet
+        .get_code(
+            contract_address,
+            Some(BlockId::Number(BlockNumber::Number(earlier_block.into()))),
         )
         .await
         .unwrap();
-    assert_eq!(code_pending, "0x");
+    assert!(code_earlier.is_empty()); // Should be empty before deployment
 
-    // Test 7: Invalid high block number (should fail)
-    println!("Testing invalid high block number (should fail)...");
-    let code_high: Result<String, _> = provider
-        .request(
-            "eth_getCode",
-            [format!("{eoa_address:#x}"), "0xffffffff".to_string()],
+    // Test 5: Genesis block (block 0) - EOA
+    let code_genesis = wallet
+        .get_code(
+            eoa_address,
+            Some(BlockId::Number(BlockNumber::Number(0u64.into()))),
+        )
+        .await
+        .unwrap();
+    assert!(code_genesis.is_empty()); // EOA should have no code
+
+    // Test 6: "pending" block tag
+    let code_pending = wallet
+        .get_code(eoa_address, Some(BlockId::Number(BlockNumber::Pending)))
+        .await
+        .unwrap();
+    assert!(code_pending.is_empty());
+
+    // Test 7: "earliest" block tag
+    let code_earliest = wallet
+        .get_code(eoa_address, Some(BlockId::Number(BlockNumber::Earliest)))
+        .await
+        .unwrap();
+    assert!(code_earliest.is_empty());
+
+    // Test 8: Invalid high block number (should fail)
+    let code_high = wallet
+        .get_code(
+            eoa_address,
+            Some(BlockId::Number(BlockNumber::Number(0xffffffffu64.into()))),
         )
         .await;
-
     assert!(code_high.is_err(), "High block number should fail");
-    println!("✓ Invalid high block number correctly failed");
-    println!("Time taken eth_get_code: {:?}", now.elapsed());
+
+    // Test 9: Verify contract code is non-empty and consistent
+    let code_by_hash = wallet
+        .get_code(
+            contract_address,
+            Some(BlockId::Hash(receipt.block_hash.unwrap())),
+        )
+        .await
+        .unwrap();
+    assert_eq!(code_latest, code_by_hash); // Code should be the same when queried by hash
 }
