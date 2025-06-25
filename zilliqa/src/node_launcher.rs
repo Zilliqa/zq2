@@ -36,6 +36,7 @@ use crate::{
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    ratelimit::{Rate, RateLimit},
     sync::SyncPeers,
 };
 
@@ -140,10 +141,17 @@ impl NodeLauncher {
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE]);
-            let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
+            let http_middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
+
+            let rpc_middleware = jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new()
+                .layer_fn(move |service| {
+                    RateLimit::new(service, Rate::new(42, Duration::from_secs(60))) // 42 RPM
+                });
+
             let server = jsonrpsee::server::ServerBuilder::new()
                 .max_response_body_size(config.max_rpc_response_size)
-                .set_http_middleware(middleware)
+                .set_http_middleware(http_middleware)
+                .set_rpc_middleware(rpc_middleware)
                 .set_id_provider(EthIdProvider)
                 .build((Ipv4Addr::UNSPECIFIED, api_server.port))
                 .await;
