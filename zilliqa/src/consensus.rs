@@ -697,7 +697,13 @@ impl Consensus {
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
+        if self.sync.am_syncing()? && !during_sync {
+            trace!("skipping block proposal, we are currently syncing");
+            return Ok(None);
+        }
+
         self.cleanup_votes()?;
+
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
         let mut view = self.get_view()?;
