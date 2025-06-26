@@ -135,6 +135,10 @@ impl NodeLauncher {
         let node = Arc::new(RwLock::new(node));
 
         for api_server in &config.api_servers {
+            let rate_limit = Rate::new(
+                api_server.rate_credit,
+                Duration::from_secs(api_server.rate_seconds),
+            );
             let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
             // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
             let cors = CorsLayer::new()
@@ -145,8 +149,8 @@ impl NodeLauncher {
 
             // RPC rate limit, because HTTP connection rate limits do not inspect for RPC calls e.g. batch calls
             let rpc_middleware = jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new()
-                .layer_fn(|service| {
-                    RateLimit::new(service, Rate::new(2, Duration::from_secs(1))) // 2 TPS
+                .layer_fn(move |service| {
+                    RateLimit::new(service, rate_limit) // 2 TPS
                 });
 
             let server = jsonrpsee::server::ServerBuilder::new()

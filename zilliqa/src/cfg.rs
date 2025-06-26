@@ -110,6 +110,11 @@ pub struct ApiServer {
     pub port: u16,
     /// RPC APIs to enable.
     pub enabled_apis: Vec<EnabledApi>,
+    /// Rate limit configuration at N credit/seconds, 0 to disable.
+    #[serde(default)]
+    pub rate_credit: u64,
+    #[serde(default)]
+    pub rate_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
