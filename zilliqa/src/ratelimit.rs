@@ -132,8 +132,7 @@ where
     }
 }
 
-use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::{collections::HashMap, sync::LazyLock};
 
 // Pricing should be derived based on the typical/average timing of the RPC calls.
 // The conversion rate should be around 1ms:1credit such that a 5ms call costs 5 credits.
