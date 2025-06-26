@@ -59,10 +59,11 @@ where
 {
     type Future = ResponseFuture<S::Future>;
 
-    // Currently, does a naive calls/time limit
-    // It can be improved by using a more sophisticated algorithm
-    // such as using per-method based weights e.g.
-    // https://docs.metamask.io/services/get-started/pricing/credit-cost/
+    // Uses a credits-based rate limiting algorithm
+    //
+    // Each connection is assigned a certain number of credits
+    // which are consumed when a call is made. If the number of credits
+    // is insufficient, the request is denied.
 
     fn call(&self, req: Request<'a>) -> Self::Future {
         // disable rate limiting if rate is 0
@@ -80,30 +81,21 @@ where
             let mut lock = self.state.lock().unwrap();
             let next_state = match *lock {
                 State::Deny { until } => {
-                    if now > until {
-                        if price > self.rate.num {
-                            State::Deny { until }
-                        } else {
-                            State::Allow {
-                                until: now + self.rate.period,
-                                rem: self.rate.num - price,
-                            }
+                    if now < until {
+                        State::Deny { until }
+                    } else if price > self.rate.num {
+                        State::Deny {
+                            until: now + self.rate.period,
                         }
                     } else {
-                        State::Deny { until }
+                        State::Allow {
+                            until: now + self.rate.period,
+                            rem: self.rate.num - price,
+                        }
                     }
                 }
                 State::Allow { until, rem } => {
-                    if now > until {
-                        if price > self.rate.num {
-                            State::Deny { until }
-                        } else {
-                            State::Allow {
-                                until: now + self.rate.period,
-                                rem: self.rate.num - price,
-                            }
-                        }
-                    } else {
+                    if now < until {
                         if price > rem {
                             State::Deny { until }
                         } else {
@@ -111,6 +103,15 @@ where
                                 until: now + self.rate.period,
                                 rem: rem - price,
                             }
+                        }
+                    } else if price > self.rate.num {
+                        State::Deny {
+                            until: now + self.rate.period,
+                        }
+                    } else {
+                        State::Allow {
+                            until: now + self.rate.period,
+                            rem: self.rate.num - price,
                         }
                     }
                 }
@@ -136,10 +137,9 @@ use std::sync::LazyLock;
 
 // Pricing should be derived based on the typical/average timing of the RPC calls.
 // The conversion rate should be around 1ms:1credit such that a 5ms call costs 5 credits.
-// Unless otherwise listed below, the default pricing allows for 1 call/second.
-
-// Initial pricing derived from https://docs.metamask.io/services/get-started/pricing/credit-cost/
+// Unless otherwise listed below, the default pricing allows for 1 call/period
 static RPC_CREDITS: LazyLock<HashMap<&'static str, u16>> = LazyLock::new(|| {
+    // Initial pricing derived from https://docs.metamask.io/services/get-started/pricing/credit-cost/
     let mut map = HashMap::new();
     map.insert("eth_accounts", 80);
     map.insert("eth_blobBaseFee", 300);
@@ -205,5 +205,5 @@ static RPC_CREDITS: LazyLock<HashMap<&'static str, u16>> = LazyLock::new(|| {
     map
 });
 
-// the default allows 1 call/second
+// the default allows 1 call/period
 pub static DEFAULT_CREDIT: u16 = 500;
