@@ -190,6 +190,17 @@ impl From<&Hash> for BlockFilter {
     }
 }
 
+pub struct BlockAndReceipts {
+    pub block: Block,
+    pub receipts: Vec<TransactionReceipt>,
+}
+
+pub struct BlockAndReceiptsAndTransactions {
+    pub block: Block,
+    pub receipts: Vec<TransactionReceipt>,
+    pub transactions: Vec<SignedTransaction>,
+}
+
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
 
 /// Version string that is written to disk along with the persisted database. This should be bumped whenever we make a
@@ -1104,6 +1115,62 @@ impl Db {
             .collect::<Result<Vec<Hash>, _>>()?;
         block.transactions = transaction_hashes;
         Ok(Some(block))
+    }
+
+    pub fn get_block_and_receipts(&self, filter: BlockFilter) -> Result<Option<BlockAndReceipts>> {
+        let Some(mut block) = self.get_transactionless_block(filter)? else {
+            return Ok(None);
+        };
+        if self.executable_blocks_height.is_some()
+            && block.header.number < self.executable_blocks_height.unwrap()
+        {
+            debug!("fetched ZQ1 block so setting state root hash to zeros");
+            block.header.state_root_hash = Hash::ZERO;
+        }
+
+        let receipts = self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
+
+        let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
+        block.transactions = transaction_hashes;
+
+        Ok(Some(BlockAndReceipts { block, receipts }))
+    }
+
+    pub fn get_block_and_receipts_and_transactions(
+        &self,
+        filter: BlockFilter,
+    ) -> Result<Option<BlockAndReceiptsAndTransactions>> {
+        let Some(mut block) = self.get_transactionless_block(filter)? else {
+            return Ok(None);
+        };
+        if self.executable_blocks_height.is_some()
+            && block.header.number < self.executable_blocks_height.unwrap()
+        {
+            debug!("fetched ZQ1 block so setting state root hash to zeros");
+            block.header.state_root_hash = Hash::ZERO;
+        }
+
+        let receipts = self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index ASC")?.query_map([block.header.hash], Self::make_receipt)?.collect::<Result<Vec<_>, _>>()?;
+
+        let transactions: Vec<SignedTransaction> = self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached(
+                "SELECT data FROM transactions INNER JOIN transactions.tx_hash = receipts.tx_hash ON tx_hash WHERE receipts.block_hash = ?1",
+            )?
+            .query_map([block.header.hash], |row| row.get(0))?
+            .map(|x|x.unwrap())
+            .collect_vec();
+
+        let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
+        block.transactions = transaction_hashes;
+
+        Ok(Some(BlockAndReceiptsAndTransactions {
+            block,
+            receipts,
+            transactions,
+        }))
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
