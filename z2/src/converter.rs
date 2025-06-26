@@ -19,7 +19,7 @@ use tracing::{debug, trace, warn};
 use zilliqa::{
     cfg::{Amount, Config, NodeConfig, scilla_ext_libs_path_default},
     crypto::{Hash, SecretKey},
-    db::Db,
+    db::{BlockFilter, Db},
     exec::store_external_libraries,
     message::{Block, MAX_COMMITTEE_SIZE, QuorumCertificate, Vote},
     schnorr,
@@ -590,7 +590,9 @@ pub async fn convert_persistence(
 
     // Let's insert another block (empty) which will be used as high_qc block when zq2 starts from converted persistence
     let highest_zq1_block = zq2_db.get_highest_canonical_block_number()?.unwrap();
-    let highest_zq1_block = zq2_db.get_block_by_view(highest_zq1_block)?.unwrap();
+    let highest_zq1_block = zq2_db
+        .get_block(BlockFilter::View(highest_zq1_block))?
+        .unwrap();
     let state_root_hash = state.root_hash()?;
 
     zq2_db.with_sqlite_tx(|sqlite_tx| {

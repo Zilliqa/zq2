@@ -9,7 +9,7 @@ use parking_lot::{RwLock, RwLockWriteGuard};
 use primitive_types::{H160, U256};
 use serde_json::{Value, value::RawValue};
 use zilliqa::{
-    cfg::new_view_broadcast_interval_default, contracts, crypto::NodePublicKey,
+    cfg::new_view_broadcast_interval_default, contracts, crypto::NodePublicKey, db::BlockFilter,
     state::contract_addr,
 };
 mod admin;
@@ -1281,7 +1281,7 @@ impl Network {
         let db = self.get_node(0).db.clone();
         loop {
             if let Some(view) = db.get_finalized_view()? {
-                if let Some(block) = db.get_block_by_view(view)? {
+                if let Some(block) = db.get_block(BlockFilter::View(view))? {
                     if block.number() >= target_block {
                         return Ok(());
                     }

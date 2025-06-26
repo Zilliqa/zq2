@@ -170,12 +170,24 @@ impl FromSql for EvmGas {
     }
 }
 
-enum BlockFilter {
+pub enum BlockFilter {
     Hash(Hash),
     View(u64),
     Height(u64),
     MaxHeight,
     MaxCanonicalByHeight,
+}
+
+impl From<Hash> for BlockFilter {
+    fn from(hash: Hash) -> Self {
+        BlockFilter::Hash(hash)
+    }
+}
+
+impl From<&Hash> for BlockFilter {
+    fn from(hash: &Hash) -> Self {
+        BlockFilter::Hash(*hash)
+    }
 }
 
 const CHECKPOINT_HEADER_BYTES: [u8; 8] = *b"ZILCHKPT";
@@ -534,7 +546,7 @@ impl Db {
             || self.get_highest_canonical_block_number()?.is_some()
         {
             // If checkpointed block already exists then assume checkpoint load already complete. Return None
-            if self.get_block_by_hash(&block.hash())?.is_some() {
+            if self.get_block(block.hash().into())?.is_some() {
                 return Ok(None);
             }
             // This may not be strictly necessary, as in theory old values will, at worst, be orphaned
@@ -544,7 +556,7 @@ impl Db {
             // unexpected and unwanted behaviour. Thus we currently forbid loading a checkpoint in
             // a node that already contains previous state, until (and unless) there's ever a
             // usecase for going through the effort to support it and ensure it works as expected.
-            if let Some(db_block) = self.get_block_by_hash(&parent.hash())? {
+            if let Some(db_block) = self.get_block(parent.hash().into())? {
                 if db_block.parent_hash() != parent.parent_hash() {
                     return Err(anyhow!(
                         "Inconsistent checkpoint file: block loaded from checkpoint and block stored in database with same hash have differing parent hashes"
@@ -1071,7 +1083,7 @@ impl Db {
         })
     }
 
-    fn get_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
+    pub fn get_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         let Some(mut block) = self.get_transactionless_block(filter)? else {
             return Ok(None);
         };
@@ -1092,22 +1104,6 @@ impl Db {
             .collect::<Result<Vec<Hash>, _>>()?;
         block.transactions = transaction_hashes;
         Ok(Some(block))
-    }
-
-    pub fn get_block_by_hash(&self, block_hash: &Hash) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::Hash(*block_hash))
-    }
-
-    pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::View(view))
-    }
-
-    pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::Height(number))
-    }
-
-    pub fn get_highest_recorded_block(&self) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::MaxHeight)
     }
 
     pub fn contains_block(&self, block_hash: &Hash) -> Result<bool> {
