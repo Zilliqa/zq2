@@ -137,7 +137,7 @@ impl NodeLauncher {
         for api_server in &config.api_servers {
             let rate_limit = Rate::new(
                 api_server.rate_credit,
-                Duration::from_secs(api_server.rate_seconds),
+                Duration::from_secs(api_server.rate_seconds.into()),
             );
             let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
             // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
