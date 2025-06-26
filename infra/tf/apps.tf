@@ -149,6 +149,16 @@ resource "google_compute_backend_service" "stats" {
   }
 }
 
+resource "google_compute_url_map" "apps_http_redirect" {
+  name = "${var.chain_name}-apps-http-redirect"
+  
+  default_url_redirect {
+    https_redirect         = true
+    redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"
+    strip_query            = false
+  }
+}
+
 resource "google_compute_url_map" "apps" {
   name            = "${var.chain_name}-apps"
   default_service = google_compute_backend_service.otterscan.id
@@ -207,7 +217,7 @@ resource "google_compute_managed_ssl_certificate" "apps" {
 
 resource "google_compute_target_http_proxy" "apps" {
   name    = "${var.chain_name}-apps-target-proxy"
-  url_map = google_compute_url_map.apps.id
+  url_map = google_compute_url_map.apps_http_redirect.id
 }
 
 resource "google_compute_target_https_proxy" "apps" {
