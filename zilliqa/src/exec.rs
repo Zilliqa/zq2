@@ -817,7 +817,7 @@ impl State {
                         }
 
                         // We will iterate over each key-value pair in this map and make a recursive call to this
-                        // function with the given value. Before each call, we need to make sure we update `inidices`
+                        // function with the given value. Before each call, we need to make sure we update `indices`
                         // to include the key. To avoid changing the length of the `Vec` in each iteration, we first
                         // add a dummy index (`vec![]`) and update it before each call.
                         indices.push(vec![]);
@@ -825,6 +825,7 @@ impl State {
                             indices.last_mut().unwrap().clone_from(k);
                             handle(storage, var, v, indices)?;
                         }
+                        indices.pop();
                     }
                     StorageValue::Value(Some(value)) => {
                         let key = storage_key(var, indices);
