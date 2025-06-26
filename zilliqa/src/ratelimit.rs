@@ -65,6 +65,11 @@ where
     // https://docs.metamask.io/services/get-started/pricing/credit-cost/
 
     fn call(&self, req: Request<'a>) -> Self::Future {
+        // disable rate limiting if rate is 0
+        if self.rate.num == 0 {
+            return ResponseFuture::future(self.service.call(req));
+        }
+
         let now = Instant::now();
 
         let is_denied = {
