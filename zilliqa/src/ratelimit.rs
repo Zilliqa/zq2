@@ -30,10 +30,6 @@ enum State {
     Allow { until: Instant, rem: u64 },
 }
 
-/// Depending on how the rate limit is instantiated
-/// it's possible to select whether the rate limit
-/// is be applied per connection or shared by
-/// all connections.
 #[derive(Clone)]
 pub struct RateLimit<S> {
     service: S,
@@ -61,10 +57,12 @@ impl<'a, S> RpcServiceT<'a> for RateLimit<S>
 where
     S: Send + RpcServiceT<'a>,
 {
-    // Instead of `Boxing` the future in this example
-    // we are using a jsonrpsee's ResponseFuture future
-    // type to avoid those extra allocations.
     type Future = ResponseFuture<S::Future>;
+
+    // Currently, does a naive calls/time limit
+    // It can be improved by using a more sophisticated algorithm
+    // such as using per-method based weights e.g.
+    // https://docs.metamask.io/services/get-started/pricing/credit-cost/
 
     fn call(&self, req: Request<'a>) -> Self::Future {
         let now = Instant::now();
@@ -109,7 +107,7 @@ where
         if is_denied {
             ResponseFuture::ready(MethodResponse::error(
                 req.id,
-                ErrorObject::borrowed(-32000, "RPC_RATE_LIMIT", None),
+                ErrorObject::borrowed(-32005, "Limit exceeded", None),
             ))
         } else {
             ResponseFuture::future(self.service.call(req))

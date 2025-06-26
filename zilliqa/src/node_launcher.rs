@@ -143,9 +143,10 @@ impl NodeLauncher {
                 .allow_headers([header::CONTENT_TYPE]);
             let http_middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
 
+            // RPC rate limit, because HTTP connection rate limits do not inspect for RPC calls e.g. batch calls
             let rpc_middleware = jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new()
-                .layer_fn(move |service| {
-                    RateLimit::new(service, Rate::new(42, Duration::from_secs(60))) // 42 RPM
+                .layer_fn(|service| {
+                    RateLimit::new(service, Rate::new(2, Duration::from_secs(1))) // 2 TPS
                 });
 
             let server = jsonrpsee::server::ServerBuilder::new()
