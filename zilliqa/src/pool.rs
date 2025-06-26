@@ -17,7 +17,7 @@ use crate::{
 /// Transaction pool limits
 const GLOBAL_TXN_POOL_SIZE: usize = 1_000_000;
 const TOTAL_SENDERS_COUNT: usize = 50_000;
-const MAX_TXNS_PER_SENDER: u64 = 200;
+const MAX_TXNS_PER_SENDER: u64 = 20000;
 
 /// The result of trying to add a transaction to the mempool. The argument is
 /// a human-readable string to be returned to the user.
