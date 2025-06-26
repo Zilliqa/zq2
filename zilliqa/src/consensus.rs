@@ -698,7 +698,7 @@ impl Consensus {
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
         if self.sync.am_syncing()? && !during_sync {
-            trace!("skipping block proposal, we are currently syncing");
+            debug!("skipping block proposal, we are currently syncing");
             return Ok(None);
         }
 
