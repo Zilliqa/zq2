@@ -1,6 +1,6 @@
 # Title
 
-eth_protocolVerrsion
+eth_protocolVersion
 
 # Keywords
 
