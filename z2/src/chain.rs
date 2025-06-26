@@ -265,52 +265,14 @@ impl Chain {
                 // estimated: 2025-05-27T18:00:00Z
                 json!({ "at_height": 10635000, "fund_accounts_from_zero_account": [("0x6F5d14cBe74547124321f34eA14016f96372c4aE", "100000000000000000000000000")] }),
             ]),
-            Chain::Zq2Testnet => Some(vec![
-                json!({
-                    "at_height": 8099088,
-                    "executable_blocks": true,
-                    "scilla_call_gas_exempt_addrs": [
-                        "0x60E6b5b1B8D3E373E1C04dC0b4f5624776bcBB60",
-                        "0x7013Da2653453299Efb867EfcCCcB1A6d5FE1384",
-                        "0x8618d39a8276D931603c6Bc7306af6A53aD2F1F3",
-                        "0xE90Dd366D627aCc5feBEC126211191901A69f8a0",
-                        "0x5900Ac075A67742f5eA4204650FEad9E674c664F",
-                        "0x28e8d39fc68eaa27c88797eb7d324b4b97d5b844",
-                        "0x51b9f3ddb948bcc16b89b48d83b920bc01dbed55",
-                        "0x1fD09F6701a1852132A649fe9D07F2A3b991eCfA",
-                        "0x878c5008A348A60a5B239844436A7b483fAdb7F2",
-                        "0x8895Aa1bEaC254E559A3F91e579CF4a67B70ce02",
-                        "0x453b11386FBd54bC532892c0217BBc316fc7b918",
-                        "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057",
-                    ],
-                }),
-            ]),
-            Chain::Zq2Mainnet => Some(vec![
-                json!({
-                    "at_height": 4770088,
-                    "executable_blocks": true,
-                    "scilla_call_gas_exempt_addrs": [
-                        "0x95347b860Bd49818AFAccCA8403C55C23e7BB9ED",
-                        "0xe64cA52EF34FdD7e20C0c7fb2E392cc9b4F6D049",
-                        "0x63B991C17010C21250a0eA58C6697F696a48cdf3",
-                        "0x241c677D9969419800402521ae87C411897A029f",
-                        "0x2274005778063684fbB1BfA96a2b725dC37D75f9",
-                        "0x598FbD8B68a8B7e75b8B7182c750164f348907Bc",
-                        "0x2938fF251Aecc1dfa768D7d0276eB6d073690317",
-                        "0x17D5af5658A24bd964984b36d28e879a8626adC3",
-                        "0xCcF3Ea256d42Aeef0EE0e39Bfc94bAa9Fa14b0Ba",
-                        "0xc6F3dede529Af9D98a11C5B32DbF03Bf34272ED5",
-                        "0x7D2fF48c6b59229d448473D267a714d29F078D3E",
-                        "0xE9D47623bb2B3C497668B34fcf61E101a7ea4058",
-                        "0x03A79429acc808e4261a68b0117aCD43Cb0FdBfa",
-                        "0x097C26F8A93009fd9d98561384b5014D64ae17C2",
-                        "0x01035e423c40a9ad4F6be2E6cC014EB5617c8Bd6",
-                        "0x9C3fE3f471d8380297e4fB222eFb313Ee94DFa0f",
-                        "0x20Dd5D5B5d4C72676514A0eA1052d0200003d69D",
-                        "0xbfDe2156aF75a29d36614bC1F8005DD816Bd9200",
-                    ],
-                }),
-            ]),
+            Chain::Zq2Testnet => Some(vec![json!({
+                "at_height": 8099088,
+                "executable_blocks": true,
+            })]),
+            Chain::Zq2Mainnet => Some(vec![json!({
+                "at_height": 4770088,
+                "executable_blocks": true,
+            })]),
             _ => None,
         }
     }
