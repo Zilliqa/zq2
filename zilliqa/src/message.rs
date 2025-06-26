@@ -15,7 +15,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::{
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey},
-    db::TrieStorage,
+    db::{BlockAndReceiptsAndTransactions, TrieStorage},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
@@ -105,6 +105,17 @@ impl Proposal {
 
     pub fn view(&self) -> u64 {
         self.header.view
+    }
+}
+
+impl From<BlockAndReceiptsAndTransactions> for Proposal {
+    fn from(x: BlockAndReceiptsAndTransactions) -> Self {
+        Proposal {
+            header: x.block.header,
+            agg: x.block.agg,
+            transactions: x.transactions,
+            opaque_transactions: x.block.transactions,
+        }
     }
 }
 

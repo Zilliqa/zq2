@@ -800,10 +800,6 @@ impl Db {
             .optional()?)
     }
 
-    pub fn get_highest_canonical_block(&self) -> Result<Option<Block>> {
-        self.get_block(BlockFilter::MaxCanonicalByHeight)
-    }
-
     pub fn set_high_qc_with_db_tx(
         &self,
         sqlite_tx: &Connection,
