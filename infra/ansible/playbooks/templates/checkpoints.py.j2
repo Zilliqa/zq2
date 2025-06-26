@@ -20,7 +20,7 @@ CONFIG = {
     'checkpoint_dir': f"/data/{os.getenv('ETH_CHAIN_ID', '')}/checkpoints",
     'gcs_bucket': f"gs://{os.getenv('NETWORK_NAME', '')}-checkpoint",
     'rpc_endpoint': 'http://localhost:4202',
-    'check_interval_seconds': int(os.getenv('CHECK_INTERVAL_SECONDS', '3600')),
+    'check_interval_seconds': int(os.getenv('CHECK_INTERVAL_SECONDS', '1800')),
     'lock_file': '/var/run/zilliqa/checkpoint_service.lock',
     'log_name': f"{os.getenv('NETWORK_NAME', '')}-checkpoint-service-log"
 }
