@@ -217,7 +217,7 @@ resource "google_compute_managed_ssl_certificate" "apps" {
 
 resource "google_compute_target_http_proxy" "apps" {
   name    = "${var.chain_name}-apps-target-proxy"
-  url_map = google_compute_url_map.apps_http_redirect.id
+  url_map = google_compute_url_map.apps.id
 }
 
 resource "google_compute_target_https_proxy" "apps" {
