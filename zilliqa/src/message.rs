@@ -319,7 +319,7 @@ impl Display for ExternalMessage {
                 write!(f, "MetaDataRequest({:?})", r.from_height..=r.to_height)
             }
             ExternalMessage::InjectedProposal(p) => {
-                write!(f, "InjectedProposal {}", p.block.number())
+                write!(f, "InjectedProposal({})", p.block.view())
             }
             ExternalMessage::Proposal(p) => write!(f, "Proposal({})", p.view()),
             ExternalMessage::Vote(v) => write!(f, "Vote({})", v.view),
