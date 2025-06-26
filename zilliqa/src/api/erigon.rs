@@ -60,22 +60,7 @@ fn get_header_by_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<Opti
     let block: u64 = params.one()?;
 
     // Erigon headers are a subset of the full block response. We choose to just return the full block.
-    let Some(ref block) = node.read().get_block(block)? else {
-        return Ok(None);
-    };
-
-    let node = node.read();
-    let logs_bloom = super::eth::get_block_logs_bloom(&node, block)?;
-
-    let miner = node.get_proposer_reward_address(block.header)?;
-
-    let block_gas_limit = node.config.consensus.eth_block_gas_limit;
-    Ok(Some(eth::Block::from_block(
-        block,
-        miner.unwrap_or_default(),
-        block_gas_limit,
-        logs_bloom,
-    )))
+    super::eth::get_eth_block(node, crate::db::BlockFilter::Height(block), true)
 }
 
 /// erigon_getLatestLogs

@@ -213,7 +213,7 @@ pub struct Consensus {
     /// The account store.
     state: State,
     /// The persistence database
-    db: Arc<Db>,
+    pub db: Arc<Db>,
     receipts_cache: Mutex<ReceiptsCache>,
     /// Actions that act on newly created blocks
     pub transaction_pool: RwLock<TransactionPool>,
