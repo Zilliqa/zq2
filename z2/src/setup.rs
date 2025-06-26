@@ -518,6 +518,8 @@ impl Setup {
                 api_servers: vec![ApiServer {
                     port,
                     enabled_apis: api::all_enabled(),
+                    rate_credit: 0,
+                    rate_seconds: 0,
                 }],
                 allowed_timestamp_skew: allowed_timestamp_skew_default(),
                 data_dir: None,
