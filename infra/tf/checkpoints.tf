@@ -110,6 +110,16 @@ resource "google_compute_backend_bucket" "checkpoint" {
   project = var.project_id
 }
 
+resource "google_compute_url_map" "checkpoint_http_redirect" {
+  name = "${var.chain_name}-checkpoint-http-redirect"
+  
+  default_url_redirect {
+    https_redirect         = true
+    redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"
+    strip_query            = false
+  }
+}
+
 resource "google_compute_url_map" "checkpoint" {
   name            = format("%s-checkpoint-cdn", var.chain_name)
   default_service = google_compute_backend_bucket.checkpoint.id
@@ -135,7 +145,7 @@ resource "google_compute_ssl_policy" "tls12_modern" {
 
 resource "google_compute_target_http_proxy" "checkpoint" {
   name    = format("%s-checkpoint-cdn", var.chain_name)
-  url_map = google_compute_url_map.checkpoint.id
+  url_map = google_compute_url_map.checkpoint_http_redirect.id
 }
 
 resource "google_compute_target_https_proxy" "checkpoint" {
