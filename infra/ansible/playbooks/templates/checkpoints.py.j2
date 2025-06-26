@@ -5,12 +5,16 @@ import glob
 import subprocess
 import logging
 import sys
+import requests
+import json
 from pathlib import Path
 
 # Configuration - replace with your actual values or use environment variables
 CHECKPOINT_DIR = "/data/{{ eth_chain_id }}/checkpoints"
 GCS_BUCKET = "gs://{{ chain_name }}-checkpoint"
 LOG_NAME = "{{ chain_name }}-checkpoint-cron-log"
+NODE_URL = "http://localhost:4202"
+HEADERS = {"Content-Type": "application/json"}
 
 def setup_logging():
     """Setup logging to syslog (similar to logger command in bash)"""
@@ -30,6 +34,36 @@ def log_message(logger, message):
     except FileNotFoundError:
         # logger command not available, already logged to stdout
         pass
+
+def get_rpc_response(method, params=[]):
+    """Get response from RPC node"""
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    try:
+        response = requests.post(NODE_URL, json=payload, headers=HEADERS, timeout=3)
+        response.raise_for_status()
+        response_json = response.json()
+        return response_json.get("result")
+    except requests.exceptions.RequestException as e:
+        return None, f"Request error in {method}: {e}"
+    except ValueError as e:
+        return None, f"JSON decoding error in {method}: {e}"
+    except Exception as e:
+        return None, f"Unexpected error in {method}: {e}"
+
+def get_current_block():
+    """Get current block number from the node"""
+    try:
+        block_number_hex = get_rpc_response("eth_blockNumber")
+        if isinstance(block_number_hex, tuple):
+            return None, block_number_hex[1]
+        
+        if block_number_hex:
+            current_block = int(block_number_hex, 16)
+            return current_block, None
+        else:
+            return None, "No block number returned from node"
+    except Exception as e:
+        return None, f"Error getting current block: {e}"
 
 def get_checkpoint_files_sorted(checkpoint_dir):
     """Get checkpoint files sorted by modification time (oldest first)"""
@@ -62,16 +96,20 @@ def run_gsutil_command(command):
 def main():
     logger = setup_logging()
     
+    # Get current block information
+    current_block, block_error = get_current_block()
+    block_info = f" (Current block: {current_block})" if current_block else f" (Block info unavailable: {block_error})"
+    
     # Check if checkpoint directory exists
     if not os.path.exists(CHECKPOINT_DIR):
-        log_message(logger, f"Checkpoint directory {CHECKPOINT_DIR} does not exist")
+        log_message(logger, f"Checkpoint directory {CHECKPOINT_DIR} does not exist{block_info}")
         sys.exit(1)
     
     # Get sorted checkpoint files
     checkpoint_files = get_checkpoint_files_sorted(CHECKPOINT_DIR)
     
     if not checkpoint_files:
-        log_message(logger, "No checkpoint files found")
+        log_message(logger, f"No checkpoint files found{block_info}")
         return
     
     # Process each checkpoint file
@@ -95,7 +133,11 @@ def main():
         copy_cmd = f'gsutil cp "{checkpoint_file}" "{GCS_BUCKET}/{formatted_filename}.dat"'
         
         if run_gsutil_command(copy_cmd):
-            log_message(logger, f"Uploaded {checkpoint_file} to GCS")
+            # Get fresh block info for upload confirmation
+            fresh_block, fresh_error = get_current_block()
+            fresh_block_info = f" (Current block: {fresh_block})" if fresh_block else f" (Block info unavailable: {fresh_error})"
+            
+            log_message(logger, f"Uploaded {checkpoint_file} to GCS{fresh_block_info}")
             
             # Delete the local file
             try:

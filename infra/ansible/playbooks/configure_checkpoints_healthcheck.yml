@@ -1,0 +1,52 @@
+---
+- name: Install and configure checkpoints healthcheck service
+  hosts: role_checkpoint
+  become: true
+  tags:
+    - install
+    - all
+
+  tasks:
+
+    - name: Create Checkpoints Healthcheck script
+      template:
+        src: templates/checkpoints_healthcheck.py.j2
+        dest: /usr/local/bin/checkpoints_healthcheck.py
+        mode: '0777'
+      notify:
+        - Restart Checkpoints Healthcheck service
+
+    - name: Create Checkpoints Healthcheck systemd service
+      template:
+        src: templates/checkpoints_healthcheck.service.j2
+        dest: /etc/systemd/system/checkpoints_healthcheck.service
+        mode: '0644'
+      notify:
+        - Restart Checkpoints Healthcheck service
+    
+    - name: Force create symlink for checkpoints healthcheck service
+      ansible.builtin.file:
+        src: /etc/systemd/system/checkpoints_healthcheck.service
+        dest: /etc/systemd/system/multi-user.target.wants/checkpoints_healthcheck.service
+        state: link
+        force: true
+      notify:
+        - Restart Checkpoints Healthcheck service
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable checkpoints healthcheck service
+      systemd:
+        name: checkpoints_healthcheck
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Restart Checkpoints Healthcheck service
+      systemd:
+        name: checkpoints_healthcheck
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
