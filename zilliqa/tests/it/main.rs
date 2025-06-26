@@ -396,6 +396,8 @@ impl Network {
             api_servers: vec![ApiServer {
                 port: 4201,
                 enabled_apis: api::all_enabled(),
+                rate_credit: 0,
+                rate_seconds: 0,
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
@@ -517,6 +519,8 @@ impl Network {
             api_servers: vec![ApiServer {
                 port: 4201,
                 enabled_apis: api::all_enabled(),
+                rate_credit: 0,
+                rate_seconds: 0,
             }],
             allowed_timestamp_skew: allowed_timestamp_skew_default(),
             data_dir: None,
