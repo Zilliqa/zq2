@@ -1179,10 +1179,6 @@ impl Db {
         self.insert_transaction_receipt_with_db_tx(&self.db.lock().unwrap(), receipt)
     }
 
-    pub fn get_transaction_receipt(&self, txn_hash: &Hash) -> Result<Option<TransactionReceipt>> {
-        Ok(self.db.lock().unwrap().prepare_cached("SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE tx_hash = ?1",)?.query_row( [txn_hash], Self::make_receipt).optional()?)
-    }
-
     pub fn get_transaction_receipts_in_block(
         &self,
         block_hash: &Hash,
