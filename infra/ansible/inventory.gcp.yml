@@ -12,6 +12,8 @@ keyed_groups:
     prefix: network
   - key: labels['role']
     prefix: role
+  - key: labels['private-api']
+    prefix: private-api
 hostnames:
   # List host by name instead of the default public ip
   - name
