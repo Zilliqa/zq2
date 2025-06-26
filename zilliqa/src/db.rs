@@ -190,11 +190,13 @@ impl From<&Hash> for BlockFilter {
     }
 }
 
+#[derive(Clone)]
 pub struct BlockAndReceipts {
     pub block: Block,
     pub receipts: Vec<TransactionReceipt>,
 }
 
+#[derive(Clone)]
 pub struct BlockAndReceiptsAndTransactions {
     pub block: Block,
     pub receipts: Vec<TransactionReceipt>,
