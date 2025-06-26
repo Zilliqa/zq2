@@ -73,13 +73,21 @@ where
         let now = Instant::now();
 
         let is_denied = {
+            let price = *RPC_CREDITS
+                .get(req.method_name())
+                .unwrap_or(&DEFAULT_CREDIT);
+
             let mut lock = self.state.lock().unwrap();
             let next_state = match *lock {
                 State::Deny { until } => {
                     if now > until {
-                        State::Allow {
-                            until: now + self.rate.period,
-                            rem: self.rate.num,
+                        if price > self.rate.num {
+                            State::Deny { until }
+                        } else {
+                            State::Allow {
+                                until: now + self.rate.period,
+                                rem: self.rate.num - price,
+                            }
                         }
                     } else {
                         State::Deny { until }
@@ -87,16 +95,15 @@ where
                 }
                 State::Allow { until, rem } => {
                     if now > until {
-                        State::Allow {
-                            until: now + self.rate.period,
-                            rem: self.rate.num,
+                        if price > self.rate.num {
+                            State::Deny { until }
+                        } else {
+                            State::Allow {
+                                until: now + self.rate.period,
+                                rem: self.rate.num - price,
+                            }
                         }
                     } else {
-                        // look up method pricing
-                        let price = *RPC_CREDITS
-                            .get(req.method_name())
-                            .unwrap_or(&DEFAULT_CREDIT);
-
                         if price > rem {
                             State::Deny { until }
                         } else {
