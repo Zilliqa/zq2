@@ -37,7 +37,7 @@ use crate::{
     cfg::{ForkName, NodeConfig},
     consensus::Consensus,
     crypto::{Hash, SecretKey},
-    db::Db,
+    db::{BlockFilter, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector},
     message::{
@@ -522,7 +522,7 @@ impl Node {
                 let Some(view) = self.db.get_finalized_view()? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
-                let Some(block) = self.db.get_block_by_view(view)? else {
+                let Some(block) = self.db.get_block(BlockFilter::View(view))? else {
                     return self.resolve_block_number(BlockNumberOrTag::Earliest);
                 };
                 Ok(Some(block))

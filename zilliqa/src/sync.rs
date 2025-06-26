@@ -17,7 +17,7 @@ use crate::{
     api::types::eth::{SyncingMeta, SyncingStruct},
     cfg::NodeConfig,
     crypto::Hash,
-    db::Db,
+    db::{BlockFilter, Db},
     message::{
         Block, BlockHeader, BlockRequest, BlockResponse, BlockTransactionsReceipts,
         ExternalMessage, InjectedProposal, Proposal, RequestBlocksByHash, RequestBlocksByHeight,
@@ -409,7 +409,7 @@ impl Sync {
                 let last = range.start().saturating_sub(1);
                 let hash = self
                     .db
-                    .get_canonical_block_by_number(*range.start())?
+                    .get_block(BlockFilter::Height(*range.start()))?
                     .expect("must exist")
                     .header
                     .qc
@@ -453,7 +453,7 @@ impl Sync {
                 break;
             }
             // remove canonical block and transactions
-            if let Some(block) = self.db.get_canonical_block_by_number(number)? {
+            if let Some(block) = self.db.get_block(BlockFilter::Height(number))? {
                 trace!(number = %block.number(), hash=%block.hash(), "sync::Prune");
                 self.db.prune_block(&block, true)?;
             }
@@ -477,7 +477,7 @@ impl Sync {
         // Only inject recent proposals - https://github.com/Zilliqa/zq2/issues/2520
         let highest_block = self
             .db
-            .get_highest_recorded_block()?
+            .get_block(BlockFilter::MaxHeight)?
             .expect("db is not empty");
 
         // drain, filter and sort cached-blocks.
@@ -615,7 +615,7 @@ impl Sync {
         // return as much as possible
         while started_at.elapsed().as_millis() < Self::PRUNE_TIMEOUT_MS {
             // grab the block
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(block) = self.db.get_block(hash.into())? else {
                 break; // that's all we have!
             };
             let number = block.number();
@@ -860,7 +860,7 @@ impl Sync {
         let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
         for hash in request {
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(block) = self.db.get_block(hash.into())? else {
                 break; // that's all we have!
             };
             proposals.push(self.block_to_proposal(block));
@@ -1207,14 +1207,14 @@ impl Sync {
         let batch_size = Self::MAX_BATCH_SIZE
             .min(request.to_height.saturating_sub(request.from_height) as usize);
         let mut metas = Vec::with_capacity(batch_size);
-        let Some(block) = self.db.get_canonical_block_by_number(request.to_height)? else {
+        let Some(block) = self.db.get_block(BlockFilter::Height(request.to_height))? else {
             warn!("sync::MetadataRequest : missing");
             return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
         };
 
         let mut hash = block.hash();
         while metas.len() <= batch_size {
-            let Some(block) = self.db.get_block_by_hash(&hash)? else {
+            let Some(block) = self.db.get_block(hash.into())? else {
                 break; // that's all we have!
             };
 

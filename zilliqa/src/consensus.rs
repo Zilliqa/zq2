@@ -29,7 +29,7 @@ use crate::{
     cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
-    db::{self, Db},
+    db::{self, BlockFilter, Db},
     exec::{PendingState, TransactionApplyResult},
     inspector::{self, ScillaInspector, TouchedAddressInspector},
     message::{
@@ -268,7 +268,7 @@ impl Consensus {
                     .expect("no header found at view {view}")
             })
             .and_then(|hash| {
-                db.get_block_by_hash(&hash)
+                db.get_block(hash.into())
                     .expect("no block found for hash {hash}")
             });
 
@@ -297,13 +297,13 @@ impl Consensus {
             match db.get_high_qc()? {
                 Some(qc) => {
                     let high_block = db
-                        .get_block_by_hash(&qc.block_hash)?
+                        .get_block(qc.block_hash.into())?
                         .ok_or_else(|| anyhow!("missing block that high QC points to!"))?;
                     let finalized_view = db
                         .get_finalized_view()?
                         .ok_or_else(|| anyhow!("missing latest finalized view!"))?;
                     let finalized_block = db
-                        .get_block_by_view(finalized_view)?
+                        .get_block(BlockFilter::View(finalized_view))?
                         .ok_or_else(|| anyhow!("missing finalized block!"))?;
 
                     // If latest view was written to disk then always start from there. Otherwise start from (highest out of high block and finalised block) + 1
@@ -479,7 +479,7 @@ impl Consensus {
             .unwrap()
             .unwrap();
         self.db
-            .get_canonical_block_by_number(highest_block_number)
+            .get_block(BlockFilter::Height(highest_block_number))
             .unwrap()
             .unwrap()
     }
@@ -2063,7 +2063,7 @@ impl Consensus {
         new_high_qc: QuorumCertificate,
     ) -> Result<()> {
         let view = self.get_view()?;
-        let Some(new_high_qc_block) = self.db.get_block_by_hash(&new_high_qc.block_hash)? else {
+        let Some(new_high_qc_block) = self.db.get_block(new_high_qc.block_hash.into())? else {
             // We don't set high_qc to a qc if we don't have its block.
             warn!("Recieved potential high QC but didn't have the corresponding block");
             return Ok(());
@@ -2275,7 +2275,7 @@ impl Consensus {
             if let Some(checkpoint_path) = self.db.get_checkpoint_dir()? {
                 let parent = self
                     .db
-                    .get_block_by_hash(&block.parent_hash())?
+                    .get_block(block.parent_hash().into())?
                     .ok_or(anyhow!(
                         "Trying to checkpoint block, but we don't have its parent"
                     ))?;
@@ -2315,7 +2315,7 @@ impl Consensus {
             .ok_or(anyhow!("No such block number {block_number}"))?;
         let parent = self
             .db
-            .get_block_by_hash(&block.parent_hash())?
+            .get_block(block.parent_hash().into())?
             .ok_or(anyhow!(
                 "Trying to checkpoint block, but we don't have its parent"
             ))?;
@@ -2573,15 +2573,15 @@ impl Consensus {
     }
 
     pub fn get_block(&self, key: &Hash) -> Result<Option<Block>> {
-        self.db.get_block_by_hash(key)
+        self.db.get_block(key.into())
     }
 
     pub fn get_block_by_view(&self, view: u64) -> Result<Option<Block>> {
-        self.db.get_block_by_view(view)
+        self.db.get_block(BlockFilter::View(view))
     }
 
     pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.db.get_canonical_block_by_number(number)
+        self.db.get_block(BlockFilter::Height(number))
     }
 
     fn set_finalized_view(&self, view: u64) -> Result<()> {
@@ -2658,7 +2658,7 @@ impl Consensus {
     pub fn state_at(&self, number: u64) -> Result<Option<State>> {
         Ok(self
             .db
-            .get_canonical_block_by_number(number)?
+            .get_block(BlockFilter::Height(number))?
             .map(|block| self.state.at_root(block.state_root_hash().into())))
     }
 
