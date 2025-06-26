@@ -997,20 +997,17 @@ impl Consensus {
     }
 
     pub fn txpool_content(&mut self) -> TxPoolContent {
-        let mut pool = self.transaction_pool.write();
-        pool.update_with_state(&self.state);
+        let pool = self.transaction_pool.read();
         pool.preview_content()
     }
 
     pub fn txpool_content_from(&mut self, address: &Address) -> TxPoolContentFrom {
-        let mut pool = self.transaction_pool.write();
-        pool.update_with_state(&self.state);
+        let pool = self.transaction_pool.read();
         pool.preview_content_from(address)
     }
 
     pub fn txpool_status(&mut self) -> TxPoolStatus {
-        let mut pool = self.transaction_pool.write();
-        pool.update_with_state(&self.state);
+        let pool = self.transaction_pool.read();
         pool.preview_status()
     }
 
@@ -1018,18 +1015,15 @@ impl Consensus {
         &self,
         txn: &VerifiedTransaction,
     ) -> Result<Option<PendingOrQueued>> {
-        let mut pool = self.transaction_pool.write();
-        pool.update_with_state(&self.state);
+        let pool = self.transaction_pool.read();
         pool.get_pending_or_queued(txn)
     }
 
     /// This is total transactions for the account, including both executed and pending
     pub fn pending_transaction_count(&self, account_address: Address) -> u64 {
-        let mut pool = self.transaction_pool.write();
         let account_data = self.state.must_get_account(account_address);
         let current_nonce = account_data.nonce;
-        pool.update_with_account(&account_address, &account_data);
-
+        let pool = self.transaction_pool.read();
         current_nonce + pool.account_pending_transaction_count(&account_address)
     }
 
