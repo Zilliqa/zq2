@@ -149,9 +149,7 @@ impl NodeLauncher {
 
             // RPC rate limit, because HTTP connection rate limits do not inspect for RPC calls e.g. batch calls
             let rpc_middleware = jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new()
-                .layer_fn(move |service| {
-                    RateLimit::new(service, rate_limit) // 2 TPS
-                });
+                .layer_fn(move |service| RateLimit::new(service, rate_limit));
 
             let server = jsonrpsee::server::ServerBuilder::new()
                 .max_response_body_size(config.max_rpc_response_size)
