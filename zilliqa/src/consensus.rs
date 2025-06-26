@@ -697,7 +697,13 @@ impl Consensus {
         proposal: Proposal,
         during_sync: bool,
     ) -> Result<Option<NetworkMessage>> {
+        if self.sync.am_syncing()? && !during_sync {
+            debug!("skipping block proposal, we are currently syncing");
+            return Ok(None);
+        }
+
         self.cleanup_votes()?;
+
         let (block, transactions) = proposal.into_parts();
         let head_block = self.head_block();
         let mut view = self.get_view()?;
@@ -1014,7 +1020,7 @@ impl Consensus {
     ) -> Result<Option<PendingOrQueued>> {
         let mut pool = self.transaction_pool.write();
         pool.update_with_state(&self.state);
-        self.transaction_pool.write().get_pending_or_queued(txn)
+        pool.get_pending_or_queued(txn)
     }
 
     /// This is total transactions for the account, including both executed and pending
@@ -1282,13 +1288,6 @@ impl Consensus {
     /// This is performed before the majority QC is available.
     /// It does all the needed work but with a dummy QC.
     fn early_proposal_assemble_at(&self, agg: Option<AggregateQc>) -> Result<()> {
-        debug!("early_proposal_assemble_at");
-        let tx_pool_preview = self.transaction_pool.read().preview_content();
-        debug!(
-            "tx pool pending: {:?}, queued: {:?}",
-            tx_pool_preview.pending.len(),
-            tx_pool_preview.queued.len()
-        );
         let view = self.get_view()?;
         {
             let early_proposal = self.early_proposal.read();
@@ -3009,12 +3008,6 @@ impl Consensus {
         committee: &[NodePublicKey],
     ) -> Result<()> {
         debug!("Executing block: {:?}", block.header);
-        let tx_pool_preview = self.transaction_pool.read().preview_content();
-        debug!(
-            "tx pool pending: {:?}, queued: {:?}",
-            tx_pool_preview.pending.len(),
-            tx_pool_preview.queued.len()
-        );
 
         let parent = self
             .get_block(&block.parent_hash())?

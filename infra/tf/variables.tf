@@ -24,6 +24,11 @@ variable "apps" {
     detach_load_balancer       = optional(bool, false)
     enable_faucet              = optional(bool, true)
     faucet_max_hourly_requests = optional(number, 1000000)
+    alternative_ssl_domains    = optional(object({
+      otterscan = optional(list(string), [])
+      faucet    = optional(list(string), [])
+      stats     = optional(list(string), [])
+    }), {})
     nodes = optional(list(object({
       count  = number
       region = optional(string)
@@ -56,12 +61,16 @@ variable "apps" {
 variable "api" {
   description = "(Optional) The configuration of the api nodes"
   type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    detach_load_balancer = optional(bool, false)
-    rate_limit           = optional(number, 1000000)
+    disk_size               = optional(number, 256)
+    instance_type           = optional(string, "e2-standard-2")
+    provisioning_model      = optional(string, "STANDARD")
+    generate_external_ip    = optional(bool, false)
+    detach_load_balancer    = optional(bool, false)
+    rate_limit              = optional(number, 1000000)
+    alternative_ssl_domains    = optional(object({
+      api    = optional(list(string), [])
+      health = optional(list(string), [])
+    }), {})
     nodes = optional(list(object({
       count  = number
       region = optional(string)
@@ -154,12 +163,15 @@ variable "bootstrap" {
 variable "checkpoint" {
   description = "(Optional) The configuration of the checkpoint nodes"
   type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    bucket_force_destroy = optional(bool, true)
-    bucket_versioning    = optional(bool, true)
+    disk_size               = optional(number, 256)
+    instance_type           = optional(string, "e2-standard-2")
+    provisioning_model      = optional(string, "STANDARD")
+    generate_external_ip    = optional(bool, false)
+    bucket_force_destroy    = optional(bool, true)
+    bucket_versioning       = optional(bool, true)
+    alternative_ssl_domains = optional(object({
+      default = optional(list(string), [])
+    }), {})
     nodes = optional(list(object({
       count  = number
       region = optional(string)

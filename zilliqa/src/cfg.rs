@@ -174,7 +174,7 @@ pub struct NodeConfig {
     /// The maximum number of blocks we will send to another node in a single message.
     #[serde(default = "block_request_limit_default")]
     pub block_request_limit: usize,
-    /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC. Defaults to no limit.
+    /// The maximum number of key value pairs allowed to be returned within the response of the `GetSmartContractState` RPC. Defaults to no limit.
     #[serde(default = "state_rpc_limit_default")]
     pub state_rpc_limit: usize,
     /// When a block request to a peer fails, do not send another request to this peer for this amount of time.

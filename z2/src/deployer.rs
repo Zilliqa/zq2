@@ -39,11 +39,6 @@ pub async fn install_or_upgrade(
     chain.set_checkpoint_url(checkpoint_url);
     let mut chain_nodes = chain.nodes().await?;
 
-    if chain.checkpoint_url().is_some() {
-        chain_nodes
-            .retain(|node| node.role == NodeRole::Validator || node.role == NodeRole::Bootstrap);
-    }
-
     chain_nodes.retain(|node| node.role != NodeRole::Apps);
 
     let node_names = chain_nodes
