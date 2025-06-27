@@ -167,9 +167,9 @@ impl Chain {
                 "fund_accounts_from_zero_account": []
             })),
             // TODO: Allow missing values from the `genesis_fork` to represent the default behaviour.
-            Chain::Zq2Testnet | Chain::Zq2Mainnet => Some(json!({
+            Chain::Zq2Testnet => Some(json!({
                 "at_height": 0,
-                "executable_blocks": false,
+                "executable_blocks": false, // differs from default
                 "call_mode_1_sets_caller_to_parent_caller": true,
                 "failed_scilla_call_from_gas_exempt_caller_causes_revert": true,
                 "scilla_messages_can_call_evm_contracts": true,
@@ -184,7 +184,28 @@ impl Chain {
                 "apply_state_changes_only_if_transaction_succeeds": true,
                 "apply_scilla_delta_when_evm_succeeded" : true,
                 "scilla_deduct_funds_from_actual_sender": true,
-                "fund_accounts_from_zero_account": []
+                "fund_accounts_from_zero_account": [],
+                "scilla_delta_maps_are_applied_correctly": true,
+            })),
+            Chain::Zq2Mainnet => Some(json!({
+                "at_height": 0,
+                "executable_blocks": false, // differs from default
+                "call_mode_1_sets_caller_to_parent_caller": true,
+                "failed_scilla_call_from_gas_exempt_caller_causes_revert": true,
+                "scilla_messages_can_call_evm_contracts": true,
+                "scilla_contract_creation_increments_account_balance": true,
+                "scilla_json_preserve_order": true,
+                "scilla_call_respects_evm_state_changes": true,
+                "only_mutated_accounts_update_state": true,
+                "scilla_call_gas_exempt_addrs": [],
+                "scilla_block_number_returns_current_block": true,
+                "scilla_maps_are_encoded_correctly": true,
+                "transfer_gas_fee_to_zero_account": true,
+                "apply_state_changes_only_if_transaction_succeeds": true,
+                "apply_scilla_delta_when_evm_succeeded" : true,
+                "scilla_deduct_funds_from_actual_sender": true,
+                "fund_accounts_from_zero_account": [],
+                "scilla_delta_maps_are_applied_correctly": false, // differs from default
             })),
             _ => None,
         }
@@ -288,6 +309,7 @@ impl Chain {
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
+                json!({ "at_height": 4854412, "scilla_delta_maps_are_applied_correctly": true }),
                 // estimated: 2025-06-27T15:21:57Z
                 json!({
                     "at_height": 4957200,

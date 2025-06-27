@@ -607,6 +607,7 @@ pub struct Fork {
     pub apply_state_changes_only_if_transaction_succeeds: bool,
     pub scilla_deduct_funds_from_actual_sender: bool,
     pub fund_accounts_from_zero_account: Vec<(Address, Amount)>,
+    pub scilla_delta_maps_are_applied_correctly: bool,
 }
 
 pub enum ForkName {
@@ -694,6 +695,9 @@ pub struct ForkDelta {
     pub scilla_deduct_funds_from_actual_sender: Option<bool>,
     /// Send funds from zero account to faucet account
     pub fund_accounts_from_zero_account: Option<Vec<(Address, Amount)>>,
+    /// If true, Scilla state deltas containing maps are applied correctly. If false, they are applied in an
+    /// unspecified and incorrect way.
+    pub scilla_delta_maps_are_applied_correctly: Option<bool>,
 }
 
 impl Fork {
@@ -749,6 +753,9 @@ impl Fork {
                 .fund_accounts_from_zero_account
                 .clone()
                 .unwrap_or_default(),
+            scilla_delta_maps_are_applied_correctly: delta
+                .scilla_delta_maps_are_applied_correctly
+                .unwrap_or(self.scilla_delta_maps_are_applied_correctly),
         }
     }
 }
@@ -833,6 +840,7 @@ pub fn genesis_fork_default() -> Fork {
         apply_state_changes_only_if_transaction_succeeds: true,
         scilla_deduct_funds_from_actual_sender: true,
         fund_accounts_from_zero_account: vec![],
+        scilla_delta_maps_are_applied_correctly: true,
     }
 }
 
@@ -969,6 +977,7 @@ mod tests {
                 apply_state_changes_only_if_transaction_succeeds: None,
                 scilla_deduct_funds_from_actual_sender: None,
                 fund_accounts_from_zero_account: None,
+                scilla_delta_maps_are_applied_correctly: None,
             }],
             ..Default::default()
         };
@@ -1008,6 +1017,7 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1027,6 +1037,7 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
                 },
             ],
             ..Default::default()
@@ -1080,6 +1091,7 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1099,6 +1111,7 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
                 },
             ],
             ..Default::default()
@@ -1143,6 +1156,7 @@ mod tests {
                 apply_state_changes_only_if_transaction_succeeds: true,
                 scilla_deduct_funds_from_actual_sender: true,
                 fund_accounts_from_zero_account: vec![],
+                scilla_delta_maps_are_applied_correctly: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1175,6 +1189,7 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1194,6 +1209,7 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
                 },
             ],
             ..Default::default()
