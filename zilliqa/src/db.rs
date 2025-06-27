@@ -1201,6 +1201,8 @@ impl Db {
         let transaction_hashes = receipts.iter().map(|x| x.tx_hash).collect();
         block.transactions = transaction_hashes;
 
+        assert_eq!(receipts.len(), transactions.len());
+
         Ok(Some(BlockAndReceiptsAndTransactions {
             block,
             receipts,
