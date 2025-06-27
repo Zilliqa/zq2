@@ -53,3 +53,6 @@
 
 - name: Import persistence backup installation
   ansible.builtin.import_playbook: install_persistence_backup.yml
+
+- name: ZQ2 Metrics installation
+  ansible.builtin.import_playbook: install_zq2_metrics.yml

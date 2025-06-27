@@ -788,10 +788,9 @@ impl State {
         state: &HashMap<Address, PendingAccount>,
         current_block_number: u64,
     ) -> Result<()> {
-        let only_mutated_accounts_update_state = self
-            .forks
-            .get(current_block_number)
-            .only_mutated_accounts_update_state;
+        let fork = self.forks.get(current_block_number);
+        let only_mutated_accounts_update_state = fork.only_mutated_accounts_update_state;
+        let scilla_delta_maps_are_applied_correctly = fork.scilla_delta_maps_are_applied_correctly;
         for (&address, account) in state {
             if only_mutated_accounts_update_state && !account.touched {
                 continue;
@@ -804,6 +803,7 @@ impl State {
 
             /// Recursively called internal function which assigns `value` at the correct key to `storage`.
             fn handle(
+                scilla_delta_maps_are_applied_correctly: bool,
                 storage: &mut EthTrie<TrieStorage>,
                 var: &str,
                 value: &StorageValue,
@@ -817,13 +817,22 @@ impl State {
                         }
 
                         // We will iterate over each key-value pair in this map and make a recursive call to this
-                        // function with the given value. Before each call, we need to make sure we update `inidices`
+                        // function with the given value. Before each call, we need to make sure we update `indices`
                         // to include the key. To avoid changing the length of the `Vec` in each iteration, we first
                         // add a dummy index (`vec![]`) and update it before each call.
                         indices.push(vec![]);
                         for (k, v) in map {
                             indices.last_mut().unwrap().clone_from(k);
-                            handle(storage, var, v, indices)?;
+                            handle(
+                                scilla_delta_maps_are_applied_correctly,
+                                storage,
+                                var,
+                                v,
+                                indices,
+                            )?;
+                        }
+                        if scilla_delta_maps_are_applied_correctly {
+                            indices.pop();
                         }
                     }
                     StorageValue::Value(Some(value)) => {
@@ -841,7 +850,13 @@ impl State {
             }
 
             for (var, value) in &account.storage {
-                handle(&mut storage, var, value, &mut vec![])?;
+                handle(
+                    scilla_delta_maps_are_applied_correctly,
+                    &mut storage,
+                    var,
+                    value,
+                    &mut vec![],
+                )?;
             }
 
             let account = Account {

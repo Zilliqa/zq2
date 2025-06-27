@@ -1,6 +1,6 @@
 # Title
 
-GetNumTxnsTxEpoch
+GetNumTxnsTXEpoch
 
 # Keywords
 
