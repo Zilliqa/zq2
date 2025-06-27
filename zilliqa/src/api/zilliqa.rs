@@ -1381,13 +1381,12 @@ fn get_total_coin_supply(_params: Params, node: &Arc<RwLock<Node>>) -> Result<St
         .get_account(Address::ZERO)
         .unwrap()
         .balance;
-    let null_address_balance_zil = ZilAmount::from_amount(null_address_balance);
-    let native_supply: ZilAmount = ZilAmount::from(node.config.consensus.total_native_token_supply);
-    Ok((native_supply - null_address_balance_zil).to_string())
+    let native_supply = node.config.consensus.total_native_token_supply.0;
+    Ok(ZilAmount::from_amount(native_supply - null_address_balance).to_string())
 }
 
 // GetTotalCoinSupplyAsInt
-fn get_total_coin_supply_as_int(_params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
+fn get_total_coin_supply_as_int(_params: Params, node: &Arc<RwLock<Node>>) -> Result<ZilAmount> {
     let node = node.read();
     let finalized_block_number = node.get_finalized_block_number()?;
     let null_address_balance = node
@@ -1397,9 +1396,8 @@ fn get_total_coin_supply_as_int(_params: Params, node: &Arc<RwLock<Node>>) -> Re
         .get_account(Address::ZERO)
         .unwrap()
         .balance;
-    let null_address_balance_zil = ZilAmount::from_amount(null_address_balance);
-    let native_supply: ZilAmount = ZilAmount::from(node.config.consensus.total_native_token_supply);
-    Ok((native_supply - null_address_balance_zil).into_inner())
+    let native_supply = node.config.consensus.total_native_token_supply.0;
+    Ok(ZilAmount::from_amount(native_supply - null_address_balance))
 }
 
 // GetMinerInfo
