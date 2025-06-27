@@ -536,12 +536,12 @@ impl Sync {
 
     /// Convenience function to convert a block to a proposal (add full txs)
     /// Should only be used for syncing history, not for consensus messages regarding new blocks.
-    fn block_to_proposal(&self, block: Block) -> Proposal {
+    fn brt_to_proposal(&self, brt: crate::db::BlockAndReceiptsAndTransactions) -> Proposal {
+        let block = brt.block;
         // since block must be valid, unwrap(s) are safe
-        let txs = block
+        let txs = brt
             .transactions
-            .iter()
-            .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
+            .into_iter()
             // handle verification on the client-side
             .map(|tx| {
                 let hash = tx.calculate_hash();
@@ -614,18 +614,26 @@ impl Sync {
         let mut size = 0;
         // return as much as possible
         while started_at.elapsed().as_millis() < Self::PRUNE_TIMEOUT_MS {
-            // grab the block
-            let Some(block) = self.db.get_block(hash.into())? else {
-                break; // that's all we have!
+            let Some(brt) = self
+                .db
+                .get_block_and_receipts_and_transactions(hash.into())?
+            else {
+                break;
             };
+            let block = brt.block;
             let number = block.number();
-            // and the receipts
-            let receipts = self.db.get_transaction_receipts_in_block(&hash)?;
+            let receipts = brt.receipts;
+            let transactions: HashMap<Hash, crate::transaction::SignedTransaction> = brt
+                .transactions
+                .into_iter()
+                .map(|tx| (tx.calculate_hash(), tx))
+                .collect();
+
             let transaction_receipts = receipts
                 .into_iter()
                 .map(|r| {
-                    let txn = self.db.get_transaction(&r.tx_hash).unwrap().unwrap();
-                    (txn, r)
+                    let txn = transactions.get(&r.tx_hash).unwrap();
+                    (txn.clone(), r)
                 })
                 .collect_vec();
             hash = block.parent_hash();
@@ -860,10 +868,13 @@ impl Sync {
         let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
         for hash in request {
-            let Some(block) = self.db.get_block(hash.into())? else {
+            let Some(brt) = self
+                .db
+                .get_block_and_receipts_and_transactions(hash.into())?
+            else {
                 break; // that's all we have!
             };
-            proposals.push(self.block_to_proposal(block));
+            proposals.push(self.brt_to_proposal(brt));
         }
 
         let message = ExternalMessage::MultiBlockResponse(proposals);
@@ -974,16 +985,16 @@ impl Sync {
         }
 
         // Must have at least 1 block, genesis/checkpoint
-        let block = self
+        let brt = self
             .db
-            .get_block(BlockFilter::MaxCanonicalByHeight)?
+            .get_block_and_receipts_and_transactions(BlockFilter::MaxCanonicalByHeight)?
             .unwrap();
 
-        info!(%from, number = %block.number(), "sync::BlockRequest : received");
+        info!(%from, number = %brt.block.number(), "sync::BlockRequest : received");
 
         // send cached response
         if let Some(prop) = self.cache_probe_response.as_ref() {
-            if prop.hash() == block.hash() {
+            if prop.hash() == brt.block.hash() {
                 return Ok(ExternalMessage::BlockResponse(BlockResponse {
                     proposals: vec![prop.clone()],
                     from_view: u64::MAX,
@@ -993,7 +1004,7 @@ impl Sync {
         };
 
         // Construct the proposal
-        let prop = self.block_to_proposal(block);
+        let prop = self.brt_to_proposal(brt);
         self.cache_probe_response = Some(prop.clone());
         let message = ExternalMessage::BlockResponse(BlockResponse {
             proposals: vec![prop],
@@ -1217,9 +1228,14 @@ impl Sync {
 
         let mut hash = block.hash();
         while metas.len() <= batch_size {
-            let Some(block) = self.db.get_block(hash.into())? else {
+            let Some(brt) = self
+                .db
+                .get_block_and_receipts_and_transactions(hash.into())?
+            else {
                 break; // that's all we have!
             };
+            let header = brt.block.header;
+            let parent_hash = brt.block.parent_hash();
 
             let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
                 // pseudo-LRU approximation
@@ -1228,7 +1244,7 @@ impl Sync {
                     self.size_cache.retain(|_, _| rng.gen_bool(0.9));
                 }
                 // A large block can cause a node to get stuck syncing since no node can respond to the request in time.
-                let proposal = self.block_to_proposal(block.clone());
+                let proposal = self.brt_to_proposal(brt);
                 let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal).unwrap().len();
                 self.size_cache.insert(hash, encoded_size);
                 encoded_size
@@ -1236,10 +1252,10 @@ impl Sync {
 
             // insert the sync size
             metas.push(SyncBlockHeader {
-                header: block.header,
+                header,
                 size_estimate: encoded_size,
             });
-            hash = block.parent_hash();
+            hash = parent_hash;
         }
 
         let message = ExternalMessage::SyncBlockHeaders(metas);
