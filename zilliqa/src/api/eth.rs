@@ -552,11 +552,11 @@ fn get_gas_price(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
 
 fn get_block_by_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<eth::Block>> {
     let mut params = params.sequence();
-    let block_number: u64 = params.next()?;
+    let block_number: BlockNumberOrTag = params.next()?;
     let full: bool = params.next()?;
     expect_end_of_params(&mut params, 2, 2)?;
 
-    get_eth_block(node, crate::db::BlockFilter::Height(block_number), full)
+    get_eth_block(node, block_number.into(), full)
 }
 
 fn get_block_by_hash(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<eth::Block>> {
