@@ -112,7 +112,7 @@ impl TransactionsAccount {
             .last_key_value()
             .map(|(k, _v)| k)
         {
-            assert!(
+            debug_assert!(
                 transaction.tx.nonce().unwrap() == highest_pending_nonce + 1,
                 "Attempt to move nonced transaction to pending with non-sequential nonce"
             );
@@ -121,7 +121,7 @@ impl TransactionsAccount {
         let prev_value = self
             .nonced_transactions_pending
             .insert(transaction.tx.nonce().unwrap(), transaction);
-        assert!(prev_value.is_none());
+        debug_assert!(prev_value.is_none());
     }
     fn pending_to_queue_nonced(&mut self) {
         let (_k, transaction) = self.nonced_transactions_pending.pop_last().unwrap();
@@ -129,19 +129,19 @@ impl TransactionsAccount {
         let prev_value = self
             .nonced_transactions_queued
             .insert(transaction.tx.nonce().unwrap(), transaction);
-        assert!(prev_value.is_none());
+        debug_assert!(prev_value.is_none());
     }
     fn queue_to_pending_nonceless(&mut self, key: NoncelessTransactionKey) {
         let transaction = self.nonceless_transactions_queued.remove(&key).unwrap();
         self.balance_after_pending -= transaction.tx.maximum_validation_cost().unwrap() as i128;
         let prev_value = self.nonceless_transactions_pending.insert(key, transaction);
-        assert!(prev_value.is_none());
+        debug_assert!(prev_value.is_none());
     }
     fn pending_to_queue_nonceless(&mut self, key: NoncelessTransactionKey) {
         let transaction = self.nonceless_transactions_pending.remove(&key).unwrap();
         self.balance_after_pending += transaction.tx.maximum_validation_cost().unwrap() as i128;
         let prev_value = self.nonceless_transactions_queued.insert(key, transaction);
-        assert!(prev_value.is_none());
+        debug_assert!(prev_value.is_none());
     }
     fn get_first_queued_nonced(&self) -> Option<&VerifiedTransaction> {
         let next_queueable_nonce = match self
@@ -216,7 +216,7 @@ impl TransactionsAccount {
                 }
             }
         }
-        assert_eq!(dbg_total_txns_before, self.get_transaction_count());
+        debug_assert!(dbg_total_txns_before == self.get_transaction_count());
     }
     fn full_recalculate(&mut self) {
         self.nonced_transactions_queued
@@ -227,24 +227,24 @@ impl TransactionsAccount {
         self.maintain();
     }
     fn insert_nonced_txn(&mut self, txn: VerifiedTransaction) {
-        assert!(txn.tx.nonce().is_some());
+        debug_assert!(txn.tx.nonce().is_some());
         let nonce = txn.tx.nonce().unwrap();
-        assert!(!self.nonced_transactions_pending.contains_key(&nonce));
+        debug_assert!(!self.nonced_transactions_pending.contains_key(&nonce));
         let existing_txn = self.nonced_transactions_queued.insert(nonce, txn);
-        assert!(
+        debug_assert!(
             existing_txn.is_none(),
             "JCVH: Attempt to double insert a transaction"
         );
         self.maintain();
     }
     fn insert_unnonced_txn(&mut self, txn: VerifiedTransaction) {
-        assert!(txn.tx.nonce().is_none());
+        debug_assert!(txn.tx.nonce().is_none());
         let gas_price = txn.tx.maximum_validation_cost().unwrap() as i128;
         // Put it in pending and then pop it again if necessary
         let existing_txn = self
             .nonceless_transactions_pending
             .insert((&txn).into(), txn.clone());
-        assert!(
+        debug_assert!(
             existing_txn.is_none(),
             "BQHN: Attempt to double insert a transaction"
         );
@@ -389,7 +389,7 @@ impl TransactionsAccount {
         result
     }
     fn get_pending_or_queued(&self, txn: &VerifiedTransaction) -> Option<PendingOrQueued> {
-        assert!(txn.signer == self.address);
+        debug_assert!(txn.signer == self.address);
         if self
             .nonceless_transactions_pending
             .contains_key(&txn.into())
@@ -491,6 +491,7 @@ struct TransactionPoolCore {
     all_transactions: HashMap<Address, TransactionsAccount>,
     pending_account_queue: BTreeSet<PendingQueueKey>,
     hash_to_txn_map: HashMap<Hash, VerifiedTransaction>,
+    // Keeps track of the total number of transactions in the pool for speed
     total_transactions_counter: usize,
 }
 
@@ -519,7 +520,6 @@ impl TransactionPoolCore {
             }
         }
         self.all_transactions.retain(|_k, v| !v.is_empty());
-        self.check_transaction_count();
     }
 
     fn update_with_account(&mut self, account_address: &Address, account_data: &Account) {
@@ -546,7 +546,6 @@ impl TransactionPoolCore {
                 }
             }
         }
-        self.check_transaction_count();
     }
     // Potentially slow, depending on merge behaviour
     fn pending_transactions_ordered(&self) -> impl Iterator<Item = &VerifiedTransaction> {
@@ -593,19 +592,7 @@ impl TransactionPoolCore {
     }
 
     fn transaction_count(&self) -> u64 {
-        self.all_transactions
-            .values()
-            .map(|x| x.get_transaction_count() as u64)
-            .sum()
-    }
-
-    fn check_transaction_count(&self) {
-        assert!(self.pending_transaction_count() <= self.total_transactions_counter as u64);
-        assert_eq!(
-            self.transaction_count(),
-            self.total_transactions_counter as u64
-        );
-        assert_eq!(self.hash_to_txn_map.len(), self.total_transactions_counter);
+        self.total_transactions_counter as u64
     }
 
     pub fn senders_count(&self) -> usize {
@@ -638,7 +625,6 @@ impl TransactionPoolCore {
         if let Some(pending_queue_key) = transactions_account.get_pending_queue_key() {
             self.pending_account_queue.insert(pending_queue_key);
         }
-        self.check_transaction_count();
     }
 
     fn add_txn(&mut self, txn: VerifiedTransaction, account: &Account) {
@@ -664,7 +650,6 @@ impl TransactionPoolCore {
             self.pending_account_queue.insert(pending_queue_key);
         }
         self.hash_to_txn_map.insert(txn.hash, txn);
-        self.check_transaction_count();
     }
 
     fn preview_content(&self) -> TxPoolContent {
@@ -749,7 +734,6 @@ impl TransactionPoolCore {
             }
             self.hash_to_txn_map.remove(&txn.hash).unwrap();
         }
-        self.check_transaction_count();
         result
     }
 
@@ -770,7 +754,6 @@ impl TransactionPoolCore {
                 self.all_transactions.remove(&address);
             }
         }
-        self.check_transaction_count();
     }
 }
 
