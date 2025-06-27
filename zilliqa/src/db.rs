@@ -176,6 +176,7 @@ pub enum BlockFilter {
     Height(u64),
     MaxHeight,
     MaxCanonicalByHeight,
+    Finalized,
 }
 
 impl From<Hash> for BlockFilter {
@@ -187,6 +188,21 @@ impl From<Hash> for BlockFilter {
 impl From<&Hash> for BlockFilter {
     fn from(hash: &Hash) -> Self {
         BlockFilter::Hash(*hash)
+    }
+}
+
+impl From<alloy::eips::BlockNumberOrTag> for BlockFilter {
+    fn from(x: alloy::eips::BlockNumberOrTag) -> Self {
+        match x {
+            alloy::eips::BlockNumberOrTag::Latest => BlockFilter::MaxCanonicalByHeight,
+            alloy::eips::BlockNumberOrTag::Finalized => BlockFilter::Finalized,
+            alloy::eips::BlockNumberOrTag::Safe => unimplemented!(),
+            alloy::eips::BlockNumberOrTag::Earliest => BlockFilter::Height(0),
+            alloy::eips::BlockNumberOrTag::Pending => {
+                panic!("Pending block cannot be retrieved from db by definition")
+            }
+            alloy::eips::BlockNumberOrTag::Number(x) => BlockFilter::Height(x),
+        }
     }
 }
 
@@ -1064,31 +1080,52 @@ impl Db {
                 transactions: vec![],
             })
         }
-        macro_rules! query_block {
-            ($cond: tt $(, $key:tt)*) => {
-                self.db.lock().unwrap().prepare_cached(concat!("SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE ", $cond),)?.query_row([$($key),*], make_block).optional()?
-            };
-        }
         // Remember to add to `query_planner_stability_guarantee()` test below
         Ok(match filter {
             BlockFilter::Hash(hash) => {
-                query_block!("block_hash = ?1", hash)
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE block_hash = ?1"
+                ),)?.query_row([hash], make_block).optional()?
             }
             BlockFilter::View(view) => {
-                query_block!("view = ?1", view)
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE view = ?1"
+                ),)?.query_row([view], make_block).optional()?
             }
             BlockFilter::Height(height) => {
-                query_block!("height = ?1 AND is_canonical = TRUE", height)
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE height = ?1 AND is_canonical = TRUE"
+                ),)?.query_row([height], make_block).optional()?
             }
             // Compound SQL queries below, due to - https://github.com/Zilliqa/zq2/issues/2629
             BlockFilter::MaxCanonicalByHeight => {
-                query_block!(
-                    "is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
-                )
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)"
+                ),)?.query_row([], make_block).optional()?
             }
             BlockFilter::MaxHeight => {
-                query_block!("height = (SELECT MAX(height) FROM blocks) LIMIT 1")
+                self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1"
+                ),)?.query_row([], make_block).optional()?
             }
+            BlockFilter::Finalized => {
+                if let Some(result) = self.db.lock().unwrap().prepare_cached(concat!(
+                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "INNER JOIN tip_info ON blocks.view = tip_info.finalized_view"
+                ),)?.query_row([], make_block).optional()? {
+                    Some(result)
+                }else{
+                    self.db.lock().unwrap().prepare_cached(concat!(
+                        "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                        "WHERE height = 0 AND is_canonical = TRUE"
+                    ),)?.query_row([], make_block).optional()?
+                }
+            },
         })
     }
 
@@ -1155,7 +1192,7 @@ impl Db {
             .lock()
             .unwrap()
             .prepare_cached(
-                "SELECT data FROM transactions INNER JOIN transactions.tx_hash = receipts.tx_hash ON tx_hash WHERE receipts.block_hash = ?1",
+                "SELECT data FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1",
             )?
             .query_map([block.header.hash], |row| row.get(0))?
             .map(|x|x.unwrap())
