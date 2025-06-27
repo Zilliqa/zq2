@@ -872,6 +872,11 @@ impl ZilAmount {
         self.0.checked_mul(10u128.pow(6)).expect("amount overflow")
     }
 
+    /// Get the underlying ZIL amount in units of (10^-12) ZILs.
+    pub fn into_inner(self) -> u128 {
+        self.0
+    }
+
     /// Return the memory representation of this amount as a big-endian byte array.
     pub fn to_be_bytes(self) -> [u8; 16] {
         self.0.to_be_bytes()
@@ -894,6 +899,14 @@ impl Add for ZilAmount {
     }
 }
 
+impl Sub for ZilAmount {
+    type Output = ZilAmount;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        ZilAmount(self.0.checked_sub(rhs.0).expect("amount underflow"))
+    }
+}
+
 impl PartialOrd for ZilAmount {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.0.cmp(&other.0))
@@ -911,6 +924,12 @@ impl FromStr for ZilAmount {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(u128::from_str(s)?))
+    }
+}
+
+impl From<crate::cfg::Amount> for ZilAmount {
+    fn from(amount: crate::cfg::Amount) -> Self {
+        ZilAmount(amount.0 / 10u128.pow(6))
     }
 }
 
