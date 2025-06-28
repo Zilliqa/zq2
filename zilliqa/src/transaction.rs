@@ -142,8 +142,11 @@ pub enum SignedTransaction {
         sig: PrimitiveSignature,
     },
     Zilliqa {
+        // #[serde(with = "ser_rlp")]
         tx: TxZilliqa,
+        #[serde(with = "ser_pubkey")]
         key: schnorr::PublicKey,
+        #[serde(with = "ser_signature")]
         sig: schnorr::Signature,
     },
     Intershard {
@@ -152,6 +155,133 @@ pub enum SignedTransaction {
         // instead use raw from-address
         from: Address,
     },
+}
+
+// Custom serialization to avoid double-byte encodings.
+// https://github.com/Zilliqa/zq2/issues/2922
+//
+mod ser_signature {
+    use serde::{Serialize, Serializer};
+    use std::sync::RwLock;
+
+    use super::schnorr::Signature;
+
+    static NEW_FORMAT: RwLock<bool> = RwLock::new(true);
+
+    pub fn new_format(new: bool) {
+        let mut current = NEW_FORMAT.write().unwrap();
+        *current = new;
+    }
+
+    pub fn serialize<S>(signature: &Signature, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if *NEW_FORMAT.read().unwrap() {
+            let bytes = signature.to_bytes();
+            serializer.serialize_bytes(bytes.as_slice())
+        } else {
+            signature.serialize(serializer) // default format
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Signature, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct PublicKeyVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PublicKeyVisitor {
+            type Value = Signature;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a byte array representing a public key")
+            }
+
+            // new format
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Signature::from_slice(v).map_err(E::custom)
+            }
+
+            // old format
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut buf = Vec::with_capacity(seq.size_hint().unwrap_or(256));
+                while let Some(b) = seq.next_element()? {
+                    buf.push(b);
+                }
+                Signature::from_slice(&buf).map_err(serde::de::Error::custom) // map_err
+            }
+        }
+        deserializer.deserialize_any(PublicKeyVisitor)
+    }
+}
+
+mod ser_pubkey {
+    use super::schnorr::PublicKey;
+    use k256::{elliptic_curve::sec1::ToEncodedPoint, pkcs8::DecodePublicKey};
+    use serde::Serialize;
+    use std::sync::RwLock;
+
+    static NEW_FORMAT: RwLock<bool> = RwLock::new(true);
+
+    pub fn new_format(new: bool) {
+        let mut current = NEW_FORMAT.write().unwrap();
+        *current = new;
+    }
+
+    pub fn serialize<S>(public_key: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if *NEW_FORMAT.read().unwrap() {
+            let bytes = public_key.to_encoded_point(true);
+            serializer.serialize_bytes(bytes.as_bytes())
+        } else {
+            public_key.serialize(serializer)
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PublicKey, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct PublicKeyVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PublicKeyVisitor {
+            type Value = PublicKey;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a byte array representing a public key")
+            }
+
+            // new format
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                PublicKey::from_sec1_bytes(v).map_err(E::custom)
+            }
+
+            // old format
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut buf = Vec::with_capacity(seq.size_hint().unwrap_or(256));
+                while let Some(b) = seq.next_element()? {
+                    buf.push(b);
+                }
+                PublicKey::from_public_key_der(&buf).map_err(serde::de::Error::custom) // map_err
+            }
+        }
+        deserializer.deserialize_any(PublicKeyVisitor)
+    }
 }
 
 // alloy's transaction types contain annotations (such as `skip_serializing_if`) which cause issues when
@@ -801,7 +931,9 @@ impl TxIntershard {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TxZilliqa {
+    #[serde(with = "alloy::serde::quantity")]
     pub chain_id: u16,
+    #[serde(with = "alloy::serde::quantity")]
     pub nonce: u64,
     pub gas_price: ZilAmount,
     pub gas_limit: ScillaGas,
@@ -847,6 +979,45 @@ impl TxZilliqa {
     }
 }
 
+impl alloy::rlp::Encodable for TxZilliqa {
+    fn encode(&self, out: &mut dyn BufMut) {
+        self.chain_id.encode(out);
+        self.nonce.encode(out);
+        self.gas_price.encode(out);
+        self.gas_limit.encode(out);
+        self.to_addr.encode(out);
+        self.amount.encode(out);
+        self.code.encode(out);
+        self.data.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        self.chain_id.length()
+            + self.nonce.length()
+            + self.gas_price.length()
+            + self.gas_limit.length()
+            + self.to_addr.length()
+            + self.amount.length()
+            + self.code.length()
+            + self.data.length()
+    }
+}
+
+impl alloy::rlp::Decodable for TxZilliqa {
+    fn decode(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
+        Ok(Self {
+            chain_id: alloy::rlp::Decodable::decode(buf)?,
+            nonce: alloy::rlp::Decodable::decode(buf)?,
+            gas_price: alloy::rlp::Decodable::decode(buf)?,
+            gas_limit: alloy::rlp::Decodable::decode(buf)?,
+            to_addr: alloy::rlp::Decodable::decode(buf)?,
+            amount: alloy::rlp::Decodable::decode(buf)?,
+            code: alloy::rlp::Decodable::decode(buf)?,
+            data: alloy::rlp::Decodable::decode(buf)?,
+        })
+    }
+}
+
 /// A wrapper for ZIL amounts in the Zilliqa API. These are represented in units of (10^-12) ZILs, rather than (10^-18)
 /// like in the rest of our code. The implementations of [Serialize], [Deserialize], [Display] and [FromStr] represent
 /// the amount in units of (10^-12) ZILs, so this type can be used in the Zilliqa API layer.
@@ -883,6 +1054,22 @@ impl ZilAmount {
         } else {
             None
         }
+    }
+}
+
+impl alloy::rlp::Decodable for ZilAmount {
+    fn decode(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
+        Ok(ZilAmount(<u128 as alloy::rlp::Decodable>::decode(buf)?))
+    }
+}
+
+impl alloy::rlp::Encodable for ZilAmount {
+    fn encode(&self, out: &mut dyn BufMut) {
+        self.0.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        self.0.length()
     }
 }
 
@@ -935,6 +1122,22 @@ pub struct ScillaGas(pub u64);
 impl ScillaGas {
     pub fn checked_sub(self, rhs: ScillaGas) -> Option<ScillaGas> {
         Some(ScillaGas(self.0.checked_sub(rhs.0)?))
+    }
+}
+
+impl alloy::rlp::Decodable for ScillaGas {
+    fn decode(buf: &mut &[u8]) -> alloy::rlp::Result<Self> {
+        Ok(ScillaGas(<u64 as alloy::rlp::Decodable>::decode(buf)?))
+    }
+}
+
+impl alloy::rlp::Encodable for ScillaGas {
+    fn encode(&self, out: &mut dyn BufMut) {
+        self.0.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        self.0.length()
     }
 }
 
@@ -1215,4 +1418,41 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
         oneof9,
     };
     prost::Message::encode_to_vec(&proto)
+}
+
+#[test]
+fn test_encode_zilliqa_transaction() {
+    // dummy data
+    let tx = TxZilliqa {
+        chain_id: 1,
+        to_addr: Address::default(),
+        amount: ZilAmount::ZERO,
+        gas_price: ZilAmount::ZERO,
+        gas_limit: SCILLA_INVOKE_RUNNER,
+        nonce: 1,
+        code: "123".to_string(),
+        data: "456".to_string(),
+    };
+    let secret_key = schnorr::SecretKey::random(&mut k256::elliptic_curve::rand_core::OsRng);
+    let key = secret_key.public_key();
+    let sig = schnorr::sign(&bincode::serialize(&tx).unwrap(), &secret_key);
+    let data = SignedTransaction::Zilliqa { tx, key, sig };
+
+    let encoded = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &data).unwrap();
+    let e_data = cbor4ii::serde::from_slice::<SignedTransaction>(&encoded).unwrap();
+
+    ser_signature::new_format(false);
+    let partial = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &data).unwrap();
+
+    ser_pubkey::new_format(false);
+    let original = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &data).unwrap();
+    let o_data = cbor4ii::serde::from_slice::<SignedTransaction>(&original).unwrap();
+
+    // check for difference
+    assert!(original.len() > 300);
+    assert!(partial.len() < 300);
+    assert!(partial.len() > 230);
+    assert!(encoded.len() < 230); // 4000 txns fit inside 90% of 1MB
+    assert_eq!(o_data, data);
+    assert_eq!(e_data, data);
 }
