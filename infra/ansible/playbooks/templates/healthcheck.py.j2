@@ -7,6 +7,7 @@ app = Flask(__name__)
 
 NODE_URL = "http://localhost:4202"
 HEADERS = {"Content-Type": "application/json"}
+GCS_BUCKET = "gs://{{ chain_name }}-checkpoint"
 
 syncing_latest_block_number = 0
 syncing_latest_block_number_obtained_at = 0
@@ -116,6 +117,95 @@ def check_pace_status():
         "code": 200
     }), 200
 
+def get_latest_checkpoint_block():
+    """Get the latest checkpoint block number from GCS bucket"""
+    try:
+        bucket_name = GCS_BUCKET.replace("gs://", "")
+        gcs_api_url = f"https://storage.googleapis.com/storage/v1/b/{bucket_name}/o?delimiter=/"
+        
+        response = requests.get(gcs_api_url, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        items = data.get("items", [])
+        
+        if not items:
+            return None, "No checkpoint files found in bucket"
+        
+        # Filter .dat files and extract block numbers
+        dat_files = []
+        for item in items:
+            name = item.get("name", "")
+            if name.endswith(".dat"):
+                try:
+                    # Remove .dat extension and convert to int (removing leading zeros)
+                    block_number = int(name.replace(".dat", ""))
+                    dat_files.append(block_number)
+                except ValueError:
+                    continue
+        
+        if not dat_files:
+            return None, "No valid .dat checkpoint files found"
+        
+        # Return the latest checkpoint block number
+        latest_checkpoint = max(dat_files)
+        return latest_checkpoint, None
+        
+    except requests.exceptions.RequestException as e:
+        return None, f"Error accessing GCS bucket: {e}"
+    except Exception as e:
+        return None, f"Unexpected error getting checkpoint: {e}"
+
+def check_checkpoint_status():
+    """Check if checkpoints are being produced within the expected timeframe"""
+    try:
+        # Get current block number
+        block_number_hex = get_rpc_response("eth_blockNumber")
+        if isinstance(block_number_hex, tuple):
+            return jsonify({
+                "error": f"Failed to get current block: {block_number_hex[0]}",
+                "code": 500
+            }), 500
+        
+        current_block = int(block_number_hex, 16)
+        
+        # Get latest checkpoint block
+        latest_checkpoint, error = get_latest_checkpoint_block()
+        if error:
+            return jsonify({
+                "error": error,
+                "code": 500
+            }), 500
+        
+        # Calculate the difference
+        block_difference = current_block - latest_checkpoint
+        
+        # Check if checkpoint is more than 86400 blocks behind
+        if block_difference > 86400:
+            return jsonify({
+                "status": "critical",
+                "error": "Last checkpoint has not been produced for more than 86400 blocks",
+                "current_block": current_block,
+                "latest_checkpoint_block": latest_checkpoint,
+                "blocks_behind": block_difference,
+                "code": 500
+            }), 500
+        
+        return jsonify({
+            "status": "healthy",
+            "message": "Last checkpoint has been produced correctly",
+            "current_block": current_block,
+            "latest_checkpoint_block": latest_checkpoint,
+            "blocks_behind": block_difference,
+            "code": 200
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Unexpected error in checkpoint check: {str(e)}",
+            "code": 500
+        }), 500
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return check_sync_status()
@@ -123,6 +213,10 @@ def health_check():
 @app.route('/health/block', methods=['GET'])
 def block_production():
     return check_pace_status()
+
+@app.route('/health/checkpoints', methods=['GET'])
+def checkpoints_health_check():
+    return check_checkpoint_status()
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)

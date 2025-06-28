@@ -1,9 +1,0 @@
-[Unit]
-Description=Run Zilliqa Checkpoints every 30 minutes
-Requires=checkpoints.service
-
-[Timer]
-OnCalendar=*:0/30
-
-[Install]
-WantedBy=timers.target
