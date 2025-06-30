@@ -1213,6 +1213,11 @@ impl Sync {
             "sync::MetadataRequest : received",
         );
 
+        if self.zq2_floor_height > request.to_height {
+            warn!("sync::MetadataRequest : skipping ZQ1");
+            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
+        }
+
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()?.as_secs() > 20 {
             warn!("sync::MetadataRequest : stale");
@@ -1233,11 +1238,6 @@ impl Sync {
                 break; // that's all we have!
             };
 
-            if block.number() < self.zq2_floor_height {
-                warn!("sync::MetadataRequest : skipping ZQ1");
-                break;
-            }
-
             let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
                 // pseudo-LRU approximation
                 if self.size_cache.len() > Self::MAX_CACHE_SIZE {
@@ -1257,6 +1257,11 @@ impl Sync {
                 size_estimate: encoded_size,
             });
             hash = block.parent_hash();
+
+            if block.number().saturating_sub(1) < self.zq2_floor_height {
+                warn!("sync::MetadataRequest : skipping ZQ1");
+                break;
+            }
         }
 
         let message = ExternalMessage::SyncBlockHeaders(metas);
