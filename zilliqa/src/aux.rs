@@ -1,0 +1,79 @@
+use std::sync::Arc;
+use anyhow::Result;
+use tracing::info;
+use crate::db::Db;
+use crate::time::SystemTime;
+use crate::transaction::Log::{Evm, Scilla};
+
+pub fn check_and_build_ots_indices(db: Arc<Db>, last_view: u64) -> Result<()> {
+    let table_key = "ots_indices_rebuilt";
+
+    let insert_res = db.insert_value_to_aux_table(table_key, "done".into());
+
+    if let Some(_) = db.get_value_from_aux_table(table_key)? {
+        // Already rebuilt
+        return Ok(())
+    };
+
+    tokio::spawn(async move {
+        let now = SystemTime::now();
+
+        for view in (0..=last_view).rev() {
+
+            let Ok(Some(block)) = db.get_block_by_view(view) else {
+                continue;
+            };
+
+            for txn_hash in block.transactions {
+
+                let mut addresses = Vec::with_capacity(64);
+
+
+                let Ok(Some(txn)) = db.get_transaction(&txn_hash) else {
+                    continue;
+                };
+
+                let Ok(txn) = txn.verify() else {
+                    continue;
+                };
+
+                addresses.push(txn.signer);
+
+                let txn = txn.tx.into_transaction();
+                if let Some(dest) = txn.to_addr() {
+                    addresses.push(dest);
+                }
+
+                let Ok(block_receipts) = db.get_transaction_receipts_in_block(&block.header.hash) else {
+                    continue;
+                };
+
+                let Some(receipt) = block_receipts.iter().find(|receipt| receipt.tx_hash == txn_hash ) else {
+                    continue;
+                };
+
+                for log in &receipt.logs {
+                    match log {
+                        Evm(log) => {
+                            addresses.push(log.address);
+                        },
+                        Scilla(log) => {
+                            addresses.push(log.address);
+                        }
+                    }
+                }
+
+                for address in addresses {
+                    let _ = db.add_touched_address(address, txn_hash);
+                }
+            }
+
+
+        }
+
+        let _ = db.insert_value_to_aux_table(table_key, "done".into());
+        info!("Migration took: {:?}", now.elapsed());
+    });
+
+    Ok(())
+}

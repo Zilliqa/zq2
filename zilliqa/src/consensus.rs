@@ -23,30 +23,15 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
 use tracing::*;
 
-use crate::{
-    api::types::eth::SyncingStruct,
-    blockhooks,
-    cfg::{ConsensusConfig, ForkName, NodeConfig},
-    constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
-    crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
-    db::{self, Db},
-    exec::{PendingState, TransactionApplyResult},
-    inspector::{self, ScillaInspector, TouchedAddressInspector},
-    message::{
-        AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
-        ExternalMessage, GossipSubTopic, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal,
-        QuorumCertificate, Vote,
-    },
-    node::{MessageSender, NetworkMessage},
-    pool::{
-        PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
-        TxPoolStatus,
-    },
-    state::State,
-    sync::{Sync, SyncPeers},
-    time::SystemTime,
-    transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
-};
+use crate::{api::types::eth::SyncingStruct, aux, blockhooks, cfg::{ConsensusConfig, ForkName, NodeConfig}, constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST}, crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages}, db::{self, Db}, exec::{PendingState, TransactionApplyResult}, inspector::{self, ScillaInspector, TouchedAddressInspector}, message::{
+    AggregateQc, BitArray, BitSlice, Block, BlockHeader, BlockRef, BlockStrategy,
+    ExternalMessage, GossipSubTopic, InternalMessage, MAX_COMMITTEE_SIZE, NewView, Proposal,
+    QuorumCertificate, Vote,
+}, node::{MessageSender, NetworkMessage}, pool::{
+    PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
+    TxPoolStatus,
+}, state::State, sync::{Sync, SyncPeers}, time::SystemTime, transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction}};
+use crate::transaction::Log::{Evm, Scilla};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct NewViewVote {
@@ -367,7 +352,7 @@ impl Consensus {
             network_message_cache: None,
             high_qc,
             state,
-            db,
+            db: db.clone(),
             receipts_cache: Default::default(),
             transaction_pool: Default::default(),
             early_proposal: Default::default(),
@@ -393,6 +378,9 @@ impl Consensus {
             // treat genesis as finalized
             consensus.set_finalized_view(latest_block_view)?;
             return Ok(consensus);
+        }
+        else {
+            aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
