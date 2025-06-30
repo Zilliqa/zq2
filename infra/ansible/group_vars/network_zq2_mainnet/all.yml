@@ -14,7 +14,7 @@ enable_faucet: false
 
 # Docker images
 zq2_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zq2:v0.11.0
-otterscan_image: zilliqa/otterscan:develop
+otterscan_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/otterscan:v1.0.6
 spout_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/eth-spout:main
 stats_dashboard_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-server:v0.1.0
 stats_agent_image: asia-docker.pkg.dev/prj-p-devops-services-tvwmrf63/zilliqa-public/zilstats-agent:v0.1.0
