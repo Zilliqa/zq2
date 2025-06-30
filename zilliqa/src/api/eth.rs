@@ -291,8 +291,6 @@ pub fn brt_to_eth_receipts(
     let mut receipts = Vec::new();
 
     for (transaction_index, receipt_retrieved) in base_receipts.iter().enumerate() {
-        // This could maybe be a bit faster if we had a db function that queried transactions by
-        // block hash, joined on receipts, but this would be quite a bit of new code.
         let transaction = transactions.get(&receipt_retrieved.tx_hash).unwrap();
 
         // Required workaround for incorrectly converted nonces for zq1 scilla transactions
@@ -406,8 +404,6 @@ pub fn old_get_block_transaction_receipts_inner(
             _ => receipt_retrieved.contract_address,
         };
 
-        let mut logs_bloom = [0; 256];
-
         let mut logs = Vec::new();
         for log in receipt_retrieved.logs.iter() {
             let log = match log {
@@ -423,7 +419,6 @@ pub fn old_get_block_transaction_receipts_inner(
                 block.hash(),
             );
             log_index += 1;
-            log.bloom(&mut logs_bloom);
             logs.push(log);
         }
 
@@ -445,7 +440,7 @@ pub fn old_get_block_transaction_receipts_inner(
             gas_used: receipt_retrieved.gas_used,
             contract_address,
             logs,
-            logs_bloom,
+            logs_bloom: [0; 256],
             ty: 0,
             status: receipt_retrieved.success,
             v,
@@ -568,18 +563,6 @@ fn get_block_by_hash(params: Params, node: &Arc<RwLock<Node>>) -> Result<Option<
     get_eth_block(node, crate::db::BlockFilter::Hash(hash.into()), full)
 }
 
-pub fn get_block_logs_bloom(brt: crate::db::BlockAndReceiptsAndTransactions) -> [u8; 256] {
-    let mut logs_bloom = [0; 256];
-    let receipts = brt_to_eth_receipts(brt);
-    for txn_receipt in receipts {
-        // Ideally we'd implement a full blown bloom filter type but this'll do for now
-        txn_receipt.logs.iter().for_each(|log| {
-            log.bloom(&mut logs_bloom);
-        });
-    }
-    logs_bloom
-}
-
 pub fn get_eth_block(
     node: &Arc<RwLock<Node>>,
     block_id: crate::db::BlockFilter,
@@ -595,15 +578,9 @@ pub fn get_eth_block(
         None => return Ok(None),
     };
 
-    let logs_bloom = get_block_logs_bloom(brt.clone());
     let miner = node.get_proposer_reward_address(brt.block.header)?;
     let block_gas_limit = brt.block.gas_limit();
-    let mut result = eth::Block::from_block(
-        &brt.block,
-        miner.unwrap_or_default(),
-        block_gas_limit,
-        logs_bloom,
-    );
+    let mut result = eth::Block::from_block(&brt.block, miner.unwrap_or_default(), block_gas_limit);
     if full {
         result.transactions = brt
             .transactions
@@ -941,13 +918,17 @@ async fn subscribe(
 
             while let Ok(header) = new_blocks.recv().await {
                 let node_lock = node.read();
-                // unfortunately, we've got to get the whole block to get the logs bloom
-                let block =
-                    get_eth_block(&node, crate::db::BlockFilter::Height(header.number), false)
-                        .unwrap()
-                        .unwrap();
+                let block = node_lock
+                    .consensus
+                    .db
+                    .get_transactionless_block(header.hash.into())?
+                    .ok_or("Block not found")?;
+                let miner = node_lock.get_proposer_reward_address(block.header)?;
                 std::mem::drop(node_lock);
-                let header = block.header;
+                let block_gas_limit = block.gas_limit();
+                let eth_block =
+                    eth::Block::from_block(&block, miner.unwrap_or_default(), block_gas_limit);
+                let header = eth_block.header;
                 let _ = sink.send(SubscriptionMessage::from_json(&header)?).await;
             }
         }

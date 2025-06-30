@@ -177,6 +177,7 @@ pub enum BlockFilter {
     MaxHeight,
     MaxCanonicalByHeight,
     Finalized,
+    HighQC,
 }
 
 impl From<Hash> for BlockFilter {
@@ -196,7 +197,7 @@ impl From<alloy::eips::BlockNumberOrTag> for BlockFilter {
         match x {
             alloy::eips::BlockNumberOrTag::Latest => BlockFilter::MaxCanonicalByHeight,
             alloy::eips::BlockNumberOrTag::Finalized => BlockFilter::Finalized,
-            alloy::eips::BlockNumberOrTag::Safe => unimplemented!(),
+            alloy::eips::BlockNumberOrTag::Safe => BlockFilter::HighQC,
             alloy::eips::BlockNumberOrTag::Earliest => BlockFilter::Height(0),
             alloy::eips::BlockNumberOrTag::Pending => {
                 panic!("Pending block cannot be retrieved from db by definition")
@@ -1060,7 +1061,7 @@ impl Db {
         Ok(rows)
     }
 
-    fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
+    pub fn get_transactionless_block(&self, filter: BlockFilter) -> Result<Option<Block>> {
         fn make_block(row: &Row) -> rusqlite::Result<Block> {
             Ok(Block {
                 header: BlockHeader {
@@ -1115,15 +1116,22 @@ impl Db {
             }
             BlockFilter::Finalized => {
                 if let Some(result) = self.db.lock().unwrap().prepare_cached(concat!(
-                    "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
+                    "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
                     "INNER JOIN tip_info ON blocks.view = tip_info.finalized_view"
                 ),)?.query_row([], make_block).optional()? {
                     Some(result)
                 }else{
+                    self.get_transactionless_block(BlockFilter::Height(0))?
+                }
+            },
+            BlockFilter::HighQC => {
+                if let Some(high_qc) = self.get_high_qc()?{
                     self.db.lock().unwrap().prepare_cached(concat!(
                         "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks ",
-                        "WHERE height = 0 AND is_canonical = TRUE"
-                    ),)?.query_row([], make_block).optional()?
+                        "WHERE block_hash = ?1"
+                    ),)?.query_row([high_qc.block_hash], make_block).optional()?
+                }else {
+                    self.get_transactionless_block(BlockFilter::Height(0))?
                 }
             },
         })
@@ -1562,6 +1570,8 @@ mod tests {
             "SELECT tx_hash, block_hash, tx_index, success, gas_used, cumulative_gas_used, contract_address, logs, transitions, accepted, errors, exceptions FROM receipts WHERE block_hash = ?1 ORDER BY tx_index",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE is_canonical = true AND height = (SELECT MAX(height) FROM blocks WHERE is_canonical = TRUE)",
             "SELECT block_hash, view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks WHERE height = (SELECT MAX(height) FROM blocks) LIMIT 1",
+            // "SELECT block_hash, blocks.view, height, qc, signature, state_root_hash, transactions_root_hash, receipts_root_hash, timestamp, gas_used, gas_limit, agg FROM blocks INNER JOIN tip_info ON blocks.view = tip_info.finalized_view", // tip_info is one record so scanning is fine
+            "SELECT data FROM transactions INNER JOIN receipts ON transactions.tx_hash = receipts.tx_hash WHERE receipts.block_hash = ?1",
             // TODO: Add more queries
         ];
 
