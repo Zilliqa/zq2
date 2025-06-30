@@ -18,11 +18,11 @@ use anyhow::{Result, anyhow};
 use base64::Engine;
 use bytes::{BufMut, Bytes, BytesMut};
 use jsonrpsee::{
-    RpcModule,
-    core::{ClientError, client::ClientT, params::ObjectParams},
+    IntoResponse, MethodCallback, MethodResponse, RpcModule,
+    core::{ClientError, RegisterMethodError, client::ClientT, params::ObjectParams},
     http_client::HttpClientBuilder,
     server::ServerHandle,
-    types::{ErrorObject, error::CALL_EXECUTION_FAILED_CODE},
+    types::{ErrorObject, Params, error::CALL_EXECUTION_FAILED_CODE},
 };
 use prost::Message as _;
 use rand::{Rng, distributions::Alphanumeric};
@@ -371,8 +371,7 @@ impl Scilla {
             sender,
             state,
             current_block,
-            fork.scilla_block_number_returns_current_block,
-            fork.scilla_maps_are_encoded_correctly,
+            fork,
             || {
                 self.request_tx.send(request)?;
                 Ok(self.response_rx.lock().unwrap().recv()?)
@@ -439,8 +438,7 @@ impl Scilla {
             contract,
             state,
             current_block,
-            fork.scilla_block_number_returns_current_block,
-            fork.scilla_maps_are_encoded_correctly,
+            fork,
             || {
                 self.request_tx.send(request)?;
                 Ok(self.response_rx.lock().unwrap().recv()?)
@@ -617,7 +615,9 @@ impl StateServer {
             .unwrap()
             .to_owned();
 
-        let server = reth_ipc::server::Builder::default().build(endpoint.clone());
+        let server = reth_ipc::server::Builder::default()
+            .max_response_body_size(1024 * 1024 * 1024) // 1 GiB
+            .build(endpoint.clone());
 
         let mut module = RpcModule::new(());
 
@@ -635,10 +635,59 @@ impl StateServer {
 
         let active_call: Arc<Mutex<Option<ActiveCall>>> = Arc::new(Mutex::new(None));
 
-        module.register_method("fetchStateValueB64", {
-            let active_call = Arc::clone(&active_call);
-            let b64 = base64::engine::general_purpose::STANDARD;
-            move |params, (), _| {
+        fn register_method<F>(
+            module: &mut RpcModule<()>,
+            active_call: Arc<Mutex<Option<ActiveCall>>>,
+            method_name: &'static str,
+            callback: F,
+        ) -> Result<(), RegisterMethodError>
+        where
+            F: Fn(Params<'_>, &mut ActiveCall) -> Result<Value, ErrorObject<'static>>
+                + Send
+                + Sync
+                + 'static,
+        {
+            // Copied from `RpcModule::register_method`. This custom version overrides the response size limit when the
+            // fork tells us to.
+            module.verify_and_insert(
+                method_name,
+                MethodCallback::Sync(Arc::new(
+                    move |id, params, max_response_size, extensions| {
+                        let mut active_call = active_call.lock().unwrap();
+
+                        let Some(active_call) = active_call.as_mut() else {
+                            return MethodResponse::response::<()>(
+                                id,
+                                Err(err("no active call")).into_response(),
+                                max_response_size,
+                            )
+                            .with_extensions(extensions);
+                        };
+
+                        // If the unlimited response size fork is NOT activated, override the configured response size with a
+                        // smaller one of 10 MiB.
+                        let max_response_size = if active_call.scilla_server_unlimited_response_size
+                        {
+                            max_response_size
+                        } else {
+                            10 * 1024 * 1024 // 10 MiB
+                        };
+
+                        let rp = callback(params, active_call).into_response();
+                        MethodResponse::response(id, rp, max_response_size)
+                            .with_extensions(extensions)
+                    },
+                )),
+            )?;
+            Ok(())
+        }
+
+        register_method(
+            &mut module,
+            Arc::clone(&active_call),
+            "fetchStateValueB64",
+            |params, active_call| {
+                let b64 = base64::engine::general_purpose::STANDARD;
                 #[derive(Deserialize)]
                 struct Params {
                     #[serde(deserialize_with = "de_b64")]
@@ -649,11 +698,6 @@ impl StateServer {
                 let ProtoScillaQuery { name, indices, .. } =
                     ProtoScillaQuery::decode(query.as_slice()).map_err(err)?;
 
-                let mut active_call = active_call.lock().unwrap();
-                let Some(active_call) = active_call.as_mut() else {
-                    return Err(err("no active call"));
-                };
-
                 let value = active_call.fetch_state_value(name, indices).map_err(err)?;
 
                 let result = match value {
@@ -662,12 +706,15 @@ impl StateServer {
                 };
 
                 Ok(Value::Array(result))
-            }
-        })?;
-        module.register_method("fetchExternalStateValueB64", {
-            let active_call = Arc::clone(&active_call);
-            let b64 = base64::engine::general_purpose::STANDARD;
-            move |params, (), _| {
+            },
+        )?;
+
+        register_method(
+            &mut module,
+            Arc::clone(&active_call),
+            "fetchExternalStateValueB64",
+            |params, active_call| {
+                let b64 = base64::engine::general_purpose::STANDARD;
                 #[derive(Deserialize)]
                 struct Params {
                     addr: Address,
@@ -678,11 +725,6 @@ impl StateServer {
                 let Params { addr, query } = params.parse()?;
                 let ProtoScillaQuery { name, indices, .. } =
                     ProtoScillaQuery::decode(query.as_slice()).map_err(err)?;
-
-                let mut active_call = active_call.lock().unwrap();
-                let Some(active_call) = active_call.as_mut() else {
-                    return Err(err("no active call"));
-                };
 
                 let value = active_call
                     .fetch_external_state_value(addr, name, indices)
@@ -696,11 +738,13 @@ impl StateServer {
                 };
 
                 Ok(Value::Array(result))
-            }
-        })?;
-        module.register_method("updateStateValueB64", {
-            let active_call = Arc::clone(&active_call);
-            move |params, (), _| {
+            },
+        )?;
+        register_method(
+            &mut module,
+            Arc::clone(&active_call),
+            "updateStateValueB64",
+            |params, active_call| {
                 #[derive(Deserialize)]
                 struct Params {
                     #[serde(deserialize_with = "de_b64")]
@@ -718,20 +762,17 @@ impl StateServer {
                 } = ProtoScillaQuery::decode(query.as_slice()).map_err(err)?;
                 let value = ProtoScillaVal::decode(value.as_slice()).map_err(err)?;
 
-                let mut active_call = active_call.lock().unwrap();
-                let Some(active_call) = active_call.as_mut() else {
-                    return Err(err("no active call"));
-                };
-
                 match active_call.update_state_value(name, indices, ignoreval, value) {
-                    Ok(()) => Ok(()),
+                    Ok(()) => Ok(Value::Null),
                     Err(e) => Err(err(e)),
                 }
-            }
-        })?;
-        module.register_method("fetchBlockchainInfo", {
-            let active_call = Arc::clone(&active_call);
-            move |params, (), _| {
+            },
+        )?;
+        register_method(
+            &mut module,
+            Arc::clone(&active_call),
+            "fetchBlockchainInfo",
+            |params, active_call| {
                 #[derive(Deserialize)]
                 struct Params {
                     query_name: String,
@@ -743,17 +784,12 @@ impl StateServer {
                     query_args,
                 } = params.parse()?;
 
-                let mut active_call = active_call.lock().unwrap();
-                let Some(active_call) = active_call.as_mut() else {
-                    return Err(err("no active call"));
-                };
-
                 match active_call.fetch_blockchain_info(query_name, query_args) {
                     Ok((present, value)) => Ok(Value::Array(vec![present.into(), value.into()])),
                     Err(e) => Err(err(e)),
                 }
-            }
-        })?;
+            },
+        )?;
 
         let handle = server.start(module).await?;
 
@@ -769,8 +805,7 @@ impl StateServer {
         sender: Address, // TODO: rename
         state: PendingState,
         current_block: u64,
-        scilla_block_number_returns_current_block: bool,
-        scilla_maps_are_encoded_correctly: bool,
+        fork: &Fork,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<(R, PendingState)> {
         {
@@ -779,8 +814,10 @@ impl StateServer {
                 sender,
                 state,
                 current_block,
-                scilla_block_number_returns_current_block,
-                scilla_maps_are_encoded_correctly,
+                scilla_block_number_returns_current_block: fork
+                    .scilla_block_number_returns_current_block,
+                scilla_maps_are_encoded_correctly: fork.scilla_maps_are_encoded_correctly,
+                scilla_server_unlimited_response_size: fork.scilla_server_unlimited_response_size,
             });
         }
 
@@ -827,6 +864,7 @@ struct ActiveCall {
     current_block: u64,
     scilla_block_number_returns_current_block: bool,
     scilla_maps_are_encoded_correctly: bool,
+    scilla_server_unlimited_response_size: bool,
 }
 
 impl ActiveCall {

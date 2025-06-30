@@ -186,6 +186,7 @@ impl Chain {
                 "scilla_deduct_funds_from_actual_sender": true,
                 "fund_accounts_from_zero_account": [],
                 "scilla_delta_maps_are_applied_correctly": true,
+                "scilla_server_unlimited_response_size": true,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -206,6 +207,7 @@ impl Chain {
                 "scilla_deduct_funds_from_actual_sender": true,
                 "fund_accounts_from_zero_account": [],
                 "scilla_delta_maps_are_applied_correctly": false, // differs from default
+                "scilla_server_unlimited_response_size": false, // differs from default
             })),
             _ => None,
         }
@@ -334,6 +336,8 @@ impl Chain {
                         "0xbfDe2156aF75a29d36614bC1F8005DD816Bd9200",
                     ],
                 }),
+                // estimated: 2025-06-30T14:54:22Z
+                json!({ "at_height": 4986000, "scilla_server_unlimited_response_size": true }),
             ]),
             _ => None,
         }

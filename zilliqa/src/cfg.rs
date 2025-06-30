@@ -608,6 +608,7 @@ pub struct Fork {
     pub scilla_deduct_funds_from_actual_sender: bool,
     pub fund_accounts_from_zero_account: Vec<(Address, Amount)>,
     pub scilla_delta_maps_are_applied_correctly: bool,
+    pub scilla_server_unlimited_response_size: bool,
 }
 
 pub enum ForkName {
@@ -698,6 +699,10 @@ pub struct ForkDelta {
     /// If true, Scilla state deltas containing maps are applied correctly. If false, they are applied in an
     /// unspecified and incorrect way.
     pub scilla_delta_maps_are_applied_correctly: Option<bool>,
+    /// If true, the Zilliqa process can send the Scilla process an unlimited (actually 1 GiB) amount of data in one
+    /// call. If false, the size is limited to 10 MiB. Any responses larger than this will lead to a failed
+    /// transaction.
+    pub scilla_server_unlimited_response_size: Option<bool>,
 }
 
 impl Fork {
@@ -756,6 +761,9 @@ impl Fork {
             scilla_delta_maps_are_applied_correctly: delta
                 .scilla_delta_maps_are_applied_correctly
                 .unwrap_or(self.scilla_delta_maps_are_applied_correctly),
+            scilla_server_unlimited_response_size: delta
+                .scilla_server_unlimited_response_size
+                .unwrap_or(self.scilla_server_unlimited_response_size),
         }
     }
 }
@@ -841,6 +849,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_deduct_funds_from_actual_sender: true,
         fund_accounts_from_zero_account: vec![],
         scilla_delta_maps_are_applied_correctly: true,
+        scilla_server_unlimited_response_size: true,
     }
 }
 
@@ -978,6 +987,7 @@ mod tests {
                 scilla_deduct_funds_from_actual_sender: None,
                 fund_accounts_from_zero_account: None,
                 scilla_delta_maps_are_applied_correctly: None,
+                scilla_server_unlimited_response_size: None,
             }],
             ..Default::default()
         };
@@ -1018,6 +1028,7 @@ mod tests {
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1038,6 +1049,7 @@ mod tests {
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
                 },
             ],
             ..Default::default()
@@ -1092,6 +1104,7 @@ mod tests {
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1112,6 +1125,7 @@ mod tests {
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
                 },
             ],
             ..Default::default()
@@ -1157,6 +1171,7 @@ mod tests {
                 scilla_deduct_funds_from_actual_sender: true,
                 fund_accounts_from_zero_account: vec![],
                 scilla_delta_maps_are_applied_correctly: true,
+                scilla_server_unlimited_response_size: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1190,6 +1205,7 @@ mod tests {
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1210,6 +1226,7 @@ mod tests {
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
                 },
             ],
             ..Default::default()
