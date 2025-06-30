@@ -138,68 +138,162 @@ use std::{collections::HashMap, sync::LazyLock};
 // The conversion rate should be around 1ms:1credit such that a 5ms call costs 5 credits.
 // Unless otherwise listed below, the default pricing allows for 1 call/period
 static RPC_CREDITS: LazyLock<HashMap<&'static str, u16>> = LazyLock::new(|| {
-    // Initial pricing derived from https://docs.metamask.io/services/get-started/pricing/credit-cost/
-    let mut map = HashMap::new();
-    map.insert("eth_accounts", 80);
-    map.insert("eth_blobBaseFee", 300);
-    map.insert("eth_blockNumber", 80);
-    map.insert("eth_call", 80);
-    map.insert("eth_chainId", 80);
-    map.insert("eth_estimateGas", 300);
-    map.insert("eth_feeHistory", 80);
-    map.insert("eth_gasPrice", 80);
-    map.insert("eth_getBalance", 80);
-    map.insert("eth_getBlockByHash", 80);
-    map.insert("eth_getBlockByNumber", 80);
-    map.insert("eth_getBlockReceipts", 1000);
-    map.insert("eth_getBlockTransactionCountByHash", 150);
-    map.insert("eth_getBlockTransactionCountByNumber", 150);
-    map.insert("eth_getCode", 80);
-    map.insert("eth_getLogs", 255);
-    map.insert("eth_getProof", 150);
-    map.insert("eth_getStorageAt", 80);
-    map.insert("eth_getTransactionByBlockHashAndIndex", 150);
-    map.insert("eth_getTransactionByBlockNumberAndIndex", 150);
-    map.insert("eth_getTransactionByHash", 150);
-    map.insert("eth_getTransactionCount", 150);
-    map.insert("eth_getTransactionReceipt", 150);
-    map.insert("eth_hashrate", 5);
-    map.insert("eth_maxPriorityFeePerGas", 80);
-    map.insert("eth_mining", 5);
-    map.insert("eth_protocolVersion", 5);
-    map.insert("eth_sendRawTransaction", 80);
-    map.insert("eth_simulateV1", 300);
-    map.insert("eth_submitWork", 80);
-    map.insert("eth_syncing", 5);
-    map.insert("eth_getFilterChanges", 140);
-    map.insert("eth_getFilterLogs", 255);
-    map.insert("eth_newBlockFilter", 80);
-    map.insert("eth_newFilter", 80);
-    map.insert("eth_uninstallFilter", 80);
-
-    map.insert("net_version", 5);
-    map.insert("net_peerCount", 5);
-    map.insert("net_listening", 5);
-
-    map.insert("web3_clientVersion", 5);
-
-    map.insert("trace_block", 300);
-    map.insert("trace_call", 300);
-    map.insert("trace_callMany", 300);
-    map.insert("trace_filter", 300);
-    map.insert("trace_rawTransaction", 300);
-    map.insert("trace_replayBlockTransactions", 300);
-    map.insert("trace_replayTransaction", 300);
-    map.insert("trace_transaction", 300);
-
-    map.insert("debug_getBadBlocks", 1000);
-    map.insert("debug_getTrieFlushInterval", 1000);
-    map.insert("debug_storageRangeAt", 1000);
-    map.insert("debug_traceBlock", 1000);
-    map.insert("debug_traceBlockByHash", 1000);
-    map.insert("debug_traceBlockByNumber", 1000);
-    map.insert("debug_traceCall", 1000);
-    map.insert("debug_traceTransaction", 1000);
+    // let mut map = HashMap::new();
+    let map: HashMap<&'static str, u16> = [
+        // Empirical estimates
+        ("CreateTransaction", 80),
+        ("GetContractAddressFromTransactionID", 250),
+        ("GetBlockchainInfo", 500),
+        ("GetNumTxBlocks", 250),
+        ("GetSmartContractState", 1000),
+        ("GetSmartContractCode", 50),
+        ("GetSmartContractInit", 250),
+        ("GetTransaction", 150),
+        ("GetBalance", 250),
+        ("GetCurrentMiniEpoch", 250),
+        ("GetLatestTxBlock", 250),
+        ("GetMinimumGasPrice", 250),
+        ("GetNetworkId", 5),
+        ("GetVersion", 5),
+        ("GetTransactionsForTxBlock", 300),
+        ("GetTxBlock", 250),
+        ("GetTxBlockVerbose", 300),
+        ("GetSmartContracts", 300),
+        // ("GetDSBlock", 500u16),
+        // ("GetDSBlockVerbose", 500u16),
+        ("GetLatestDSBlock", 250),
+        // ("GetCurrentDSComm", 500u16),
+        ("GetCurrentDSEpoch", 250),
+        ("DSBlockListing", 80),
+        ("GetDSBlockRate", 80),
+        ("GetTxBlockRate", 80),
+        ("TxBlockListing", 50),
+        ("GetNumPeers", 80),
+        // ("GetTransactionRate", 500u16),
+        // ("GetTransactionsForTxBlockEx", 500u16),
+        ("GetTxnBodiesForTxBlock", 250),
+        ("GetTxnBodiesForTxBlockEx", 80),
+        // ("GetNumDSBlocks", 500u16),
+        ("GetRecentTransactions", 500),
+        // ("GetNumTransactions", 500u16),
+        // ("GetNumTxnsTXEpoch", 500u16),
+        // ("GetNumTxnsDSEpoch", 500u16),
+        ("GetTotalCoinSupply", 5),
+        ("GetTotalCoinSupplyAsInt", 5),
+        ("GetMinerInfo", 5),
+        // ("GetNodeType", 500u16),
+        ("GetPrevDifficulty", 5),
+        ("GetPrevDSDifficulty", 5),
+        // ("GetShardingStructure", 500u16),
+        ("GetSmartContractSubState", 80),
+        // ("GetSoftConfirmedTransaction", 500u16),
+        // ("GetStateProof", 500u16),
+        ("GetTransactionStatus", 250),
+        // RPC rate-limit can be disabled for the admin port, to enable all these calls
+        ("admin_consensusInfo", 10000),
+        ("admin_generateCheckpoint", 10000),
+        ("admin_blockRange", 80),
+        ("admin_forceView", 10000),
+        ("admin_getPeers", 80),
+        ("admin_votesReceived", 10000),
+        ("admin_clearMempool", 10000),
+        ("admin_getLeaders", 10000),
+        // RPC rate-limit can be disabled for the admin port, to enable all these calls
+        ("debug_getBadBlocks", 10000),
+        ("debug_getTrieFlushInterval", 10000),
+        ("debug_storageRangeAt", 10000),
+        ("debug_traceBlock", 10000),
+        ("debug_traceBlockByHash", 10000),
+        ("debug_traceBlockByNumber", 10000),
+        ("debug_traceCall", 10000),
+        ("debug_traceTransaction", 10000),
+        // Estimated from similar eth_* calls
+        ("erigon_blockNumber", 80),
+        ("erigon_forks", 80),
+        ("erigon_getBlockByTimestamp", 150),
+        ("erigon_getBlockReceiptsByBlockHash", 1000),
+        ("erigon_getHeaderByHash", 80),
+        ("erigon_getHeaderByNumber", 80),
+        ("erigon_getLatestLogs", 250),
+        ("erigon_getLogsByHash", 250),
+        // Derived from https://docs.metamask.io/services/get-started/pricing/credit-cost/
+        ("net_version", 5),
+        ("net_peerCount", 80),
+        ("net_listening", 5),
+        ("web3_clientVersion", 80),
+        // Empirical estimate
+        ("ots_getApiLevel", 5),
+        ("ots_getBlockDetails", 80),
+        ("ots_getBlockDetailsByHash", 80),
+        ("ots_getBlockTransactions", 250),
+        ("ots_getContractCreator", 500),
+        ("ots_getInternalOperations", 80),
+        ("ots_getTransactionBySenderAndNonce", 50),
+        ("ots_getTransactionError", 50),
+        ("ots_hasCode", 5),
+        ("ots_searchTransactionsAfter", 500),
+        ("ots_searchTransactionsBefore", 500),
+        ("ots_traceTransaction", 80),
+        // Derived from https://docs.metamask.io/services/get-started/pricing/credit-cost/
+        ("trace_block", 300),
+        ("trace_call", 300),
+        ("trace_callMany", 300),
+        ("trace_filter", 300),
+        ("trace_rawTransaction", 300),
+        ("trace_replayBlockTransactions", 300),
+        ("trace_replayTransaction", 300),
+        ("trace_transaction", 300),
+        // Empirical estimate
+        ("txpool_content", 300),
+        ("txpool_contentFrom", 300),
+        ("txpool_inspect", 300),
+        ("txpool_status", 300),
+        // Derived from https://docs.metamask.io/services/get-started/pricing/credit-cost/
+        ("eth_accounts", 80),
+        ("eth_blobBaseFee", 300),
+        ("eth_blockNumber", 80),
+        ("eth_call", 80),
+        ("eth_chainId", 80),
+        ("eth_estimateGas", 300),
+        ("eth_feeHistory", 80),
+        ("eth_gasPrice", 80),
+        ("eth_getAccount", 80),
+        ("eth_getBalance", 80),
+        ("eth_getBlockByHash", 80),
+        ("eth_getBlockByNumber", 80),
+        ("eth_getBlockReceipts", 1000),
+        ("eth_getBlockTransactionCountByHash", 150),
+        ("eth_getBlockTransactionCountByNumber", 150),
+        ("eth_getCode", 80),
+        ("eth_getFilterChanges", 140),
+        ("eth_getFilterLogs", 250),
+        ("eth_getLogs", 250),
+        ("eth_getProof", 150),
+        ("eth_getStorageAt", 80),
+        ("eth_getTransactionByBlockHashAndIndex", 150),
+        ("eth_getTransactionByBlockNumberAndIndex", 150),
+        ("eth_getTransactionByHash", 150),
+        ("eth_getTransactionCount", 150),
+        ("eth_getTransactionReceipt", 150),
+        ("eth_getUncleByBlockHashAndIndex", 150),
+        ("eth_getUncleByBlockNumberAndIndex", 150),
+        ("eth_getUncleCountByBlockHash", 150),
+        ("eth_getUncleCountByBlockNumber", 150),
+        ("eth_hashrate", 5),
+        ("eth_maxPriorityFeePerGas", 80),
+        ("eth_mining", 5),
+        ("eth_newBlockFilter", 80),
+        ("eth_newFilter", 80),
+        ("eth_uninstallFilter", 80),
+        ("eth_protocolVersion", 5),
+        ("eth_sendRawTransaction", 80),
+        ("eth_signTransaction", 80),
+        ("eth_simulateV1", 300),
+        ("eth_submitWork", 80),
+        ("eth_syncing", 5),
+    ]
+    .into_iter()
+    .collect();
 
     map
 });
