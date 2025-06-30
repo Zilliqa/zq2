@@ -863,6 +863,11 @@ impl Sync {
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
+            if block.number() < self.zq1_ceil_height {
+                // do not active sync ZQ1 blocks
+                warn!("sync::MultiBlockRequest : skipping ZQ1");
+                break;
+            }
             proposals.push(self.block_to_proposal(block));
         }
 
@@ -1217,6 +1222,11 @@ impl Sync {
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
+
+            if block.number() < self.zq1_ceil_height {
+                warn!("sync::MetadataRequest : skipping ZQ1");
+                break;
+            }
 
             let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
                 // pseudo-LRU approximation
