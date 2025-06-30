@@ -110,6 +110,19 @@ pub struct ApiServer {
     pub port: u16,
     /// RPC APIs to enable.
     pub enabled_apis: Vec<EnabledApi>,
+    /// Rate limit configuration at N credit/seconds, 0 to disable.
+    #[serde(default = "default_rate_credit")]
+    pub rate_credit: u16,
+    #[serde(default = "default_rate_seconds")]
+    pub rate_seconds: u16,
+}
+
+fn default_rate_credit() -> u16 {
+    crate::ratelimit::DEFAULT_CREDIT
+}
+
+fn default_rate_seconds() -> u16 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

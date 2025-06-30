@@ -36,6 +36,7 @@ use crate::{
     message::{ExternalMessage, InternalMessage},
     node::{self, OutgoingMessageFailure},
     p2p_node::{LocalMessageTuple, OutboundMessageTuple},
+    ratelimit::{Rate, RateLimit},
     sync::SyncPeers,
 };
 
@@ -134,16 +135,26 @@ impl NodeLauncher {
         let node = Arc::new(RwLock::new(node));
 
         for api_server in &config.api_servers {
+            let rate_limit = Rate::new(
+                api_server.rate_credit,
+                Duration::from_secs(api_server.rate_seconds.into()),
+            );
             let rpc_module = api::rpc_module(Arc::clone(&node), &api_server.enabled_apis);
             // Construct the JSON-RPC API server. We inject a [CorsLayer] to ensure web browsers can call our API directly.
             let cors = CorsLayer::new()
                 .allow_methods(Method::POST)
                 .allow_origin(Any)
                 .allow_headers([header::CONTENT_TYPE]);
-            let middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
+            let http_middleware = tower::ServiceBuilder::new().layer(HealthLayer).layer(cors);
+
+            // RPC rate limit, because HTTP connection rate limits do not inspect for RPC calls e.g. batch calls
+            let rpc_middleware = jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new()
+                .layer_fn(move |service| RateLimit::new(service, rate_limit));
+
             let server = jsonrpsee::server::ServerBuilder::new()
                 .max_response_body_size(config.max_rpc_response_size)
-                .set_http_middleware(middleware)
+                .set_http_middleware(http_middleware)
+                .set_rpc_middleware(rpc_middleware)
                 .set_id_provider(EthIdProvider)
                 .build((Ipv4Addr::UNSPECIFIED, api_server.port))
                 .await;
