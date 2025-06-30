@@ -298,5 +298,5 @@ static RPC_CREDITS: LazyLock<HashMap<&'static str, u16>> = LazyLock::new(|| {
     map
 });
 
-// the default allows 1 call/period
+// the default allows 2 call/period
 pub static DEFAULT_CREDIT: u16 = 500;

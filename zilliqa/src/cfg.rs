@@ -113,16 +113,17 @@ pub struct ApiServer {
     /// Rate limit configuration at N credit/seconds, 0 to disable.
     #[serde(default = "default_rate_credit")]
     pub rate_credit: u16,
-    #[serde(default = "default_rate_seconds")]
+    #[serde(default = "default_rate_period")]
     pub rate_seconds: u16,
 }
 
+// default config allows 2 calls/period
 fn default_rate_credit() -> u16 {
-    crate::ratelimit::DEFAULT_CREDIT
+    crate::ratelimit::DEFAULT_CREDIT * 2
 }
 
-fn default_rate_seconds() -> u16 {
-    1
+fn default_rate_period() -> u16 {
+    2
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
