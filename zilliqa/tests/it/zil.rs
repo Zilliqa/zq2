@@ -2960,11 +2960,6 @@ async fn combined_total_coin_supply_test(mut network: Network) {
         .parse()
         .expect("Expected string to be parsed as an integer");
 
-    assert!(
-        total_coin_supply_as_int_from_str > 0,
-        "Total coin supply should be greater than 0"
-    );
-
     let response_int: Value = wallet
         .provider()
         .request("GetTotalCoinSupplyAsInt", [""])
@@ -2983,15 +2978,15 @@ async fn combined_total_coin_supply_test(mut network: Network) {
         .as_u128()
         .expect("Expected u128 conversion");
 
-    assert!(
-        total_coin_supply_as_int > 0,
-        "Total coin supply should be greater than 0"
-    );
-
     assert_eq!(
         total_coin_supply_as_int_from_str, total_coin_supply_as_int,
         "Total coin supply from string and int APIs should be the same"
     );
+
+    assert_eq!(
+        total_coin_supply_as_int, 1000000256000000000000,
+        "Total coin supply should be 1000000256000000000000"
+    )
 }
 
 #[zilliqa_macros::test]
