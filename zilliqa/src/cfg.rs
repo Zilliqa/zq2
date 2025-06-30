@@ -117,9 +117,9 @@ pub struct ApiServer {
     pub rate_seconds: u16,
 }
 
-// default config allows 2 calls/period
+// default config allows 1 call/period.
 fn default_rate_credit() -> u16 {
-    crate::ratelimit::DEFAULT_CREDIT * 2
+    crate::ratelimit::DEFAULT_CREDIT * default_rate_period()
 }
 
 fn default_rate_period() -> u16 {
