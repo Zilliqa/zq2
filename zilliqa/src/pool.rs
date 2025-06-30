@@ -435,10 +435,11 @@ impl TransactionsAccount {
             return vec![old_txn.hash];
         }
         let Some(nonce_to_remove) = txn.tx.nonce() else {
-            panic!(
+            tracing::warn!(
                 "Transaction could not be marked executed since it was not in pool: {:?}",
                 txn
             );
+            return vec![];
         };
         if let Some(lowest_nonce) = self
             .nonced_transactions_pending
@@ -466,13 +467,15 @@ impl TransactionsAccount {
                 }
                 vec![txn.hash]
             } else {
-                panic!(
+                tracing::warn!(
                     "Transaction could not be marked executed since it was not in pool: {:?}",
                     txn
                 );
+                return vec![];
             }
         } else {
-            panic!("No nonced transactions in pool");
+            tracing::warn!("No nonced transactions in pool");
+            vec![]
         }
     }
 }
@@ -747,8 +750,9 @@ impl TransactionPoolCore {
     pub fn mark_executed(&mut self, txn: &VerifiedTransaction) {
         let address = txn.signer;
         if let Some(account) = self.all_transactions.get_mut(&address) {
-            self.pending_account_queue
-                .remove(&account.get_pending_queue_key().unwrap());
+            if let Some(pending_queue_key) = account.get_pending_queue_key() {
+                self.pending_account_queue.remove(&pending_queue_key);
+            }
             let removed_txn_hashes = account.mark_executed(txn);
             self.total_transactions_counter -= removed_txn_hashes.len();
             for hash in removed_txn_hashes {
