@@ -189,6 +189,12 @@ impl Sync {
 
         let ignore_passive = config.sync.ignore_passive; // defaults to servicing passive-sync requests
 
+        if latest_block_number < zq1_ceil_height {
+            return Err(anyhow::anyhow!(
+                "latest block number {latest_block_number} < ZQ2 height {zq1_ceil_height}"
+            ));
+        }
+
         Ok(Self {
             db,
             message_sender,
@@ -531,6 +537,12 @@ impl Sync {
             .db
             .get_highest_canonical_block_number()?
             .expect("no highest canonical block");
+        if self.started_at < self.zq1_ceil_height {
+            error!(
+                "Starting block {} is below ZQ2 height {}",
+                self.started_at, self.zq1_ceil_height
+            );
+        }
         Ok(())
     }
 
