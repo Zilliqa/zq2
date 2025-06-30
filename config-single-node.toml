@@ -3,7 +3,7 @@ network = "Localnet"
 
 [[nodes]]
 api_servers = [
-    { port = 4201, enabled_apis = [ "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] }
+    { rate_credit = 0, port = 4201, enabled_apis = [ "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] }
 ]
 eth_chain_id = 0x8001
 consensus.scilla_address = "http://localhost:3000"
