@@ -135,7 +135,7 @@ pub struct Sync {
     size_cache: HashMap<Hash, usize>,
     // passive sync
     sync_base_height: u64,
-    zq1_ceil_height: u64,
+    zq2_floor_height: u64,
     ignore_passive: bool,
 }
 
@@ -181,13 +181,17 @@ impl Sync {
             return Err(anyhow::anyhow!("sync_base_height > highest_block"));
         }
 
-        let zq1_ceil_height = config
+        let zq2_floor_height = config
             .consensus
             .get_forks()?
             .find_height_fork_first_activated(crate::cfg::ForkName::ExecutableBlocks)
             .unwrap_or_default();
 
         let ignore_passive = config.sync.ignore_passive; // defaults to servicing passive-sync requests
+
+        if latest_block_number < zq2_floor_height {
+            return Err(anyhow::anyhow!("Please restore from a checkpoint"));
+        }
 
         Ok(Self {
             db,
@@ -216,7 +220,7 @@ impl Sync {
             sync_base_height,
             prune_interval,
             size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
-            zq1_ceil_height,
+            zq2_floor_height,
             ignore_passive,
         })
     }
@@ -531,6 +535,12 @@ impl Sync {
             .db
             .get_highest_canonical_block_number()?
             .expect("no highest canonical block");
+        if self.started_at < self.zq2_floor_height {
+            error!(
+                "Starting block {} is below ZQ2 height {}",
+                self.started_at, self.zq2_floor_height
+            );
+        }
         Ok(())
     }
 
@@ -874,6 +884,11 @@ impl Sync {
             else {
                 break; // that's all we have!
             };
+            if brt.block.number() < self.zq2_floor_height {
+                // do not active sync ZQ1 blocks
+                warn!("sync::MultiBlockRequest : skipping ZQ1");
+                break;
+            }
             proposals.push(self.brt_to_proposal(brt));
         }
 
@@ -1212,6 +1227,11 @@ impl Sync {
             "sync::MetadataRequest : received",
         );
 
+        if self.zq2_floor_height > request.to_height {
+            warn!("sync::MetadataRequest : skipping ZQ1");
+            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
+        }
+
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()?.as_secs() > 20 {
             warn!("sync::MetadataRequest : stale");
@@ -1256,6 +1276,11 @@ impl Sync {
                 size_estimate: encoded_size,
             });
             hash = parent_hash;
+
+            if header.number.saturating_sub(1) < self.zq2_floor_height {
+                warn!("sync::MetadataRequest : skipping ZQ1");
+                break;
+            }
         }
 
         let message = ExternalMessage::SyncBlockHeaders(metas);
@@ -1390,7 +1415,7 @@ impl Sync {
             }
 
             // Verify ZQ2 blocks only - ZQ1 blocks have faux block hashes, to maintain history.
-            if block.verify_hash().is_err() && block.number() >= self.zq1_ceil_height {
+            if block.verify_hash().is_err() && block.number() >= self.zq2_floor_height {
                 return Err(anyhow::anyhow!(
                     "sync::StoreProposals : unverified {}",
                     block.number()
@@ -1411,7 +1436,7 @@ impl Sync {
                         if let Ok(vt) = st.clone().verify() {
                             self.db
                                 .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt.tx)?;
-                        } else if block.number() < self.zq1_ceil_height {
+                        } else if block.number() < self.zq2_floor_height {
                             // FIXME: ZQ1 bypass
                             error!(number = %block.number(), index = %rt.index, hash = %rt.tx_hash, "sync::StoreProposals : unverifiable");
                             self.db
