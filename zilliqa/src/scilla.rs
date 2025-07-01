@@ -220,6 +220,7 @@ pub struct Scilla {
 }
 
 impl Scilla {
+    const MAX_ATTEMPTS: u8 = 2;
     /// Create a new Scilla interpreter. This involves spawning two threads:
     /// 1. The client thread, responsible for communicating with the server.
     /// 2. The state IPC thread, responsible for serving state requests from the running Scilla server.
@@ -319,8 +320,7 @@ impl Scilla {
             match response {
                 Ok(r) => break r,
                 Err(ClientError::Call(e)) => break serde_json::from_str(e.message())?,
-                // maximum 3 attempts on timeout
-                Err(ClientError::RequestTimeout) if attempt < 3 => {
+                Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
                     tracing::warn!(%attempt, "Check retry");
                     attempt += 1;
                 }
@@ -395,8 +395,7 @@ impl Scilla {
             match response {
                 Ok(r) => break (r, state),
                 Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
-                // maximum 3 attempts on timeout
-                Err(ClientError::RequestTimeout) if attempt < 3 => {
+                Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
                     tracing::warn!(%attempt, "Create retry");
                     attempt += 1;
                 }
@@ -473,8 +472,7 @@ impl Scilla {
             match response {
                 Ok(r) => break (r, state),
                 Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
-                // maximum 3 attempts on timeout
-                Err(ClientError::RequestTimeout) if attempt < 3 => {
+                Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
                     tracing::warn!(%attempt, "Invoke retry");
                     attempt += 1;
                 }
