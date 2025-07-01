@@ -422,35 +422,44 @@ impl Scilla {
         fork: &Fork,
         current_block: u64,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
-        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
-            .init(init.to_string())
-            .ipc_address(self.state_server_addr())
-            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
-            .code(code.to_owned())
-            .message(msg)?
-            .balance(contract_balance)
-            .gas_limit(gas_limit)
-            .json_errors(true)
-            .pplit(true)
-            .build()?;
+        let mut attempt = 1;
+        let (response, state) = loop {
+            let pending_state = state.clone();
 
-        let (response, state) = self.state_server.lock().unwrap().active_call(
-            contract,
-            state,
-            current_block,
-            fork,
-            || {
-                self.request_tx.send(request)?;
-                Ok(self.response_rx.lock().unwrap().recv()?)
-            },
-        )?;
+            let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
+                .init(init.to_string())
+                .ipc_address(self.state_server_addr())
+                .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+                .code(code.to_owned())
+                .message(msg)?
+                .balance(contract_balance)
+                .gas_limit(gas_limit)
+                .json_errors(true)
+                .pplit(true)
+                .build()?;
 
-        let response: Value = match response {
-            Ok(r) => r,
-            Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
-            Err(e) => {
-                return Err(anyhow!("{e:?}"));
-            }
+            tracing::debug!(%attempt, "Invoke attempt {:?}", request.1);
+            let (response, state) = self.state_server.lock().unwrap().active_call(
+                contract,
+                pending_state,
+                current_block,
+                fork,
+                || {
+                    self.request_tx.send(request)?;
+                    Ok(self.response_rx.lock().unwrap().recv()?)
+                },
+            )?;
+
+            match response {
+                Ok(r) => break (r, state),
+                Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
+                // maximum 3 attempts on timeout
+                Err(ClientError::RequestTimeout) if attempt < 3 => {
+                    tracing::warn!(%attempt, "Invoke retry");
+                    attempt += 1;
+                }
+                Err(e) => return Err(anyhow!("{e:?}")),
+            };
         };
 
         trace!("Invoke response: {response}");

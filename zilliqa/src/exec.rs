@@ -1270,7 +1270,7 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 }
 
 /// The account state during the execution of a Scilla transaction. Changes to the original state are kept in memory.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PendingState {
     pub pre_state: State,
     pub new_state: HashMap<Address, PendingAccount>,
