@@ -313,7 +313,7 @@ impl Scilla {
                 .is_library(init.is_library()?)
                 .build()?;
 
-            tracing::debug!(%attempt, "Check attempt {:?}", request.1);
+            tracing::debug!(%attempt,"Check attempt");
             self.request_tx.send(request)?;
             let response = self.response_rx.lock().unwrap().recv()?;
 
@@ -330,7 +330,7 @@ impl Scilla {
             };
         };
 
-        trace!(?response, "check response");
+        trace!(?response, "Check response");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let response = if let Some(response) = response.as_str() {
@@ -380,7 +380,7 @@ impl Scilla {
                 .is_library(init.is_library()?)
                 .build()?;
 
-            tracing::debug!(%attempt, "Create attempt {:?}", request.1);
+            tracing::debug!(%attempt,"Create attempt");
             let (response, state) = self.state_server.lock().unwrap().active_call(
                 sender,
                 pending_state,
@@ -405,7 +405,7 @@ impl Scilla {
             };
         };
 
-        trace!(?response, "create response");
+        trace!(?response, "Create response");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let response = if let Some(response) = response.as_str() {
@@ -457,7 +457,7 @@ impl Scilla {
                 .pplit(true)
                 .build()?;
 
-            tracing::debug!(%attempt, "Invoke attempt {:?}", request.1);
+            tracing::debug!(%attempt,"Invoke attempt");
             let (response, state) = self.state_server.lock().unwrap().active_call(
                 contract,
                 pending_state,
