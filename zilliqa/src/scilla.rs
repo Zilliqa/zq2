@@ -220,6 +220,9 @@ pub struct Scilla {
 }
 
 impl Scilla {
+    const MAX_ATTEMPTS: u8 = 3; // effective time is up to MAX_ATTEMPTS * REQ_TIMEOUT.
+    const REQ_TIMEOUT: Duration = Duration::from_secs(120); // effective time should be kept below gossip/request timeouts.
+
     /// Create a new Scilla interpreter. This involves spawning two threads:
     /// 1. The client thread, responsible for communicating with the server.
     /// 2. The state IPC thread, responsible for serving state requests from the running Scilla server.
@@ -249,7 +252,7 @@ impl Scilla {
                 .build()
                 .unwrap();
             let client = HttpClientBuilder::default()
-                .request_timeout(Duration::from_secs(120))
+                .request_timeout(Self::REQ_TIMEOUT)
                 .build(format!("{address}/run"))
                 .unwrap();
 
@@ -300,28 +303,36 @@ impl Scilla {
         init: &ContractInit,
         ext_libs_dir: &ScillaExtLibsPathInScilla,
     ) -> Result<Result<CheckOutput, ErrorResponse>> {
-        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
-            .init(init.to_string())
-            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
-            .code(code.to_owned())
-            .gas_limit(gas_limit)
-            .contract_info(true)
-            .json_errors(true)
-            .is_library(init.is_library()?)
-            .build()?;
+        let mut attempt = 1;
+        let response = loop {
+            let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
+                .init(init.to_string())
+                .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+                .code(code.to_owned())
+                .gas_limit(gas_limit)
+                .contract_info(true)
+                .json_errors(true)
+                .is_library(init.is_library()?)
+                .build()?;
 
-        self.request_tx.send(request)?;
-        let response = self.response_rx.lock().unwrap().recv()?;
+            tracing::debug!(%attempt,"Check attempt");
+            self.request_tx.send(request)?;
+            let response = self.response_rx.lock().unwrap().recv()?;
 
-        trace!(?response, "check response");
-
-        let response: Value = match response {
-            Ok(r) => r,
-            Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
-            Err(e) => {
-                return Err(anyhow!("{e:?}"));
-            }
+            match response {
+                Ok(r) => break r,
+                Err(ClientError::Call(e)) => break serde_json::from_str(e.message())?,
+                Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
+                    tracing::warn!(%attempt, "Check retry");
+                    attempt += 1;
+                }
+                Err(e) => {
+                    return Err(anyhow!("{e:?}"));
+                }
+            };
         };
+
+        trace!(?response, "Check response");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let response = if let Some(response) = response.as_str() {
@@ -356,37 +367,47 @@ impl Scilla {
         fork: &Fork,
         current_block: u64,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
-        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
-            .ipc_address(self.state_server_addr())
-            .init(init.to_string())
-            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
-            .code(code.to_owned())
-            .gas_limit(gas_limit)
-            .balance(value)
-            .json_errors(true)
-            .is_library(init.is_library()?)
-            .build()?;
+        let mut attempt = 1;
+        let (response, state) = loop {
+            let pending_state = state.clone();
 
-        let (response, state) = self.state_server.lock().unwrap().active_call(
-            sender,
-            state,
-            current_block,
-            fork,
-            || {
-                self.request_tx.send(request)?;
-                Ok(self.response_rx.lock().unwrap().recv()?)
-            },
-        )?;
+            let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
+                .ipc_address(self.state_server_addr())
+                .init(init.to_string())
+                .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+                .code(code.to_owned())
+                .gas_limit(gas_limit)
+                .balance(value)
+                .json_errors(true)
+                .is_library(init.is_library()?)
+                .build()?;
 
-        trace!(?response, "create response");
+            tracing::debug!(%attempt,"Create attempt");
+            let (response, state) = self.state_server.lock().unwrap().active_call(
+                sender,
+                pending_state,
+                current_block,
+                fork,
+                || {
+                    self.request_tx.send(request)?;
+                    Ok(self.response_rx.lock().unwrap().recv()?)
+                },
+            )?;
 
-        let response: Value = match response {
-            Ok(r) => r,
-            Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
-            Err(e) => {
-                return Err(anyhow!("{e:?}"));
-            }
+            match response {
+                Ok(r) => break (r, state),
+                Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
+                Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
+                    tracing::warn!(%attempt, "Create retry");
+                    attempt += 1;
+                }
+                Err(e) => {
+                    return Err(anyhow!("{e:?}"));
+                }
+            };
         };
+
+        trace!(?response, "Create response");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let response = if let Some(response) = response.as_str() {
@@ -422,38 +443,46 @@ impl Scilla {
         fork: &Fork,
         current_block: u64,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
-        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
-            .init(init.to_string())
-            .ipc_address(self.state_server_addr())
-            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
-            .code(code.to_owned())
-            .message(msg)?
-            .balance(contract_balance)
-            .gas_limit(gas_limit)
-            .json_errors(true)
-            .pplit(true)
-            .build()?;
+        let mut attempt = 1;
+        let (response, state) = loop {
+            let pending_state = state.clone();
 
-        let (response, state) = self.state_server.lock().unwrap().active_call(
-            contract,
-            state,
-            current_block,
-            fork,
-            || {
-                self.request_tx.send(request)?;
-                Ok(self.response_rx.lock().unwrap().recv()?)
-            },
-        )?;
+            let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
+                .init(init.to_string())
+                .ipc_address(self.state_server_addr())
+                .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+                .code(code.to_owned())
+                .message(msg)?
+                .balance(contract_balance)
+                .gas_limit(gas_limit)
+                .json_errors(true)
+                .pplit(true)
+                .build()?;
 
-        let response: Value = match response {
-            Ok(r) => r,
-            Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
-            Err(e) => {
-                return Err(anyhow!("{e:?}"));
-            }
+            tracing::debug!(%attempt,"Invoke attempt");
+            let (response, state) = self.state_server.lock().unwrap().active_call(
+                contract,
+                pending_state,
+                current_block,
+                fork,
+                || {
+                    self.request_tx.send(request)?;
+                    Ok(self.response_rx.lock().unwrap().recv()?)
+                },
+            )?;
+
+            match response {
+                Ok(r) => break (r, state),
+                Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
+                Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
+                    tracing::warn!(%attempt, "Invoke retry");
+                    attempt += 1;
+                }
+                Err(e) => return Err(anyhow!("{e:?}")),
+            };
         };
 
-        trace!("Invoke response: {response}");
+        trace!(?response, "Invoke response");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let mut response: Value = if let Some(response) = response.as_str() {
