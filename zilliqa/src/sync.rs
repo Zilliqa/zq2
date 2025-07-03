@@ -553,10 +553,7 @@ impl Sync {
             .iter()
             .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
             // handle verification on the client-side
-            .map(|tx| {
-                let hash = tx.calculate_hash();
-                (tx, hash)
-            })
+            .map(|tx| (tx.tx, tx.hash))
             .collect_vec();
         Proposal::from_parts_with_hashes(block, txs)
     }
@@ -635,7 +632,7 @@ impl Sync {
                 .into_iter()
                 .map(|r| {
                     let txn = self.db.get_transaction(&r.tx_hash).unwrap().unwrap();
-                    (txn, r)
+                    (txn.tx, r)
                 })
                 .collect_vec();
             hash = block.parent_hash();
@@ -1416,12 +1413,12 @@ impl Sync {
                         // Verify transaction
                         if let Ok(vt) = st.clone().verify() {
                             self.db
-                                .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt.tx)?;
+                                .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt)?;
                         } else if block.number() < self.zq2_floor_height {
                             // FIXME: ZQ1 bypass
                             error!(number = %block.number(), index = %rt.index, hash = %rt.tx_hash, "sync::StoreProposals : unverifiable");
                             self.db
-                                .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st)?;
+                                .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st.verify_override())?;
                         } else {
                             anyhow::bail!(
                                 "sync::StoreProposal : unverifiable transaction {}/{}/{}",
