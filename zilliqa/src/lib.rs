@@ -1,4 +1,5 @@
 pub mod api;
+mod aux;
 mod blockhooks;
 pub mod cfg;
 pub mod consensus;
@@ -27,4 +28,3 @@ pub mod test_util;
 pub mod time;
 pub mod transaction;
 pub mod zq1_proto;
-mod aux;

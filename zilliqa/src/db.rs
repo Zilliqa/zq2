@@ -456,8 +456,7 @@ impl Db {
     }
 
     pub fn insert_value_to_aux_table(&self, key: &str, value: Vec<u8>) -> Result<()> {
-        self
-            .db
+        self.db
             .lock()
             .unwrap()
             .prepare_cached("INSERT OR REPLACE INTO aux_table (key, value) VALUES (?1, ?2)")?
