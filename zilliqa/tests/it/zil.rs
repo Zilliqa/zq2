@@ -2956,7 +2956,7 @@ async fn combined_total_coin_supply_test(mut network: Network) {
     );
 
     let total_coin_supply_str = response_str.as_str().expect("Expected string conversion");
-    let total_coin_supply_as_int_from_str: u128 = total_coin_supply_str
+    let total_coin_supply_as_f64_from_str: f64 = total_coin_supply_str
         .parse()
         .expect("Expected string to be parsed as an integer");
 
@@ -2978,14 +2978,14 @@ async fn combined_total_coin_supply_test(mut network: Network) {
         .as_u128()
         .expect("Expected u128 conversion");
 
-    assert_eq!(
-        total_coin_supply_as_int_from_str, total_coin_supply_as_int,
+    assert!(
+        (total_coin_supply_as_f64_from_str - total_coin_supply_as_int as f64).abs() < 1.0,
         "Total coin supply from string and int APIs should be the same"
     );
 
     assert_eq!(
-        total_coin_supply_as_int, 1000000256000000000000,
-        "Total coin supply should be 1000000256000000000000"
+        total_coin_supply_as_int, 1000000256,
+        "Total coin supply should be 1000000256"
     )
 }
 

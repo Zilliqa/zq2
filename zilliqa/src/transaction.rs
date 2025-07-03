@@ -884,6 +884,18 @@ impl ZilAmount {
             None
         }
     }
+
+    // In ZIL, rounded down to the nearest ZIL unit.
+    pub fn to_zils(self) -> u128 {
+        self.0 / 10u128.pow(12)
+    }
+
+    // In ZIL, as a string representation of the exact float amount
+    pub fn to_float_string(self) -> String {
+        let integer_part = self.0 / 10u128.pow(12);
+        let fractional_part = self.0 % 10u128.pow(12);
+        format!("{}.{}", integer_part, fractional_part)
+    }
 }
 
 impl Add for ZilAmount {
