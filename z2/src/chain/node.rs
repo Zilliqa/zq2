@@ -684,8 +684,10 @@ impl ChainNode {
         let private_api = json!({ "port": 4202, "enabled_apis": ["admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa"] });
         let api_servers = json!([public_api, private_api]);
 
-        // Enable Otterscan indices on API nodes.
-        let enable_ots_indices = self.role == NodeRole::Api || self.role == NodeRole::PrivateApi;
+        // Enable Otterscan indices on API and persistence nodes.
+        let enable_ots_indices = self.role == NodeRole::Api
+            || self.role == NodeRole::PrivateApi
+            || self.role == NodeRole::Persistence;
 
         let mut ctx = Context::new();
         ctx.insert("role", &role_name);
