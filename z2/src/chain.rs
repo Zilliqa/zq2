@@ -311,7 +311,7 @@ impl Chain {
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
-                json!({ "at_height": 4854412, "scilla_delta_maps_are_applied_correctly": true }),
+                json!({ "at_height": 4854500, "scilla_delta_maps_are_applied_correctly": true }),
                 // estimated: 2025-06-27T15:21:57Z
                 json!({
                     "at_height": 4957200,
