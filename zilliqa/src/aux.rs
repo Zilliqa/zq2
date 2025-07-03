@@ -10,10 +10,13 @@ use crate::{
     transaction::Log::{Evm, Scilla},
 };
 
+// The following procedure iterates over all blocks and their transactions starting
+// from last view down to genesis and insert into db: sender, optionally recipient and all
+// addresses emitted in the receipt logs for given transaction hash.
 pub fn check_and_build_ots_indices(db: Arc<Db>, last_view: u64) -> Result<()> {
     let table_key = "ots_indices_rebuilt";
 
-    if let Some(_) = db.get_value_from_aux_table(table_key)? {
+    if db.get_value_from_aux_table(table_key)?.is_some() {
         // Already rebuilt
         return Ok(());
     };

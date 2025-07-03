@@ -355,6 +355,8 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let enable_ots_indices = config.enable_ots_indices;
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -393,7 +395,7 @@ impl Consensus {
             // treat genesis as finalized
             consensus.set_finalized_view(latest_block_view)?;
             return Ok(consensus);
-        } else {
+        } else if enable_ots_indices {
             aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
