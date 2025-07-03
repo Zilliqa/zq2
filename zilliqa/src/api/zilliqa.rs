@@ -1370,13 +1370,11 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<RwLock<Node>>) -> Result<St
     Ok(num_txns_epoch.to_string())
 }
 
-// GetTotalCoinSupply
-fn get_total_coin_supply(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
-    Ok(get_total_coin_supply_as_int(params, node)?.to_string())
-}
-
-// GetTotalCoinSupplyAsInt
-fn get_total_coin_supply_as_int(_params: Params, node: &Arc<RwLock<Node>>) -> Result<ZilAmount> {
+// GetTotalCoinSupplyAsZil
+fn get_total_coin_supply_as_zil_amount(
+    _params: Params,
+    node: &Arc<RwLock<Node>>,
+) -> Result<ZilAmount> {
     let node = node.read();
     let finalized_block_number = node.get_finalized_block_number()?;
     let null_address_balance = node
@@ -1388,6 +1386,16 @@ fn get_total_coin_supply_as_int(_params: Params, node: &Arc<RwLock<Node>>) -> Re
         .balance;
     let native_supply = node.config.consensus.total_native_token_supply.0;
     Ok(ZilAmount::from_amount(native_supply - null_address_balance))
+}
+
+// GetTotalCoinSupply
+fn get_total_coin_supply(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+    Ok(get_total_coin_supply_as_zil_amount(params, node)?.to_float_string())
+}
+
+// GetTotalCoinSupplyAsInt
+fn get_total_coin_supply_as_int(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
+    Ok(get_total_coin_supply_as_zil_amount(params, node)?.to_zils())
 }
 
 // GetMinerInfo
