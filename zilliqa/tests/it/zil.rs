@@ -15,7 +15,7 @@ use prost::Message;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tracing::debug;
+use tracing::{debug, info};
 use zilliqa::{
     api::types::zil::GetTxResponse,
     schnorr,
@@ -217,7 +217,14 @@ async fn send_transaction(
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(eth_receipt.status.unwrap().as_u32(), 1);
+    if eth_receipt.status.unwrap().as_u32() != 1 {
+        let txn: Value = wallet
+            .provider()
+            .request("GetTransaction", [txn_hash])
+            .await
+            .unwrap();
+        panic!("transaction failed: {txn}");
+    }
 
     (
         eth_receipt.contract_address,
@@ -3888,4 +3895,53 @@ async fn withdraw_from_contract(mut network: Network) {
         .unwrap()
         .as_u128();
     assert_eq!(0_u128, contract_zero_balance);
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn scilla_map_edge_cases(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = include_str!("contracts/maps.scilla");
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, code, data, 0).await;
+
+    let state: serde_json::Value = wallet
+        .provider()
+        .request("GetSmartContractState", [contract_address])
+        .await
+        .unwrap();
+    info!("State: {state}");
+
+    for i in 1..=24 {
+        info!("Calling transition {i}");
+        let call = format!(r#"{{ "_tag": "t{i}", "params": [] }}"#);
+
+        let (_, _) = send_transaction(
+            &mut network,
+            &wallet,
+            &secret_key,
+            i + 1,
+            ToAddr::Address(contract_address),
+            0,
+            50_000,
+            None,
+            Some(&call),
+        )
+        .await;
+
+        let state: serde_json::Value = wallet
+            .provider()
+            .request("GetSmartContractState", [contract_address])
+            .await
+            .unwrap();
+        info!("State: {state}");
+    }
 }
