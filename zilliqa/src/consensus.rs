@@ -1,4 +1,5 @@
 use std::{
+    cell::LazyCell,
     collections::{BTreeMap, HashMap},
     error::Error,
     fmt::Display,
@@ -17,6 +18,7 @@ use eth_trie::{EthTrie, MemoryDB, Trie};
 use itertools::Itertools;
 use k256::pkcs8::der::DateTime;
 use libp2p::PeerId;
+use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use revm::Inspector;
 use serde::{Deserialize, Serialize};
@@ -896,6 +898,14 @@ impl Consensus {
         proposer: NodePublicKey,
         block: &Block,
     ) -> Result<()> {
+        let earned_reward = LazyCell::new(|| {
+            let meter = opentelemetry::global::meter("zilliqa");
+            meter
+                .f64_counter("validator_earned_reward")
+                .with_unit("ZIL")
+                .build()
+        });
+
         debug!("apply late rewards in view {}", block.view());
         let rewards_per_block: u128 = *config.rewards_per_hour / config.blocks_per_hour as u128;
 
@@ -938,6 +948,12 @@ impl Consensus {
                 Ok(())
             })?;
             total_rewards_issued += reward;
+
+            let attributes = [
+                KeyValue::new("address", format!("{proposer_address:?}")),
+                KeyValue::new("role", "proposer"),
+            ];
+            earned_reward.add((reward as f64) / 1e18, &attributes);
         }
 
         // Reward the committee
@@ -954,6 +970,12 @@ impl Consensus {
                     Ok(())
                 })?;
                 total_rewards_issued += reward;
+
+                let attributes = [
+                    KeyValue::new("address", format!("{cosigner:?}")),
+                    KeyValue::new("role", "cosigner"),
+                ];
+                earned_reward.add((reward as f64) / 1e18, &attributes);
             }
         }
 
