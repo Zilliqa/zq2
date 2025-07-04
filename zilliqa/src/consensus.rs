@@ -1522,7 +1522,7 @@ impl Consensus {
         self.db.with_sqlite_tx(|sqlite_tx| {
             for tx in applied_txs {
                 self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, &tx.tx)?;
+                    .insert_transaction_with_db_tx(sqlite_tx, &tx.hash, tx)?;
             }
             Ok(())
         })?;
@@ -1670,7 +1670,7 @@ impl Consensus {
                 inspector::noop(),
                 false,
             )?;
-            self.db.insert_transaction(&txn.hash, &txn.tx)?;
+            self.db.insert_transaction(&txn.hash, &txn)?;
 
             // Skip transactions whose execution resulted in an error
             let Some(result) = result else {
@@ -2070,7 +2070,7 @@ impl Consensus {
 
     pub fn get_transaction_by_hash(&self, hash: Hash) -> Result<Option<VerifiedTransaction>> {
         Ok(match self.db.get_transaction(&hash)? {
-            Some(tx) => Some(tx.verify()?),
+            Some(tx) => Some(tx),
             None => self.transaction_pool.read().get_transaction(&hash).cloned(),
         })
     }
@@ -2316,7 +2316,7 @@ impl Consensus {
                             txn_hash,
                             parent.hash()
                         ))?;
-                        Ok::<_, anyhow::Error>(tx)
+                        Ok::<_, anyhow::Error>(tx.tx)
                     })
                     .collect::<Result<Vec<SignedTransaction>>>()?;
 
@@ -2356,7 +2356,7 @@ impl Consensus {
                     txn_hash,
                     parent.hash()
                 ))?;
-                Ok::<_, anyhow::Error>(tx)
+                Ok::<_, anyhow::Error>(tx.tx)
             })
             .collect::<Result<Vec<SignedTransaction>>>()?;
         let checkpoint_dir = self
@@ -2939,7 +2939,7 @@ impl Consensus {
             // block transactions need to be removed from self.transactions and re-injected
             let mut pool = self.transaction_pool.write();
             for tx_hash in &head_block.transactions {
-                let orig_tx = self.db.get_transaction(tx_hash)?.unwrap().verify()?;
+                let orig_tx = self.db.get_transaction(tx_hash)?.unwrap();
 
                 // Insert this unwound transaction back into the transaction pool.
                 let account = self.state.get_account(orig_tx.signer)?;
@@ -2999,15 +2999,7 @@ impl Consensus {
             let transactions = block_pointer.transactions.clone();
             let transactions = transactions
                 .iter()
-                .map(|tx_hash| {
-                    self.db
-                        .get_transaction(tx_hash)
-                        .unwrap()
-                        .unwrap()
-                        .verify()
-                        .unwrap()
-                        .tx
-                })
+                .map(|tx_hash| self.db.get_transaction(tx_hash).unwrap().unwrap().tx)
                 .collect();
             let parent = self
                 .get_block(&block_pointer.parent_hash())?
@@ -3170,7 +3162,7 @@ impl Consensus {
         self.db.with_sqlite_tx(|sqlite_tx| {
             for txn in &verified_txns {
                 self.db
-                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, &txn.tx)?;
+                    .insert_transaction_with_db_tx(sqlite_tx, &txn.hash, txn)?;
             }
             for (addr, txn_hash) in touched_addresses {
                 self.db

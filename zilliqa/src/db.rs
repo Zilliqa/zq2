@@ -28,7 +28,7 @@ use crate::{
     message::{AggregateQc, Block, BlockHeader, QuorumCertificate},
     state::Account,
     time::SystemTime,
-    transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt},
+    transaction::{EvmGas, Log, SignedTransaction, TransactionReceipt, VerifiedTransaction},
 };
 
 macro_rules! sqlify_with_bincode {
@@ -852,14 +852,21 @@ impl Db {
             .collect::<Result<Vec<_>, _>>()?)
     }
 
-    pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<SignedTransaction>> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT data FROM transactions WHERE tx_hash = ?1")?
-            .query_row([txn_hash], |row| row.get(0))
-            .optional()?)
+    pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<VerifiedTransaction>> {
+        Ok(
+            match self
+                .db
+                .lock()
+                .unwrap()
+                .prepare_cached("SELECT data FROM transactions WHERE tx_hash = ?1")?
+                .query_row([txn_hash], |row| row.get(0))
+                .optional()?
+                .map(|x: SignedTransaction| x.verify_bypass())
+            {
+                Some(x) => Some(x?),
+                None => None,
+            },
+        )
     }
 
     pub fn contains_transaction(&self, hash: &Hash) -> Result<bool> {
@@ -877,17 +884,17 @@ impl Db {
         &self,
         sqlite_tx: &Connection,
         hash: &Hash,
-        tx: &SignedTransaction,
+        tx: &VerifiedTransaction,
     ) -> Result<()> {
         sqlite_tx
             .prepare_cached("INSERT OR IGNORE INTO transactions (tx_hash, data) VALUES (?1, ?2)")?
-            .execute((hash, tx))?;
+            .execute((hash, tx.tx.clone()))?;
         Ok(())
     }
 
     /// Insert a transaction whose hash was precalculated, to save a call to calculate_hash() if it
     /// is already known
-    pub fn insert_transaction(&self, hash: &Hash, tx: &SignedTransaction) -> Result<()> {
+    pub fn insert_transaction(&self, hash: &Hash, tx: &VerifiedTransaction) -> Result<()> {
         self.insert_transaction_with_db_tx(&self.db.lock().unwrap(), hash, tx)
     }
 

@@ -397,6 +397,14 @@ impl SignedTransaction {
     }
 
     pub fn verify(self) -> Result<VerifiedTransaction> {
+        self.verify_inner(false)
+    }
+
+    pub fn verify_bypass(self) -> Result<VerifiedTransaction> {
+        self.verify_inner(true)
+    }
+
+    fn verify_inner(self, force: bool) -> Result<VerifiedTransaction> {
         let (tx, signer, hash) = match self {
             SignedTransaction::Legacy { tx, sig } => {
                 let signed = tx.into_signed(sig);
@@ -419,7 +427,10 @@ impl SignedTransaction {
             SignedTransaction::Zilliqa { tx, key, sig } => {
                 let txn_data = encode_zilliqa_transaction(&tx, key);
 
-                schnorr::verify(&txn_data, key, sig).ok_or_else(|| anyhow!("invalid signature"))?;
+                if !force {
+                    schnorr::verify(&txn_data, key, sig)
+                        .ok_or_else(|| anyhow!("invalid signature"))?;
+                }
 
                 let hashed = Sha256::digest(key.to_encoded_point(true).as_bytes());
                 let (_, bytes): (GenericArray<u8, U12>, GenericArray<u8, U20>) = hashed.split();
