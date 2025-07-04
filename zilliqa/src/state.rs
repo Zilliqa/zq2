@@ -20,7 +20,7 @@ use crate::{
     cfg::{Amount, ConsensusConfig, Forks, NodeConfig, ReinitialiseParams, ScillaExtLibsPath},
     contracts::{self, Contract},
     crypto::{self, Hash},
-    db::{Db, TrieStorage},
+    db::{BlockFilter, Db, TrieStorage},
     error::ensure_success,
     message::{Block, BlockHeader, MAX_COMMITTEE_SIZE},
     node::ChainId,
@@ -438,7 +438,7 @@ impl State {
     }
 
     pub fn get_canonical_block_by_number(&self, number: u64) -> Result<Option<Block>> {
-        self.sql.get_canonical_block_by_number(number)
+        self.sql.get_block(BlockFilter::Height(number))
     }
 
     pub fn get_highest_canonical_block_number(&self) -> Result<Option<u64>> {

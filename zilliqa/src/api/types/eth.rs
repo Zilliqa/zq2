@@ -104,14 +104,9 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn from_block(
-        block: &message::Block,
-        miner: Address,
-        block_gas_limit: EvmGas,
-        logs_bloom: [u8; 256],
-    ) -> Self {
+    pub fn from_block(block: &message::Block, miner: Address, block_gas_limit: EvmGas) -> Self {
         Block {
-            header: Header::from_header(block.header, miner, block_gas_limit, logs_bloom),
+            header: Header::from_header(block.header, miner, block_gas_limit),
             size: block.size() as u64,
             transactions: block
                 .transactions
@@ -171,7 +166,6 @@ impl Header {
         header: message::BlockHeader,
         miner: Address,
         block_gas_limit: EvmGas,
-        logs_bloom: [u8; 256],
     ) -> Self {
         // TODO(#79): Lots of these fields are empty/zero and shouldn't be.
         Header {
@@ -198,7 +192,7 @@ impl Header {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            logs_bloom,
+            logs_bloom: [0; 256],
         }
     }
 }
