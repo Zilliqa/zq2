@@ -569,7 +569,7 @@ pub async fn convert_persistence(
                 if let Err(err) = zq2_db.insert_transaction_with_db_tx(
                     sqlite_tx,
                     hash,
-                    &transaction.clone().verify_override(),
+                    &transaction.clone().verify_bypass()?,
                 ) {
                     warn!(
                         "Unable to insert transaction with id: {:?} to db, err: {:?}",

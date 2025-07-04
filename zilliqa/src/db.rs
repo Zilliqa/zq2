@@ -853,14 +853,20 @@ impl Db {
     }
 
     pub fn get_transaction(&self, txn_hash: &Hash) -> Result<Option<VerifiedTransaction>> {
-        Ok(self
-            .db
-            .lock()
-            .unwrap()
-            .prepare_cached("SELECT data FROM transactions WHERE tx_hash = ?1")?
-            .query_row([txn_hash], |row| row.get(0))
-            .optional()?
-            .map(|x: SignedTransaction| x.verify_override()))
+        Ok(
+            match self
+                .db
+                .lock()
+                .unwrap()
+                .prepare_cached("SELECT data FROM transactions WHERE tx_hash = ?1")?
+                .query_row([txn_hash], |row| row.get(0))
+                .optional()?
+                .map(|x: SignedTransaction| x.verify_bypass())
+            {
+                Some(x) => Some(x?),
+                None => None,
+            },
+        )
     }
 
     pub fn contains_transaction(&self, hash: &Hash) -> Result<bool> {

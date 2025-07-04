@@ -385,8 +385,8 @@ impl SignedTransaction {
         self.verify_inner(false)
     }
 
-    pub fn verify_override(self) -> VerifiedTransaction {
-        self.verify_inner(true).unwrap()
+    pub fn verify_bypass(self) -> Result<VerifiedTransaction> {
+        self.verify_inner(true)
     }
 
     fn verify_inner(self, force: bool) -> Result<VerifiedTransaction> {
