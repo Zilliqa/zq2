@@ -460,4 +460,38 @@ contract ScillaInterop {
         uint128 afterWrite = readMapUint128(scillaContract, fieldName, arg1);
         require(afterWrite == arg2, "Value must be arg2");
     }
+
+    function callScillaCheckChangeRevert(
+        address scillaContract,
+        string memory transitionName,
+        address arg1,
+        uint128 arg2,
+        string memory fieldName
+    ) public {
+        scillaContract.callScilla(transitionName, arg1, arg2);
+        uint128 afterWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(afterWrite == arg2, "Value must be arg2");
+        revert();
+    }
+
+    function readAfterWriteWithRevert(
+        address scillaContract,
+        string memory transitionName,
+        address arg1,
+        uint128 arg2,
+        string memory fieldName
+    ) public {
+        uint128 beforeWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(beforeWrite == 0, "Value must be 0");
+
+        (bool ok, ) = address(this).call(
+            abi.encodeWithSelector(
+                this.callScillaCheckChangeRevert.selector,
+                scillaContract, transitionName, arg1, arg2, fieldName));
+
+        require(!ok, "This call must fail!");
+
+        uint128 afterWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(afterWrite == 0, "Value must be 0");
+    }
 }
