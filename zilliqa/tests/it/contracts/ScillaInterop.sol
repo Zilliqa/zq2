@@ -495,7 +495,13 @@ contract ScillaInterop {
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
                 this.callScillaCheckChangeRevert.selector,
-                scillaContract, transitionName, arg1, arg2, fieldName));
+                scillaContract,
+                transitionName,
+                arg1,
+                arg2,
+                fieldName
+            )
+        );
 
         require(!ok, "This call must fail!");
 
