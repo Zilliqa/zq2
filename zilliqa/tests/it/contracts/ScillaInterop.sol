@@ -443,7 +443,11 @@ contract ScillaInterop {
         address SOME_RANDOM_ADDRESS = 0x00000000005a494c4445504f53495450524f5859;
 
         // reads to SOME_RANDOM_ADDRESS should give 0 before and after the call
-        uint128 beforeWriteRandAddr = readMapUint128(scillaContract, fieldName, SOME_RANDOM_ADDRESS);
+        uint128 beforeWriteRandAddr = readMapUint128(
+            scillaContract,
+            fieldName,
+            SOME_RANDOM_ADDRESS
+        );
         require(beforeWriteRandAddr == 0, "Value must be 0");
 
         // This is the key of our interest - before calling transition its value is 0
@@ -453,7 +457,11 @@ contract ScillaInterop {
         scillaContract.callScilla(transitionName, arg1, arg2);
 
         // reads to SOME_RANDOM_ADDRESS still gives 0
-        uint128 afterWriteRandAddr = readMapUint128(scillaContract, fieldName, SOME_RANDOM_ADDRESS);
+        uint128 afterWriteRandAddr = readMapUint128(
+            scillaContract,
+            fieldName,
+            SOME_RANDOM_ADDRESS
+        );
         require(afterWriteRandAddr == 0, "Value must be 0");
 
         // Transition has updated this key so it should return updated value
