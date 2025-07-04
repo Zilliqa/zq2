@@ -98,6 +98,8 @@ impl Default for ScillaServer {
 
         let child = Command::new("docker")
             .arg("run")
+            .arg("--platform")
+            .arg("linux/amd64")
             .arg("--name")
             .arg(&container_name)
             // Let Docker auto-assign a free port on the host. The scilla-server listens on port 3000.

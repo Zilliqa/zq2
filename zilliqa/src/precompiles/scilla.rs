@@ -5,15 +5,9 @@ use alloy::{
     sol_types::{SolValue, abi::Decoder},
 };
 use anyhow::{Result, anyhow};
-use revm::{
-    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
-    handler::register::EvmHandler,
-    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
-    precompile::PrecompileError,
-    primitives::{
-        Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
-    },
-};
+use revm::{ContextStatefulPrecompile, FrameOrResult, InnerEvmContext, handler::register::EvmHandler, interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult}, precompile::PrecompileError, primitives::{
+    Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
+}, FrameResult};
 use scilla_parser::{
     ast::nodes::{
         NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
@@ -392,7 +386,28 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         }
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
-        prev_handle(ctx, inputs)
+        let result = prev_handle(ctx, inputs);
+
+        match &result {
+            Ok(frame_or_result) => {
+                if let FrameOrResult::Result(frame_result) = frame_or_result {
+                    match frame_result {
+                        FrameResult::Create(outcome) => {
+                            if outcome.result.is_error() || outcome.result.is_revert() {
+                                ctx.external.has_evm_failed = true;
+                            }
+                        },
+                        _ => {
+                            return result
+                        }
+                    }
+                }
+            },
+            Err(_) => {
+                ctx.external.has_evm_failed = true;
+            }
+        }
+        result
     });
 
     // EOF create handler
@@ -407,7 +422,29 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         }
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
-        prev_handle(ctx, inputs)
+        let result = prev_handle(ctx, inputs);
+
+        match &result {
+            Ok(frame_or_result) => {
+                if let FrameOrResult::Result(frame_result) = frame_or_result {
+                    match frame_result {
+                        FrameResult::EOFCreate(outcome) => {
+                           if outcome.result.is_error() || outcome.result.is_revert() {
+                               ctx.external.has_evm_failed = true;
+                           }
+                        },
+                        _ => {
+                            return result
+                        }
+                    }
+                }
+            },
+            Err(_) => {
+                ctx.external.has_evm_failed = true;
+            }
+        }
+        result
+
     });
 
     // Call handler
@@ -423,7 +460,28 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
         if inputs.bytecode_address != Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53") {
-            return prev_handle(ctx, inputs);
+            let result = prev_handle(ctx, inputs);
+
+            match &result {
+                Ok(frame_or_result) => {
+                    if let FrameOrResult::Result(frame_result) = frame_or_result {
+                        match frame_result {
+                            FrameResult::Call(outcome) => {
+                                if outcome.result.is_error() || outcome.result.is_revert() {
+                                    ctx.external.has_evm_failed = true;
+                                }
+                            },
+                            _ => {
+                                return result
+                            }
+                        }
+                    }
+                },
+                Err(_) => {
+                    ctx.external.has_evm_failed = true;
+                }
+            }
+            return result
         }
 
         let gas = Gas::new(inputs.gas_limit);
@@ -432,6 +490,10 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
             .fork
             .scilla_call_gas_exempt_addrs
             .contains(&inputs.caller);
+
+        if gas_exempt {
+            ctx.external.has_touched_whitelisted_addresses = true;
+        }
 
         // The behaviour is different for contracts having 21k gas and/or deployed with zq1
         // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
