@@ -609,6 +609,7 @@ pub struct Fork {
     pub fund_accounts_from_zero_account: Vec<(Address, Amount)>,
     pub scilla_delta_maps_are_applied_correctly: bool,
     pub scilla_server_unlimited_response_size: bool,
+    pub evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: bool,
 }
 
 pub enum ForkName {
@@ -703,6 +704,8 @@ pub struct ForkDelta {
     /// call. If false, the size is limited to 10 MiB. Any responses larger than this will lead to a failed
     /// transaction.
     pub scilla_server_unlimited_response_size: Option<bool>,
+
+    pub evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: Option<bool>,
 }
 
 impl Fork {
@@ -764,6 +767,9 @@ impl Fork {
             scilla_server_unlimited_response_size: delta
                 .scilla_server_unlimited_response_size
                 .unwrap_or(self.scilla_server_unlimited_response_size),
+            evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: delta
+                .evm_exec_failure_causes_scilla_whitelisted_addr_to_fail
+                .unwrap_or(self.evm_exec_failure_causes_scilla_whitelisted_addr_to_fail),
         }
     }
 }
@@ -850,6 +856,7 @@ pub fn genesis_fork_default() -> Fork {
         fund_accounts_from_zero_account: vec![],
         scilla_delta_maps_are_applied_correctly: true,
         scilla_server_unlimited_response_size: true,
+        evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: true,
     }
 }
 
@@ -988,6 +995,7 @@ mod tests {
                 fund_accounts_from_zero_account: None,
                 scilla_delta_maps_are_applied_correctly: None,
                 scilla_server_unlimited_response_size: None,
+                evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None
             }],
             ..Default::default()
         };
@@ -1029,6 +1037,7 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1050,6 +1059,7 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
             ],
             ..Default::default()
@@ -1105,6 +1115,7 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1126,6 +1137,7 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
             ],
             ..Default::default()
@@ -1172,6 +1184,7 @@ mod tests {
                 fund_accounts_from_zero_account: vec![],
                 scilla_delta_maps_are_applied_correctly: true,
                 scilla_server_unlimited_response_size: true,
+                evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1206,6 +1219,7 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1227,6 +1241,7 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
             ],
             ..Default::default()
