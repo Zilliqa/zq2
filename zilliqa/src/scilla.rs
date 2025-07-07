@@ -321,7 +321,11 @@ impl Scilla {
 
             match response {
                 Ok(r) => break r,
-                Err(ClientError::Call(e)) => break serde_json::from_str(e.message())?,
+                Err(ClientError::Call(e)) => {
+                    let error_message = e.message();
+                    tracing::error!(%error_message, "Check error");
+                    break serde_json::from_str(error_message)?;
+                }
                 Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
                     tracing::warn!(%attempt, "Check retry");
                     attempt += 1;
@@ -396,7 +400,11 @@ impl Scilla {
 
             match response {
                 Ok(r) => break (r, state),
-                Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
+                Err(ClientError::Call(e)) => {
+                    let error_message = e.message();
+                    tracing::error!(%error_message, "Create error");
+                    break (serde_json::from_str(error_message)?, state);
+                }
                 Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
                     tracing::warn!(%attempt, "Create retry");
                     attempt += 1;
@@ -473,7 +481,11 @@ impl Scilla {
 
             match response {
                 Ok(r) => break (r, state),
-                Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
+                Err(ClientError::Call(e)) => {
+                    let error_message = e.message();
+                    tracing::error!(%error_message, "Invoke error");
+                    break (serde_json::from_str(error_message)?, state);
+                }
                 Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
                     tracing::warn!(%attempt, "Invoke retry");
                     attempt += 1;
