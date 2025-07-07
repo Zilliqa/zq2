@@ -238,6 +238,10 @@ pub struct Consensus {
 impl Consensus {
     // determined empirically
     const PROP_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of 1MB
+    // range of views to buffer votes for
+    const VIEW_BUFFER_RANGE: u64 = 500;
+    // maximum number of votes to buffer for each view
+    const MAX_VOTES_PER_VIEW: usize = crate::message::MAX_COMMITTEE_SIZE * 2 / 3;
 
     pub fn new(
         secret_key: SecretKey,
@@ -1101,9 +1105,12 @@ impl Consensus {
         let current_view = self.get_view()?;
         info!(block_view, current_view, %block_hash, "handling vote from: {:?}", peer_id);
 
-        // if the vote is too old and does not count anymore
+        // if the vote is too old; or too new
         if block_view + 1 < current_view {
             trace!("vote is too old");
+            return Ok(None);
+        } else if block_view > current_view + Self::VIEW_BUFFER_RANGE {
+            trace!("vote is too early");
             return Ok(None);
         }
 
@@ -1115,14 +1122,16 @@ impl Consensus {
 
         // Retrieve the actual block this vote is for.
         let Some(block) = self.get_block(&block_hash)? else {
-            trace!("vote for unknown block, buffering");
             // If we don't have the block yet, we buffer the vote in case we recieve the block later. Note that we
             // don't know the leader of this view without the block, so we may be storing this unnecessarily, however
             // non-malicious nodes should only have sent us this vote if they thought we were the leader.
-            self.buffered_votes
-                .entry(block_hash)
-                .or_default()
-                .push((peer_id, vote));
+            let mut buf = self.buffered_votes.entry(block_hash).or_default();
+            if buf.len() < Self::MAX_VOTES_PER_VIEW {
+                trace!("vote for unknown block, buffering");
+                buf.push((peer_id, vote));
+            } else {
+                trace!("vote for unknown block, dropping");
+            }
             return Ok(None);
         };
 
