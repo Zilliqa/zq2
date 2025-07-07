@@ -580,6 +580,10 @@ impl Forks {
                 ForkName::FundAccountsFromZeroAccount => {
                     !fork.fund_accounts_from_zero_account.is_empty()
                 }
+                ForkName::ScillaFailedTxnCorrectBalanceDeduction => {
+                    fork.scilla_failed_txn_correct_balance_deduction
+                }
+                ForkName::ScillaTransitionsProperOrder => fork.scilla_transition_proper_order,
             } {
                 return Some(fork.at_height);
             }
@@ -609,6 +613,8 @@ pub struct Fork {
     pub fund_accounts_from_zero_account: Vec<(Address, Amount)>,
     pub scilla_delta_maps_are_applied_correctly: bool,
     pub scilla_server_unlimited_response_size: bool,
+    pub scilla_failed_txn_correct_balance_deduction: bool,
+    pub scilla_transition_proper_order: bool,
 }
 
 pub enum ForkName {
@@ -624,6 +630,8 @@ pub enum ForkName {
     ScillaBlockNumberReturnsCurrentBlock,
     ScillaMapsAreEncodedCorrectly,
     FundAccountsFromZeroAccount,
+    ScillaFailedTxnCorrectBalanceDeduction,
+    ScillaTransitionsProperOrder,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -703,6 +711,12 @@ pub struct ForkDelta {
     /// call. If false, the size is limited to 10 MiB. Any responses larger than this will lead to a failed
     /// transaction.
     pub scilla_server_unlimited_response_size: Option<bool>,
+    /// If true, for failed scilla transaction there will be only fee taken from sender balance and possible
+    /// balance subtractions caused by scilla transitions will be discarded
+    pub scilla_failed_txn_correct_balance_deduction: Option<bool>,
+    /// If true, scilla transitions are pushed on the stack onto stack in the same order as they were
+    /// emitted from scilla call
+    pub scilla_transition_proper_order: Option<bool>,
 }
 
 impl Fork {
@@ -764,6 +778,12 @@ impl Fork {
             scilla_server_unlimited_response_size: delta
                 .scilla_server_unlimited_response_size
                 .unwrap_or(self.scilla_server_unlimited_response_size),
+            scilla_failed_txn_correct_balance_deduction: delta
+                .scilla_failed_txn_correct_balance_deduction
+                .unwrap_or(self.scilla_failed_txn_correct_balance_deduction),
+            scilla_transition_proper_order: delta
+                .scilla_transition_proper_order
+                .unwrap_or(self.scilla_transition_proper_order),
         }
     }
 }
@@ -850,6 +870,8 @@ pub fn genesis_fork_default() -> Fork {
         fund_accounts_from_zero_account: vec![],
         scilla_delta_maps_are_applied_correctly: true,
         scilla_server_unlimited_response_size: true,
+        scilla_failed_txn_correct_balance_deduction: true,
+        scilla_transition_proper_order: true,
     }
 }
 
@@ -988,6 +1010,8 @@ mod tests {
                 fund_accounts_from_zero_account: None,
                 scilla_delta_maps_are_applied_correctly: None,
                 scilla_server_unlimited_response_size: None,
+                scilla_failed_txn_correct_balance_deduction: None,
+                scilla_transition_proper_order: None,
             }],
             ..Default::default()
         };
@@ -1029,6 +1053,8 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1050,6 +1076,8 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
                 },
             ],
             ..Default::default()
@@ -1105,6 +1133,8 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1126,6 +1156,8 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
                 },
             ],
             ..Default::default()
@@ -1172,6 +1204,8 @@ mod tests {
                 fund_accounts_from_zero_account: vec![],
                 scilla_delta_maps_are_applied_correctly: true,
                 scilla_server_unlimited_response_size: true,
+                scilla_failed_txn_correct_balance_deduction: true,
+                scilla_transition_proper_order: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1206,6 +1240,8 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1227,6 +1263,8 @@ mod tests {
                     fund_accounts_from_zero_account: None,
                     scilla_delta_maps_are_applied_correctly: None,
                     scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
                 },
             ],
             ..Default::default()

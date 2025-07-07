@@ -236,8 +236,15 @@ pub fn scilla_test_contract_code() -> String {
 
         library HelloWorld
 
+        let one_msg =
+          fun (msg : Message) =>
+          let nil_msg = Nil {Message} in
+            Cons {Message} msg nil_msg
+
         let one = Uint32 1
         let two = Uint32 2
+
+        let amnt = Uint128 0
 
         contract HelloWorld
         (owner: ByStr20)
@@ -292,6 +299,17 @@ pub fn scilla_test_contract_code() -> String {
         b <- foobar;
         e = {_eventname: "fields"; a_one: a_one; b: b};
         event e
+        end
+
+        transition callFailure(addr: ByStr20)
+          accept;
+          msg = { _tag : "failure"; _recipient : addr; _amount : amnt };
+          msgs = one_msg msg;
+          send msgs
+        end
+
+        transition failure()
+            throw
         end
     "#,
     )
@@ -3387,6 +3405,99 @@ async fn nested_maps_insert_removal(mut network: Network) {
         let event = &txn["receipt"]["event_logs"][0];
         assert_eq!(event["params"][0]["value"], "failed");
     }
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn failed_scilla_contract_proper_fee(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
+
+    let initial_balance = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+    let gas_limit = 50_000;
+
+    let amount_to_transfer = 10 * 10u128.pow(12);
+
+    let call = format!(
+        r#"{{
+        "_tag": "callFailure",
+        "_amount": "0x{amount_to_transfer:x}",
+        "params": [
+            {{
+                "vname": "addr",
+                "type": "ByStr20",
+                "value": "0x{contract_address:x}"
+            }}
+        ]
+         }}"#
+    );
+
+    let response = issue_create_transaction(
+        &wallet,
+        &secret_key.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key,
+        2,
+        ToAddr::Address(contract_address),
+        amount_to_transfer,
+        gas_limit as u64,
+        None,
+        Some(&call),
+    )
+    .await
+    .unwrap();
+
+    let txn_hash: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+
+    network
+        .run_until_async(
+            || async {
+                let response: Result<GetTxResponse, _> = wallet
+                    .provider()
+                    .request("GetTransaction", [txn_hash])
+                    .await;
+                response.is_ok()
+            },
+            400,
+        )
+        .await
+        .unwrap();
+
+    let eth_receipt = wallet
+        .get_transaction_receipt(txn_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(eth_receipt.status.unwrap().as_u32(), 0);
+
+    // Verify the sender's nonce has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [address])
+        .await
+        .unwrap();
+    println!("GetBalance() after transfer = {response:?}");
+    assert_eq!(response["nonce"].as_u64().unwrap(), 2);
+
+    let transaction_fee: u128 =
+        (eth_receipt.cumulative_gas_used * eth_receipt.effective_gas_price.unwrap()).as_u128();
+
+    let balance_after_failed_call = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    assert_eq!(balance_after_failed_call, initial_balance - transaction_fee);
 }
 
 #[zilliqa_macros::test]
