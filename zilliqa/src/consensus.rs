@@ -241,7 +241,7 @@ impl Consensus {
     // range of views to buffer votes for
     const VIEW_BUFFER_RANGE: u64 = 500;
     // maximum number of votes to buffer for each view
-    const MAX_VOTES_PER_VIEW: usize = crate::message::MAX_COMMITTEE_SIZE * 2 / 3;
+    const MAX_VOTES_PER_VIEW: usize = crate::message::MAX_COMMITTEE_SIZE;
 
     pub fn new(
         secret_key: SecretKey,
