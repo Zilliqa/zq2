@@ -43,7 +43,7 @@ use crate::{
     message::Block,
     node::Node,
     pool::TxAddResult,
-    state::Code,
+    state::{Account, Code},
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction},
 };
@@ -1008,8 +1008,18 @@ fn fee_history(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 
 /// eth_getAccount
 /// Retrieve account details by specifying an address and a block number/tag.
-fn get_account(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
-    Err(anyhow!("API method eth_getAccount is not implemented yet"))
+fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<Account> {
+    let mut params = params.sequence();
+    let address: ZilAddress = params.next()?;
+    let address: Address = address.into();
+    let block_id: BlockId = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
+
+    let node = node.read();
+    let block = node.get_block(block_id)?;
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
+    node.get_state(&block)?.get_account(address)
 }
 
 /// eth_getFilterChanges
