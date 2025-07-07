@@ -147,7 +147,7 @@ impl Sync {
     // Mitigate DoS
     const MAX_BATCH_SIZE: usize = 100;
     // Cache recent block sizes
-    const MAX_CACHE_SIZE: usize = 10000;
+    const MAX_CACHE_SIZE: usize = 100_000;
     // Timeout for passive-sync/prune
     const PRUNE_TIMEOUT_MS: u128 = 1000;
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
@@ -879,10 +879,14 @@ impl Sync {
                 warn!("sync::MultiBlockRequest : skipping ZQ1");
                 break;
             }
-            cbor_size = cbor_size.saturating_add(
-                cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &hash)?.len(),
-            );
-            proposals.push(self.block_to_proposal(block));
+            let proposal = self.block_to_proposal(block);
+            let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
+                cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
+                    .unwrap()
+                    .len()
+            });
+            cbor_size = cbor_size.saturating_add(encoded_size);
+            proposals.push(proposal);
         }
 
         let message = ExternalMessage::MultiBlockResponse(proposals);
@@ -1246,11 +1250,14 @@ impl Sync {
                 // pseudo-LRU approximation
                 if self.size_cache.len() > Self::MAX_CACHE_SIZE {
                     let mut rng = rand::thread_rng();
-                    self.size_cache.retain(|_, _| rng.gen_bool(0.9));
+                    self.size_cache.retain(|_, _| rng.gen_bool(0.99));
                 }
                 // A large block can cause a node to get stuck syncing since no node can respond to the request in time.
                 let proposal = self.block_to_proposal(block.clone());
-                let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal).unwrap().len();
+                let encoded_size =
+                    cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
+                        .unwrap()
+                        .len();
                 self.size_cache.insert(hash, encoded_size);
                 encoded_size
             });
