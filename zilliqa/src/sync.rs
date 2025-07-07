@@ -866,7 +866,11 @@ impl Sync {
 
         let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
+        let mut cbor_size = 0;
         for hash in request {
+            if cbor_size > Self::RESPONSE_SIZE_THRESHOLD {
+                break; // response size limit reached
+            }
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
@@ -875,6 +879,9 @@ impl Sync {
                 warn!("sync::MultiBlockRequest : skipping ZQ1");
                 break;
             }
+            cbor_size = cbor_size.saturating_add(
+                cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &hash)?.len(),
+            );
             proposals.push(self.block_to_proposal(block));
         }
 
