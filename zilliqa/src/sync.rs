@@ -145,7 +145,7 @@ impl Sync {
     // Speed up by fetching multiple segments in Phase 1.
     const MAX_CONCURRENT_PEERS: usize = 10;
     // Mitigate DoS
-    const MAX_BATCH_SIZE: usize = 1000;
+    const MAX_BATCH_SIZE: usize = 100;
     // Cache recent block sizes
     const MAX_CACHE_SIZE: usize = 10000;
     // Timeout for passive-sync/prune
@@ -164,11 +164,11 @@ impl Sync {
         let max_batch_size = config
             .sync
             .block_request_batch_size
-            .clamp(100, Self::MAX_BATCH_SIZE);
-        let max_blocks_in_flight = config
-            .sync
-            .max_blocks_in_flight
-            .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
+            .clamp(10, Self::MAX_BATCH_SIZE); // reduce the max batch size - 100 is more than sufficient; less may work too.
+        let max_blocks_in_flight = config.sync.max_blocks_in_flight.clamp(
+            max_batch_size,
+            Self::MAX_BATCH_SIZE * Self::MAX_CONCURRENT_PEERS, // phase 2 buffering - 1000 is more than sufficient; more may work too.
+        );
         let sync_base_height = config.sync.base_height;
         let prune_interval = config.sync.prune_interval;
         // Start from reset, or continue sync
