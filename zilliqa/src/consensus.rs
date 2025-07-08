@@ -28,7 +28,7 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
-    cfg::{ConsensusConfig, ForkName, NodeConfig},
+    cfg::{ConsensusConfig, ForkName, NodeConfig, XSGD_CODE, XSGD_MAINNET_ADDR},
     constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
@@ -44,7 +44,7 @@ use crate::{
         PendingOrQueued, TransactionPool, TxAddResult, TxPoolContent, TxPoolContentFrom,
         TxPoolStatus,
     },
-    state::State,
+    state::{Code, State},
     sync::{Sync, SyncPeers},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -3284,6 +3284,22 @@ impl Consensus {
                     }
                 }
             };
+        }
+
+        if fork.restore_xsgd_contract {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RestoreXsgdContract)
+            {
+                if fork_height == block.header.number {
+                    let code: Code = serde_json::from_slice(&hex::decode(XSGD_CODE)?)?;
+                    state.mutate_account(XSGD_MAINNET_ADDR, |a| {
+                        a.code = code;
+                        Ok(())
+                    })?;
+                }
+            }
         }
 
         if self.block_is_first_in_epoch(block.header.number) {
