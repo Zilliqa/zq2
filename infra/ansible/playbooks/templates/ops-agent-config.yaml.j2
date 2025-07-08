@@ -53,7 +53,7 @@ metrics:
                 action: keep
 {% if ethereum_metrics_exporter_image is defined and ethereum_metrics_exporter_image != "" %}
           - job_name: 'ethereum_metrics_exporter'
-            scrape_interval: 15s
+            scrape_interval: 30s
             static_configs:
               - targets: ['localhost:9090']
 {% endif %}
