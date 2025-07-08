@@ -27,8 +27,8 @@ async-trait = "0.1.88"
 base64 = "0.22.0"
 bitvec = "1.0.1"
 blsful = { git = "https://github.com/JamesHinshelwood/agora-blsful", branch = "update-blstrs"}
-clap = {version = "4.5.37", features = ["derive"]}
-clap-verbosity-flag = "3.0.2"
+clap = {version = "4.5.40", features = ["derive"]}
+clap-verbosity-flag = "3.0.3"
 cliclack = "0.3.6"
 colored = "3.0.0"
 env_logger = "0.11.8"
@@ -44,13 +44,13 @@ jsonrpsee = {version = "0.24.8", features = ["client"]}
 k256 = "0.13.4"
 lazy_static = "1.5.0"
 libp2p = { version = "0.56.0", features = ["identify"]}
-log = "0.4.26"
-parking_lot = "0.12.3"
+log = "0.4.27"
+parking_lot = "0.12.4"
 primitive-types = "0.12.2"
 prost = "0.13.5"
 rand = "0.8.5"
 regex = "1.11.1"
-reqwest = {version = "0.12.14", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
+reqwest = {version = "0.12.15", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
 revm = {version = "19.6.0", features = ["optional_balance_check"]}
 rs-leveldb = "0.1.5"
 rustls = "0.23.23"
@@ -67,7 +67,7 @@ tera = "1.19.1"
 thiserror = "2.0.12"
 tokio = {version = "1.44.2", features = ["macros", "rt-multi-thread", "sync", "io-std", "io-util", "process", "fs"]}
 tokio-stream = "0.1.17"
-toml = { version = "0.8.21", features = ["preserve_order"] }
+toml = { version = "0.8.23", features = ["preserve_order"] }
 tracing = "0.1.41"
 url = "2.5.4"
 zilliqa = {path = "../zilliqa"}
