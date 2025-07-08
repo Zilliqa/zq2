@@ -1491,18 +1491,26 @@ fn test_encode_zilliqa_transaction() {
     let encoded = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &data).unwrap();
     let e_data = cbor4ii::serde::from_slice::<SignedTransaction>(&encoded).unwrap();
 
+    let new_bin = bincode::serialize(&data).unwrap();
+
     ser_signature::new_format(false);
     let partial = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &data).unwrap();
+    let p_data = cbor4ii::serde::from_slice::<SignedTransaction>(&partial).unwrap();
 
     ser_pubkey::new_format(false);
     let original = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &data).unwrap();
     let o_data = cbor4ii::serde::from_slice::<SignedTransaction>(&original).unwrap();
 
+    let old_bin = bincode::serialize(&data).unwrap();
+
     // check for difference
+    assert_eq!(o_data, data);
+    assert_eq!(p_data, data);
+    assert_eq!(e_data, data);
+    assert_eq!(new_bin, old_bin); // bincode data should be unchanged
+    // check for size
     assert!(original.len() > 300);
     assert!(partial.len() < 300);
     assert!(partial.len() > 230);
     assert!(encoded.len() < 230); // 4000 txns fit inside 90% of 1MB
-    assert_eq!(o_data, data);
-    assert_eq!(e_data, data);
 }
