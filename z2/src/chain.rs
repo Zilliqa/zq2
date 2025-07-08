@@ -187,6 +187,10 @@ impl Chain {
                 "fund_accounts_from_zero_account": [],
                 "scilla_delta_maps_are_applied_correctly": true,
                 "scilla_server_unlimited_response_size": true,
+                "scilla_failed_txn_correct_balance_deduction": false,
+                "scilla_transition_proper_order": false,
+                "evm_to_scilla_value_transfer_zero": false,
+                "restore_xsgd_contract": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -208,6 +212,10 @@ impl Chain {
                 "fund_accounts_from_zero_account": [],
                 "scilla_delta_maps_are_applied_correctly": false, // differs from default
                 "scilla_server_unlimited_response_size": false, // differs from default
+                "scilla_failed_txn_correct_balance_deduction": false,
+                "scilla_transition_proper_order": false,
+                "evm_to_scilla_value_transfer_zero": false,
+                "restore_xsgd_contract": false,
             })),
             _ => None,
         }
@@ -308,6 +316,8 @@ impl Chain {
                         "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057",
                     ],
                 }),
+                // estimated: 2025-07-09T07.00.00Z
+                json!({ "at_height": 9341630, "scilla_failed_txn_correct_balance_deduction": true, "scilla_transition_proper_order": true, "evm_to_scilla_value_transfer_zero": true, "restore_xsgd_contract": true }),
             ]),
             Chain::Zq2Mainnet => Some(vec![
                 json!({ "at_height": 4770088, "executable_blocks": true }),
@@ -338,6 +348,8 @@ impl Chain {
                 }),
                 // estimated: 2025-06-30T14:54:22Z
                 json!({ "at_height": 4986000, "scilla_server_unlimited_response_size": true }),
+                // estimated: 2025-07-09T12.00.00Z
+                json!({ "at_height": 5528557, "scilla_failed_txn_correct_balance_deduction": true, "scilla_transition_proper_order": true, "evm_to_scilla_value_transfer_zero": true, "restore_xsgd_contract": true }),
             ]),
             _ => None,
         }
