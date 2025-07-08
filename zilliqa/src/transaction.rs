@@ -176,7 +176,7 @@ pub enum SignedTransaction {
 // https://github.com/Zilliqa/zq2/issues/2922
 //
 mod ser_signature {
-    use serde::{Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::RwLock;
 
     use super::schnorr::Signature;
@@ -192,8 +192,9 @@ mod ser_signature {
     where
         S: Serializer,
     {
-        if *NEW_FORMAT.read().unwrap() {
-            let bytes = signature.to_bytes();
+        let type_name = std::any::type_name::<S>();
+        if type_name.contains("cbor4ii::serde::") && *NEW_FORMAT.read().unwrap() {
+            let bytes = signature.to_vec();
             serializer.serialize_bytes(bytes.as_slice())
         } else {
             signature.serialize(serializer) // default format
@@ -202,7 +203,7 @@ mod ser_signature {
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Signature, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         struct PublicKeyVisitor;
 
@@ -233,14 +234,19 @@ mod ser_signature {
                 Signature::from_slice(&buf).map_err(serde::de::Error::custom) // map_err
             }
         }
-        deserializer.deserialize_any(PublicKeyVisitor)
+        let type_name = std::any::type_name::<D>();
+        if type_name.contains("cbor4ii::serde::") {
+            deserializer.deserialize_any(PublicKeyVisitor)
+        } else {
+            Signature::deserialize(deserializer)
+        }
     }
 }
 
 mod ser_pubkey {
     use super::schnorr::PublicKey;
     use k256::{elliptic_curve::sec1::ToEncodedPoint, pkcs8::DecodePublicKey};
-    use serde::Serialize;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::RwLock;
 
     static NEW_FORMAT: RwLock<bool> = RwLock::new(true);
@@ -252,9 +258,10 @@ mod ser_pubkey {
 
     pub fn serialize<S>(public_key: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
-        if *NEW_FORMAT.read().unwrap() {
+        let type_name = std::any::type_name::<S>();
+        if type_name.contains("cbor4ii::serde::") && *NEW_FORMAT.read().unwrap() {
             let bytes = public_key.to_encoded_point(true);
             serializer.serialize_bytes(bytes.as_bytes())
         } else {
@@ -264,7 +271,7 @@ mod ser_pubkey {
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<PublicKey, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         struct PublicKeyVisitor;
 
@@ -295,7 +302,12 @@ mod ser_pubkey {
                 PublicKey::from_public_key_der(&buf).map_err(serde::de::Error::custom) // map_err
             }
         }
-        deserializer.deserialize_any(PublicKeyVisitor)
+        let type_name = std::any::type_name::<D>();
+        if type_name.contains("cbor4ii::serde::") {
+            deserializer.deserialize_any(PublicKeyVisitor)
+        } else {
+            PublicKey::deserialize(deserializer)
+        }
     }
 }
 
