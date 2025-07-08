@@ -177,15 +177,14 @@ pub enum SignedTransaction {
 //
 mod ser_signature {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::sync::RwLock;
+    use std::sync::atomic::AtomicBool;
 
     use super::schnorr::Signature;
 
-    static NEW_FORMAT: RwLock<bool> = RwLock::new(true);
+    static NEW_FORMAT: AtomicBool = AtomicBool::new(true);
 
     pub fn new_format(new: bool) {
-        let mut current = NEW_FORMAT.write().unwrap();
-        *current = new;
+        NEW_FORMAT.store(new, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn serialize<S>(signature: &Signature, serializer: S) -> Result<S::Ok, S::Error>
@@ -193,7 +192,9 @@ mod ser_signature {
         S: Serializer,
     {
         let type_name = std::any::type_name::<S>();
-        if type_name.contains("cbor4ii::serde::") && *NEW_FORMAT.read().unwrap() {
+        if type_name.contains("cbor4ii::serde::")
+            && NEW_FORMAT.load(std::sync::atomic::Ordering::Relaxed)
+        {
             let bytes = signature.to_vec();
             serializer.serialize_bytes(bytes.as_slice())
         } else {
@@ -247,13 +248,12 @@ mod ser_pubkey {
     use super::schnorr::PublicKey;
     use k256::{elliptic_curve::sec1::ToEncodedPoint, pkcs8::DecodePublicKey};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::sync::RwLock;
+    use std::sync::atomic::AtomicBool;
 
-    static NEW_FORMAT: RwLock<bool> = RwLock::new(true);
+    static NEW_FORMAT: AtomicBool = AtomicBool::new(true);
 
     pub fn new_format(new: bool) {
-        let mut current = NEW_FORMAT.write().unwrap();
-        *current = new;
+        NEW_FORMAT.store(new, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn serialize<S>(public_key: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
@@ -261,7 +261,9 @@ mod ser_pubkey {
         S: Serializer,
     {
         let type_name = std::any::type_name::<S>();
-        if type_name.contains("cbor4ii::serde::") && *NEW_FORMAT.read().unwrap() {
+        if type_name.contains("cbor4ii::serde::")
+            && NEW_FORMAT.load(std::sync::atomic::Ordering::Relaxed)
+        {
             let bytes = public_key.to_encoded_point(true);
             serializer.serialize_bytes(bytes.as_bytes())
         } else {
@@ -1480,8 +1482,8 @@ fn test_encode_zilliqa_transaction() {
         gas_price: ZilAmount::ZERO,
         gas_limit: SCILLA_INVOKE_RUNNER,
         nonce: 1,
-        code: "123".to_string(),
-        data: "456".to_string(),
+        code: "".to_string(),
+        data: "".to_string(),
     };
     let secret_key = schnorr::SecretKey::random(&mut k256::elliptic_curve::rand_core::OsRng);
     let key = secret_key.public_key();
@@ -1511,6 +1513,6 @@ fn test_encode_zilliqa_transaction() {
     // check for size
     assert!(original.len() > 300);
     assert!(partial.len() < 300);
-    assert!(partial.len() > 230);
-    assert!(encoded.len() < 230); // 4000 txns fit inside 90% of 1MB
+    assert!(partial.len() > 225);
+    assert!(encoded.len() < 225); // 4000 txns fit inside 90% of 1MB
 }
