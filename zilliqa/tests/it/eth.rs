@@ -30,6 +30,7 @@ async fn call_block_number(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/CallMe.sol",
         "CallMe",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -347,6 +348,7 @@ async fn eth_get_transaction_receipt(mut network: Network) {
     let (hash, _abi) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -393,6 +395,7 @@ async fn get_transaction_receipt_sequential_log_indexes(mut network: Network) {
     let (hash1, abi) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -443,6 +446,7 @@ async fn get_logs(mut network: Network) {
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -633,6 +637,7 @@ async fn get_storage_at(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/Storage.sol",
         "Storage",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -866,6 +871,7 @@ async fn eth_call(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/SetGetContractValue.sol",
         "SetGetContractValue",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -910,6 +916,7 @@ async fn revert_transaction(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/RevertMe.sol",
         "RevertMe",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -962,6 +969,7 @@ async fn gas_charged_on_revert(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/RevertMe.sol",
         "RevertMe",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1309,6 +1317,7 @@ async fn logs_subscription(mut network: Network) {
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1517,6 +1526,7 @@ async fn get_block_receipts(mut network: Network) {
     let (hash1, _) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1655,6 +1665,7 @@ async fn test_log_filter(mut network: Network) {
     let (hash, contract) = deploy_contract(
         "tests/it/contracts/EmitEvents.sol",
         "EmitEvents",
+        0u128,
         &wallet,
         &mut network,
     )

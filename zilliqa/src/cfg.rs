@@ -584,6 +584,7 @@ impl Forks {
                     fork.scilla_failed_txn_correct_balance_deduction
                 }
                 ForkName::ScillaTransitionsProperOrder => fork.scilla_transition_proper_order,
+                ForkName::EvmToScillaValueTransferZero => fork.evm_to_scilla_value_transfer_zero,
             } {
                 return Some(fork.at_height);
             }
@@ -615,6 +616,7 @@ pub struct Fork {
     pub scilla_server_unlimited_response_size: bool,
     pub scilla_failed_txn_correct_balance_deduction: bool,
     pub scilla_transition_proper_order: bool,
+    pub evm_to_scilla_value_transfer_zero: bool,
 }
 
 pub enum ForkName {
@@ -632,6 +634,7 @@ pub enum ForkName {
     FundAccountsFromZeroAccount,
     ScillaFailedTxnCorrectBalanceDeduction,
     ScillaTransitionsProperOrder,
+    EvmToScillaValueTransferZero,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -717,6 +720,8 @@ pub struct ForkDelta {
     /// If true, scilla transitions are pushed on the stack onto stack in the same order as they were
     /// emitted from scilla call
     pub scilla_transition_proper_order: Option<bool>,
+    /// If true, values transfers from evm to scilla contracts are always reset to 0
+    pub evm_to_scilla_value_transfer_zero: Option<bool>,
 }
 
 impl Fork {
@@ -784,6 +789,9 @@ impl Fork {
             scilla_transition_proper_order: delta
                 .scilla_transition_proper_order
                 .unwrap_or(self.scilla_transition_proper_order),
+            evm_to_scilla_value_transfer_zero: delta
+                .evm_to_scilla_value_transfer_zero
+                .unwrap_or(self.evm_to_scilla_value_transfer_zero),
         }
     }
 }
@@ -872,6 +880,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_server_unlimited_response_size: true,
         scilla_failed_txn_correct_balance_deduction: true,
         scilla_transition_proper_order: true,
+        evm_to_scilla_value_transfer_zero: true,
     }
 }
 
@@ -1012,6 +1021,7 @@ mod tests {
                 scilla_server_unlimited_response_size: None,
                 scilla_failed_txn_correct_balance_deduction: None,
                 scilla_transition_proper_order: None,
+                evm_to_scilla_value_transfer_zero: None,
             }],
             ..Default::default()
         };
@@ -1055,6 +1065,7 @@ mod tests {
                     scilla_server_unlimited_response_size: None,
                     scilla_failed_txn_correct_balance_deduction: None,
                     scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1078,6 +1089,7 @@ mod tests {
                     scilla_server_unlimited_response_size: None,
                     scilla_failed_txn_correct_balance_deduction: None,
                     scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
                 },
             ],
             ..Default::default()
@@ -1135,6 +1147,7 @@ mod tests {
                     scilla_server_unlimited_response_size: None,
                     scilla_failed_txn_correct_balance_deduction: None,
                     scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1158,6 +1171,7 @@ mod tests {
                     scilla_server_unlimited_response_size: None,
                     scilla_failed_txn_correct_balance_deduction: None,
                     scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
                 },
             ],
             ..Default::default()
@@ -1206,6 +1220,7 @@ mod tests {
                 scilla_server_unlimited_response_size: true,
                 scilla_failed_txn_correct_balance_deduction: true,
                 scilla_transition_proper_order: true,
+                evm_to_scilla_value_transfer_zero: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1242,6 +1257,7 @@ mod tests {
                     scilla_server_unlimited_response_size: None,
                     scilla_failed_txn_correct_balance_deduction: None,
                     scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1265,6 +1281,7 @@ mod tests {
                     scilla_server_unlimited_response_size: None,
                     scilla_failed_txn_correct_balance_deduction: None,
                     scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
                 },
             ],
             ..Default::default()
