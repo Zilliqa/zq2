@@ -1036,6 +1036,7 @@ async fn scilla_precompiles(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1251,6 +1252,7 @@ async fn mutate_evm_then_read_from_scilla(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1361,6 +1363,7 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1423,6 +1426,111 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
             .as_u128(),
         1_000_000
     );
+}
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn call_scilla_precompile_with_value(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        library HelloWorld
+        let one = Uint128 1
+
+        let one_msg =
+          fun (msg : Message) =>
+          let nil_msg = Nil {Message} in
+            Cons {Message} msg nil_msg
+
+        contract Test
+        ()
+
+        transition justAccept()
+            accept
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    let evm_contract_value = 10_000_000;
+    let value_to_send = evm_contract_value / 2;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        evm_contract_value,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let evm_contract_address = receipt.contract_address.unwrap();
+
+    // Query evm contract balance
+    let evm_contract_zero_balance = wallet
+        .get_balance(evm_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(evm_contract_zero_balance.as_u128(), evm_contract_value);
+
+    // Scilla contract balance is zero
+    let scilla_contract_zero_balance = wallet
+        .get_balance(scilla_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(scilla_contract_zero_balance.as_u128(), 0);
+
+    // Call precompile that sends the value
+    let function = abi.function("callScillaValue").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("justAccept".to_owned()),
+        Token::Uint(value_to_send.into()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(evm_contract_address)
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // Run the transaction.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.status.unwrap().as_u64(), 1);
+
+    // Evm contract balance is untouched
+    let evm_contract_zero_balance = wallet
+        .get_balance(evm_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(evm_contract_zero_balance.as_u128(), evm_contract_value);
+
+    // Scilla contract balance is still zero
+    let scilla_contract_zero_balance = wallet
+        .get_balance(scilla_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(scilla_contract_zero_balance.as_u128(), 0);
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
@@ -1495,6 +1603,7 @@ async fn scilla_call_with_bad_gas(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1605,6 +1714,7 @@ async fn interop_call_then_revert(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )

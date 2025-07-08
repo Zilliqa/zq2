@@ -169,6 +169,7 @@ async fn checkpoints_test(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/Storage.sol",
         "Storage",
+        0u128,
         &wallet,
         &mut network,
     )
