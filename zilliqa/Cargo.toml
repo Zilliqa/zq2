@@ -30,7 +30,7 @@ alloy = { version = "0.12.4", default-features = false, features = ["consensus",
 anyhow = { version = "1.0.98", features = ["backtrace"] }
 async-trait = "0.1.88"
 base64 = "0.22.1"
-bincode = "1.3.3"
+bincode = "2.0.1"
 bitvec = { version = "1.0.1", features = ["serde"] }
 bs58 = "0.5.1"
 bytes = "1.10.0"
