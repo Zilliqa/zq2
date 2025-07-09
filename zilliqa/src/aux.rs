@@ -36,10 +36,6 @@ pub fn check_and_build_ots_indices(db: Arc<Db>, last_view: u64) -> Result<()> {
                     continue;
                 };
 
-                let Ok(txn) = txn.verify() else {
-                    continue;
-                };
-
                 addresses.push(txn.signer);
 
                 let txn = txn.tx.into_transaction();
