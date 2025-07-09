@@ -386,28 +386,16 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         }
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
-        let result = prev_handle(ctx, inputs);
+        return prev_handle(ctx, inputs);
+    });
 
-        match &result {
-            Ok(frame_or_result) => {
-                if let FrameOrResult::Result(frame_result) = frame_or_result {
-                    match frame_result {
-                        FrameResult::Create(outcome) => {
-                            if outcome.result.is_error() || outcome.result.is_revert() {
-                                ctx.external.has_evm_failed = true;
-                            }
-                        },
-                        _ => {
-                            return result
-                        }
-                    }
-                }
-            },
-            Err(_) => {
-                ctx.external.has_evm_failed = true;
-            }
+    // Create result handler
+    let prev_handle = handler.execution.insert_create_outcome.clone();
+    handler.execution.insert_create_outcome = Arc::new(move |ctx, frame, outcome| {
+        if outcome.result.is_error() || outcome.result.is_revert() {
+            ctx.external.has_evm_failed = true;
         }
-        result
+        return prev_handle(ctx, frame, outcome);
     });
 
     // EOF create handler
@@ -422,30 +410,18 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         }
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
-        let result = prev_handle(ctx, inputs);
-
-        match &result {
-            Ok(frame_or_result) => {
-                if let FrameOrResult::Result(frame_result) = frame_or_result {
-                    match frame_result {
-                        FrameResult::EOFCreate(outcome) => {
-                           if outcome.result.is_error() || outcome.result.is_revert() {
-                               ctx.external.has_evm_failed = true;
-                           }
-                        },
-                        _ => {
-                            return result
-                        }
-                    }
-                }
-            },
-            Err(_) => {
-                ctx.external.has_evm_failed = true;
-            }
-        }
-        result
-
+        return prev_handle(ctx, inputs);
     });
+
+    // EOF result handler
+    let prev_handle = handler.execution.insert_eofcreate_outcome.clone();
+    handler.execution.insert_eofcreate_outcome = Arc::new(move |ctx, frame, outcome| {
+        if outcome.result.is_error() || outcome.result.is_revert() {
+            ctx.external.has_evm_failed = true;
+        }
+        return prev_handle(ctx, frame, outcome);
+    });
+
 
     // Call handler
     let prev_handle = handler.execution.call.clone();
@@ -460,28 +436,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
         if inputs.bytecode_address != Address::from(*b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0ZIL\x53") {
-            let result = prev_handle(ctx, inputs);
-
-            match &result {
-                Ok(frame_or_result) => {
-                    if let FrameOrResult::Result(frame_result) = frame_or_result {
-                        match frame_result {
-                            FrameResult::Call(outcome) => {
-                                if outcome.result.is_error() || outcome.result.is_revert() {
-                                    ctx.external.has_evm_failed = true;
-                                }
-                            },
-                            _ => {
-                                return result
-                            }
-                        }
-                    }
-                },
-                Err(_) => {
-                    ctx.external.has_evm_failed = true;
-                }
-            }
-            return result
+            return prev_handle(ctx, inputs);
         }
 
         let gas = Gas::new(inputs.gas_limit);
@@ -491,6 +446,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
             .scilla_call_gas_exempt_addrs
             .contains(&inputs.caller);
 
+        // Record access of whitelisted contract by precompile
         if gas_exempt {
             ctx.external.has_touched_whitelisted_addresses = true;
         }
@@ -554,6 +510,15 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
             result,
             inputs.return_memory_offset.clone(),
         ))
+    });
+
+    // Call result handler
+    let prev_handle = handler.execution.insert_call_outcome.clone();
+    handler.execution.insert_call_outcome = Arc::new(move |ctx, frame, memory, outcome| {
+        if outcome.result.is_error() || outcome.result.is_revert() {
+            ctx.external.has_evm_failed = true;
+        }
+        return prev_handle(ctx, frame, memory, outcome);
     });
 }
 
@@ -653,10 +618,21 @@ fn scilla_call_precompile<I: ScillaInspector>(
         state.evm_state = Some(evmctx.journaled_state.clone());
     }
 
-    let effective_value = if external_context.fork.evm_to_scilla_value_transfer_zero {
-        ZilAmount::from_amount(0)
-    } else {
-        ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to())
+    // 1. if evm_exec_failure_causes_scilla_whitelisted_addr_to_fail == true then we take converted value
+    // 2. if evm_exec_failure_causes_scilla_whitelisted_addr_to_fail == false and evm_to_scilla_value_transfer_zero == true -> we return 0
+    // 3. else we take converted value
+    let effective_value = {
+        match (external_context.fork.evm_exec_failure_causes_scilla_whitelisted_addr_to_fail, external_context.fork.evm_to_scilla_value_transfer_zero) {
+            (true, _) => {
+                ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to())
+            },
+            (false, true) => {
+                ZilAmount::from_amount(0)
+            },
+            _ => {
+                ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to())
+            }
+        }
     };
 
     let scilla = evmctx.db.pre_state.scilla();

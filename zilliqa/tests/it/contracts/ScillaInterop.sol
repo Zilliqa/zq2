@@ -519,7 +519,7 @@ contract ScillaInterop {
         revert();
     }
 
-    function readAfterWriteWithRevert(
+    function makeNestedPrecompileCallWhichReverts(
         address scillaContract,
         string memory transitionName,
         address arg1,
@@ -541,8 +541,5 @@ contract ScillaInterop {
         );
 
         require(!ok, "This call must fail!");
-
-        uint128 afterWrite = readMapUint128(scillaContract, fieldName, arg1);
-        require(afterWrite == 0, "Value must be 0");
     }
 }
