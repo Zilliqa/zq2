@@ -3307,6 +3307,10 @@ impl Consensus {
             state.contract_upgrade_apply_state_change(&self.config.consensus, block.header)?;
         }
 
+        // TODO: Remove this check after the hardfork, and make it permanent.
+        crate::transaction::ser_pubkey::new_format(fork.smaller_cbor_encoding_for_txzilliqa);
+        crate::transaction::ser_signature::new_format(fork.smaller_cbor_encoding_for_txzilliqa);
+
         Ok(())
     }
 
