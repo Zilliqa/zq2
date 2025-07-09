@@ -175,8 +175,9 @@ pub enum SignedTransaction {
 // https://github.com/Zilliqa/zq2/issues/2922
 //
 pub mod ser_signature {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::atomic::AtomicBool;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     use super::schnorr::Signature;
 
@@ -244,10 +245,12 @@ pub mod ser_signature {
 }
 
 pub mod ser_pubkey {
-    use super::schnorr::PublicKey;
+    use std::sync::atomic::AtomicBool;
+
     use k256::{elliptic_curve::sec1::ToEncodedPoint, pkcs8::DecodePublicKey};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::sync::atomic::AtomicBool;
+
+    use super::schnorr::PublicKey;
 
     static NEW_FORMAT: AtomicBool = AtomicBool::new(true);
 
