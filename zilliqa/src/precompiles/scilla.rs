@@ -652,6 +652,13 @@ fn scilla_call_precompile<I: ScillaInspector>(
     if external_context.fork.scilla_call_respects_evm_state_changes {
         state.evm_state = Some(evmctx.journaled_state.clone());
     }
+
+    let effective_value = if external_context.fork.evm_to_scilla_value_transfer_zero {
+        ZilAmount::from_amount(0)
+    } else {
+        ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to())
+    };
+
     let scilla = evmctx.db.pre_state.scilla();
     let Ok((result, mut state)) = scilla_call(
         state,
@@ -679,7 +686,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
             EvmGas(gas_limit - required_gas).into()
         },
         address,
-        ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+        effective_value,
         serde_json::to_string(&message).unwrap(),
         &mut external_context.inspector,
         &scilla_ext_libs_path_default(),

@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 // Source: https://github.com/Zilliqa/zilliqa-developer/blob/main/contracts/experimental/ERC20ProxyForZRC2/contracts/ScillaConnector.sol
 library ScillaConnector {
     uint private constant CALL_SCILLA_WITH_THE_SAME_SENDER = 1;
+    uint private constant CALL_SCILLA_WITH_CALLER_AS_SENDER = 0;
     uint private constant SCILLA_CALL_PRECOMPILE_ADDRESS = 0x5a494c53;
     uint private constant SCILLA_STATE_READ_PRECOMPILE_ADDRESS = 0x5a494c92;
 
@@ -92,6 +93,34 @@ library ScillaConnector {
                 gas(),
                 SCILLA_CALL_PRECOMPILE_ADDRESS,
                 0,
+                add(encodedArgs, 0x20),
+                argsLength,
+                0x20,
+                0
+            )
+            if iszero(ok) {
+                revert(0, 0)
+            }
+        }
+    }
+
+    function callScillaValue(
+        address target,
+        string memory tran_name,
+        uint128 value
+    ) internal {
+        bytes memory encodedArgs = abi.encode(
+            target,
+            tran_name,
+            CALL_SCILLA_WITH_CALLER_AS_SENDER
+        );
+        uint256 argsLength = encodedArgs.length;
+
+        assembly {
+            let ok := call(
+                gas(),
+                SCILLA_CALL_PRECOMPILE_ADDRESS,
+                value,
                 add(encodedArgs, 0x20),
                 argsLength,
                 0x20,
@@ -340,7 +369,7 @@ library ScillaConnector {
 contract ScillaInterop {
     using ScillaConnector for address;
 
-    constructor() {}
+    constructor() payable {}
 
     function readUint128(
         address scillaContract,
@@ -431,6 +460,14 @@ contract ScillaInterop {
     ) public {
         scillaContract.callScilla(transitionName, arg1, arg2);
         revert();
+    }
+
+    function callScillaValue(
+        address scillaContract,
+        string memory transitionName,
+        uint128 value
+    ) public {
+        scillaContract.callScillaValue(transitionName, value);
     }
 
     function readAfterWrite(
