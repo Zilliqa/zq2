@@ -587,6 +587,9 @@ impl Forks {
                 ForkName::ScillaTransitionsProperOrder => fork.scilla_transition_proper_order,
                 ForkName::EvmToScillaValueTransferZero => fork.evm_to_scilla_value_transfer_zero,
                 ForkName::RestoreXsgdContract => fork.restore_xsgd_contract,
+                ForkName::SmallerCborEncodingForTxZilliqa => {
+                    fork.smaller_cbor_encoding_for_txzilliqa
+                }
             } {
                 return Some(fork.at_height);
             }
@@ -620,6 +623,7 @@ pub struct Fork {
     pub scilla_transition_proper_order: bool,
     pub evm_to_scilla_value_transfer_zero: bool,
     pub restore_xsgd_contract: bool,
+    pub smaller_cbor_encoding_for_txzilliqa: bool,
 }
 
 pub enum ForkName {
@@ -639,6 +643,7 @@ pub enum ForkName {
     ScillaTransitionsProperOrder,
     EvmToScillaValueTransferZero,
     RestoreXsgdContract,
+    SmallerCborEncodingForTxZilliqa,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -728,6 +733,8 @@ pub struct ForkDelta {
     pub evm_to_scilla_value_transfer_zero: Option<bool>,
     /// If true, re-write XSGD contract to address 0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5's code
     pub restore_xsgd_contract: Option<bool>,
+    /// If true, use smaller CBOR encoding for TxZilliqa
+    pub smaller_cbor_encoding_for_txzilliqa: Option<bool>,
 }
 
 impl Fork {
@@ -801,6 +808,9 @@ impl Fork {
             restore_xsgd_contract: delta
                 .restore_xsgd_contract
                 .unwrap_or(self.restore_xsgd_contract),
+            smaller_cbor_encoding_for_txzilliqa: delta
+                .restore_xsgd_contract
+                .unwrap_or(self.smaller_cbor_encoding_for_txzilliqa),
         }
     }
 }
@@ -895,6 +905,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_transition_proper_order: true,
         evm_to_scilla_value_transfer_zero: true,
         restore_xsgd_contract: true,
+        smaller_cbor_encoding_for_txzilliqa: true,
     }
 }
 
@@ -1037,6 +1048,7 @@ mod tests {
                 scilla_transition_proper_order: None,
                 evm_to_scilla_value_transfer_zero: None,
                 restore_xsgd_contract: None,
+                smaller_cbor_encoding_for_txzilliqa: None,
             }],
             ..Default::default()
         };
@@ -1082,6 +1094,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    smaller_cbor_encoding_for_txzilliqa: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1107,6 +1120,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    smaller_cbor_encoding_for_txzilliqa: None,
                 },
             ],
             ..Default::default()
@@ -1166,6 +1180,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    smaller_cbor_encoding_for_txzilliqa: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1191,6 +1206,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    smaller_cbor_encoding_for_txzilliqa: None,
                 },
             ],
             ..Default::default()
@@ -1241,6 +1257,7 @@ mod tests {
                 scilla_transition_proper_order: true,
                 evm_to_scilla_value_transfer_zero: true,
                 restore_xsgd_contract: true,
+                smaller_cbor_encoding_for_txzilliqa: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1279,6 +1296,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    smaller_cbor_encoding_for_txzilliqa: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1304,6 +1322,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    smaller_cbor_encoding_for_txzilliqa: None,
                 },
             ],
             ..Default::default()
