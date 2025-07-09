@@ -41,32 +41,6 @@ pub enum Chain {
         )
     )]
     Zq2Devnet,
-    #[value(name = "zq2-prototestnet")]
-    #[strum(
-        serialize = "zq2-prototestnet",
-        props(
-            genesis_amount = "900_000_000_000_000_000_000_000_000",
-            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
-            subdomain = "zq2-prototestnet.zilliqa.com",
-            project_id = "prj-d-zq2-testnet-g13pnaa8",
-            log_level = "zilliqa=trace",
-            enable_kms = "false"
-        )
-    )]
-    Zq2ProtoTestnet,
-    #[value(name = "zq2-protomainnet")]
-    #[strum(
-        serialize = "zq2-protomainnet",
-        props(
-            genesis_amount = "900_000_000_000_000_000_000_000_000",
-            genesis_deposits_amount = "20_000_000_000_000_000_000_000_000",
-            subdomain = "zq2-protomainnet.zilliqa.com",
-            project_id = "prj-p-zq2-mainnet-sn5n8wfl",
-            log_level = "zilliqa=trace",
-            enable_kms = "false"
-        )
-    )]
-    Zq2ProtoMainnet,
     #[value(name = "zq2-testnet")]
     #[strum(
         serialize = "zq2-testnet",
@@ -101,12 +75,6 @@ impl Chain {
         match chain_name {
             "zq2-infratest" => Ok(include_str!("../resources/chain-specs/zq2-infratest.toml")),
             "zq2-devnet" => Ok(include_str!("../resources/chain-specs/zq2-devnet.toml")),
-            "zq2-prototestnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-prototestnet.toml"
-            )),
-            "zq2-protomainnet" => Ok(include_str!(
-                "../resources/chain-specs/zq2-protomainnet.toml"
-            )),
             "zq2-testnet" => Ok(include_str!("../resources/chain-specs/zq2-testnet.toml")),
             "zq2-mainnet" => Ok(include_str!("../resources/chain-specs/zq2-mainnet.toml")),
             _ => Err(anyhow!("Configuration file for {} not found", chain_name)),
@@ -126,45 +94,62 @@ impl Chain {
                     }),
                 }),
             },
-            Self::Zq2ProtoMainnet => ContractUpgrades {
-                // estimated: 2024-12-20T23:33:12Z
-                deposit_v3: Some(ContractUpgradeConfig::from_height(5342400)),
-                // estimated: 2025-02-12T13:25:00Z
-                deposit_v4: Some(ContractUpgradeConfig::from_height(7966800)),
-                // estimated: 2025-03-17T13:16:37Z
-                deposit_v5: Some(ContractUpgradeConfig::from_height(9010800)),
-            },
-            Self::Zq2ProtoTestnet => ContractUpgrades {
-                deposit_v3: Some(ContractUpgradeConfig::from_height(8406000)),
-                // estimated: 2025-02-03T13:55:00Z
-                deposit_v4: Some(ContractUpgradeConfig::from_height(10890000)),
-                // estimated: 2025-03-12T15:00:00Z
-                deposit_v5: Some(ContractUpgradeConfig::from_height(12934800)),
-            },
             _ => ContractUpgrades::default(),
         }
     }
 
     pub fn genesis_fork(&self) -> Option<Value> {
         match self {
-            Chain::Zq2ProtoTestnet | Chain::Zq2ProtoMainnet => Some(json!({
+            // TODO: Allow missing values from the `genesis_fork` to represent the default behaviour.
+            Chain::Zq2Testnet => Some(json!({
                 "at_height": 0,
-                "executable_blocks": false,
-                "call_mode_1_sets_caller_to_parent_caller": false,
-                "failed_scilla_call_from_gas_exempt_caller_causes_revert": false,
-                "scilla_messages_can_call_evm_contracts": false,
-                "scilla_contract_creation_increments_account_balance": false,
-                "scilla_json_preserve_order": false,
-                "scilla_call_respects_evm_state_changes": false,
-                "only_mutated_accounts_update_state": false,
+                "executable_blocks": false, // differs from default
+                "call_mode_1_sets_caller_to_parent_caller": true,
+                "failed_scilla_call_from_gas_exempt_caller_causes_revert": true,
+                "scilla_messages_can_call_evm_contracts": true,
+                "scilla_contract_creation_increments_account_balance": true,
+                "scilla_json_preserve_order": true,
+                "scilla_call_respects_evm_state_changes": true,
+                "only_mutated_accounts_update_state": true,
                 "scilla_call_gas_exempt_addrs": [],
-                "scilla_block_number_returns_current_block": false,
-                "scilla_maps_are_encoded_correctly": false,
-                "transfer_gas_fee_to_zero_account": false,
-                "apply_state_changes_only_if_transaction_succeeds": false,
-                "apply_scilla_delta_when_evm_succeeded" : false,
-                "scilla_deduct_funds_from_actual_sender": false,
-                "fund_accounts_from_zero_account": []
+                "scilla_block_number_returns_current_block": true,
+                "scilla_maps_are_encoded_correctly": true,
+                "transfer_gas_fee_to_zero_account": true,
+                "apply_state_changes_only_if_transaction_succeeds": true,
+                "apply_scilla_delta_when_evm_succeeded" : true,
+                "scilla_deduct_funds_from_actual_sender": true,
+                "fund_accounts_from_zero_account": [],
+                "scilla_delta_maps_are_applied_correctly": true,
+                "scilla_server_unlimited_response_size": true,
+                "scilla_failed_txn_correct_balance_deduction": false,
+                "scilla_transition_proper_order": false,
+                "evm_to_scilla_value_transfer_zero": false,
+                "restore_xsgd_contract": false,
+            })),
+            Chain::Zq2Mainnet => Some(json!({
+                "at_height": 0,
+                "executable_blocks": false, // differs from default
+                "call_mode_1_sets_caller_to_parent_caller": true,
+                "failed_scilla_call_from_gas_exempt_caller_causes_revert": true,
+                "scilla_messages_can_call_evm_contracts": true,
+                "scilla_contract_creation_increments_account_balance": true,
+                "scilla_json_preserve_order": true,
+                "scilla_call_respects_evm_state_changes": true,
+                "only_mutated_accounts_update_state": true,
+                "scilla_call_gas_exempt_addrs": [],
+                "scilla_block_number_returns_current_block": true,
+                "scilla_maps_are_encoded_correctly": true,
+                "transfer_gas_fee_to_zero_account": true,
+                "apply_state_changes_only_if_transaction_succeeds": true,
+                "apply_scilla_delta_when_evm_succeeded" : true,
+                "scilla_deduct_funds_from_actual_sender": true,
+                "fund_accounts_from_zero_account": [],
+                "scilla_delta_maps_are_applied_correctly": false, // differs from default
+                "scilla_server_unlimited_response_size": false, // differs from default
+                "scilla_failed_txn_correct_balance_deduction": false,
+                "scilla_transition_proper_order": false,
+                "evm_to_scilla_value_transfer_zero": false,
+                "restore_xsgd_contract": false,
             })),
             _ => None,
         }
@@ -172,10 +157,11 @@ impl Chain {
 
     pub fn get_forks(&self) -> Option<Vec<Value>> {
         match self {
-            Chain::Zq2ProtoTestnet => Some(vec![
-                json!({ "at_height": 7507088, "executable_blocks": true }),
+            Chain::Zq2Testnet => Some(vec![
+                json!({ "at_height": 8099088, "executable_blocks": true }),
+                // estimated: 2025-06-27T15:05:14Z
                 json!({
-                    "at_height": 7855000,
+                    "at_height": 8377200,
                     "scilla_call_gas_exempt_addrs": [
                         "0x60E6b5b1B8D3E373E1C04dC0b4f5624776bcBB60",
                         "0x7013Da2653453299Efb867EfcCCcB1A6d5FE1384",
@@ -191,27 +177,15 @@ impl Chain {
                         "0xaD581eC62eA08831c8FE2Cd7A1113473fE40A057",
                     ],
                 }),
-                // estimated: 2024-12-18T14:57:53Z
-                json!({ "at_height": 8404000, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
-                // estimated: 2025-01-15T09:10:37Z
-                json!({ "at_height": 10200000, "scilla_messages_can_call_evm_contracts": true }),
-                // estimated: 2025-02-12T12:08:37Z
-                json!({ "at_height": 11152000, "scilla_contract_creation_increments_account_balance": true, "scilla_json_preserve_order": true }),
-                // estimated: 2025-03-07T12:35:25Z
-                json!({ "at_height": 12693600, "scilla_call_respects_evm_state_changes": true }),
-                // estimated: 2025-03-11T12:58:08Z
-                json!({ "at_height": 12884400, "only_mutated_accounts_update_state": true, "scilla_block_number_returns_current_block": true }),
-                // estimated: 2025-03-12T12:29:22Z
-                json!({ "at_height": 12931200, "scilla_maps_are_encoded_correctly": true }),
-                // estimated: 2025-04-24T20:13:22Z
-                json!({ "at_height": 14767200, "transfer_gas_fee_to_zero_account": true, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded": true, "scilla_deduct_funds_from_actual_sender": true }),
-                // estimated: 2025-05-22T13:30:00Z
-                json!({ "at_height": 15900000, "fund_accounts_from_zero_account": [("0xB4492C468Fe97CB73Ea70a9A712cdd5B5aB621c3", "10000000000000000000000000")] }),
+                // estimated: 2025-07-09T07.00.00Z
+                json!({ "at_height": 9341630, "scilla_failed_txn_correct_balance_deduction": true, "scilla_transition_proper_order": true, "evm_to_scilla_value_transfer_zero": true, "restore_xsgd_contract": true }),
             ]),
-            Chain::Zq2ProtoMainnet => Some(vec![
-                json!({ "at_height": 4277188, "executable_blocks": true }),
+            Chain::Zq2Mainnet => Some(vec![
+                json!({ "at_height": 4770088, "executable_blocks": true }),
+                json!({ "at_height": 4854500, "scilla_delta_maps_are_applied_correctly": true }),
+                // estimated: 2025-06-27T15:21:57Z
                 json!({
-                    "at_height": 4683779,
+                    "at_height": 4957200,
                     "scilla_call_gas_exempt_addrs": [
                         "0x95347b860Bd49818AFAccCA8403C55C23e7BB9ED",
                         "0xe64cA52EF34FdD7e20C0c7fb2E392cc9b4F6D049",
@@ -233,17 +207,10 @@ impl Chain {
                         "0xbfDe2156aF75a29d36614bC1F8005DD816Bd9200",
                     ],
                 }),
-                // estimated: 2024-12-20T23:33:12Z
-                json!({ "at_height": 5342400, "failed_scilla_call_from_gas_exempt_caller_causes_revert": true, "call_mode_1_sets_caller_to_parent_caller": true }),
-                json!({ "at_height": 7685881, "scilla_json_preserve_order": true }),
-                // estimated: 2025-02-12T13:25:00Z
-                json!({ "at_height": 7966800, "scilla_messages_can_call_evm_contracts": true, "scilla_contract_creation_increments_account_balance": true }),
-                // estimated: 2025-03-17T13:16:37Z
-                json!({ "at_height": 9010800, "scilla_call_respects_evm_state_changes": true, "only_mutated_accounts_update_state": true, "scilla_block_number_returns_current_block": true, "scilla_maps_are_encoded_correctly": true }),
-                // estimated: 2025-04-28T08:05:32Z
-                json!({ "at_height": 9896400, "transfer_gas_fee_to_zero_account": true, "apply_state_changes_only_if_transaction_succeeds": true, "apply_scilla_delta_when_evm_succeeded": true, "scilla_deduct_funds_from_actual_sender": true }),
-                // estimated: 2025-05-27T18:00:00Z
-                json!({ "at_height": 10635000, "fund_accounts_from_zero_account": [("0x6F5d14cBe74547124321f34eA14016f96372c4aE", "100000000000000000000000000")] }),
+                // estimated: 2025-06-30T14:54:22Z
+                json!({ "at_height": 4986000, "scilla_server_unlimited_response_size": true }),
+                // estimated: 2025-07-09T12.00.00Z
+                json!({ "at_height": 5528557, "scilla_failed_txn_correct_balance_deduction": true, "scilla_transition_proper_order": true, "evm_to_scilla_value_transfer_zero": true, "restore_xsgd_contract": true }),
             ]),
             _ => None,
         }

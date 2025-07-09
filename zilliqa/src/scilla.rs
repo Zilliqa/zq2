@@ -18,11 +18,11 @@ use anyhow::{Result, anyhow};
 use base64::Engine;
 use bytes::{BufMut, Bytes, BytesMut};
 use jsonrpsee::{
-    RpcModule,
-    core::{ClientError, client::ClientT, params::ObjectParams},
+    IntoResponse, MethodCallback, MethodResponse, RpcModule,
+    core::{ClientError, RegisterMethodError, client::ClientT, params::ObjectParams},
     http_client::HttpClientBuilder,
     server::ServerHandle,
-    types::{ErrorObject, error::CALL_EXECUTION_FAILED_CODE},
+    types::{ErrorObject, Params, error::CALL_EXECUTION_FAILED_CODE},
 };
 use prost::Message as _;
 use rand::{Rng, distributions::Alphanumeric};
@@ -220,6 +220,9 @@ pub struct Scilla {
 }
 
 impl Scilla {
+    const MAX_ATTEMPTS: u8 = 3; // effective time is up to MAX_ATTEMPTS * REQ_TIMEOUT.
+    const REQ_TIMEOUT: Duration = Duration::from_secs(120); // effective time should be kept below gossip/request timeouts.
+
     /// Create a new Scilla interpreter. This involves spawning two threads:
     /// 1. The client thread, responsible for communicating with the server.
     /// 2. The state IPC thread, responsible for serving state requests from the running Scilla server.
@@ -249,7 +252,7 @@ impl Scilla {
                 .build()
                 .unwrap();
             let client = HttpClientBuilder::default()
-                .request_timeout(Duration::from_secs(120))
+                .request_timeout(Self::REQ_TIMEOUT)
                 .build(format!("{address}/run"))
                 .unwrap();
 
@@ -300,28 +303,36 @@ impl Scilla {
         init: &ContractInit,
         ext_libs_dir: &ScillaExtLibsPathInScilla,
     ) -> Result<Result<CheckOutput, ErrorResponse>> {
-        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
-            .init(init.to_string())
-            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
-            .code(code.to_owned())
-            .gas_limit(gas_limit)
-            .contract_info(true)
-            .json_errors(true)
-            .is_library(init.is_library()?)
-            .build()?;
+        let mut attempt = 1;
+        let response = loop {
+            let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
+                .init(init.to_string())
+                .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+                .code(code.to_owned())
+                .gas_limit(gas_limit)
+                .contract_info(true)
+                .json_errors(true)
+                .is_library(init.is_library()?)
+                .build()?;
 
-        self.request_tx.send(request)?;
-        let response = self.response_rx.lock().unwrap().recv()?;
+            tracing::debug!(%attempt,"Check attempt");
+            self.request_tx.send(request)?;
+            let response = self.response_rx.lock().unwrap().recv()?;
 
-        trace!(?response, "check response");
-
-        let response: Value = match response {
-            Ok(r) => r,
-            Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
-            Err(e) => {
-                return Err(anyhow!("{e:?}"));
-            }
+            match response {
+                Ok(r) => break r,
+                Err(ClientError::Call(e)) => break serde_json::from_str(e.message())?,
+                Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
+                    tracing::warn!(%attempt, "Check retry");
+                    attempt += 1;
+                }
+                Err(e) => {
+                    return Err(anyhow!("{e:?}"));
+                }
+            };
         };
+
+        trace!(?response, "Check response");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let response = if let Some(response) = response.as_str() {
@@ -356,38 +367,47 @@ impl Scilla {
         fork: &Fork,
         current_block: u64,
     ) -> Result<(Result<CreateOutput, ErrorResponse>, PendingState)> {
-        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
-            .ipc_address(self.state_server_addr())
-            .init(init.to_string())
-            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
-            .code(code.to_owned())
-            .gas_limit(gas_limit)
-            .balance(value)
-            .json_errors(true)
-            .is_library(init.is_library()?)
-            .build()?;
+        let mut attempt = 1;
+        let (response, state) = loop {
+            let pending_state = state.clone();
 
-        let (response, state) = self.state_server.lock().unwrap().active_call(
-            sender,
-            state,
-            current_block,
-            fork.scilla_block_number_returns_current_block,
-            fork.scilla_maps_are_encoded_correctly,
-            || {
-                self.request_tx.send(request)?;
-                Ok(self.response_rx.lock().unwrap().recv()?)
-            },
-        )?;
+            let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
+                .ipc_address(self.state_server_addr())
+                .init(init.to_string())
+                .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+                .code(code.to_owned())
+                .gas_limit(gas_limit)
+                .balance(value)
+                .json_errors(true)
+                .is_library(init.is_library()?)
+                .build()?;
 
-        trace!(?response, "create response");
+            tracing::debug!(%attempt,"Create attempt");
+            let (response, state) = self.state_server.lock().unwrap().active_call(
+                sender,
+                pending_state,
+                current_block,
+                fork,
+                || {
+                    self.request_tx.send(request)?;
+                    Ok(self.response_rx.lock().unwrap().recv()?)
+                },
+            )?;
 
-        let response: Value = match response {
-            Ok(r) => r,
-            Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
-            Err(e) => {
-                return Err(anyhow!("{e:?}"));
-            }
+            match response {
+                Ok(r) => break (r, state),
+                Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
+                Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
+                    tracing::warn!(%attempt, "Create retry");
+                    attempt += 1;
+                }
+                Err(e) => {
+                    return Err(anyhow!("{e:?}"));
+                }
+            };
         };
+
+        trace!(?response, "Create response");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let response = if let Some(response) = response.as_str() {
@@ -423,39 +443,46 @@ impl Scilla {
         fork: &Fork,
         current_block: u64,
     ) -> Result<(Result<InvokeOutput, ErrorResponse>, PendingState)> {
-        let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
-            .init(init.to_string())
-            .ipc_address(self.state_server_addr())
-            .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
-            .code(code.to_owned())
-            .message(msg)?
-            .balance(contract_balance)
-            .gas_limit(gas_limit)
-            .json_errors(true)
-            .pplit(true)
-            .build()?;
+        let mut attempt = 1;
+        let (response, state) = loop {
+            let pending_state = state.clone();
 
-        let (response, state) = self.state_server.lock().unwrap().active_call(
-            contract,
-            state,
-            current_block,
-            fork.scilla_block_number_returns_current_block,
-            fork.scilla_maps_are_encoded_correctly,
-            || {
-                self.request_tx.send(request)?;
-                Ok(self.response_rx.lock().unwrap().recv()?)
-            },
-        )?;
+            let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Run)
+                .init(init.to_string())
+                .ipc_address(self.state_server_addr())
+                .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
+                .code(code.to_owned())
+                .message(msg)?
+                .balance(contract_balance)
+                .gas_limit(gas_limit)
+                .json_errors(true)
+                .pplit(true)
+                .build()?;
 
-        let response: Value = match response {
-            Ok(r) => r,
-            Err(ClientError::Call(e)) => serde_json::from_str(e.message())?,
-            Err(e) => {
-                return Err(anyhow!("{e:?}"));
-            }
+            tracing::debug!(%attempt,"Invoke attempt");
+            let (response, state) = self.state_server.lock().unwrap().active_call(
+                contract,
+                pending_state,
+                current_block,
+                fork,
+                || {
+                    self.request_tx.send(request)?;
+                    Ok(self.response_rx.lock().unwrap().recv()?)
+                },
+            )?;
+
+            match response {
+                Ok(r) => break (r, state),
+                Err(ClientError::Call(e)) => break (serde_json::from_str(e.message())?, state),
+                Err(ClientError::RequestTimeout) if attempt < Self::MAX_ATTEMPTS => {
+                    tracing::warn!(%attempt, "Invoke retry");
+                    attempt += 1;
+                }
+                Err(e) => return Err(anyhow!("{e:?}")),
+            };
         };
 
-        trace!("Invoke response: {response}");
+        trace!(?response, "Invoke response");
 
         // Sometimes Scilla returns a JSON object within a JSON string. Sometimes it doesn't...
         let mut response: Value = if let Some(response) = response.as_str() {
@@ -617,7 +644,9 @@ impl StateServer {
             .unwrap()
             .to_owned();
 
-        let server = reth_ipc::server::Builder::default().build(endpoint.clone());
+        let server = reth_ipc::server::Builder::default()
+            .max_response_body_size(1024 * 1024 * 1024) // 1 GiB
+            .build(endpoint.clone());
 
         let mut module = RpcModule::new(());
 
@@ -635,10 +664,59 @@ impl StateServer {
 
         let active_call: Arc<Mutex<Option<ActiveCall>>> = Arc::new(Mutex::new(None));
 
-        module.register_method("fetchStateValueB64", {
-            let active_call = Arc::clone(&active_call);
-            let b64 = base64::engine::general_purpose::STANDARD;
-            move |params, (), _| {
+        fn register_method<F>(
+            module: &mut RpcModule<()>,
+            active_call: Arc<Mutex<Option<ActiveCall>>>,
+            method_name: &'static str,
+            callback: F,
+        ) -> Result<(), RegisterMethodError>
+        where
+            F: Fn(Params<'_>, &mut ActiveCall) -> Result<Value, ErrorObject<'static>>
+                + Send
+                + Sync
+                + 'static,
+        {
+            // Copied from `RpcModule::register_method`. This custom version overrides the response size limit when the
+            // fork tells us to.
+            module.verify_and_insert(
+                method_name,
+                MethodCallback::Sync(Arc::new(
+                    move |id, params, max_response_size, extensions| {
+                        let mut active_call = active_call.lock().unwrap();
+
+                        let Some(active_call) = active_call.as_mut() else {
+                            return MethodResponse::response::<()>(
+                                id,
+                                Err(err("no active call")).into_response(),
+                                max_response_size,
+                            )
+                            .with_extensions(extensions);
+                        };
+
+                        // If the unlimited response size fork is NOT activated, override the configured response size with a
+                        // smaller one of 10 MiB.
+                        let max_response_size = if active_call.scilla_server_unlimited_response_size
+                        {
+                            max_response_size
+                        } else {
+                            10 * 1024 * 1024 // 10 MiB
+                        };
+
+                        let rp = callback(params, active_call).into_response();
+                        MethodResponse::response(id, rp, max_response_size)
+                            .with_extensions(extensions)
+                    },
+                )),
+            )?;
+            Ok(())
+        }
+
+        register_method(
+            &mut module,
+            Arc::clone(&active_call),
+            "fetchStateValueB64",
+            |params, active_call| {
+                let b64 = base64::engine::general_purpose::STANDARD;
                 #[derive(Deserialize)]
                 struct Params {
                     #[serde(deserialize_with = "de_b64")]
@@ -649,11 +727,6 @@ impl StateServer {
                 let ProtoScillaQuery { name, indices, .. } =
                     ProtoScillaQuery::decode(query.as_slice()).map_err(err)?;
 
-                let mut active_call = active_call.lock().unwrap();
-                let Some(active_call) = active_call.as_mut() else {
-                    return Err(err("no active call"));
-                };
-
                 let value = active_call.fetch_state_value(name, indices).map_err(err)?;
 
                 let result = match value {
@@ -662,12 +735,15 @@ impl StateServer {
                 };
 
                 Ok(Value::Array(result))
-            }
-        })?;
-        module.register_method("fetchExternalStateValueB64", {
-            let active_call = Arc::clone(&active_call);
-            let b64 = base64::engine::general_purpose::STANDARD;
-            move |params, (), _| {
+            },
+        )?;
+
+        register_method(
+            &mut module,
+            Arc::clone(&active_call),
+            "fetchExternalStateValueB64",
+            |params, active_call| {
+                let b64 = base64::engine::general_purpose::STANDARD;
                 #[derive(Deserialize)]
                 struct Params {
                     addr: Address,
@@ -678,11 +754,6 @@ impl StateServer {
                 let Params { addr, query } = params.parse()?;
                 let ProtoScillaQuery { name, indices, .. } =
                     ProtoScillaQuery::decode(query.as_slice()).map_err(err)?;
-
-                let mut active_call = active_call.lock().unwrap();
-                let Some(active_call) = active_call.as_mut() else {
-                    return Err(err("no active call"));
-                };
 
                 let value = active_call
                     .fetch_external_state_value(addr, name, indices)
@@ -696,11 +767,13 @@ impl StateServer {
                 };
 
                 Ok(Value::Array(result))
-            }
-        })?;
-        module.register_method("updateStateValueB64", {
-            let active_call = Arc::clone(&active_call);
-            move |params, (), _| {
+            },
+        )?;
+        register_method(
+            &mut module,
+            Arc::clone(&active_call),
+            "updateStateValueB64",
+            |params, active_call| {
                 #[derive(Deserialize)]
                 struct Params {
                     #[serde(deserialize_with = "de_b64")]
@@ -718,20 +791,17 @@ impl StateServer {
                 } = ProtoScillaQuery::decode(query.as_slice()).map_err(err)?;
                 let value = ProtoScillaVal::decode(value.as_slice()).map_err(err)?;
 
-                let mut active_call = active_call.lock().unwrap();
-                let Some(active_call) = active_call.as_mut() else {
-                    return Err(err("no active call"));
-                };
-
                 match active_call.update_state_value(name, indices, ignoreval, value) {
-                    Ok(()) => Ok(()),
+                    Ok(()) => Ok(Value::Null),
                     Err(e) => Err(err(e)),
                 }
-            }
-        })?;
-        module.register_method("fetchBlockchainInfo", {
-            let active_call = Arc::clone(&active_call);
-            move |params, (), _| {
+            },
+        )?;
+        register_method(
+            &mut module,
+            Arc::clone(&active_call),
+            "fetchBlockchainInfo",
+            |params, active_call| {
                 #[derive(Deserialize)]
                 struct Params {
                     query_name: String,
@@ -743,17 +813,12 @@ impl StateServer {
                     query_args,
                 } = params.parse()?;
 
-                let mut active_call = active_call.lock().unwrap();
-                let Some(active_call) = active_call.as_mut() else {
-                    return Err(err("no active call"));
-                };
-
                 match active_call.fetch_blockchain_info(query_name, query_args) {
                     Ok((present, value)) => Ok(Value::Array(vec![present.into(), value.into()])),
                     Err(e) => Err(err(e)),
                 }
-            }
-        })?;
+            },
+        )?;
 
         let handle = server.start(module).await?;
 
@@ -769,8 +834,7 @@ impl StateServer {
         sender: Address, // TODO: rename
         state: PendingState,
         current_block: u64,
-        scilla_block_number_returns_current_block: bool,
-        scilla_maps_are_encoded_correctly: bool,
+        fork: &Fork,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<(R, PendingState)> {
         {
@@ -779,8 +843,10 @@ impl StateServer {
                 sender,
                 state,
                 current_block,
-                scilla_block_number_returns_current_block,
-                scilla_maps_are_encoded_correctly,
+                scilla_block_number_returns_current_block: fork
+                    .scilla_block_number_returns_current_block,
+                scilla_maps_are_encoded_correctly: fork.scilla_maps_are_encoded_correctly,
+                scilla_server_unlimited_response_size: fork.scilla_server_unlimited_response_size,
             });
         }
 
@@ -827,6 +893,7 @@ struct ActiveCall {
     current_block: u64,
     scilla_block_number_returns_current_block: bool,
     scilla_maps_are_encoded_correctly: bool,
+    scilla_server_unlimited_response_size: bool,
 }
 
 impl ActiveCall {

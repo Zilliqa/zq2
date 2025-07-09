@@ -135,7 +135,7 @@ pub struct Sync {
     size_cache: HashMap<Hash, usize>,
     // passive sync
     sync_base_height: u64,
-    zq1_ceil_height: u64,
+    zq2_floor_height: u64,
     ignore_passive: bool,
 }
 
@@ -145,9 +145,9 @@ impl Sync {
     // Speed up by fetching multiple segments in Phase 1.
     const MAX_CONCURRENT_PEERS: usize = 10;
     // Mitigate DoS
-    const MAX_BATCH_SIZE: usize = 1000;
+    const MAX_BATCH_SIZE: usize = 100;
     // Cache recent block sizes
-    const MAX_CACHE_SIZE: usize = 10000;
+    const MAX_CACHE_SIZE: usize = 100_000;
     // Timeout for passive-sync/prune
     const PRUNE_TIMEOUT_MS: u128 = 1000;
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
@@ -164,11 +164,11 @@ impl Sync {
         let max_batch_size = config
             .sync
             .block_request_batch_size
-            .clamp(100, Self::MAX_BATCH_SIZE);
-        let max_blocks_in_flight = config
-            .sync
-            .max_blocks_in_flight
-            .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
+            .clamp(10, Self::MAX_BATCH_SIZE); // reduce the max batch size - 100 is more than sufficient; less may work too.
+        let max_blocks_in_flight = config.sync.max_blocks_in_flight.clamp(
+            max_batch_size,
+            Self::MAX_BATCH_SIZE * Self::MAX_CONCURRENT_PEERS, // phase 2 buffering - 1000 is more than sufficient; more may work too.
+        );
         let sync_base_height = config.sync.base_height;
         let prune_interval = config.sync.prune_interval;
         // Start from reset, or continue sync
@@ -181,13 +181,17 @@ impl Sync {
             return Err(anyhow::anyhow!("sync_base_height > highest_block"));
         }
 
-        let zq1_ceil_height = config
+        let zq2_floor_height = config
             .consensus
             .get_forks()?
             .find_height_fork_first_activated(crate::cfg::ForkName::ExecutableBlocks)
             .unwrap_or_default();
 
         let ignore_passive = config.sync.ignore_passive; // defaults to servicing passive-sync requests
+
+        if latest_block_number < zq2_floor_height {
+            return Err(anyhow::anyhow!("Please restore from a checkpoint"));
+        }
 
         Ok(Self {
             db,
@@ -216,7 +220,7 @@ impl Sync {
             sync_base_height,
             prune_interval,
             size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
-            zq1_ceil_height,
+            zq2_floor_height,
             ignore_passive,
         })
     }
@@ -531,6 +535,12 @@ impl Sync {
             .db
             .get_highest_canonical_block_number()?
             .expect("no highest canonical block");
+        if self.started_at < self.zq2_floor_height {
+            error!(
+                "Starting block {} is below ZQ2 height {}",
+                self.started_at, self.zq2_floor_height
+            );
+        }
         Ok(())
     }
 
@@ -543,10 +553,7 @@ impl Sync {
             .iter()
             .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
             // handle verification on the client-side
-            .map(|tx| {
-                let hash = tx.calculate_hash();
-                (tx, hash)
-            })
+            .map(|tx| (tx.tx, tx.hash))
             .collect_vec();
         Proposal::from_parts_with_hashes(block, txs)
     }
@@ -625,7 +632,7 @@ impl Sync {
                 .into_iter()
                 .map(|r| {
                     let txn = self.db.get_transaction(&r.tx_hash).unwrap().unwrap();
-                    (txn, r)
+                    (txn.tx, r)
                 })
                 .collect_vec();
             hash = block.parent_hash();
@@ -859,11 +866,27 @@ impl Sync {
 
         let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
+        let mut cbor_size = 0;
         for hash in request {
+            if cbor_size > Self::RESPONSE_SIZE_THRESHOLD {
+                break; // response size limit reached
+            }
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
-            proposals.push(self.block_to_proposal(block));
+            if block.number() < self.zq2_floor_height {
+                // do not active sync ZQ1 blocks
+                warn!("sync::MultiBlockRequest : skipping ZQ1");
+                break;
+            }
+            let proposal = self.block_to_proposal(block);
+            let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
+                cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
+                    .unwrap()
+                    .len()
+            });
+            cbor_size = cbor_size.saturating_add(encoded_size);
+            proposals.push(proposal);
         }
 
         let message = ExternalMessage::MultiBlockResponse(proposals);
@@ -1198,6 +1221,11 @@ impl Sync {
             "sync::MetadataRequest : received",
         );
 
+        if self.zq2_floor_height > request.to_height {
+            warn!("sync::MetadataRequest : skipping ZQ1");
+            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
+        }
+
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()?.as_secs() > 20 {
             warn!("sync::MetadataRequest : stale");
@@ -1222,11 +1250,14 @@ impl Sync {
                 // pseudo-LRU approximation
                 if self.size_cache.len() > Self::MAX_CACHE_SIZE {
                     let mut rng = rand::thread_rng();
-                    self.size_cache.retain(|_, _| rng.gen_bool(0.9));
+                    self.size_cache.retain(|_, _| rng.gen_bool(0.99));
                 }
                 // A large block can cause a node to get stuck syncing since no node can respond to the request in time.
                 let proposal = self.block_to_proposal(block.clone());
-                let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal).unwrap().len();
+                let encoded_size =
+                    cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
+                        .unwrap()
+                        .len();
                 self.size_cache.insert(hash, encoded_size);
                 encoded_size
             });
@@ -1237,6 +1268,11 @@ impl Sync {
                 size_estimate: encoded_size,
             });
             hash = block.parent_hash();
+
+            if block.number().saturating_sub(1) < self.zq2_floor_height {
+                warn!("sync::MetadataRequest : skipping ZQ1");
+                break;
+            }
         }
 
         let message = ExternalMessage::SyncBlockHeaders(metas);
@@ -1371,7 +1407,7 @@ impl Sync {
             }
 
             // Verify ZQ2 blocks only - ZQ1 blocks have faux block hashes, to maintain history.
-            if block.verify_hash().is_err() && block.number() >= self.zq1_ceil_height {
+            if block.verify_hash().is_err() && block.number() >= self.zq2_floor_height {
                 return Err(anyhow::anyhow!(
                     "sync::StoreProposals : unverified {}",
                     block.number()
@@ -1391,12 +1427,12 @@ impl Sync {
                         // Verify transaction
                         if let Ok(vt) = st.clone().verify() {
                             self.db
-                                .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt.tx)?;
-                        } else if block.number() < self.zq1_ceil_height {
+                                .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt)?;
+                        } else if block.number() < self.zq2_floor_height {
                             // FIXME: ZQ1 bypass
                             error!(number = %block.number(), index = %rt.index, hash = %rt.tx_hash, "sync::StoreProposals : unverifiable");
                             self.db
-                                .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st)?;
+                                .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st.verify_bypass()?)?;
                         } else {
                             anyhow::bail!(
                                 "sync::StoreProposal : unverifiable transaction {}/{}/{}",

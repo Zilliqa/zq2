@@ -1,0 +1,27 @@
+#!/bin/bash
+echo yes |  gcloud auth configure-docker asia-docker.pkg.dev,europe-docker.pkg.dev
+
+ZQ2_METRICS_IMAGE="{{ zq2_metrics_image }}"
+
+start() {
+    docker ps -a --filter "name=zq2-metrics-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker rm -f &> /dev/null || echo 0
+    cat > .env << 'EOL'
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4317
+ZQ2_METRICS_RPC_URL=ws://localhost:4201
+ZQ2_METRICS_VALIDATOR_IDENTITIES='{}'
+EOL
+    docker run -td --name zq2-metrics-{{ zq2_metrics_version }} \
+        --net=host --restart=unless-stopped --pull=always \
+        -v $(pwd)/.env:/.env \
+        ${ZQ2_METRICS_IMAGE} &> /dev/null &
+}
+
+stop() {
+    docker ps --filter "name=zq2-metrics-" --format "{{'{{'}}.ID{{'}}'}}" | xargs -r docker stop
+}
+
+case ${1} in
+    start|stop) ${1} ;;
+esac
+
+exit 0

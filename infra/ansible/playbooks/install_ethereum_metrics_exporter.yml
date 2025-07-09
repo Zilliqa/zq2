@@ -1,0 +1,71 @@
+---
+- name: Install and configure Ethereum Metrics Exporter
+  hosts: role_apps
+  become: true
+  tags:
+    - install
+    - all
+
+  tasks:
+
+    - name: Extract version tag from ethereum_metrics_exporter_image
+      set_fact:
+        ethereum_metrics_exporter_version: "{{ ethereum_metrics_exporter_image.split(':')[-1] }}"
+
+    - name: Show extracted version
+      debug:
+        var: ethereum_metrics_exporter_version
+
+    - name: Create Ethereum Metrics Exporter script
+      template:
+        src: templates/ethereum_metrics_exporter.sh.j2
+        dest: /usr/local/bin/ethereum_metrics_exporter-{{ ethereum_metrics_exporter_version }}.sh
+        mode: '0777'
+      vars:
+        ethereum_metrics_exporter_version: "{{ ethereum_metrics_exporter_version }}"
+      notify:
+        - Restart Ethereum Metrics Exporter service
+
+    - name: Force create symlink for ethereum_metrics_exporter script
+      ansible.builtin.file:
+        src: /usr/local/bin/ethereum_metrics_exporter-{{ ethereum_metrics_exporter_version }}.sh
+        dest: /usr/local/bin/ethereum_metrics_exporter.sh
+        state: link
+        force: true
+      notify:
+        - Restart Ethereum Metrics Exporter service
+
+    - name: Create Ethereum Metrics Exporter systemd service
+      template:
+        src: templates/ethereum_metrics_exporter.service.j2
+        dest: /etc/systemd/system/ethereum_metrics_exporter.service
+        mode: '0644'
+      notify:
+        - Restart Ethereum Metrics Exporter service
+    
+    - name: Force create symlink for ethereum_metrics_exporter service
+      ansible.builtin.file:
+        src: /etc/systemd/system/ethereum_metrics_exporter.service
+        dest: /etc/systemd/system/multi-user.target.wants/ethereum_metrics_exporter.service
+        state: link
+        force: true
+      notify:
+        - Restart Ethereum Metrics Exporter service
+
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start and enable node service
+      systemd:
+        name: ethereum_metrics_exporter
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Restart Ethereum Metrics Exporter service
+      systemd:
+        name: ethereum_metrics_exporter
+        state: restarted
+        enabled: yes
+        daemon_reload: yes 

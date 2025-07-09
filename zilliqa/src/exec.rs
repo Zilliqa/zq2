@@ -644,6 +644,8 @@ impl State {
             return Ok((result, state.finalize()));
         }
 
+        let fork = self.forks.get(current_block.number);
+
         let (result, mut new_state) = if txn.to_addr.is_zero() {
             scilla_create(
                 state,
@@ -653,7 +655,7 @@ impl State {
                 current_block,
                 inspector,
                 &self.scilla_ext_libs_path,
-                self.forks.get(current_block.number),
+                fork,
             )
         } else {
             scilla_call(
@@ -667,31 +669,39 @@ impl State {
                 txn.data,
                 inspector,
                 &self.scilla_ext_libs_path,
-                self.forks.get(current_block.number),
+                fork,
                 current_block.number,
             )
         }?;
 
         let actual_gas_charged =
             total_scilla_gas_price(ScillaGas::from(result.gas_used), gas_price);
-        let to_charge = actual_gas_charged.checked_sub(&deposit);
-        trace!("scilla_txn: actual_gas_used {actual_gas_charged} to_charge = {to_charge:?}");
-        if let Some(extra_charge) = to_charge {
-            // Deduct the remaining gas.
-            // If we fail, Zilliqa 1 deducts nothing at all, and neither do we.
-            if let Some(result) =
-                new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
-            {
-                trace!("scilla_txn: cannot deduct remaining gas - txn failed");
-                let mut failed_state = PendingState::new(self.try_clone()?);
-                return Ok((result, failed_state.finalize()));
-            }
-        }
-        // If the txn doesn't fail, increment the nonce.
         let from = new_state.load_account(from_addr)?;
         from.account.nonce += 1;
         from.mark_touch();
 
+        // If txn is successful deduct extra fee and keep balance changes intact
+        if !fork.scilla_failed_txn_correct_balance_deduction || result.success {
+            let to_charge = actual_gas_charged.checked_sub(&deposit);
+            trace!("scilla_txn: actual_gas_used {actual_gas_charged} to_charge = {to_charge:?}");
+            if let Some(extra_charge) = to_charge {
+                // Deduct the remaining gas.
+                // If we fail, Zilliqa 1 deducts nothing at all, and neither do we.
+                if let Some(result) =
+                    new_state.deduct_from_account(from_addr, extra_charge, EvmGas(0))?
+                {
+                    trace!("scilla_txn: cannot deduct remaining gas - txn failed");
+                    let mut failed_state = PendingState::new(self.try_clone()?);
+                    return Ok((result, failed_state.finalize()));
+                }
+            }
+        } else {
+            // If txn has failed - make sure only fee is deducted from sender account
+            let original_acc = self.get_account(from_addr)?;
+            from.account.balance = original_acc
+                .balance
+                .saturating_sub(actual_gas_charged.get());
+        }
         trace!("scilla_txn completed successfully");
         Ok((result, new_state.finalize()))
     }
@@ -730,6 +740,7 @@ impl State {
                     .ok_or(anyhow!("from account not found"))?;
 
                 let mut storage = self.get_account_trie(from_addr)?;
+
                 let account = Account {
                     nonce: from_account.account.nonce,
                     balance: from_account.account.balance,
@@ -788,10 +799,9 @@ impl State {
         state: &HashMap<Address, PendingAccount>,
         current_block_number: u64,
     ) -> Result<()> {
-        let only_mutated_accounts_update_state = self
-            .forks
-            .get(current_block_number)
-            .only_mutated_accounts_update_state;
+        let fork = self.forks.get(current_block_number);
+        let only_mutated_accounts_update_state = fork.only_mutated_accounts_update_state;
+        let scilla_delta_maps_are_applied_correctly = fork.scilla_delta_maps_are_applied_correctly;
         for (&address, account) in state {
             if only_mutated_accounts_update_state && !account.touched {
                 continue;
@@ -804,6 +814,7 @@ impl State {
 
             /// Recursively called internal function which assigns `value` at the correct key to `storage`.
             fn handle(
+                scilla_delta_maps_are_applied_correctly: bool,
                 storage: &mut EthTrie<TrieStorage>,
                 var: &str,
                 value: &StorageValue,
@@ -823,9 +834,17 @@ impl State {
                         indices.push(vec![]);
                         for (k, v) in map {
                             indices.last_mut().unwrap().clone_from(k);
-                            handle(storage, var, v, indices)?;
+                            handle(
+                                scilla_delta_maps_are_applied_correctly,
+                                storage,
+                                var,
+                                v,
+                                indices,
+                            )?;
                         }
-                        indices.pop();
+                        if scilla_delta_maps_are_applied_correctly {
+                            indices.pop();
+                        }
                     }
                     StorageValue::Value(Some(value)) => {
                         let key = storage_key(var, indices);
@@ -842,7 +861,13 @@ impl State {
             }
 
             for (var, value) in &account.storage {
-                handle(&mut storage, var, value, &mut vec![])?;
+                handle(
+                    scilla_delta_maps_are_applied_correctly,
+                    &mut storage,
+                    var,
+                    value,
+                    &mut vec![],
+                )?;
             }
 
             let account = Account {
@@ -1256,7 +1281,7 @@ pub fn zil_contract_address(sender: Address, nonce: u64) -> Address {
 }
 
 /// The account state during the execution of a Scilla transaction. Changes to the original state are kept in memory.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PendingState {
     pub pre_state: State,
     pub new_state: HashMap<Address, PendingAccount>,
@@ -2010,7 +2035,7 @@ pub fn scilla_call(
             )?;
             inspector.call(sender, to_addr, amount.get(), depth);
 
-            let output = match output {
+            let mut output = match output {
                 Ok(o) => o,
                 Err(e) => {
                     warn!(?e, "transaction failed");
@@ -2053,6 +2078,13 @@ pub fn scilla_call(
 
             transitions.reserve(output.messages.len());
             call_stack.reserve(output.messages.len());
+
+            // Ensure the order is preserved and transitions are dispatched in the same order
+            // as they were emitted from contract
+            if fork.scilla_transition_proper_order {
+                output.messages.reverse();
+            }
+
             for message in output.messages {
                 transitions.push(ScillaTransition {
                     from: to_addr,
