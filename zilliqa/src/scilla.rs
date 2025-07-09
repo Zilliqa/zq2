@@ -307,6 +307,7 @@ impl Scilla {
         let response = loop {
             let request = ScillaServerRequestBuilder::new(ScillaServerRequestType::Check)
                 .init(init.to_string())
+                .ipc_address(self.state_server_addr())
                 .lib_dirs(vec![self.scilla_stdlib_dir.clone(), ext_libs_dir.0.clone()])
                 .code(code.to_owned())
                 .gas_limit(gas_limit)
