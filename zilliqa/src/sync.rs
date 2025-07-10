@@ -1083,8 +1083,14 @@ impl Sync {
                 break;
             }
         }
-        // perform next block transfers, where possible
-        self.do_sync()
+
+        // Stop potential recursion issues - https://github.com/Zilliqa/zq2/issues/3006
+        // Only progress the state machine when all the pending requests are completed, one way or other.
+        if self.in_flight.is_empty() {
+            self.do_sync()
+        } else {
+            Ok(())
+        }
     }
 
     fn do_metadata_response(
