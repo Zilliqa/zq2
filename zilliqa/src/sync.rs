@@ -317,8 +317,8 @@ impl Sync {
                 self.handle_request_failure(
                     self.peer_id, // self-triggered
                     OutgoingMessageFailure {
-                        peer: peer_id.clone(),
-                        request_id: request_id.clone(),
+                        peer: *peer_id,
+                        request_id: *request_id,
                         error: libp2p::autonat::OutboundFailure::Timeout,
                     },
                 )?;
