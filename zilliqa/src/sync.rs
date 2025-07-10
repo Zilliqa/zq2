@@ -1086,12 +1086,11 @@ impl Sync {
         }
 
         // Stop potential recursion issues - https://github.com/Zilliqa/zq2/issues/3006
-        // Only progress the state machine when all the pending requests are completed, one way or other.
-        if self.in_flight.is_empty() {
-            self.do_sync()
-        } else {
-            Ok(())
+        // Only progress the state machine when all the pending requests are completed, either way.
+        if !self.in_flight.is_empty() {
+            return Ok(());
         }
+        self.do_sync()
     }
 
     fn do_metadata_response(
