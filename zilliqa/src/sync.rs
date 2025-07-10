@@ -140,8 +140,6 @@ pub struct Sync {
 }
 
 impl Sync {
-    // Speed up by speculatively fetching blocks in Phase 1 & 2.
-    const DO_SPECULATIVE: bool = true;
     // Speed up by fetching multiple segments in Phase 1.
     const MAX_CONCURRENT_PEERS: usize = 10;
     // Mitigate DoS
@@ -356,8 +354,6 @@ impl Sync {
             }
             // Retry to fix sync issues e.g. peers that are now offline
             SyncState::Retry1(_) if self.in_pipeline == 0 => {
-                self.update_started_at()?;
-                // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
             }
             SyncState::Phase4(_) => self.request_passive_sync()?,
@@ -582,10 +578,9 @@ impl Sync {
         self.state = SyncState::Phase1(faux_header);
         self.inject_at = None;
 
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-        Ok(())
+        // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
+        self.update_started_at()?;
+        self.do_sync()
     }
 
     /// Handle Passive Sync Request
@@ -712,10 +707,7 @@ impl Sync {
         }
         // fall-thru in all cases
         self.state = SyncState::Phase0;
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-        Ok(())
+        self.do_sync()
     }
 
     /// Phase 4: Request Passive Sync
@@ -796,10 +788,7 @@ impl Sync {
         if let SyncState::Phase2((_, range, marker)) = &self.state {
             self.state = SyncState::Retry1((range.clone(), *marker));
         };
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-        Ok(())
+        self.do_sync()
     }
 
     fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<bool> {
@@ -833,7 +822,6 @@ impl Sync {
         if !self.inject_proposals(proposals)? {
             // phase-2 is stuck, cancel sync and restart
             self.state = SyncState::Phase3;
-            return Ok(true);
         };
 
         // if we're done
@@ -841,10 +829,6 @@ impl Sync {
             self.state = SyncState::Phase3;
         }
 
-        // perform next block transfers, where possible
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
         Ok(true)
     }
 
@@ -1100,10 +1084,7 @@ impl Sync {
             }
         }
         // perform next block transfers, where possible
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-        Ok(())
+        self.do_sync()
     }
 
     fn do_metadata_response(
@@ -1518,10 +1499,7 @@ impl Sync {
         trace!(%number, "sync::MarkReceivedProposal : received");
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
         // perform next block transfers, where possible
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-        Ok(())
+        self.do_sync()
     }
 
     /// Returns (am_syncing, current_highest_block)
