@@ -429,6 +429,8 @@ pub struct ExternalContext<'a, I> {
     /// The caller of each call in the call-stack. This is needed because the `scilla_call` precompile needs to peek
     /// into the call-stack. This will always be non-empty and the first entry will be the transaction signer.
     pub callers: Vec<Address>,
+    pub has_evm_failed: bool,
+    pub has_touched_whitelisted_addresses: bool,
 }
 
 impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
@@ -495,6 +497,24 @@ impl State {
         }
     }
 
+    fn failed(
+        mut result_and_state: ResultAndState,
+        env: Box<Env>,
+    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
+        result_and_state.state.clear();
+        Ok((
+            ResultAndState {
+                result: ExecutionResult::Revert {
+                    gas_used: result_and_state.result.gas_used(),
+                    output: Bytes::default(),
+                },
+                state: result_and_state.state,
+            },
+            HashMap::new(),
+            env,
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn apply_transaction_evm<I: Inspector<PendingState> + ScillaInspector>(
         &self,
@@ -518,6 +538,8 @@ impl State {
             fork: self.forks.get(current_block.number),
             enforce_transaction_failure: false,
             callers: vec![from_addr],
+            has_evm_failed: false,
+            has_touched_whitelisted_addresses: false,
         };
         let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
@@ -576,7 +598,7 @@ impl State {
         }
         let mut evm = evm.build();
 
-        let mut result_and_state = evm.transact()?;
+        let result_and_state = evm.transact()?;
         let mut ctx_with_handler = evm.into_context_with_handler_cfg();
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
@@ -585,18 +607,21 @@ impl State {
             .external
             .enforce_transaction_failure
         {
-            result_and_state.state.clear();
-            return Ok((
-                ResultAndState {
-                    result: ExecutionResult::Revert {
-                        gas_used: result_and_state.result.gas_used(),
-                        output: Bytes::default(),
-                    },
-                    state: result_and_state.state,
-                },
-                HashMap::new(),
-                ctx_with_handler.context.evm.inner.env,
-            ));
+            return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
+        }
+
+        // If any of EVM (calls, creates, ...) failed and there was a call to whitelisted scilla address with interop precompile
+        // then report entire transaction as failed
+        let evm_exec_failure_causes_scilla_whitelisted_addr_to_fail = self
+            .forks
+            .get(current_block.number)
+            .evm_exec_failure_causes_scilla_whitelisted_addr_to_fail;
+        let ctx = &ctx_with_handler.context.external;
+        if evm_exec_failure_causes_scilla_whitelisted_addr_to_fail
+            && ctx.has_evm_failed
+            && ctx.has_touched_whitelisted_addresses
+        {
+            return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
         }
 
         Ok((

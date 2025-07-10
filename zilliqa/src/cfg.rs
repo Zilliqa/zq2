@@ -587,6 +587,9 @@ impl Forks {
                 ForkName::ScillaTransitionsProperOrder => fork.scilla_transition_proper_order,
                 ForkName::EvmToScillaValueTransferZero => fork.evm_to_scilla_value_transfer_zero,
                 ForkName::RestoreXsgdContract => fork.restore_xsgd_contract,
+                ForkName::EvmExecFailureCausesScillaWhitelistedAddrToFail => {
+                    fork.evm_exec_failure_causes_scilla_whitelisted_addr_to_fail
+                }
             } {
                 return Some(fork.at_height);
             }
@@ -620,6 +623,7 @@ pub struct Fork {
     pub scilla_transition_proper_order: bool,
     pub evm_to_scilla_value_transfer_zero: bool,
     pub restore_xsgd_contract: bool,
+    pub evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: bool,
 }
 
 pub enum ForkName {
@@ -639,6 +643,7 @@ pub enum ForkName {
     ScillaTransitionsProperOrder,
     EvmToScillaValueTransferZero,
     RestoreXsgdContract,
+    EvmExecFailureCausesScillaWhitelistedAddrToFail,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -728,6 +733,9 @@ pub struct ForkDelta {
     pub evm_to_scilla_value_transfer_zero: Option<bool>,
     /// If true, re-write XSGD contract to address 0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5's code
     pub restore_xsgd_contract: Option<bool>,
+    /// If true, any failed evm action (call, create, create2, etc) will automatically make
+    /// entire transaction fail if there's been a call to whitelisted zrc2 contract via scilla precompile
+    pub evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: Option<bool>,
 }
 
 impl Fork {
@@ -801,6 +809,9 @@ impl Fork {
             restore_xsgd_contract: delta
                 .restore_xsgd_contract
                 .unwrap_or(self.restore_xsgd_contract),
+            evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: delta
+                .evm_exec_failure_causes_scilla_whitelisted_addr_to_fail
+                .unwrap_or(self.evm_exec_failure_causes_scilla_whitelisted_addr_to_fail),
         }
     }
 }
@@ -895,6 +906,7 @@ pub fn genesis_fork_default() -> Fork {
         scilla_transition_proper_order: true,
         evm_to_scilla_value_transfer_zero: true,
         restore_xsgd_contract: true,
+        evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: true,
     }
 }
 
@@ -1037,6 +1049,7 @@ mod tests {
                 scilla_transition_proper_order: None,
                 evm_to_scilla_value_transfer_zero: None,
                 restore_xsgd_contract: None,
+                evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
             }],
             ..Default::default()
         };
@@ -1082,6 +1095,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1107,6 +1121,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
             ],
             ..Default::default()
@@ -1166,6 +1181,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1191,6 +1207,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
             ],
             ..Default::default()
@@ -1241,6 +1258,7 @@ mod tests {
                 scilla_transition_proper_order: true,
                 evm_to_scilla_value_transfer_zero: true,
                 restore_xsgd_contract: true,
+                evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1279,6 +1297,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1304,6 +1323,7 @@ mod tests {
                     scilla_transition_proper_order: None,
                     evm_to_scilla_value_transfer_zero: None,
                     restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
                 },
             ],
             ..Default::default()
