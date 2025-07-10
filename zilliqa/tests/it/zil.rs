@@ -1523,7 +1523,10 @@ async fn call_scilla_precompile_with_value(mut network: Network) {
         .get_balance(evm_contract_address, None)
         .await
         .unwrap();
-    assert_eq!(evm_contract_zero_balance.as_u128(), evm_contract_value - value_to_send);
+    assert_eq!(
+        evm_contract_zero_balance.as_u128(),
+        evm_contract_value - value_to_send
+    );
 
     // Scilla contract balance received the value
     let scilla_contract_zero_balance = wallet
@@ -1770,7 +1773,6 @@ async fn interop_call_then_revert(mut network: Network) {
     assert!(txn["receipt"]["event_logs"].as_array().unwrap().is_empty());
 }
 
-
 #[zilliqa_macros::test(restrict_concurrency)]
 async fn interop_read_after_write(mut network: Network) {
     let wallet = network.genesis_wallet().await;
@@ -1821,7 +1823,7 @@ async fn interop_read_after_write(mut network: Network) {
         Some(code),
         Some(data),
     )
-        .await;
+    .await;
     let scilla_contract_address = contract_address.unwrap();
 
     // Bump the genesis wallet's nonce up, so that the next contract we deploy will be exempt from gas charges when
@@ -1840,7 +1842,7 @@ async fn interop_read_after_write(mut network: Network) {
         &wallet,
         &mut network,
     )
-        .await;
+    .await;
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
     // Construct a transaction which uses the scilla_call precompile.
@@ -1861,7 +1863,6 @@ async fn interop_read_after_write(mut network: Network) {
     let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 1);
-
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
@@ -1928,7 +1929,7 @@ async fn interop_nested_call_to_precompile_then_revert(mut network: Network) {
         Some(code),
         Some(data),
     )
-        .await;
+    .await;
     let scilla_contract_address = contract_address.unwrap();
 
     // Bump the genesis wallet's nonce up, so that the next contract we deploy will be exempt from gas charges when
@@ -1947,11 +1948,13 @@ async fn interop_nested_call_to_precompile_then_revert(mut network: Network) {
         &wallet,
         &mut network,
     )
-        .await;
+    .await;
     let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
 
     // Construct a transaction which uses the scilla_call precompile.
-    let function = abi.function("makeNestedPrecompileCallWhichReverts").unwrap();
+    let function = abi
+        .function("makeNestedPrecompileCallWhichReverts")
+        .unwrap();
     let input = &[
         Token::Address(scilla_contract_address),
         Token::String("InsertIntoMap".to_owned()),
@@ -1970,10 +1973,8 @@ async fn interop_nested_call_to_precompile_then_revert(mut network: Network) {
     network
         .run_until_async(
             || async {
-                let response: Result<GetTxResponse, _> = wallet
-                    .provider()
-                    .request("GetTransaction", [tx_hash])
-                    .await;
+                let response: Result<GetTxResponse, _> =
+                    wallet.provider().request("GetTransaction", [tx_hash]).await;
                 response.is_ok()
             },
             400,
@@ -1988,7 +1989,6 @@ async fn interop_nested_call_to_precompile_then_revert(mut network: Network) {
         .unwrap();
 
     assert_eq!(eth_receipt.status.unwrap().as_u64(), 0);
-
 
     let call = format!(
         r#"
@@ -2016,10 +2016,9 @@ async fn interop_nested_call_to_precompile_then_revert(mut network: Network) {
         None,
         Some(&call),
     )
-        .await;
+    .await;
 
     assert!(txn["receipt"]["event_logs"].as_array().unwrap().is_empty());
-
 }
 
 #[zilliqa_macros::test]

@@ -5,9 +5,15 @@ use alloy::{
     sol_types::{SolValue, abi::Decoder},
 };
 use anyhow::{Result, anyhow};
-use revm::{ContextStatefulPrecompile, FrameOrResult, InnerEvmContext, handler::register::EvmHandler, interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult}, precompile::PrecompileError, primitives::{
-    Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
-}, FrameResult};
+use revm::{
+    ContextStatefulPrecompile, FrameOrResult, InnerEvmContext,
+    handler::register::EvmHandler,
+    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
+    precompile::PrecompileError,
+    primitives::{
+        Address, Bytes, EVMError, LogData, PrecompileErrors, PrecompileOutput, PrecompileResult,
+    },
+};
 use scilla_parser::{
     ast::nodes::{
         NodeAddressType, NodeByteStr, NodeMetaIdentifier, NodeScillaType, NodeTypeMapKey,
@@ -386,7 +392,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         }
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
-        return prev_handle(ctx, inputs);
+        prev_handle(ctx, inputs)
     });
 
     // Create result handler
@@ -395,7 +401,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         if outcome.result.is_error() || outcome.result.is_revert() {
             ctx.external.has_evm_failed = true;
         }
-        return prev_handle(ctx, frame, outcome);
+        prev_handle(ctx, frame, outcome)
     });
 
     // EOF create handler
@@ -410,7 +416,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         }
         ctx.external.callers[ctx.evm.journaled_state.depth] = inputs.caller;
 
-        return prev_handle(ctx, inputs);
+        prev_handle(ctx, inputs)
     });
 
     // EOF result handler
@@ -419,9 +425,8 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         if outcome.result.is_error() || outcome.result.is_revert() {
             ctx.external.has_evm_failed = true;
         }
-        return prev_handle(ctx, frame, outcome);
+        prev_handle(ctx, frame, outcome)
     });
-
 
     // Call handler
     let prev_handle = handler.execution.call.clone();
@@ -518,7 +523,7 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
         if outcome.result.is_error() || outcome.result.is_revert() {
             ctx.external.has_evm_failed = true;
         }
-        return prev_handle(ctx, frame, memory, outcome);
+        prev_handle(ctx, frame, memory, outcome)
     });
 }
 
@@ -622,16 +627,15 @@ fn scilla_call_precompile<I: ScillaInspector>(
     // 2. if evm_exec_failure_causes_scilla_whitelisted_addr_to_fail == false and evm_to_scilla_value_transfer_zero == true -> we return 0
     // 3. else we take converted value
     let effective_value = {
-        match (external_context.fork.evm_exec_failure_causes_scilla_whitelisted_addr_to_fail, external_context.fork.evm_to_scilla_value_transfer_zero) {
-            (true, _) => {
-                ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to())
-            },
-            (false, true) => {
-                ZilAmount::from_amount(0)
-            },
-            _ => {
-                ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to())
-            }
+        match (
+            external_context
+                .fork
+                .evm_exec_failure_causes_scilla_whitelisted_addr_to_fail,
+            external_context.fork.evm_to_scilla_value_transfer_zero,
+        ) {
+            (true, _) => ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
+            (false, true) => ZilAmount::from_amount(0),
+            _ => ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
         }
     };
 

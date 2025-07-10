@@ -587,7 +587,9 @@ impl Forks {
                 ForkName::ScillaTransitionsProperOrder => fork.scilla_transition_proper_order,
                 ForkName::EvmToScillaValueTransferZero => fork.evm_to_scilla_value_transfer_zero,
                 ForkName::RestoreXsgdContract => fork.restore_xsgd_contract,
-                ForkName::EvmExecFailureCausesScillaWhitelistedAddrToFail => fork.evm_exec_failure_causes_scilla_whitelisted_addr_to_fail,
+                ForkName::EvmExecFailureCausesScillaWhitelistedAddrToFail => {
+                    fork.evm_exec_failure_causes_scilla_whitelisted_addr_to_fail
+                }
             } {
                 return Some(fork.at_height);
             }
@@ -1047,7 +1049,7 @@ mod tests {
                 scilla_transition_proper_order: None,
                 evm_to_scilla_value_transfer_zero: None,
                 restore_xsgd_contract: None,
-                evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None
+                evm_exec_failure_causes_scilla_whitelisted_addr_to_fail: None,
             }],
             ..Default::default()
         };

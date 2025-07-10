@@ -497,7 +497,10 @@ impl State {
         }
     }
 
-    fn failed(mut result_and_state: ResultAndState, env: Box<Env>) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
+    fn failed(
+        mut result_and_state: ResultAndState,
+        env: Box<Env>,
+    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
         result_and_state.state.clear();
         Ok((
             ResultAndState {
@@ -508,7 +511,7 @@ impl State {
                 state: result_and_state.state,
             },
             HashMap::new(),
-            env
+            env,
         ))
     }
 
@@ -609,9 +612,15 @@ impl State {
 
         // If any of EVM (calls, creates, ...) failed and there was a call to whitelisted scilla address with interop precompile
         // then report entire transaction as failed
-        let evm_exec_failure_causes_scilla_whitelisted_addr_to_fail = self.forks.get(current_block.number).evm_exec_failure_causes_scilla_whitelisted_addr_to_fail;
+        let evm_exec_failure_causes_scilla_whitelisted_addr_to_fail = self
+            .forks
+            .get(current_block.number)
+            .evm_exec_failure_causes_scilla_whitelisted_addr_to_fail;
         let ctx = &ctx_with_handler.context.external;
-        if evm_exec_failure_causes_scilla_whitelisted_addr_to_fail && ctx.has_evm_failed && ctx.has_touched_whitelisted_addresses {
+        if evm_exec_failure_causes_scilla_whitelisted_addr_to_fail
+            && ctx.has_evm_failed
+            && ctx.has_touched_whitelisted_addresses
+        {
             return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
         }
 
