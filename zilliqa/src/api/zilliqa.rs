@@ -1591,17 +1591,10 @@ fn get_transaction_status(
         TransactionState::Error
     } else {
         match &block {
-            Some(block) => {
-                let newest_finalized_block =
-                    node.resolve_block_number(BlockNumberOrTag::Finalized)?;
-                if newest_finalized_block.is_some()
-                    && block.number() >= newest_finalized_block.unwrap().number()
-                {
-                    TransactionState::Finalized
-                } else {
-                    TransactionState::Pending
-                }
-            }
+            Some(block) => match node.resolve_block_number(BlockNumberOrTag::Finalized)? {
+                Some(x) if x.number() >= block.number() => TransactionState::Finalized,
+                _ => TransactionState::Pending,
+            },
             None => match node.consensus.get_pending_or_queued(&transaction)? {
                 Some(PendingOrQueued::Pending) => TransactionState::Pending,
                 Some(PendingOrQueued::Queued) => TransactionState::Queued,
