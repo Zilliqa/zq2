@@ -145,9 +145,9 @@ impl Sync {
     // Speed up by fetching multiple segments in Phase 1.
     const MAX_CONCURRENT_PEERS: usize = 10;
     // Mitigate DoS
-    const MAX_BATCH_SIZE: usize = 1000;
+    const MAX_BATCH_SIZE: usize = 100;
     // Cache recent block sizes
-    const MAX_CACHE_SIZE: usize = 10000;
+    const MAX_CACHE_SIZE: usize = 100_000;
     // Timeout for passive-sync/prune
     const PRUNE_TIMEOUT_MS: u128 = 1000;
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
@@ -164,11 +164,11 @@ impl Sync {
         let max_batch_size = config
             .sync
             .block_request_batch_size
-            .clamp(100, Self::MAX_BATCH_SIZE);
-        let max_blocks_in_flight = config
-            .sync
-            .max_blocks_in_flight
-            .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
+            .clamp(10, Self::MAX_BATCH_SIZE); // reduce the max batch size - 100 is more than sufficient; less may work too.
+        let max_blocks_in_flight = config.sync.max_blocks_in_flight.clamp(
+            max_batch_size,
+            Self::MAX_BATCH_SIZE * Self::MAX_CONCURRENT_PEERS, // phase 2 buffering - 1000 is more than sufficient; more may work too.
+        );
         let sync_base_height = config.sync.base_height;
         let prune_interval = config.sync.prune_interval;
         // Start from reset, or continue sync
@@ -866,7 +866,11 @@ impl Sync {
 
         let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
+        let mut cbor_size = 0;
         for hash in request {
+            if cbor_size > Self::RESPONSE_SIZE_THRESHOLD {
+                break; // response size limit reached
+            }
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
@@ -875,7 +879,14 @@ impl Sync {
                 warn!("sync::MultiBlockRequest : skipping ZQ1");
                 break;
             }
-            proposals.push(self.block_to_proposal(block));
+            let proposal = self.block_to_proposal(block);
+            let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
+                cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
+                    .unwrap()
+                    .len()
+            });
+            cbor_size = cbor_size.saturating_add(encoded_size);
+            proposals.push(proposal);
         }
 
         let message = ExternalMessage::MultiBlockResponse(proposals);
@@ -1239,11 +1250,14 @@ impl Sync {
                 // pseudo-LRU approximation
                 if self.size_cache.len() > Self::MAX_CACHE_SIZE {
                     let mut rng = rand::thread_rng();
-                    self.size_cache.retain(|_, _| rng.gen_bool(0.9));
+                    self.size_cache.retain(|_, _| rng.gen_bool(0.99));
                 }
                 // A large block can cause a node to get stuck syncing since no node can respond to the request in time.
                 let proposal = self.block_to_proposal(block.clone());
-                let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal).unwrap().len();
+                let encoded_size =
+                    cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
+                        .unwrap()
+                        .len();
                 self.size_cache.insert(hash, encoded_size);
                 encoded_size
             });

@@ -51,6 +51,12 @@ metrics:
               - source_labels: [__name__]
                 regex: 'namedprocess_namegroup_cpu_seconds_total|namedprocess_namegroup_memory_bytes'
                 action: keep
+{% if ethereum_metrics_exporter_image is defined and ethereum_metrics_exporter_image != "" %}
+          - job_name: 'ethereum_metrics_exporter'
+            scrape_interval: 30s
+            static_configs:
+              - targets: ['localhost:9090']
+{% endif %}
   service:
     log_level: info
     pipelines:

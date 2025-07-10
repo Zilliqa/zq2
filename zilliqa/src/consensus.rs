@@ -238,6 +238,8 @@ pub struct Consensus {
 impl Consensus {
     // determined empirically
     const PROP_SIZE_THRESHOLD: usize = 921 * 1024; // 90% of 1MB
+    // view buffer size limit
+    const VIEW_BUFFER_THRESHOLD: usize = 1000;
 
     pub fn new(
         secret_key: SecretKey,
@@ -1101,9 +1103,15 @@ impl Consensus {
         let current_view = self.get_view()?;
         info!(block_view, current_view, %block_hash, "handling vote from: {:?}", peer_id);
 
-        // if the vote is too old and does not count anymore
+        // if the vote is too old; or too new
         if block_view + 1 < current_view {
             trace!("vote is too old");
+            return Ok(None);
+        } else if block_view > current_view + 500 {
+            // when stuck in exponential backoff, +500 is effectively forever;
+            // when active syncing at ~30 blk/s, means that we're > 3 views behind.
+            // in either case, that vote is quite meaningless at this point and can be ignored.
+            trace!("vote is too early");
             return Ok(None);
         }
 
@@ -1115,14 +1123,26 @@ impl Consensus {
 
         // Retrieve the actual block this vote is for.
         let Some(block) = self.get_block(&block_hash)? else {
-            trace!("vote for unknown block, buffering");
+            // We try to limit the size of the buffered votes to prevent memory exhaustion.
+            // If the buffered votes exceed the threshold, we purge as many stale votes as possible.
+            // While this is not guaranteed to reduce the size of the buffered votes, it is a best-effort attempt.
+            if self.buffered_votes.len() > Self::VIEW_BUFFER_THRESHOLD {
+                self.buffered_votes.retain(|_hash, votes| {
+                    // purge stale votes
+                    votes.first().map(|(_p, v)| v.view + 1).unwrap_or_default() >= current_view
+                });
+            }
             // If we don't have the block yet, we buffer the vote in case we recieve the block later. Note that we
             // don't know the leader of this view without the block, so we may be storing this unnecessarily, however
             // non-malicious nodes should only have sent us this vote if they thought we were the leader.
-            self.buffered_votes
-                .entry(block_hash)
-                .or_default()
-                .push((peer_id, vote));
+            let mut buf = self.buffered_votes.entry(block_hash).or_default();
+            if buf.len() < MAX_COMMITTEE_SIZE {
+                // we only ever need 2/3 of the committee, so it should not exceed this number.
+                trace!("vote for unknown block, buffering");
+                buf.push((peer_id, vote));
+            } else {
+                error!(%peer_id, view=%block_view, "vote for unknown block, dropping");
+            }
             return Ok(None);
         };
 
