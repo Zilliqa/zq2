@@ -67,7 +67,7 @@ time = { version = "0.3.41", features = ["formatting", "macros"] }
 tokio = { version = "1.46.1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 tokio-stream = "0.1.17"
 toml = "0.8.23"
-tower = "0.4.13"
+tower = "0.5.2"
 tower-http = { version = "0.6.6", features = ["cors"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
