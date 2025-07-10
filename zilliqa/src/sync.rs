@@ -304,20 +304,21 @@ impl Sync {
             return Ok(());
         }
 
-        // check in-flights; manually failing one stale request.
-        if !self.in_flight.is_empty() {
-            let stale_flight = self
-                .in_flight
-                .iter()
-                .find(|(p, _)| p.last_used.elapsed().as_secs() > 90) // 9x libp2p timeout
-                .cloned();
-            if let Some((PeerInfo { peer_id: peer, .. }, request_id)) = stale_flight {
-                warn!(%peer, ?request_id, "sync::DoSync : stale");
+        // check in-flights; manually failing one stale request at a time
+        if let Some((
+            PeerInfo {
+                peer_id, last_used, ..
+            },
+            request_id,
+        )) = self.in_flight.front()
+        {
+            if last_used.elapsed().as_secs() > 90 {
+                warn!(%peer_id, ?request_id, "sync::DoSync : stale");
                 self.handle_request_failure(
                     self.peer_id, // self-triggered
                     OutgoingMessageFailure {
-                        peer,
-                        request_id,
+                        peer: peer_id.clone(),
+                        request_id: request_id.clone(),
                         error: libp2p::autonat::OutboundFailure::Timeout,
                     },
                 )?;
