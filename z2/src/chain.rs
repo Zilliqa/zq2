@@ -125,6 +125,7 @@ impl Chain {
                 "scilla_transition_proper_order": false,
                 "evm_to_scilla_value_transfer_zero": false,
                 "restore_xsgd_contract": false,
+                "smaller_cbor_encoding_for_txzilliqa": false, // differs from default
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -150,6 +151,7 @@ impl Chain {
                 "scilla_transition_proper_order": false,
                 "evm_to_scilla_value_transfer_zero": false,
                 "restore_xsgd_contract": false,
+                "smaller_cbor_encoding_for_txzilliqa": false, // differs from default
             })),
             _ => None,
         }

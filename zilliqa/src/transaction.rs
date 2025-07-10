@@ -158,7 +158,9 @@ pub enum SignedTransaction {
     },
     Zilliqa {
         tx: TxZilliqa,
+        #[serde(with = "ser_pubkey")]
         key: schnorr::PublicKey,
+        #[serde(with = "ser_signature")]
         sig: schnorr::Signature,
     },
     Intershard {
@@ -167,6 +169,150 @@ pub enum SignedTransaction {
         // instead use raw from-address
         from: Address,
     },
+}
+
+// Custom serialization to avoid double-byte encodings.
+// https://github.com/Zilliqa/zq2/issues/2922
+//
+pub mod ser_signature {
+    use std::sync::atomic::AtomicBool;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::schnorr::Signature;
+
+    static NEW_FORMAT: AtomicBool = AtomicBool::new(true);
+
+    pub fn new_format(new: bool) {
+        NEW_FORMAT.store(new, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn serialize<S>(signature: &Signature, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let type_name = std::any::type_name::<S>();
+        if type_name.contains("cbor4ii::serde::")
+            && NEW_FORMAT.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            let bytes = signature.to_vec();
+            serializer.serialize_bytes(bytes.as_slice())
+        } else {
+            signature.serialize(serializer) // default format
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Signature, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PublicKeyVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PublicKeyVisitor {
+            type Value = Signature;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a byte array representing a public key")
+            }
+
+            // new format
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Signature::from_slice(v).map_err(E::custom)
+            }
+
+            // old format
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut buf = Vec::with_capacity(seq.size_hint().unwrap_or(256));
+                while let Some(b) = seq.next_element()? {
+                    buf.push(b);
+                }
+                Signature::from_slice(&buf).map_err(serde::de::Error::custom) // map_err
+            }
+        }
+        let type_name = std::any::type_name::<D>();
+        if type_name.contains("cbor4ii::serde::") {
+            deserializer.deserialize_any(PublicKeyVisitor)
+        } else {
+            Signature::deserialize(deserializer)
+        }
+    }
+}
+
+pub mod ser_pubkey {
+    use std::sync::atomic::AtomicBool;
+
+    use k256::{elliptic_curve::sec1::ToEncodedPoint, pkcs8::DecodePublicKey};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::schnorr::PublicKey;
+
+    static NEW_FORMAT: AtomicBool = AtomicBool::new(true);
+
+    pub fn new_format(new: bool) {
+        NEW_FORMAT.store(new, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn serialize<S>(public_key: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let type_name = std::any::type_name::<S>();
+        if type_name.contains("cbor4ii::serde::")
+            && NEW_FORMAT.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            let bytes = public_key.to_encoded_point(true);
+            serializer.serialize_bytes(bytes.as_bytes())
+        } else {
+            public_key.serialize(serializer)
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PublicKey, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PublicKeyVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for PublicKeyVisitor {
+            type Value = PublicKey;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a byte array representing a public key")
+            }
+
+            // new format
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                PublicKey::from_sec1_bytes(v).map_err(E::custom)
+            }
+
+            // old format
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut buf = Vec::with_capacity(seq.size_hint().unwrap_or(256));
+                while let Some(b) = seq.next_element()? {
+                    buf.push(b);
+                }
+                PublicKey::from_public_key_der(&buf).map_err(serde::de::Error::custom) // map_err
+            }
+        }
+        let type_name = std::any::type_name::<D>();
+        if type_name.contains("cbor4ii::serde::") {
+            deserializer.deserialize_any(PublicKeyVisitor)
+        } else {
+            PublicKey::deserialize(deserializer)
+        }
+    }
 }
 
 // alloy's transaction types contain annotations (such as `skip_serializing_if`) which cause issues when
@@ -1253,4 +1399,49 @@ fn encode_zilliqa_transaction(txn: &TxZilliqa, pub_key: schnorr::PublicKey) -> V
         oneof9,
     };
     prost::Message::encode_to_vec(&proto)
+}
+
+#[test]
+fn test_encode_zilliqa_transaction() {
+    // dummy data
+    let tx = TxZilliqa {
+        chain_id: 1,
+        to_addr: Address::default(),
+        amount: ZilAmount::ZERO,
+        gas_price: ZilAmount::ZERO,
+        gas_limit: SCILLA_INVOKE_RUNNER,
+        nonce: 1,
+        code: "".to_string(),
+        data: "".to_string(),
+    };
+    let secret_key = schnorr::SecretKey::random(&mut k256::elliptic_curve::rand_core::OsRng);
+    let key = secret_key.public_key();
+    let sig = schnorr::sign(&bincode::serialize(&tx).unwrap(), &secret_key);
+    let data = SignedTransaction::Zilliqa { tx, key, sig };
+
+    let encoded = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &data).unwrap();
+    let e_data = cbor4ii::serde::from_slice::<SignedTransaction>(&encoded).unwrap();
+
+    let new_bin = bincode::serialize(&data).unwrap();
+
+    ser_signature::new_format(false);
+    let partial = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &data).unwrap();
+    let p_data = cbor4ii::serde::from_slice::<SignedTransaction>(&partial).unwrap();
+
+    ser_pubkey::new_format(false);
+    let original = cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &data).unwrap();
+    let o_data = cbor4ii::serde::from_slice::<SignedTransaction>(&original).unwrap();
+
+    let old_bin = bincode::serialize(&data).unwrap();
+
+    // check for difference
+    assert_eq!(o_data, data);
+    assert_eq!(p_data, data);
+    assert_eq!(e_data, data);
+    assert_eq!(new_bin, old_bin); // bincode data should be unchanged
+    // check for size
+    assert!(original.len() > 300);
+    assert!(partial.len() < 300);
+    assert!(partial.len() > 225);
+    assert!(encoded.len() < 225); // 4000 txns fit inside 90% of 1MB
 }

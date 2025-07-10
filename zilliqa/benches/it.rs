@@ -295,7 +295,7 @@ fn full_blocks_zil_transfers(c: &mut Criterion) {
         address,
         iter::empty(),
         txns,
-        2300,
+        4000,
     );
 }
 
