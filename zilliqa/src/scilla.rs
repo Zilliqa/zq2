@@ -246,7 +246,9 @@ impl Scilla {
         let (request_tx, request_rx) = channel();
         let (response_tx, response_rx) = channel();
 
+        let dispatch = tracing::dispatcher::Dispatch::default();
         thread::spawn(move || {
+            let _guard = tracing::dispatcher::set_default(&dispatch);
             let runtime = runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -268,7 +270,9 @@ impl Scilla {
         });
 
         let (tx, rx) = channel();
+        let dispatch = tracing::dispatcher::Dispatch::default();
         thread::spawn(move || {
+            let _guard = tracing::dispatcher::set_default(&dispatch);
             let runtime = runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -905,6 +909,7 @@ impl ActiveCall {
     ) -> Result<Option<(ProtoScillaVal, String)>> {
         let (ty, depth) = self.state.load_var_info(addr, &name)?;
         let ty = ty.to_owned();
+        trace!(name, ty, depth);
 
         if indices.len() > depth as usize {
             return Err(anyhow!("too many indices"));

@@ -1537,6 +1537,7 @@ impl PendingState {
         var_name: &str,
         indices: &[Vec<u8>],
     ) -> Result<BTreeMap<Vec<u8>, StorageValue>> {
+        trace!(%address, var_name, indices_len = indices.len(), "load_storage_by_prefix");
         let account = load_account(
             &self.pre_state,
             &mut self.new_state,
