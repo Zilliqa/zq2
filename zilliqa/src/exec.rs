@@ -564,6 +564,7 @@ impl State {
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
             .modify_cfg_env(|c| {
+                c.disable_eip3607 = true;
                 c.chain_id = self.chain_id.eth;
                 c.disable_base_fee = match base_fee_check {
                     BaseFeeCheck::Validate => false,
