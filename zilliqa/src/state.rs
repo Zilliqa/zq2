@@ -367,13 +367,18 @@ impl State {
     /// Returns an error on failures to access the state tree, or decode the account; or an empty
     /// account if one didn't exist yet
     pub fn get_account(&self, address: Address) -> Result<Account> {
-        Ok(self
+        let Some(bytes) = self
             .accounts
             .lock()
             .unwrap()
             .get(&Self::account_key(address).0)?
-            .map(|bytes| bincode::deserialize::<Account>(&bytes))
-            .unwrap_or(Ok(Account::default()))?)
+        else {
+            return Ok(Account::default());
+        };
+
+        let account =
+            bincode::serde::decode_from_slice::<Account, _>(&bytes, bincode::config::legacy())?.0;
+        Ok(account)
     }
 
     /// As get_account, but panics if account cannot be read.
@@ -433,7 +438,7 @@ impl State {
     pub fn save_account(&mut self, address: Address, account: Account) -> Result<()> {
         Ok(self.accounts.lock().unwrap().insert(
             &Self::account_key(address).0,
-            &bincode::serialize(&account)?,
+            &bincode::serde::encode_to_vec(&account, bincode::config::legacy())?,
         )?)
     }
 

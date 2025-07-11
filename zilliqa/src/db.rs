@@ -35,8 +35,8 @@ macro_rules! sqlify_with_bincode {
     ($type: ty) => {
         impl ToSql for $type {
             fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-                let data = bincode::serialize(self)
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e))?;
+                let data = bincode::serde::encode_to_vec(self, bincode::config::legacy())
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 Ok(ToSqlOutput::from(data))
             }
         }
@@ -45,7 +45,11 @@ macro_rules! sqlify_with_bincode {
                 value: rusqlite::types::ValueRef<'_>,
             ) -> rusqlite::types::FromSqlResult<Self> {
                 let blob = value.as_blob()?;
-                bincode::deserialize(blob).map_err(|e| FromSqlError::Other(e))
+                Ok(
+                    bincode::serde::decode_from_slice(blob, bincode::config::legacy())
+                        .map_err(|e| FromSqlError::Other(Box::new(e)))?
+                        .0,
+                )
             }
         }
     };
@@ -506,7 +510,8 @@ impl Db {
         reader.read_exact(&mut block_len_buf)?;
         let mut block_ser = vec![0u8; usize::try_from(u64::from_be_bytes(block_len_buf))?];
         reader.read_exact(&mut block_ser)?;
-        let block: Block = bincode::deserialize(&block_ser)?;
+        let block: Block =
+            bincode::serde::decode_from_slice(&block_ser, bincode::config::legacy())?.0;
         if block.hash() != *hash {
             return Err(anyhow!("Checkpoint does not match trusted hash"));
         }
@@ -517,13 +522,15 @@ impl Db {
         let mut transactions_ser =
             vec![0u8; usize::try_from(u64::from_be_bytes(transactions_len_buf))?];
         reader.read_exact(&mut transactions_ser)?;
-        let transactions: Vec<SignedTransaction> = bincode::deserialize(&transactions_ser)?;
+        let transactions =
+            bincode::serde::decode_from_slice(&transactions_ser, bincode::config::legacy())?.0;
 
         let mut parent_len_buf = [0u8; std::mem::size_of::<u64>()];
         reader.read_exact(&mut parent_len_buf)?;
         let mut parent_ser = vec![0u8; usize::try_from(u64::from_be_bytes(parent_len_buf))?];
         reader.read_exact(&mut parent_ser)?;
-        let parent: Block = bincode::deserialize(&parent_ser)?;
+        let parent: Block =
+            bincode::serde::decode_from_slice(&parent_ser, bincode::config::legacy())?.0;
         if block.parent_hash() != parent.hash() {
             return Err(anyhow!(
                 "Invalid checkpoint file: parent's blockhash does not correspond to checkpoint block"
@@ -633,8 +640,12 @@ impl Db {
                 processed_storage_items += 1;
             }
 
-            let account_trie_root =
-                bincode::deserialize::<Account>(&serialised_account)?.storage_root;
+            let account_trie_root = bincode::serde::decode_from_slice::<Account, _>(
+                &serialised_account,
+                bincode::config::legacy(),
+            )?
+            .0
+            .storage_root;
             if account_trie.root_hash()?.as_slice() != account_trie_root {
                 return Err(anyhow!(
                     "Invalid checkpoint file: account trie root hash mismatch: calculated {}, checkpoint file contained {}",
@@ -1244,17 +1255,17 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
     writer.write_all(b"\n")?;
 
     // write the block...
-    let block_ser = &bincode::serialize(&block)?;
+    let block_ser = &bincode::serde::encode_to_vec(block, bincode::config::legacy())?;
     writer.write_all(&u64::try_from(block_ser.len())?.to_be_bytes())?;
     writer.write_all(block_ser)?;
 
     // write transactions
-    let transactions_ser = &bincode::serialize(&transactions)?;
+    let transactions_ser = &bincode::serde::encode_to_vec(transactions, bincode::config::legacy())?;
     writer.write_all(&u64::try_from(transactions_ser.len())?.to_be_bytes())?;
     writer.write_all(transactions_ser)?;
 
     // and its parent, to keep the qc tracked
-    let parent_ser = &bincode::serialize(&parent)?;
+    let parent_ser = &bincode::serde::encode_to_vec(parent, bincode::config::legacy())?;
     writer.write_all(&u64::try_from(parent_ser.len())?.to_be_bytes())?;
     writer.write_all(parent_ser)?;
 
@@ -1273,8 +1284,14 @@ pub fn checkpoint_block_with_state<P: AsRef<Path> + Debug>(
         writer.write_all(&serialised_account)?;
 
         // now write the entire account storage map
-        let account_storage = account_storage
-            .at_root(bincode::deserialize::<Account>(&serialised_account)?.storage_root);
+        let account_storage = account_storage.at_root(
+            bincode::serde::decode_from_slice::<Account, _>(
+                &serialised_account,
+                bincode::config::legacy(),
+            )?
+            .0
+            .storage_root,
+        );
         let mut account_storage_buf = vec![];
         for (storage_key, storage_val) in account_storage.iter() {
             account_storage_buf.extend_from_slice(&u64::try_from(storage_key.len())?.to_be_bytes());
@@ -1435,6 +1452,30 @@ mod tests {
     use crate::{crypto::SecretKey, state::State};
 
     #[test]
+    fn bincode1_bincode2_compatibility() {
+        #[derive(Serialize)]
+        struct Testdata {
+            a: QuorumCertificate,
+            b: BlsSignature,
+            c: VecLogSqlable,
+            d: MapScillaErrorSqlable,
+        }
+
+        let data = Testdata {
+            a: QuorumCertificate::genesis(),
+            b: BlsSignature::identity(),
+            c: VecLogSqlable(Vec::new()),
+            d: MapScillaErrorSqlable(BTreeMap::new()),
+        };
+
+        let bincode1 = bincode_v1::serialize(&data).unwrap(); // v1.3.3
+        let bincode2 = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap(); // v2.0 compatibility
+        let bincode0 = bincode::serde::encode_to_vec(&data, bincode::config::standard()).unwrap(); // v2.0 new standard
+        assert_ne!(bincode1, bincode0);
+        assert_eq!(bincode1, bincode2);
+    }
+
+    #[test]
     fn query_planner_stability_guarantee() {
         let base_path = tempdir().unwrap();
         let base_path = base_path.path();
@@ -1527,7 +1568,7 @@ mod tests {
             root_trie
                 .insert(
                     &State::account_key(account_address.into()).0,
-                    &bincode::serialize(&account).unwrap(),
+                    &bincode::serde::encode_to_vec(&account, bincode::config::legacy()).unwrap(),
                 )
                 .unwrap();
         }
