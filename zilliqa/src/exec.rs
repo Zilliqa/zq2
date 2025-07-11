@@ -943,22 +943,37 @@ impl State {
             // `account.info.code` might be `None`, even though we always return `Some` for the account code in our
             // [DatabaseRef] implementation. However, this is only the case for empty code, so we handle this case
             // separately.
-            let code = if account.info.code_hash == KECCAK_EMPTY {
-                vec![]
+            let mut code = if account.info.code_hash == KECCAK_EMPTY {
+                Code::Evm(vec![])
             } else {
-                account
-                    .info
-                    .code
-                    .as_ref()
-                    .expect("code_by_hash is not used")
-                    .original_bytes()
-                    .to_vec()
+                Code::Evm(
+                    account
+                        .info
+                        .code
+                        .as_ref()
+                        .expect("code_by_hash is not used")
+                        .original_bytes()
+                        .to_vec(),
+                )
             };
+
+            if self
+                .forks
+                .get(current_block_number)
+                .scilla_fix_contract_code_removal_on_evm_tx
+            {
+                // if contract is Scilla then fetch Code to include in Account update
+                let mut pending_state = PendingState::new(self.try_clone()?);
+                let zq2_account = pending_state.load_account(address)?;
+                if zq2_account.account.code.is_scilla() {
+                    code = zq2_account.account.code.clone()
+                }
+            }
 
             let account = Account {
                 nonce: account.info.nonce,
                 balance: account.info.balance.try_into()?,
-                code: Code::Evm(code),
+                code,
                 storage_root: storage.root_hash()?,
             };
             trace!(?address, ?account, "update account");
