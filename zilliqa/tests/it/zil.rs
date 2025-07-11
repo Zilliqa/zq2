@@ -4377,3 +4377,42 @@ async fn withdraw_from_contract(mut network: Network) {
         .as_u128();
     assert_eq!(0_u128, contract_zero_balance);
 }
+
+/// This test is for hardfork scilla_fix_contract_code_removal_on_evm_tx's behaviour
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn create_scilla_contract_send_evm_tx(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
+
+    let account_code_before = network
+        .get_node(0)
+        .consensus
+        .state()
+        .get_account(Address::from(contract_address.to_fixed_bytes()))
+        .unwrap()
+        .code;
+
+    // Send type 0 tx
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(contract_address, 0), None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, hash, 200).await;
+
+    let account_code_after = network
+        .get_node(0)
+        .consensus
+        .state()
+        .get_account(Address::from(contract_address.to_fixed_bytes()))
+        .unwrap()
+        .code;
+    assert_eq!(
+        serde_json::to_string(&account_code_before).unwrap(),
+        serde_json::to_string(&account_code_after).unwrap()
+    );
+}
