@@ -93,11 +93,13 @@ fn trace_block(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceResu
 
 /// trace_call
 fn trace_call(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+    // TODO: disable_eip3607 for this call.
     Err(anyhow!("API method trace_call is not implemented yet"))
 }
 
 /// trace_callMany
 fn trace_call_many(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+    // TODO: disable_eip3607 for this call.
     Err(anyhow!("API method trace_callMany is not implemented yet"))
 }
 
