@@ -152,15 +152,21 @@ def process_checkpoint_files() -> bool:
         move_cmd = f'gsutil mv "{CONFIG["gcs_bucket"]}/*.dat" "{CONFIG["gcs_bucket"]}/previous/"'
         run_gsutil_command(move_cmd)  # Don't check return value as this might fail if no files exist
         
-        # Copy checkpoint file to GCS
-        copy_cmd = f'gsutil cp "{checkpoint_file}" "{CONFIG["gcs_bucket"]}/{formatted_filename}.dat"'
+        # Get fresh block info for upload confirmation
+        fresh_block, fresh_error = get_current_block()
+        fresh_block_info = f" (Current block: {fresh_block})" if fresh_block else f" (Block info unavailable: {fresh_error})"
+        
+        # Copy checkpoint file to GCS with metadata
+        metadata_headers = []
+        metadata_headers.append(f'-h "x-goog-meta-block_at_checkpoint_production:{filename}"')
+        if fresh_block:
+            metadata_headers.append(f'-h "x-goog-meta-block_at_checkpoint_upload:{fresh_block}"')
+        
+        metadata_str = ' '.join(metadata_headers)
+        copy_cmd = f'gsutil {metadata_str} cp "{checkpoint_file}" "{CONFIG["gcs_bucket"]}/{formatted_filename}.dat"'
         
         if run_gsutil_command(copy_cmd):
-            # Get fresh block info for upload confirmation
-            fresh_block, fresh_error = get_current_block()
-            fresh_block_info = f" (Current block: {fresh_block})" if fresh_block else f" (Block info unavailable: {fresh_error})"
-            
-            log_message(f"Uploaded {checkpoint_file} to GCS{fresh_block_info}")
+            log_message(f"Uploaded {checkpoint_file} to GCS with metadata{fresh_block_info}")
             
             # Delete the local file
             try:
