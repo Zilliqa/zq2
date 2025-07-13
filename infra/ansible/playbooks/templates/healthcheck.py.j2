@@ -232,7 +232,8 @@ def check_checkpoint_status():
                 "latest_checkpoint_block_upload": latest_checkpoint_block["upload"],
                 "code": 500
             }), 500
-        
+
+        # Return healthy status if current block is lower than the expected next checkpoint block
         return jsonify({
             "status": "healthy",
             "message": "Last checkpoint has been produced correctly",
