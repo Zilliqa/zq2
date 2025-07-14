@@ -45,7 +45,9 @@ use crate::{
         TxPoolStatus,
     },
     state::{Code, State},
-    static_hardfork_data::{XSGD_CODE, XSGD_MAINNET_ADDR},
+    static_hardfork_data::{
+        XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
+    },
     sync::{Sync, SyncPeers},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -3333,6 +3335,22 @@ impl Consensus {
                         a.code = Code::Evm(vec![]);
                         Ok(())
                     })?;
+                }
+            }
+        }
+        if fork.restore_ignite_wallet_contracts {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RestoreIgniteWalletContracts)
+            {
+                if fork_height == block.header.number {
+                    for (addr, code) in build_ignite_wallet_addr_scilla_code_map()?.iter() {
+                        state.mutate_account(*addr, |a| {
+                            a.code = code.clone();
+                            Ok(())
+                        })?;
+                    }
                 }
             }
         }

@@ -593,6 +593,7 @@ impl Forks {
                 ForkName::ScillaFixContractCodeRemovalOnEvmTx => {
                     fork.scilla_fix_contract_code_removal_on_evm_tx
                 }
+                ForkName::RestoreIgniteWalletContracts => fork.restore_ignite_wallet_contracts,
             } {
                 return Some(fork.at_height);
             }
@@ -629,6 +630,7 @@ pub struct Fork {
     pub evm_exec_failure_causes_scilla_precompile_to_fail: bool,
     pub revert_restore_xsgd_contract: bool,
     pub scilla_fix_contract_code_removal_on_evm_tx: bool,
+    pub restore_ignite_wallet_contracts: bool,
 }
 
 pub enum ForkName {
@@ -651,6 +653,7 @@ pub enum ForkName {
     EvmExecFailureCausesScillaWhitelistedAddrToFail,
     RevertRestoreXsgdContract,
     ScillaFixContractCodeRemovalOnEvmTx,
+    RestoreIgniteWalletContracts,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -747,6 +750,8 @@ pub struct ForkDelta {
     pub revert_restore_xsgd_contract: Option<bool>,
     /// If true, an evm tx (legacy or eip1559) should not clear a Scilla contract's code when its address is interacted with
     pub scilla_fix_contract_code_removal_on_evm_tx: Option<bool>,
+    /// If true, re-write IgniteWallet's contract to addresses specified
+    pub restore_ignite_wallet_contracts: Option<bool>,
 }
 
 impl Fork {
@@ -829,6 +834,9 @@ impl Fork {
             scilla_fix_contract_code_removal_on_evm_tx: delta
                 .scilla_fix_contract_code_removal_on_evm_tx
                 .unwrap_or(self.scilla_fix_contract_code_removal_on_evm_tx),
+            restore_ignite_wallet_contracts: delta
+                .restore_ignite_wallet_contracts
+                .unwrap_or(self.restore_ignite_wallet_contracts),
         }
     }
 }
@@ -922,6 +930,7 @@ pub fn genesis_fork_default() -> Fork {
         evm_exec_failure_causes_scilla_precompile_to_fail: true,
         revert_restore_xsgd_contract: true,
         scilla_fix_contract_code_removal_on_evm_tx: true,
+        restore_ignite_wallet_contracts: true,
     }
 }
 
@@ -1067,6 +1076,7 @@ mod tests {
                 evm_exec_failure_causes_scilla_precompile_to_fail: None,
                 revert_restore_xsgd_contract: None,
                 scilla_fix_contract_code_removal_on_evm_tx: None,
+                restore_ignite_wallet_contracts: None,
             }],
             ..Default::default()
         };
@@ -1115,6 +1125,7 @@ mod tests {
                     evm_exec_failure_causes_scilla_precompile_to_fail: None,
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1143,6 +1154,7 @@ mod tests {
                     evm_exec_failure_causes_scilla_precompile_to_fail: None,
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
             ],
             ..Default::default()
@@ -1205,6 +1217,7 @@ mod tests {
                     evm_exec_failure_causes_scilla_precompile_to_fail: None,
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1233,6 +1246,7 @@ mod tests {
                     evm_exec_failure_causes_scilla_precompile_to_fail: None,
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
             ],
             ..Default::default()
@@ -1286,6 +1300,7 @@ mod tests {
                 evm_exec_failure_causes_scilla_precompile_to_fail: true,
                 revert_restore_xsgd_contract: true,
                 scilla_fix_contract_code_removal_on_evm_tx: true,
+                restore_ignite_wallet_contracts: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1327,6 +1342,7 @@ mod tests {
                     evm_exec_failure_causes_scilla_precompile_to_fail: None,
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1355,6 +1371,7 @@ mod tests {
                     evm_exec_failure_causes_scilla_precompile_to_fail: None,
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
             ],
             ..Default::default()
