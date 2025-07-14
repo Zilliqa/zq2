@@ -430,7 +430,7 @@ pub struct ExternalContext<'a, I> {
     /// into the call-stack. This will always be non-empty and the first entry will be the transaction signer.
     pub callers: Vec<Address>,
     pub has_evm_failed: bool,
-    pub has_touched_whitelisted_addresses: bool,
+    pub has_called_scilla_precompile: bool,
 }
 
 impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
@@ -541,7 +541,7 @@ impl State {
             enforce_transaction_failure: false,
             callers: vec![from_addr],
             has_evm_failed: false,
-            has_touched_whitelisted_addresses: false,
+            has_called_scilla_precompile: false,
         };
         let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
@@ -615,14 +615,14 @@ impl State {
 
         // If any of EVM (calls, creates, ...) failed and there was a call to whitelisted scilla address with interop precompile
         // then report entire transaction as failed
-        let evm_exec_failure_causes_scilla_whitelisted_addr_to_fail = self
+        let evm_exec_failure_causes_scilla_precompile_to_fail = self
             .forks
             .get(current_block.number)
-            .evm_exec_failure_causes_scilla_whitelisted_addr_to_fail;
+            .evm_exec_failure_causes_scilla_precompile_to_fail;
         let ctx = &ctx_with_handler.context.external;
-        if evm_exec_failure_causes_scilla_whitelisted_addr_to_fail
+        if evm_exec_failure_causes_scilla_precompile_to_fail
             && ctx.has_evm_failed
-            && ctx.has_touched_whitelisted_addresses
+            && ctx.has_called_scilla_precompile
         {
             return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
         }
