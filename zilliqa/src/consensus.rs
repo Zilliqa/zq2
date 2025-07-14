@@ -28,7 +28,7 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     blockhooks,
-    cfg::{ConsensusConfig, ForkName, NodeConfig, XSGD_CODE, XSGD_MAINNET_ADDR},
+    cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
@@ -45,6 +45,7 @@ use crate::{
         TxPoolStatus,
     },
     state::{Code, State},
+    static_hardfork_data::{XSGD_CODE, XSGD_MAINNET_ADDR},
     sync::{Sync, SyncPeers},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
