@@ -451,10 +451,8 @@ pub fn scilla_call_handle_register<I: ScillaInspector>(
             .scilla_call_gas_exempt_addrs
             .contains(&inputs.caller);
 
-        // Record access of whitelisted contract by precompile
-        if gas_exempt {
-            ctx.external.has_touched_whitelisted_addresses = true;
-        }
+        // Record access of scilla precompile
+        ctx.external.has_called_scilla_precompile = true;
 
         // The behaviour is different for contracts having 21k gas and/or deployed with zq1
         // 1. If gas == 21k and gas_exempt -> allow it to run with gas_left()
@@ -623,14 +621,14 @@ fn scilla_call_precompile<I: ScillaInspector>(
         state.evm_state = Some(evmctx.journaled_state.clone());
     }
 
-    // 1. if evm_exec_failure_causes_scilla_whitelisted_addr_to_fail == true then we take converted value
-    // 2. if evm_exec_failure_causes_scilla_whitelisted_addr_to_fail == false and evm_to_scilla_value_transfer_zero == true -> we return 0
+    // 1. if evm_exec_failure_causes_scilla_precompile_to_fail == true then we take converted value
+    // 2. if evm_exec_failure_causes_scilla_precompile_to_fail == false and evm_to_scilla_value_transfer_zero == true -> we return 0
     // 3. else we take converted value
     let effective_value = {
         match (
             external_context
                 .fork
-                .evm_exec_failure_causes_scilla_whitelisted_addr_to_fail,
+                .evm_exec_failure_causes_scilla_precompile_to_fail,
             external_context.fork.evm_to_scilla_value_transfer_zero,
         ) {
             (true, _) => ZilAmount::from_amount(input.transfer_value().unwrap_or_default().to()),
