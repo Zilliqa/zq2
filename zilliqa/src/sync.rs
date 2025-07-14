@@ -137,6 +137,8 @@ pub struct Sync {
     sync_base_height: u64,
     zq2_floor_height: u64,
     ignore_passive: bool,
+    // periodic vacuum
+    vacuum_at: u64,
 }
 
 impl Sync {
@@ -150,6 +152,8 @@ impl Sync {
     const PRUNE_TIMEOUT_MS: u128 = 1000;
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
     const RESPONSE_SIZE_THRESHOLD: usize = 8 * 1024 * 1024;
+    // periodic vacuum interval
+    const VACUUM_INTERVAL: u64 = 86400; // 'daily'
 
     pub fn new(
         config: &NodeConfig,
@@ -191,6 +195,14 @@ impl Sync {
             return Err(anyhow::anyhow!("Please restore from a checkpoint"));
         }
 
+        // at some random point in the future, or never
+        let vacuum_at = if prune_interval != u64::MAX {
+            latest_block_number
+                .saturating_add(rand::thread_rng().gen_range(1..Self::VACUUM_INTERVAL))
+        } else {
+            u64::MAX
+        };
+
         Ok(Self {
             db,
             message_sender,
@@ -220,6 +232,7 @@ impl Sync {
             size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
             zq2_floor_height,
             ignore_passive,
+            vacuum_at,
         })
     }
 
@@ -420,7 +433,11 @@ impl Sync {
                 self.request_passive_sync()?;
             }
             Ordering::Less => {
-                self.prune_range(range)?;
+                let last_prune = self.prune_range(range)?;
+                if last_prune > self.vacuum_at {
+                    self.vacuum_at = last_prune.saturating_add(Self::VACUUM_INTERVAL);
+                    self.db.vacuum()?;
+                }
             }
         }
         Ok(())
@@ -429,7 +446,8 @@ impl Sync {
     /// Utility: Prune blocks
     ///
     /// Deletes both canonical and non-canonical blocks from the DB, given a range.
-    pub fn prune_range(&mut self, range: RangeInclusive<u64>) -> Result<()> {
+    /// Returns the highest block number pruned
+    pub fn prune_range(&mut self, range: RangeInclusive<u64>) -> Result<u64> {
         let prune_ceil = if self.prune_interval != u64::MAX {
             // prune prune-interval
             range
@@ -442,7 +460,7 @@ impl Sync {
                 .saturating_sub(MIN_PRUNE_INTERVAL.saturating_sub(1))
                 .min(self.sync_base_height)
         } else {
-            return Ok(());
+            return Ok(u64::MIN);
         };
 
         // Prune canonical, and non-canonical blocks.
@@ -451,7 +469,7 @@ impl Sync {
         for number in *range.start()..prune_ceil {
             // check if we have time to prune
             if start_now.elapsed().as_millis() > Self::PRUNE_TIMEOUT_MS {
-                break;
+                return Ok(number);
             }
             // remove canonical block and transactions
             if let Some(block) = self.db.get_canonical_block_by_number(number)? {
@@ -464,7 +482,7 @@ impl Sync {
                 self.db.prune_block(&block, false)?;
             }
         }
-        Ok(())
+        Ok(prune_ceil)
     }
 
     /// Injects the recent proposals
@@ -1163,6 +1181,7 @@ impl Sync {
                 .filter(|&sb| {
                     self.segments.insert_sync_metadata(&sb.header); // record all metadata
                     block_size = block_size.saturating_add(sb.size_estimate);
+                    trace!(total=%block_size, "sync::DoMetadataResponse : response");
                     if block_size > Self::RESPONSE_SIZE_THRESHOLD {
                         block_size = 0;
                         true

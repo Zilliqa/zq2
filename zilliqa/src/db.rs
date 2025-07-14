@@ -980,6 +980,13 @@ impl Db {
         Ok(())
     }
 
+    /// Triggers a DB vacuum
+    pub fn vacuum(&self) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        db.execute("VACUUM", [])?;
+        Ok(())
+    }
+
     /// Delete the block and its related transactions and receipts
     pub fn prune_block(&self, block: &Block, is_canonical: bool) -> Result<()> {
         let hash = block.hash();
