@@ -16,10 +16,17 @@ use crate::{
 pub fn check_and_build_ots_indices(db: Arc<Db>, last_view: u64) -> Result<()> {
     let table_key = "ots_indices_rebuilt";
 
-    if db.get_value_from_aux_table(table_key)?.is_some() {
-        // Already rebuilt
-        return Ok(());
+    let last_view = match db.get_value_from_aux_table(table_key)? {
+        Some(bytes) => {
+            let arr: [u8; 8] = bytes.as_slice().try_into()?;
+            u64::from_le_bytes(arr)
+        }
+        None => last_view,
     };
+
+    if last_view == 0 {
+        return Ok(());
+    }
 
     tokio::spawn(async move {
         let now = SystemTime::now();
@@ -70,11 +77,14 @@ pub fn check_and_build_ots_indices(db: Arc<Db>, last_view: u64) -> Result<()> {
                     let _ = db.add_touched_address(address, txn_hash);
                 }
                 // Give some breath to db before proceeding with next transaction
-                sleep(Duration::from_millis(10)).await;
+                sleep(Duration::from_millis(5)).await;
+            }
+            let _ = db.insert_value_to_aux_table(table_key, view.to_le_bytes().to_vec());
+
+            if view % 100_000 == 0 {
+                info!("Ots indices built down to block: {:?}", view);
             }
         }
-
-        let _ = db.insert_value_to_aux_table(table_key, "done".into());
         info!("Migration took: {:?}", now.elapsed());
     });
 
