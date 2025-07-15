@@ -84,14 +84,14 @@ z2 deposit-top-up \
   --public-key <PUBLIC_KEY>
   --amount <AMOUNT>
 
-Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_MILLION_OF_ZIL>
+Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_ZIL>
 ```
 
 ## Parameters
 * `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-testnet, zq2-mainnet.
 * `--private-key <PRIVATE_KEY_OF_WALLET>`: The private key of the wallet.
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
-* `--amount <AMOUNT_IN_MILLION_OF_ZIL>`: The amount in millions of ZILs to top up.
+* `--amount <AMOUNT_IN_ZIL>`: The amount in ZILs to top up.
 
 #### Sample run
 ```bash
@@ -112,14 +112,14 @@ z2 unstake \
   --public-key <PUBLIC_KEY>
   --amount <AMOUNT>
 
-Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_MILLION_OF_ZIL>
+Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_ZIL>
 ```
 
 ## Parameters
 * `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-testnet, zq2-mainnet.
 * `--private-key <PRIVATE_KEY_OF_WALLET>`: The private key of the wallet.
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
-* `--amount <AMOUNT_IN_MILLION_OF_ZIL>`: The amount in millions of ZILs to unstake.
+* `--amount <AMOUNT_IN_ZIL>`: The amount in ZILs to unstake.
 
 #### Sample run
 ```bash
