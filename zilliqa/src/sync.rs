@@ -153,7 +153,7 @@ impl Sync {
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
     const RESPONSE_SIZE_THRESHOLD: usize = 8 * 1024 * 1024;
     // periodic vacuum interval
-    const VACUUM_INTERVAL: u64 = 86400; // 'daily'
+    const VACUUM_INTERVAL: u64 = 604800; // 'weekly'
 
     pub fn new(
         config: &NodeConfig,
@@ -435,8 +435,9 @@ impl Sync {
             Ordering::Less => {
                 let last_prune = self.prune_range(range)?;
                 if last_prune > self.vacuum_at {
-                    self.vacuum_at = last_prune.saturating_add(Self::VACUUM_INTERVAL);
+                    tracing::info!("Vacuum at {last_prune} then {}", self.vacuum_at);
                     self.db.vacuum()?;
+                    self.vacuum_at = last_prune.saturating_add(Self::VACUUM_INTERVAL);
                 }
             }
         }
