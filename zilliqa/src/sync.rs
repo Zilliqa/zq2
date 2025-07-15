@@ -149,7 +149,7 @@ impl Sync {
     // Timeout for passive-sync/prune
     const PRUNE_TIMEOUT_MS: u128 = 1000;
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
-    const RESPONSE_SIZE_THRESHOLD: usize = 9 * 1024 * 1024;
+    const RESPONSE_SIZE_THRESHOLD: usize = 8 * 1024 * 1024;
 
     pub fn new(
         config: &NodeConfig,
@@ -1163,7 +1163,6 @@ impl Sync {
                 .filter(|&sb| {
                     self.segments.insert_sync_metadata(&sb.header); // record all metadata
                     block_size = block_size.saturating_add(sb.size_estimate);
-                    trace!(total=%block_size, "sync::DoMetadataResponse : response");
                     if block_size > Self::RESPONSE_SIZE_THRESHOLD {
                         block_size = 0;
                         true
