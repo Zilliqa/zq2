@@ -469,4 +469,77 @@ contract ScillaInterop {
     ) public {
         scillaContract.callScillaValue(transitionName, value);
     }
+
+    function readAfterWrite(
+        address scillaContract,
+        string memory transitionName,
+        address arg1,
+        uint128 arg2,
+        string memory fieldName
+    ) public {
+        address SOME_RANDOM_ADDRESS = 0x00000000005a494c4445504f53495450524f5859;
+
+        // reads to SOME_RANDOM_ADDRESS should give 0 before and after the call
+        uint128 beforeWriteRandAddr = readMapUint128(
+            scillaContract,
+            fieldName,
+            SOME_RANDOM_ADDRESS
+        );
+        require(beforeWriteRandAddr == 0, "Value must be 0");
+
+        // This is the key of our interest - before calling transition its value is 0
+        uint128 beforeWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(beforeWrite == 0, "Value must be 0");
+
+        scillaContract.callScilla(transitionName, arg1, arg2);
+
+        // reads to SOME_RANDOM_ADDRESS still gives 0
+        uint128 afterWriteRandAddr = readMapUint128(
+            scillaContract,
+            fieldName,
+            SOME_RANDOM_ADDRESS
+        );
+        require(afterWriteRandAddr == 0, "Value must be 0");
+
+        // Transition has updated this key so it should return updated value
+        uint128 afterWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(afterWrite == arg2, "Value must be arg2");
+    }
+
+    function callScillaCheckChangeRevert(
+        address scillaContract,
+        string memory transitionName,
+        address arg1,
+        uint128 arg2,
+        string memory fieldName
+    ) public {
+        scillaContract.callScilla(transitionName, arg1, arg2);
+        uint128 afterWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(afterWrite == arg2, "Value must be arg2");
+        revert();
+    }
+
+    function makeNestedPrecompileCallWhichReverts(
+        address scillaContract,
+        string memory transitionName,
+        address arg1,
+        uint128 arg2,
+        string memory fieldName
+    ) public {
+        uint128 beforeWrite = readMapUint128(scillaContract, fieldName, arg1);
+        require(beforeWrite == 0, "Value must be 0");
+
+        (bool ok, ) = address(this).call(
+            abi.encodeWithSelector(
+                this.callScillaCheckChangeRevert.selector,
+                scillaContract,
+                transitionName,
+                arg1,
+                arg2,
+                fieldName
+            )
+        );
+
+        require(!ok, "This call must fail!");
+    }
 }

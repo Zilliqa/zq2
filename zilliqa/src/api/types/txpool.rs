@@ -7,13 +7,17 @@ use super::eth::Transaction;
 
 #[derive(Clone, Serialize)]
 pub struct TxPoolContent {
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub pending: HashMap<Address, HashMap<u64, Transaction>>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub queued: HashMap<Address, HashMap<u64, Transaction>>,
 }
 
 #[derive(Clone, Serialize)]
 pub struct TxPoolInspect {
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub pending: HashMap<Address, HashMap<u64, String>>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub queued: HashMap<Address, HashMap<u64, String>>,
 }
 

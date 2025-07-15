@@ -429,6 +429,8 @@ pub struct ExternalContext<'a, I> {
     /// The caller of each call in the call-stack. This is needed because the `scilla_call` precompile needs to peek
     /// into the call-stack. This will always be non-empty and the first entry will be the transaction signer.
     pub callers: Vec<Address>,
+    pub has_evm_failed: bool,
+    pub has_called_scilla_precompile: bool,
 }
 
 impl<I: Inspector<PendingState>> GetInspector<PendingState> for ExternalContext<'_, I> {
@@ -468,6 +470,7 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
+            false,
         )?;
 
         match result {
@@ -495,6 +498,24 @@ impl State {
         }
     }
 
+    fn failed(
+        mut result_and_state: ResultAndState,
+        env: Box<Env>,
+    ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
+        result_and_state.state.clear();
+        Ok((
+            ResultAndState {
+                result: ExecutionResult::Revert {
+                    gas_used: result_and_state.result.gas_used(),
+                    output: Bytes::default(),
+                },
+                state: result_and_state.state,
+            },
+            HashMap::new(),
+            env,
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn apply_transaction_evm<I: Inspector<PendingState> + ScillaInspector>(
         &self,
@@ -509,6 +530,7 @@ impl State {
         inspector: I,
         enable_inspector: bool,
         base_fee_check: BaseFeeCheck,
+        disable_eip3607: bool,
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
@@ -518,6 +540,8 @@ impl State {
             fork: self.forks.get(current_block.number),
             enforce_transaction_failure: false,
             callers: vec![from_addr],
+            has_evm_failed: false,
+            has_called_scilla_precompile: false,
         };
         let pending_state = PendingState::new(self.clone());
         let mut evm = Evm::builder()
@@ -542,6 +566,7 @@ impl State {
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
             .modify_cfg_env(|c| {
+                c.disable_eip3607 = disable_eip3607;
                 c.chain_id = self.chain_id.eth;
                 c.disable_base_fee = match base_fee_check {
                     BaseFeeCheck::Validate => false,
@@ -576,7 +601,7 @@ impl State {
         }
         let mut evm = evm.build();
 
-        let mut result_and_state = evm.transact()?;
+        let result_and_state = evm.transact()?;
         let mut ctx_with_handler = evm.into_context_with_handler_cfg();
 
         // If the scilla precompile failed for whitelisted zq1 contract we mark the entire transaction as failed
@@ -585,18 +610,21 @@ impl State {
             .external
             .enforce_transaction_failure
         {
-            result_and_state.state.clear();
-            return Ok((
-                ResultAndState {
-                    result: ExecutionResult::Revert {
-                        gas_used: result_and_state.result.gas_used(),
-                        output: Bytes::default(),
-                    },
-                    state: result_and_state.state,
-                },
-                HashMap::new(),
-                ctx_with_handler.context.evm.inner.env,
-            ));
+            return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
+        }
+
+        // If any of EVM (calls, creates, ...) failed and there was a call to whitelisted scilla address with interop precompile
+        // then report entire transaction as failed
+        let evm_exec_failure_causes_scilla_precompile_to_fail = self
+            .forks
+            .get(current_block.number)
+            .evm_exec_failure_causes_scilla_precompile_to_fail;
+        let ctx = &ctx_with_handler.context.external;
+        if evm_exec_failure_causes_scilla_precompile_to_fail
+            && ctx.has_evm_failed
+            && ctx.has_called_scilla_precompile
+        {
+            return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
         }
 
         Ok((
@@ -770,6 +798,7 @@ impl State {
                     } else {
                         BaseFeeCheck::Validate
                     },
+                    false,
                 )?;
 
             self.apply_delta_evm(&state, current_block.number)?;
@@ -914,22 +943,37 @@ impl State {
             // `account.info.code` might be `None`, even though we always return `Some` for the account code in our
             // [DatabaseRef] implementation. However, this is only the case for empty code, so we handle this case
             // separately.
-            let code = if account.info.code_hash == KECCAK_EMPTY {
-                vec![]
+            let mut code = if account.info.code_hash == KECCAK_EMPTY {
+                Code::Evm(vec![])
             } else {
-                account
-                    .info
-                    .code
-                    .as_ref()
-                    .expect("code_by_hash is not used")
-                    .original_bytes()
-                    .to_vec()
+                Code::Evm(
+                    account
+                        .info
+                        .code
+                        .as_ref()
+                        .expect("code_by_hash is not used")
+                        .original_bytes()
+                        .to_vec(),
+                )
             };
+
+            if self
+                .forks
+                .get(current_block_number)
+                .scilla_fix_contract_code_removal_on_evm_tx
+            {
+                // if contract is Scilla then fetch Code to include in Account update
+                let mut pending_state = PendingState::new(self.try_clone()?);
+                let zq2_account = pending_state.load_account(address)?;
+                if zq2_account.account.code.is_scilla() {
+                    code = zq2_account.account.code.clone()
+                }
+            }
 
             let account = Account {
                 nonce: account.info.nonce,
                 balance: account.info.balance.try_into()?,
-                code: Code::Evm(code),
+                code,
                 storage_root: storage.root_hash()?,
             };
             trace!(?address, ?account, "update account");
@@ -946,6 +990,7 @@ impl State {
             contracts::deposit::VERSION.encode_input(&[]).unwrap(),
             0,
             current_block,
+            false,
         )?;
         contracts::deposit::VERSION.decode_output(&ensure_success(result)?)?[0]
             .clone()
@@ -962,6 +1007,7 @@ impl State {
             data,
             0,
             current_block,
+            false,
         )?;
         let leader = ensure_success(result)?;
 
@@ -984,6 +1030,7 @@ impl State {
             data,
             0,
             current_block,
+            false,
         )?;
         let stakers = ensure_success(result)?;
 
@@ -1009,6 +1056,7 @@ impl State {
             data,
             0,
             BlockHeader::default(),
+            false,
         )?;
         let committee = ensure_success(result)?;
         let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
@@ -1031,6 +1079,7 @@ impl State {
             data,
             0,
             current_block,
+            false,
         )?;
         let stake = ensure_success(result)?;
 
@@ -1051,6 +1100,7 @@ impl State {
             // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
             BlockHeader::default(),
+            false,
         )?;
         let return_value = ensure_success(result)?;
 
@@ -1075,6 +1125,7 @@ impl State {
             // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
             BlockHeader::default(),
+            false,
         )?;
         let return_value = ensure_success(result)?;
 
@@ -1129,6 +1180,7 @@ impl State {
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
+        disable_eip3607: bool,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
@@ -1146,6 +1198,7 @@ impl State {
             EvmGas(upper_bound),
             gas_price,
             value,
+            disable_eip3607,
         )?;
 
         // Execute the while loop iff (max - min)/max < MINIMUM_PERCENT_RATIO [%]
@@ -1171,6 +1224,7 @@ impl State {
                 inspector::noop(),
                 false,
                 BaseFeeCheck::Validate,
+                disable_eip3607,
             )?;
 
             match result {
@@ -1195,6 +1249,7 @@ impl State {
         gas: EvmGas,
         gas_price: u128,
         value: u128,
+        disable_eip3607: bool,
     ) -> Result<u64> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
@@ -1208,6 +1263,7 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Validate,
+            disable_eip3607,
         )?;
 
         let gas_used = result.gas_used();
@@ -1224,6 +1280,7 @@ impl State {
         data: Vec<u8>,
         amount: u128,
         current_block: BlockHeader,
+        disable_eip3607: bool,
     ) -> Result<ExecutionResult> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
@@ -1237,6 +1294,7 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
+            disable_eip3607,
         )?;
 
         Ok(result)
@@ -1264,6 +1322,7 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
+            false,
         )?;
         self.apply_delta_evm(&state, current_block.number)?;
 

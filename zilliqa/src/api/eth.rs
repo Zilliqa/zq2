@@ -60,6 +60,7 @@ pub fn rpc_module(
             ("eth_blobBaseFee", blob_base_fee),
             ("eth_blockNumber", block_number),
             ("eth_call", call),
+            ("eth_callMany", call_many),
             ("eth_chainId", chain_id),
             ("eth_estimateGas", estimate_gas),
             ("eth_feeHistory", fee_history),
@@ -196,6 +197,11 @@ fn block_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
     let node = node.read();
     Ok(node.consensus.get_highest_canonical_block_number().to_hex())
+}
+
+fn call_many(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+    // TODO: disable_eip3607 for this call.
+    Err(anyhow!("API method eth_callMany is not implemented yet"))
 }
 
 fn call(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
@@ -1172,6 +1178,7 @@ fn sign_transaction(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 /// eth_simulateV1
 /// Simulates a series of transactions at a specific block height with optional state overrides. This method allows you to test transactions with custom block and state parameters without actually submitting them to the network.
 fn simulate_v1(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+    // TODO: disable_eip3607 for this call.
     Err(anyhow!("API method eth_simulateV1 is not implemented yet"))
 }
 

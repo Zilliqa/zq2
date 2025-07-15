@@ -47,7 +47,7 @@ libp2p = { version = "0.56.0", features = ["identify"]}
 log = "0.4.27"
 parking_lot = "0.12.4"
 primitive-types = "0.12.2"
-prost = "0.13.5"
+prost = "0.14.1"
 rand = "0.8.5"
 regex = "1.11.1"
 reqwest = {version = "0.12.15", features = ["json", "rustls-tls", "http2", "charset"], default-features = false}
@@ -74,4 +74,4 @@ zilliqa = {path = "../zilliqa"}
 zilliqa-rs = "0.3.2"
 
 [build-dependencies]
-prost-build = "0.13.5"
+prost-build = "0.14.1"

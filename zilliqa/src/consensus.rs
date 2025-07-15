@@ -3325,6 +3325,20 @@ impl Consensus {
                 }
             }
         }
+        if fork.revert_restore_xsgd_contract {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RevertRestoreXsgdContract)
+            {
+                if fork_height == block.header.number {
+                    state.mutate_account(XSGD_MAINNET_ADDR, |a| {
+                        a.code = Code::Evm(vec![]);
+                        Ok(())
+                    })?;
+                }
+            }
+        }
 
         if self.block_is_first_in_epoch(block.header.number) {
             // Update state with any contract upgrades for this block
