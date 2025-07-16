@@ -18,7 +18,11 @@ pub fn check_and_build_ots_indices(db: Arc<Db>, last_view: u64) -> Result<()> {
 
     let last_view = match db.get_value_from_aux_table(table_key)? {
         Some(bytes) => {
-            let arr: [u8; 8] = bytes.as_slice().try_into()?;
+            let arr: [u8; 8] = match bytes.as_slice().try_into() {
+                Ok(arr) => arr,
+                // Previous non-integer marker stored in db
+                Err(_) => return Ok(()),
+            };
             u64::from_le_bytes(arr)
         }
         None => last_view,
