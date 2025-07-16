@@ -174,7 +174,7 @@ pub struct DeployerStakingArgs {
     /// Enable nodes selection
     #[clap(long)]
     select: bool,
-    /// Specify the amount in millions
+    /// Specify the amount in ZILs
     #[clap(long)]
     amount: u8,
 }
@@ -520,7 +520,7 @@ struct DepositTopUpStruct {
     /// Specify the Validator Public Key
     #[clap(long)]
     public_key: String,
-    /// Specify the stake amount in millions you want provide
+    /// Specify the stake amount in ZILs you want provide
     #[clap(long, short)]
     amount: u8,
 }
@@ -536,7 +536,7 @@ struct UnstakeStruct {
     /// Specify the Validator Public Key
     #[clap(long)]
     public_key: String,
-    /// Specify the amount in millions you want to unstake
+    /// Specify the amount in ZILs you want to unstake
     #[clap(long, short)]
     amount: u8,
 }
