@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{scilla::TransitionParam, state::Code};
 use anyhow::Result;
 use revm::primitives::{Address, address};
+
+use crate::{scilla::TransitionParam, state::Code};
 
 /// Scilla Code to be restored via restore_xsgd_contract
 pub const XSGD_MAINNET_ADDR: Address = address!("0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5");

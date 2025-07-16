@@ -10,9 +10,7 @@ use colored::Colorize;
 use serde_json::{Value, json};
 use strum::EnumProperty;
 use strum_macros::{Display, EnumString};
-use zilliqa::cfg::{
-    ContractUpgradeConfig, ContractUpgrades, ReinitialiseParams, genesis_fork_default,
-};
+use zilliqa::cfg::{ContractUpgradeConfig, ContractUpgrades, ReinitialiseParams};
 
 #[derive(Clone, Debug, ValueEnum, Display, EnumString, EnumProperty, PartialEq)]
 // TODO: decomment when became available
@@ -161,11 +159,6 @@ impl Chain {
                 "scilla_fix_contract_code_removal_on_evm_tx": false,
                 "restore_ignite_wallet_contracts": false,
             })),
-            Chain::Zq2Devnet => {
-                let mut genesis_forks = genesis_fork_default();
-                genesis_forks.restore_ignite_wallet_contracts = false;
-                Some(json!(genesis_forks))
-            }
             _ => None,
         }
     }
@@ -232,10 +225,6 @@ impl Chain {
                 json!({ "at_height": 5528557, "scilla_failed_txn_correct_balance_deduction": true, "scilla_transition_proper_order": true, "evm_to_scilla_value_transfer_zero": true, "restore_xsgd_contract": true }),
                 // estimated: 2025-07-14T12.00.00Z
                 json!({ "at_height": 5910029, "evm_exec_failure_causes_scilla_precompile_to_fail": true, "scilla_fix_contract_code_removal_on_evm_tx": true}),
-            ]),
-            Chain::Zq2Devnet => Some(vec![
-                // estimated: 2025-07-16T15.45.00Z
-                json!({ "at_height": 100, "restore_ignite_wallet_contracts": true}),
             ]),
             _ => None,
         }
