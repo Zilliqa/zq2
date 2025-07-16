@@ -112,14 +112,14 @@ impl SignerClient {
     }
 
     pub async fn deposit_top_up(&self, bls_public_key: &NodePublicKey, amount: u8) -> Result<()> {
-        println!("DepositTopUp: adding {} M $ZIL stake", amount,);
+        println!("DepositTopUp: adding {} $ZIL stake", amount,);
 
         let client = self.get_signer().await?;
 
         // Topup the validator's funds.
         let tx = TransactionRequest::new()
             .to(H160(contract_addr::DEPOSIT_PROXY.into_array()))
-            .value(amount as u128 * 1_000_000u128 * 10u128.pow(18))
+            .value(amount as u128 * 10u128.pow(18))
             .data(
                 contracts::deposit_v4::DEPOSIT_TOPUP
                     .encode_input(&[Token::Bytes(bls_public_key.as_bytes())])
@@ -142,7 +142,7 @@ impl SignerClient {
     }
 
     pub async fn unstake(&self, bls_public_key: &NodePublicKey, amount: u8) -> Result<()> {
-        println!("Unstake: removing {} M $ZIL", amount);
+        println!("Unstake: removing {} $ZIL", amount);
 
         let client = self.get_signer().await?;
         // Unstake the validator's funds.
@@ -152,7 +152,7 @@ impl SignerClient {
                 contracts::deposit_v4::UNSTAKE
                     .encode_input(&[
                         Token::Bytes(bls_public_key.as_bytes()),
-                        Token::Uint((amount as u128 * 1_000_000u128 * 10u128.pow(18)).into()),
+                        Token::Uint((amount as u128 * 10u128.pow(18)).into()),
                     ])
                     .unwrap(),
             );

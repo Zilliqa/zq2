@@ -152,7 +152,7 @@ z2 deployer deposit-top-up --amount <AMOUNT> [OPTIONS] <CONFIG_FILE>
 ```
 **Options:**
 - `--select` — interactively select nodes
-- `--amount <AMOUNT>` — amount in millions (required)
+- `--amount <AMOUNT>` — amount in ZILs (required)
 
 **Example:**
 ```bash
@@ -168,7 +168,7 @@ z2 deployer unstake --amount <AMOUNT> [OPTIONS] <CONFIG_FILE>
 ```
 **Options:**
 - `--select` — interactively select nodes
-- `--amount <AMOUNT>` — amount in millions (required)
+- `--amount <AMOUNT>` — amount in ZILs (required)
 
 **Example:**
 ```bash
