@@ -1311,7 +1311,7 @@ impl State {
             BaseFeeCheck::Ignore,
             ExtraOpts {
                 disable_eip3607: true,
-                exec_type: ExecType::Estimate,
+                exec_type: ExecType::Call,
             },
         )?;
 
