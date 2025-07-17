@@ -613,7 +613,7 @@ fn scilla_call_precompile<I: ScillaInspector>(
 
     let message = serde_json::json!({"_tag": transition.name, "params": params });
 
-    let empty_state = PendingState::new(evmctx.db.pre_state.clone());
+    let empty_state = PendingState::new(evmctx.db.pre_state.clone(), external_context.fork.clone());
     // Temporarily move the `PendingState` out of `evmctx`, replacing it with an empty state.
     let mut state = std::mem::replace(&mut evmctx.db, empty_state);
     let depth = evmctx.journaled_state.depth;

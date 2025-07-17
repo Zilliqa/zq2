@@ -4398,7 +4398,10 @@ async fn create_scilla_contract_send_evm_tx(mut network: Network) {
 
     // Send type 0 tx
     let hash = wallet
-        .send_transaction(TransactionRequest::pay(contract_address, 0), None)
+        .send_transaction(
+            TransactionRequest::pay(contract_address, 0).gas(1_000_000),
+            None,
+        )
         .await
         .unwrap()
         .tx_hash();
@@ -4415,4 +4418,31 @@ async fn create_scilla_contract_send_evm_tx(mut network: Network) {
         serde_json::to_string(&account_code_before).unwrap(),
         serde_json::to_string(&account_code_after).unwrap()
     );
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn evm_tx_to_scilla_contract_should_fail(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
+
+    // Send type 0 tx
+    let hash = wallet
+        .send_transaction(
+            TransactionRequest::pay(contract_address, 10).gas(21000),
+            None,
+        )
+        .await
+        .unwrap()
+        .tx_hash();
+
+    // Process pending transaction
+    network.run_until_receipt(&wallet, hash, 200).await;
+
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    assert_eq!(receipt.status.unwrap().as_u64(), 0u64);
+    assert_eq!(receipt.cumulative_gas_used.as_u64(), 21000);
 }

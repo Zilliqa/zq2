@@ -129,6 +129,7 @@ impl Chain {
                 "revert_restore_xsgd_contract": false,
                 "scilla_fix_contract_code_removal_on_evm_tx": false,
                 "restore_ignite_wallet_contracts": false,
+                "prevent_zil_transfer_from_evm_to_scilla_contract": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -158,6 +159,7 @@ impl Chain {
                 "revert_restore_xsgd_contract": false,
                 "scilla_fix_contract_code_removal_on_evm_tx": false,
                 "restore_ignite_wallet_contracts": false,
+                "prevent_zil_transfer_from_evm_to_scilla_contract": false,
             })),
             _ => None,
         }
