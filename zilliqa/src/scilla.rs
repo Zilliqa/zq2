@@ -221,7 +221,7 @@ pub struct Scilla {
 
 impl Scilla {
     const MAX_ATTEMPTS: u8 = 3; // effective time is up to MAX_ATTEMPTS * REQ_TIMEOUT.
-    const REQ_TIMEOUT: Duration = Duration::from_secs(120); // effective time should be kept below gossip/request timeouts.
+    const REQ_TIMEOUT: Duration = Duration::from_secs(300); // effective time should be kept below gossip/request timeouts.
 
     /// Create a new Scilla interpreter. This involves spawning two threads:
     /// 1. The client thread, responsible for communicating with the server.
