@@ -161,7 +161,7 @@ def go(role):
     log("PROVISIONING_COMPLETED")
 
 def login_registry():
-    run_or_die(["sudo", "bash", "-c", "gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://asia-docker.pkg.dev" ])
+    run_or_die(["sudo", "bash", "-c", "gcloud auth application-default print-access-token | docker login -u oauth2accesstoken --password-stdin https://asia-docker.pkg.dev" ])
 
 def create_zq2_start_script():
     with open("/tmp/zq2.sh", "w") as f:

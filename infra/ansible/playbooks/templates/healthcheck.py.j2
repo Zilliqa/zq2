@@ -118,37 +118,79 @@ def check_pace_status():
     }), 200
 
 def get_latest_checkpoint_block():
-    """Get the latest checkpoint block number from GCS bucket"""
+    """Get the latest checkpoint block data from GCS bucket metadata"""
+    import logging
+    import sys
+    
+    # Configure logging to stderr
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
     try:
+        logger.info("FUNCTION CALLED")
         bucket_name = GCS_BUCKET.replace("gs://", "")
-        gcs_api_url = f"https://storage.googleapis.com/storage/v1/b/{bucket_name}/o?delimiter=/"
+        logger.info(f"Bucket: {bucket_name}")
         
-        response = requests.get(gcs_api_url, timeout=10)
+        # Get ONLY root-level objects using delimiter
+        list_url = f"https://storage.googleapis.com/storage/v1/b/{bucket_name}/o?delimiter=/"
+        
+        response = requests.get(list_url, timeout=10)
         response.raise_for_status()
         
         data = response.json()
         items = data.get("items", [])
+        logger.info(f"Items found: {len(items)}")
         
         if not items:
             return None, "No checkpoint files found in bucket"
         
-        # Filter .dat files and extract block numbers
-        dat_files = []
+        # Process only .dat files
+        checkpoint_data = []
         for item in items:
             name = item.get("name", "")
+            logger.info(f"Item: {name}")
+            
             if name.endswith(".dat"):
-                try:
-                    # Remove .dat extension and convert to int (removing leading zeros)
-                    block_number = int(name.replace(".dat", ""))
-                    dat_files.append(block_number)
-                except ValueError:
-                    continue
+                logger.info(f"Processing .dat file: {name}")
+                
+                # Get individual object with metadata
+                object_url = f"https://storage.googleapis.com/storage/v1/b/{bucket_name}/o/{name}"
+                
+                obj_response = requests.get(object_url, timeout=10)
+                obj_response.raise_for_status()
+                
+                obj_data = obj_response.json()
+                metadata = obj_data.get("metadata", {})
+                
+                logger.info(f"File: {name}, Metadata: {metadata}")
+                
+                # Get both metadata values
+                production_block = metadata.get("block_at_checkpoint_production")
+                upload_block = metadata.get("block_at_checkpoint_upload")
+                
+                logger.info(f"Production: {production_block}, Upload: {upload_block}")
+                
+                if production_block:
+                    try:
+                        production_block_num = int(production_block)
+                        upload_block_num = int(upload_block) if upload_block else None
+                        
+                        checkpoint_info = {
+                            "production": production_block_num,
+                            "upload": upload_block_num,
+                            "filename": name
+                        }
+                        checkpoint_data.append(checkpoint_info)
+                        logger.info(f"Added: {checkpoint_info}")
+                    except ValueError:
+                        continue
         
-        if not dat_files:
-            return None, "No valid .dat checkpoint files found"
+        if not checkpoint_data:
+            return None, "No valid checkpoint files with production block metadata found"
         
-        # Return the latest checkpoint block number
-        latest_checkpoint = max(dat_files)
+        # Return the latest checkpoint based on production block number
+        latest_checkpoint = max(checkpoint_data, key=lambda x: x["production"])
+        logger.info(f"Latest: {latest_checkpoint}")
         return latest_checkpoint, None
         
     except requests.exceptions.RequestException as e:
@@ -169,34 +211,35 @@ def check_checkpoint_status():
         
         current_block = int(block_number_hex, 16)
         
-        # Get latest checkpoint block
-        latest_checkpoint, error = get_latest_checkpoint_block()
+        # Get latest checkpoint block data
+        latest_checkpoint_block, error = get_latest_checkpoint_block()
         if error:
             return jsonify({
                 "error": error,
                 "code": 500
             }), 500
         
-        # Calculate the difference
-        block_difference = current_block - latest_checkpoint
+        # Calculate the next checkpoint block
+        next_checkpoint_block = latest_checkpoint_block["upload"] + 86400
         
-        # Check if checkpoint is more than 86400 blocks behind
-        if block_difference > 86400:
+        # Check if current block is higher than the expected next checkpoint block
+        if current_block > next_checkpoint_block:
             return jsonify({
                 "status": "critical",
-                "error": "Last checkpoint has not been produced for more than 86400 blocks",
+                "error": "Last checkpoint has not been produced",
                 "current_block": current_block,
-                "latest_checkpoint_block": latest_checkpoint,
-                "blocks_behind": block_difference,
+                "latest_checkpoint_block_production": latest_checkpoint_block["production"],
+                "latest_checkpoint_block_upload": latest_checkpoint_block["upload"],
                 "code": 500
             }), 500
-        
+
+        # Return healthy status if current block is lower than the expected next checkpoint block
         return jsonify({
             "status": "healthy",
             "message": "Last checkpoint has been produced correctly",
             "current_block": current_block,
-            "latest_checkpoint_block": latest_checkpoint,
-            "blocks_behind": block_difference,
+            "latest_checkpoint_block_production": latest_checkpoint_block["production"],
+            "latest_checkpoint_block_upload": latest_checkpoint_block["upload"],
             "code": 200
         }), 200
         

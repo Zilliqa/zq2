@@ -503,6 +503,14 @@ pub enum SyncingResult {
     Struct(SyncingStruct),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetAccountResult {
+    pub nonce: u64,
+    pub balance: u128,
+    pub code_hash: B256,
+    pub storage_root: B256,
+}
+
 #[cfg(test)]
 mod tests {
     use alloy::primitives::B256;

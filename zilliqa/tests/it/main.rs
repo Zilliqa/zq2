@@ -1044,7 +1044,7 @@ impl Network {
                 match destination {
                     Some((destination, _)) => {
                         assert!(
-                            cbor_size < 1024 * 1024,
+                            cbor_size < 1024 * 1024, // 1MB request
                             "request overflow {} {:?}",
                             cbor_size,
                             external_message
@@ -1096,7 +1096,7 @@ impl Network {
                     }
                     None => {
                         assert!(
-                            cbor_size < 1024 * 1024,
+                            cbor_size < 1024 * 1024 * 2, // 2MB gossip
                             "broadcast overflow {} {:?}",
                             cbor_size,
                             external_message
@@ -1153,7 +1153,7 @@ impl Network {
                         .unwrap()
                         .len();
                 assert!(
-                    cbor_size < 1024 * 1024 * 10,
+                    cbor_size < 1024 * 1024 * 10, // 10MB response
                     "response overflow {} {:?}",
                     cbor_size,
                     message

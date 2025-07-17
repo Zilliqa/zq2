@@ -24,6 +24,7 @@ use jsonrpsee::{
     },
 };
 use parking_lot::{RwLock, RwLockReadGuard};
+use revm::primitives::keccak256;
 use serde_json::json;
 use tracing::*;
 
@@ -35,7 +36,7 @@ use super::{
     },
 };
 use crate::{
-    api::zilliqa::ZilAddress,
+    api::{types::eth::GetAccountResult, zilliqa::ZilAddress},
     cfg::EnabledApi,
     crypto::Hash,
     error::ensure_success,
@@ -43,7 +44,7 @@ use crate::{
     message::Block,
     node::Node,
     pool::TxAddResult,
-    state::{Account, Code},
+    state::Code,
     time::SystemTime,
     transaction::{EvmGas, Log, SignedTransaction},
 };
@@ -1014,7 +1015,7 @@ fn fee_history(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 
 /// eth_getAccount
 /// Retrieve account details by specifying an address and a block number/tag.
-fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<Account> {
+fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<GetAccountResult> {
     let mut params = params.sequence();
     let address: ZilAddress = params.next()?;
     let address: Address = address.into();
@@ -1025,7 +1026,21 @@ fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<Account> {
     let block = node.get_block(block_id)?;
     let block = build_errored_response_for_missing_block(block_id, block)?;
 
-    node.get_state(&block)?.get_account(address)
+    let account = node.get_state(&block)?.get_account(address)?;
+    let return_code = if account.code.is_eoa() {
+        vec![].to_hex_no_prefix()
+    } else {
+        match account.code {
+            Code::Evm(val) => val.to_hex_no_prefix(),
+            Code::Scilla { code, .. } => code.to_hex_no_prefix(),
+        }
+    };
+    Ok(GetAccountResult {
+        balance: account.balance,
+        nonce: account.nonce,
+        storage_root: account.storage_root,
+        code_hash: keccak256(return_code),
+    })
 }
 
 /// eth_getFilterChanges
