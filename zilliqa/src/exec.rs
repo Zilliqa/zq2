@@ -46,6 +46,19 @@ use crate::{
     },
 };
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ExecType {
+    Call,
+    Estimate,
+    Transact,
+}
+
+#[derive(Clone, Copy)]
+pub struct ExtraOpts {
+    pub(crate) disable_eip3607: bool,
+    pub(crate) exec_type: ExecType,
+}
+
 type ScillaResultAndState = (ScillaResult, HashMap<Address, PendingAccount>);
 
 /// Data returned after applying a [Transaction] to [State].
@@ -470,7 +483,10 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
-            false,
+            ExtraOpts {
+                disable_eip3607: false,
+                exec_type: ExecType::Transact,
+            },
         )?;
 
         match result {
@@ -530,7 +546,7 @@ impl State {
         inspector: I,
         enable_inspector: bool,
         base_fee_check: BaseFeeCheck,
-        disable_eip3607: bool,
+        extra_opts: ExtraOpts,
     ) -> Result<(ResultAndState, HashMap<Address, PendingAccount>, Box<Env>)> {
         let mut padded_view_number = [0u8; 32];
         padded_view_number[24..].copy_from_slice(&current_block.view.to_be_bytes());
@@ -566,7 +582,7 @@ impl State {
             .with_handler_cfg(HandlerCfg { spec_id: SPEC_ID })
             .append_handler_register(scilla_call_handle_register)
             .modify_cfg_env(|c| {
-                c.disable_eip3607 = disable_eip3607;
+                c.disable_eip3607 = extra_opts.disable_eip3607;
                 c.chain_id = self.chain_id.eth;
                 c.disable_base_fee = match base_fee_check {
                     BaseFeeCheck::Validate => false,
@@ -623,6 +639,7 @@ impl State {
         if evm_exec_failure_causes_scilla_precompile_to_fail
             && ctx.has_evm_failed
             && ctx.has_called_scilla_precompile
+            && extra_opts.exec_type == ExecType::Transact
         {
             return Self::failed(result_and_state, ctx_with_handler.context.evm.inner.env);
         }
@@ -798,7 +815,10 @@ impl State {
                     } else {
                         BaseFeeCheck::Validate
                     },
-                    false,
+                    ExtraOpts {
+                        disable_eip3607: false,
+                        exec_type: ExecType::Transact,
+                    },
                 )?;
 
             self.apply_delta_evm(&state, current_block.number)?;
@@ -990,7 +1010,6 @@ impl State {
             contracts::deposit::VERSION.encode_input(&[]).unwrap(),
             0,
             current_block,
-            false,
         )?;
         contracts::deposit::VERSION.decode_output(&ensure_success(result)?)?[0]
             .clone()
@@ -1007,7 +1026,6 @@ impl State {
             data,
             0,
             current_block,
-            false,
         )?;
         let leader = ensure_success(result)?;
 
@@ -1030,7 +1048,6 @@ impl State {
             data,
             0,
             current_block,
-            false,
         )?;
         let stakers = ensure_success(result)?;
 
@@ -1056,7 +1073,6 @@ impl State {
             data,
             0,
             BlockHeader::default(),
-            false,
         )?;
         let committee = ensure_success(result)?;
         let committee = contracts::deposit::COMMITTEE.decode_output(&committee)?;
@@ -1079,7 +1095,6 @@ impl State {
             data,
             0,
             current_block,
-            false,
         )?;
         let stake = ensure_success(result)?;
 
@@ -1100,7 +1115,6 @@ impl State {
             // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
             BlockHeader::default(),
-            false,
         )?;
         let return_value = ensure_success(result)?;
 
@@ -1125,7 +1139,6 @@ impl State {
             // The current block is not accessed when the native balance is read, so we just pass in some
             // dummy values.
             BlockHeader::default(),
-            false,
         )?;
         let return_value = ensure_success(result)?;
 
@@ -1180,7 +1193,6 @@ impl State {
         gas: Option<EvmGas>,
         gas_price: Option<u128>,
         value: u128,
-        disable_eip3607: bool,
     ) -> Result<u64> {
         let gas_price = gas_price.unwrap_or(self.gas_price);
 
@@ -1198,7 +1210,6 @@ impl State {
             EvmGas(upper_bound),
             gas_price,
             value,
-            disable_eip3607,
         )?;
 
         // Execute the while loop iff (max - min)/max < MINIMUM_PERCENT_RATIO [%]
@@ -1224,7 +1235,10 @@ impl State {
                 inspector::noop(),
                 false,
                 BaseFeeCheck::Validate,
-                disable_eip3607,
+                ExtraOpts {
+                    disable_eip3607: true,
+                    exec_type: ExecType::Estimate,
+                },
             )?;
 
             match result {
@@ -1249,7 +1263,6 @@ impl State {
         gas: EvmGas,
         gas_price: u128,
         value: u128,
-        disable_eip3607: bool,
     ) -> Result<u64> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
@@ -1263,7 +1276,10 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Validate,
-            disable_eip3607,
+            ExtraOpts {
+                disable_eip3607: true,
+                exec_type: ExecType::Estimate,
+            },
         )?;
 
         let gas_used = result.gas_used();
@@ -1280,7 +1296,6 @@ impl State {
         data: Vec<u8>,
         amount: u128,
         current_block: BlockHeader,
-        disable_eip3607: bool,
     ) -> Result<ExecutionResult> {
         let (ResultAndState { result, .. }, ..) = self.apply_transaction_evm(
             from_addr,
@@ -1294,7 +1309,10 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
-            disable_eip3607,
+            ExtraOpts {
+                disable_eip3607: true,
+                exec_type: ExecType::Estimate,
+            },
         )?;
 
         Ok(result)
@@ -1322,7 +1340,10 @@ impl State {
             inspector::noop(),
             false,
             BaseFeeCheck::Ignore,
-            false,
+            ExtraOpts {
+                disable_eip3607: false,
+                exec_type: ExecType::Transact,
+            },
         )?;
         self.apply_delta_evm(&state, current_block.number)?;
 
