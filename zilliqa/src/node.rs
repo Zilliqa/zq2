@@ -902,7 +902,7 @@ impl Node {
             return Err(anyhow!("State required to execute request does not exist"));
         }
 
-        state.call_contract(from_addr, to_addr, data, amount, block.header)
+        state.call_contract(from_addr, to_addr, data, amount, block.header, true)
     }
 
     pub fn get_proposer_reward_address(&self, header: BlockHeader) -> Result<Option<Address>> {
@@ -959,6 +959,7 @@ impl Node {
             gas,
             gas_price,
             value,
+            true,
         )
     }
 

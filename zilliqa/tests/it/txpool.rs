@@ -17,14 +17,22 @@ async fn txpool_content(mut network: Network) {
         .await
         .expect("Failed to call txpool_content API");
 
-    let empty_pending = empty_response["pending"].as_object().unwrap();
-    let empty_queued = empty_response["queued"].as_object().unwrap();
     assert!(
-        empty_pending.is_empty(),
+        empty_response
+            .get("pending")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty pending transactions"
     );
     assert!(
-        empty_queued.is_empty(),
+        empty_response
+            .get("queued")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty queued transactions"
     );
 
@@ -79,14 +87,22 @@ async fn txpool_content(mut network: Network) {
         .await
         .expect("Failed to call txpool_content API");
 
-    let final_pending = final_response["pending"].as_object().unwrap();
-    let final_queued = final_response["queued"].as_object().unwrap();
     assert!(
-        final_pending.is_empty(),
+        final_response
+            .get("pending")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty pending transactions after mining"
     );
     assert!(
-        final_queued.is_empty(),
+        final_response
+            .get("queued")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty queued transactions after mining"
     );
 }
@@ -133,14 +149,22 @@ async fn txpool_content_from(mut network: Network) {
         .await
         .expect("Failed to call txpool_contentFrom API with random address");
 
-    let empty_pending = empty_response["pending"].as_object().unwrap();
-    let empty_queued = empty_response["queued"].as_object().unwrap();
     assert!(
-        empty_pending.is_empty(),
+        empty_response
+            .get("pending")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty pending transactions for random address"
     );
     assert!(
-        empty_queued.is_empty(),
+        empty_response
+            .get("queued")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty queued transactions for random address"
     );
 }
@@ -193,11 +217,21 @@ async fn txpool_content_from_with_queued(mut network: Network) {
         .expect("Failed to call txpool_contentFrom API with random address");
 
     assert!(
-        empty_content["pending"].as_object().unwrap().is_empty(),
+        empty_content
+            .get("pending")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty pending for random address"
     );
     assert!(
-        empty_content["queued"].as_object().unwrap().is_empty(),
+        empty_content
+            .get("queued")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty queued for random address"
     );
 }
@@ -215,14 +249,22 @@ async fn txpool_inspect(mut network: Network) {
         .await
         .expect("Failed to call txpool_inspect API");
 
-    let empty_pending = empty_response["pending"].as_object().unwrap();
-    let empty_queued = empty_response["queued"].as_object().unwrap();
     assert!(
-        empty_pending.is_empty(),
+        empty_response
+            .get("pending")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty pending transactions"
     );
     assert!(
-        empty_queued.is_empty(),
+        empty_response
+            .get("queued")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty queued transactions"
     );
 
@@ -294,14 +336,22 @@ async fn txpool_inspect(mut network: Network) {
         .await
         .expect("Failed to call txpool_inspect API");
 
-    let final_pending = final_response["pending"].as_object().unwrap();
-    let final_queued = final_response["queued"].as_object().unwrap();
     assert!(
-        final_pending.is_empty(),
+        final_response
+            .get("pending")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty pending transactions after mining"
     );
     assert!(
-        final_queued.is_empty(),
+        final_response
+            .get("queued")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty queued transactions after mining"
     );
 }
@@ -391,14 +441,22 @@ async fn txpool_inspect_with_queued(mut network: Network) {
         .await
         .expect("Failed to call txpool_inspect API");
 
-    let final_pending = final_inspect["pending"].as_object().unwrap();
-    let final_queued = final_inspect["queued"].as_object().unwrap();
     assert!(
-        final_pending.is_empty(),
+        final_inspect
+            .get("pending")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty pending transactions after mining"
     );
     assert!(
-        final_queued.is_empty(),
+        final_inspect
+            .get("queued")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .is_empty(),
         "Expected empty queued transactions after mining"
     );
 }

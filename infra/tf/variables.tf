@@ -67,7 +67,7 @@ variable "api" {
     generate_external_ip    = optional(bool, false)
     detach_load_balancer    = optional(bool, false)
     rate_limit              = optional(number, 1000000)
-    alternative_ssl_domains    = optional(object({
+    alternative_ssl_domains = optional(object({
       api    = optional(list(string), [])
       health = optional(list(string), [])
     }), {})
@@ -76,6 +76,16 @@ variable "api" {
       region = optional(string)
       zone   = optional(string)
     })), [])
+    allow_ip_ranges = optional(map(object({
+      priority      = number
+      description   = string
+      src_ip_ranges = list(string)
+    })), {})
+    allow_custom_rules = optional(map(object({
+      priority    = number
+      description = string
+      expression  = string
+    })), {})
   })
   default = {}
 
@@ -163,12 +173,15 @@ variable "bootstrap" {
 variable "checkpoint" {
   description = "(Optional) The configuration of the checkpoint nodes"
   type = object({
-    disk_size            = optional(number, 256)
-    instance_type        = optional(string, "e2-standard-2")
-    provisioning_model   = optional(string, "STANDARD")
-    generate_external_ip = optional(bool, false)
-    bucket_force_destroy = optional(bool, true)
-    bucket_versioning    = optional(bool, true)
+    disk_size               = optional(number, 256)
+    instance_type           = optional(string, "e2-standard-2")
+    provisioning_model      = optional(string, "STANDARD")
+    generate_external_ip    = optional(bool, false)
+    bucket_force_destroy    = optional(bool, true)
+    bucket_versioning       = optional(bool, true)
+    alternative_ssl_domains = optional(object({
+      default = optional(list(string), [])
+    }), {})
     nodes = optional(list(object({
       count  = number
       region = optional(string)

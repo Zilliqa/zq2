@@ -9,15 +9,15 @@ on:
         options:
           - "devnet"
           - "infratest"
-          - "protomainnet"
-          - "prototestnet"
+          - "mainnet"
+          - "testnet"
         required: false
-        default: "prototestnet"
+        default: "testnet"
       target_host:
         description: "Target host"
         type: string
         required: false
-        default: "api.zq2-prototestnet.zilliqa.com"
+        default: "api.zq2-testnet.zilliqa.com"
       target_port:
         description: "Target port"
         type: string
@@ -74,7 +74,7 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     timeout-minutes: 1440
     env:
-      TARGET_HOST: ${{ github.event.inputs.target_host || 'api.zq2-prototestnet.zilliqa.com' }}
+      TARGET_HOST: ${{ github.event.inputs.target_host || 'api.zq2-testnet.zilliqa.com' }}
       TARGET_PORT: ${{ github.event.inputs.target_port || '443' }}
       PROTOCOL: ${{ github.event.inputs.protocol || 'https' }}
       RPC_METHOD: ${{ github.event.inputs.rpc_method || 'eth_blockNumber' }}
@@ -138,4 +138,4 @@ jobs:
         with:
           process_gcloudignore: false
           path: "infra/jmeter/${{ steps.build-test-id.outputs.TEST_ID }}"
-          destination: "zq2-${{ github.event.inputs.network || 'prototestnet' }}-performance-tests"
+          destination: "zq2-${{ github.event.inputs.network || 'testnet' }}-performance-tests"

@@ -8,7 +8,7 @@ Join a ZQ2 network
 Usage: z2 join [OPTIONS] --chain <CHAIN_NAME>
 
 Options:
-      --chain <CHAIN_NAME>             Specify the ZQ2 chain you want join [possible values: zq2-infratest, zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet]
+      --chain <CHAIN_NAME>             Specify the ZQ2 chain you want join [possible values: zq2-infratest, zq2-devnet, zq2-testnet, zq2-mainnet]
       --image-tag <IMAGE_TAG>          Specify the tag of the image to run
       --otlp-endpoint <OTLP_ENDPOINT>  Endpoint of OTLP collector
   -v, --verbose...                     Increase logging verbosity
@@ -16,15 +16,15 @@ Options:
   -h, --help                           Print help
 ```
 
-## Create a startup script and configuration file to join the prototestnet
+## Create a startup script and configuration file to join the testnet
 
 ```bash
 
-z2 join --chain zq2-prototestnet
+z2 join --chain zq2-testnet
 ✌️ Generating the node startup scripts and configuration
-📋 Chain specification: zq2-prototestnet
+📋 Chain specification: zq2-testnet
 👤 Role: Node
-💾 Node config: /path/to/zq2/zq2-prototestnet.toml
+💾 Node config: /path/to/zq2/zq2-testnet.toml
 💾 Startup script: /path/to/zq2/start_node.sh
 ```
 
@@ -37,7 +37,7 @@ to restart your node.
 Copy the above generated node config and startup script to an Ubuntu 20.04LTS with
 Docker version 26.1+.
 
->Info: the start_node.sh and the zq2-prototestnet.toml MUST be on the same directory.
+>Info: the start_node.sh and the zq2-testnet.toml MUST be on the same directory.
 
 On the Ubuntu 20.04LTS run:
 

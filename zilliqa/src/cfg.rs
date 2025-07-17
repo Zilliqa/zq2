@@ -174,7 +174,7 @@ pub struct NodeConfig {
     /// The maximum number of blocks we will send to another node in a single message.
     #[serde(default = "block_request_limit_default")]
     pub block_request_limit: usize,
-    /// The maximum number of key value pairs allowed to be returned withing the response of the `GetSmartContractState` RPC. Defaults to no limit.
+    /// The maximum number of key value pairs allowed to be returned within the response of the `GetSmartContractState` RPC. Defaults to no limit.
     #[serde(default = "state_rpc_limit_default")]
     pub state_rpc_limit: usize,
     /// When a block request to a peer fails, do not send another request to this peer for this amount of time.
@@ -580,6 +580,20 @@ impl Forks {
                 ForkName::FundAccountsFromZeroAccount => {
                     !fork.fund_accounts_from_zero_account.is_empty()
                 }
+                ForkName::ScillaFailedTxnCorrectBalanceDeduction => {
+                    fork.scilla_failed_txn_correct_balance_deduction
+                }
+                ForkName::ScillaTransitionsProperOrder => fork.scilla_transition_proper_order,
+                ForkName::EvmToScillaValueTransferZero => fork.evm_to_scilla_value_transfer_zero,
+                ForkName::RestoreXsgdContract => fork.restore_xsgd_contract,
+                ForkName::EvmExecFailureCausesScillaWhitelistedAddrToFail => {
+                    fork.evm_exec_failure_causes_scilla_precompile_to_fail
+                }
+                ForkName::RevertRestoreXsgdContract => fork.revert_restore_xsgd_contract,
+                ForkName::ScillaFixContractCodeRemovalOnEvmTx => {
+                    fork.scilla_fix_contract_code_removal_on_evm_tx
+                }
+                ForkName::RestoreIgniteWalletContracts => fork.restore_ignite_wallet_contracts,
             } {
                 return Some(fork.at_height);
             }
@@ -607,6 +621,16 @@ pub struct Fork {
     pub apply_state_changes_only_if_transaction_succeeds: bool,
     pub scilla_deduct_funds_from_actual_sender: bool,
     pub fund_accounts_from_zero_account: Vec<(Address, Amount)>,
+    pub scilla_delta_maps_are_applied_correctly: bool,
+    pub scilla_server_unlimited_response_size: bool,
+    pub scilla_failed_txn_correct_balance_deduction: bool,
+    pub scilla_transition_proper_order: bool,
+    pub evm_to_scilla_value_transfer_zero: bool,
+    pub restore_xsgd_contract: bool,
+    pub evm_exec_failure_causes_scilla_precompile_to_fail: bool,
+    pub revert_restore_xsgd_contract: bool,
+    pub scilla_fix_contract_code_removal_on_evm_tx: bool,
+    pub restore_ignite_wallet_contracts: bool,
 }
 
 pub enum ForkName {
@@ -622,6 +646,14 @@ pub enum ForkName {
     ScillaBlockNumberReturnsCurrentBlock,
     ScillaMapsAreEncodedCorrectly,
     FundAccountsFromZeroAccount,
+    ScillaFailedTxnCorrectBalanceDeduction,
+    ScillaTransitionsProperOrder,
+    EvmToScillaValueTransferZero,
+    RestoreXsgdContract,
+    EvmExecFailureCausesScillaWhitelistedAddrToFail,
+    RevertRestoreXsgdContract,
+    ScillaFixContractCodeRemovalOnEvmTx,
+    RestoreIgniteWalletContracts,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -694,6 +726,32 @@ pub struct ForkDelta {
     pub scilla_deduct_funds_from_actual_sender: Option<bool>,
     /// Send funds from zero account to faucet account
     pub fund_accounts_from_zero_account: Option<Vec<(Address, Amount)>>,
+    /// If true, Scilla state deltas containing maps are applied correctly. If false, they are applied in an
+    /// unspecified and incorrect way.
+    pub scilla_delta_maps_are_applied_correctly: Option<bool>,
+    /// If true, the Zilliqa process can send the Scilla process an unlimited (actually 1 GiB) amount of data in one
+    /// call. If false, the size is limited to 10 MiB. Any responses larger than this will lead to a failed
+    /// transaction.
+    pub scilla_server_unlimited_response_size: Option<bool>,
+    /// If true, for failed scilla transaction there will be only fee taken from sender balance and possible
+    /// balance subtractions caused by scilla transitions will be discarded
+    pub scilla_failed_txn_correct_balance_deduction: Option<bool>,
+    /// If true, scilla transitions are pushed on the stack onto stack in the same order as they were
+    /// emitted from scilla call
+    pub scilla_transition_proper_order: Option<bool>,
+    /// If true, values transfers from evm to scilla contracts are always reset to 0
+    pub evm_to_scilla_value_transfer_zero: Option<bool>,
+    /// If true, re-write XSGD contract to address 0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5's code
+    pub restore_xsgd_contract: Option<bool>,
+    /// If true, any failed evm action (call, create, create2, etc) will automatically make
+    /// entire transaction fail if there's been a call to whitelisted zrc2 contract via scilla precompile
+    pub evm_exec_failure_causes_scilla_precompile_to_fail: Option<bool>,
+    /// If true, set address 0x173CA6770aA56eb00511Dac8e6E13B3D7f16A5a5's code to "0x"
+    pub revert_restore_xsgd_contract: Option<bool>,
+    /// If true, an evm tx (legacy or eip1559) should not clear a Scilla contract's code when its address is interacted with
+    pub scilla_fix_contract_code_removal_on_evm_tx: Option<bool>,
+    /// If true, re-write IgniteWallet's contract to addresses specified
+    pub restore_ignite_wallet_contracts: Option<bool>,
 }
 
 impl Fork {
@@ -749,6 +807,36 @@ impl Fork {
                 .fund_accounts_from_zero_account
                 .clone()
                 .unwrap_or_default(),
+            scilla_delta_maps_are_applied_correctly: delta
+                .scilla_delta_maps_are_applied_correctly
+                .unwrap_or(self.scilla_delta_maps_are_applied_correctly),
+            scilla_server_unlimited_response_size: delta
+                .scilla_server_unlimited_response_size
+                .unwrap_or(self.scilla_server_unlimited_response_size),
+            scilla_failed_txn_correct_balance_deduction: delta
+                .scilla_failed_txn_correct_balance_deduction
+                .unwrap_or(self.scilla_failed_txn_correct_balance_deduction),
+            scilla_transition_proper_order: delta
+                .scilla_transition_proper_order
+                .unwrap_or(self.scilla_transition_proper_order),
+            evm_to_scilla_value_transfer_zero: delta
+                .evm_to_scilla_value_transfer_zero
+                .unwrap_or(self.evm_to_scilla_value_transfer_zero),
+            restore_xsgd_contract: delta
+                .restore_xsgd_contract
+                .unwrap_or(self.restore_xsgd_contract),
+            evm_exec_failure_causes_scilla_precompile_to_fail: delta
+                .evm_exec_failure_causes_scilla_precompile_to_fail
+                .unwrap_or(self.evm_exec_failure_causes_scilla_precompile_to_fail),
+            revert_restore_xsgd_contract: delta
+                .revert_restore_xsgd_contract
+                .unwrap_or(self.revert_restore_xsgd_contract),
+            scilla_fix_contract_code_removal_on_evm_tx: delta
+                .scilla_fix_contract_code_removal_on_evm_tx
+                .unwrap_or(self.scilla_fix_contract_code_removal_on_evm_tx),
+            restore_ignite_wallet_contracts: delta
+                .restore_ignite_wallet_contracts
+                .unwrap_or(self.restore_ignite_wallet_contracts),
         }
     }
 }
@@ -833,6 +921,16 @@ pub fn genesis_fork_default() -> Fork {
         apply_state_changes_only_if_transaction_succeeds: true,
         scilla_deduct_funds_from_actual_sender: true,
         fund_accounts_from_zero_account: vec![],
+        scilla_delta_maps_are_applied_correctly: true,
+        scilla_server_unlimited_response_size: true,
+        scilla_failed_txn_correct_balance_deduction: true,
+        scilla_transition_proper_order: true,
+        evm_to_scilla_value_transfer_zero: true,
+        restore_xsgd_contract: true,
+        evm_exec_failure_causes_scilla_precompile_to_fail: true,
+        revert_restore_xsgd_contract: true,
+        scilla_fix_contract_code_removal_on_evm_tx: true,
+        restore_ignite_wallet_contracts: true,
     }
 }
 
@@ -969,6 +1067,16 @@ mod tests {
                 apply_state_changes_only_if_transaction_succeeds: None,
                 scilla_deduct_funds_from_actual_sender: None,
                 fund_accounts_from_zero_account: None,
+                scilla_delta_maps_are_applied_correctly: None,
+                scilla_server_unlimited_response_size: None,
+                scilla_failed_txn_correct_balance_deduction: None,
+                scilla_transition_proper_order: None,
+                evm_to_scilla_value_transfer_zero: None,
+                restore_xsgd_contract: None,
+                evm_exec_failure_causes_scilla_precompile_to_fail: None,
+                revert_restore_xsgd_contract: None,
+                scilla_fix_contract_code_removal_on_evm_tx: None,
+                restore_ignite_wallet_contracts: None,
             }],
             ..Default::default()
         };
@@ -1008,6 +1116,16 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
+                    restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_precompile_to_fail: None,
+                    revert_restore_xsgd_contract: None,
+                    scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1027,6 +1145,16 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
+                    restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_precompile_to_fail: None,
+                    revert_restore_xsgd_contract: None,
+                    scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
             ],
             ..Default::default()
@@ -1080,6 +1208,16 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
+                    restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_precompile_to_fail: None,
+                    revert_restore_xsgd_contract: None,
+                    scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1099,6 +1237,16 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
+                    restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_precompile_to_fail: None,
+                    revert_restore_xsgd_contract: None,
+                    scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
             ],
             ..Default::default()
@@ -1143,6 +1291,16 @@ mod tests {
                 apply_state_changes_only_if_transaction_succeeds: true,
                 scilla_deduct_funds_from_actual_sender: true,
                 fund_accounts_from_zero_account: vec![],
+                scilla_delta_maps_are_applied_correctly: true,
+                scilla_server_unlimited_response_size: true,
+                scilla_failed_txn_correct_balance_deduction: true,
+                scilla_transition_proper_order: true,
+                evm_to_scilla_value_transfer_zero: true,
+                restore_xsgd_contract: true,
+                evm_exec_failure_causes_scilla_precompile_to_fail: true,
+                revert_restore_xsgd_contract: true,
+                scilla_fix_contract_code_removal_on_evm_tx: true,
+                restore_ignite_wallet_contracts: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1175,6 +1333,16 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
+                    restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_precompile_to_fail: None,
+                    revert_restore_xsgd_contract: None,
+                    scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1194,6 +1362,16 @@ mod tests {
                     apply_state_changes_only_if_transaction_succeeds: None,
                     scilla_deduct_funds_from_actual_sender: None,
                     fund_accounts_from_zero_account: None,
+                    scilla_delta_maps_are_applied_correctly: None,
+                    scilla_server_unlimited_response_size: None,
+                    scilla_failed_txn_correct_balance_deduction: None,
+                    scilla_transition_proper_order: None,
+                    evm_to_scilla_value_transfer_zero: None,
+                    restore_xsgd_contract: None,
+                    evm_exec_failure_causes_scilla_precompile_to_fail: None,
+                    revert_restore_xsgd_contract: None,
+                    scilla_fix_contract_code_removal_on_evm_tx: None,
+                    restore_ignite_wallet_contracts: None,
                 },
             ],
             ..Default::default()

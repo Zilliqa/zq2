@@ -1370,16 +1370,55 @@ fn get_num_txns_ds_epoch(_params: Params, node: &Arc<RwLock<Node>>) -> Result<St
     Ok(num_txns_epoch.to_string())
 }
 
-// GetTotalCoinSupply
-fn get_total_coin_supply(_params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+// GetTotalCoinSupplyAsZil
+fn get_total_coin_supply_as_zil_amount(
+    _params: Params,
+    node: &Arc<RwLock<Node>>,
+) -> Result<ZilAmount> {
     let node = node.read();
-    Ok(node.config.consensus.total_native_token_supply.to_string())
+    let finalized_block = node.get_block(BlockId::finalized())?.unwrap();
+    let finalized_block_number = finalized_block.number();
+    let null_address_balance = node
+        .consensus
+        .state_at(finalized_block_number)?
+        .unwrap()
+        .get_account(Address::ZERO)
+        .unwrap()
+        .balance;
+    let native_supply = node.config.consensus.total_native_token_supply.0;
+    let state = node.consensus.state_at(finalized_block_number)?.unwrap();
+    let stakers = state.get_stakers(finalized_block.header)?;
+    let validators_stake: u128 = stakers
+        .into_iter()
+        .filter(|staker_pubkey| {
+            let reward_address = state.get_reward_address(*staker_pubkey).unwrap();
+            match reward_address {
+                Some(address) => address == Address::ZERO,
+                None => false,
+            }
+        })
+        .map(|staker_pubkey| {
+            state
+                .get_stake(staker_pubkey, finalized_block.header)
+                .unwrap()
+                .unwrap()
+                .get()
+        })
+        .sum();
+
+    Ok(ZilAmount::from_amount(
+        native_supply - null_address_balance - validators_stake,
+    ))
+}
+
+// GetTotalCoinSupply
+fn get_total_coin_supply(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
+    Ok(get_total_coin_supply_as_zil_amount(params, node)?.to_float_string())
 }
 
 // GetTotalCoinSupplyAsInt
-fn get_total_coin_supply_as_int(_params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
-    let node = node.read();
-    Ok(node.config.consensus.total_native_token_supply.0)
+fn get_total_coin_supply_as_int(params: Params, node: &Arc<RwLock<Node>>) -> Result<u128> {
+    Ok(get_total_coin_supply_as_zil_amount(params, node)?.to_zils())
 }
 
 // GetMinerInfo
@@ -1575,17 +1614,10 @@ fn get_transaction_status(
         TransactionState::Error
     } else {
         match &block {
-            Some(block) => {
-                let newest_finalized_block =
-                    node.resolve_block_number(BlockNumberOrTag::Finalized)?;
-                if newest_finalized_block.is_some()
-                    && block.number() >= newest_finalized_block.unwrap().number()
-                {
-                    TransactionState::Finalized
-                } else {
-                    TransactionState::Pending
-                }
-            }
+            Some(block) => match node.resolve_block_number(BlockNumberOrTag::Finalized)? {
+                Some(x) if x.number() >= block.number() => TransactionState::Finalized,
+                _ => TransactionState::Pending,
+            },
             None => match node.consensus.get_pending_or_queued(&transaction)? {
                 Some(PendingOrQueued::Pending) => TransactionState::Pending,
                 Some(PendingOrQueued::Queued) => TransactionState::Queued,

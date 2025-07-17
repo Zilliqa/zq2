@@ -135,23 +135,25 @@ pub struct Sync {
     size_cache: HashMap<Hash, usize>,
     // passive sync
     sync_base_height: u64,
-    zq1_ceil_height: u64,
+    zq2_floor_height: u64,
     ignore_passive: bool,
+    // periodic vacuum
+    vacuum_at: u64,
 }
 
 impl Sync {
-    // Speed up by speculatively fetching blocks in Phase 1 & 2.
-    const DO_SPECULATIVE: bool = true;
     // Speed up by fetching multiple segments in Phase 1.
     const MAX_CONCURRENT_PEERS: usize = 10;
     // Mitigate DoS
-    const MAX_BATCH_SIZE: usize = 1000;
+    const MAX_BATCH_SIZE: usize = 100;
     // Cache recent block sizes
-    const MAX_CACHE_SIZE: usize = 10000;
+    const MAX_CACHE_SIZE: usize = 100_000;
     // Timeout for passive-sync/prune
     const PRUNE_TIMEOUT_MS: u128 = 1000;
     // Do not overflow libp2p::request-response::cbor::codec::RESPONSE_SIZE_MAXIMUM = 10MB (default)
-    const RESPONSE_SIZE_THRESHOLD: usize = 9 * 1024 * 1024;
+    const RESPONSE_SIZE_THRESHOLD: usize = 8 * 1024 * 1024;
+    // periodic vacuum interval
+    const VACUUM_INTERVAL: u64 = 604800; // 'weekly'
 
     pub fn new(
         config: &NodeConfig,
@@ -164,11 +166,11 @@ impl Sync {
         let max_batch_size = config
             .sync
             .block_request_batch_size
-            .clamp(100, Self::MAX_BATCH_SIZE);
-        let max_blocks_in_flight = config
-            .sync
-            .max_blocks_in_flight
-            .clamp(max_batch_size, Self::MAX_BATCH_SIZE);
+            .clamp(10, Self::MAX_BATCH_SIZE); // reduce the max batch size - 100 is more than sufficient; less may work too.
+        let max_blocks_in_flight = config.sync.max_blocks_in_flight.clamp(
+            max_batch_size,
+            Self::MAX_BATCH_SIZE * Self::MAX_CONCURRENT_PEERS, // phase 2 buffering - 1000 is more than sufficient; more may work too.
+        );
         let sync_base_height = config.sync.base_height;
         let prune_interval = config.sync.prune_interval;
         // Start from reset, or continue sync
@@ -181,13 +183,25 @@ impl Sync {
             return Err(anyhow::anyhow!("sync_base_height > highest_block"));
         }
 
-        let zq1_ceil_height = config
+        let zq2_floor_height = config
             .consensus
             .get_forks()?
             .find_height_fork_first_activated(crate::cfg::ForkName::ExecutableBlocks)
             .unwrap_or_default();
 
         let ignore_passive = config.sync.ignore_passive; // defaults to servicing passive-sync requests
+
+        if latest_block_number < zq2_floor_height {
+            return Err(anyhow::anyhow!("Please restore from a checkpoint"));
+        }
+
+        // at some random point in the future, or never
+        let vacuum_at = if prune_interval != u64::MAX {
+            latest_block_number
+                .saturating_add(rand::thread_rng().gen_range(1..Self::VACUUM_INTERVAL))
+        } else {
+            u64::MAX
+        };
 
         Ok(Self {
             db,
@@ -216,8 +230,9 @@ impl Sync {
             sync_base_height,
             prune_interval,
             size_cache: HashMap::with_capacity(Self::MAX_CACHE_SIZE),
-            zq1_ceil_height,
+            zq2_floor_height,
             ignore_passive,
+            vacuum_at,
         })
     }
 
@@ -302,20 +317,21 @@ impl Sync {
             return Ok(());
         }
 
-        // check in-flights; manually failing one stale request.
-        if !self.in_flight.is_empty() {
-            let stale_flight = self
-                .in_flight
-                .iter()
-                .find(|(p, _)| p.last_used.elapsed().as_secs() > 90) // 9x libp2p timeout
-                .cloned();
-            if let Some((PeerInfo { peer_id: peer, .. }, request_id)) = stale_flight {
-                warn!(%peer, ?request_id, "sync::DoSync : stale");
+        // check in-flights; manually failing one stale request at a time
+        if let Some((
+            PeerInfo {
+                peer_id, last_used, ..
+            },
+            request_id,
+        )) = self.in_flight.front()
+        {
+            if last_used.elapsed().as_secs() > 90 {
+                warn!(%peer_id, ?request_id, "sync::DoSync : stale");
                 self.handle_request_failure(
                     self.peer_id, // self-triggered
                     OutgoingMessageFailure {
-                        peer,
-                        request_id,
+                        peer: *peer_id,
+                        request_id: *request_id,
                         error: libp2p::autonat::OutboundFailure::Timeout,
                     },
                 )?;
@@ -352,8 +368,6 @@ impl Sync {
             }
             // Retry to fix sync issues e.g. peers that are now offline
             SyncState::Retry1(_) if self.in_pipeline == 0 => {
-                self.update_started_at()?;
-                // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
                 self.retry_phase1()?;
             }
             SyncState::Phase4(_) => self.request_passive_sync()?,
@@ -419,7 +433,12 @@ impl Sync {
                 self.request_passive_sync()?;
             }
             Ordering::Less => {
-                self.prune_range(range)?;
+                let last_prune = self.prune_range(range)?;
+                if last_prune > self.vacuum_at {
+                    tracing::info!("Vacuum at {last_prune} then {}", self.vacuum_at);
+                    self.db.vacuum()?;
+                    self.vacuum_at = last_prune.saturating_add(Self::VACUUM_INTERVAL);
+                }
             }
         }
         Ok(())
@@ -428,7 +447,8 @@ impl Sync {
     /// Utility: Prune blocks
     ///
     /// Deletes both canonical and non-canonical blocks from the DB, given a range.
-    pub fn prune_range(&mut self, range: RangeInclusive<u64>) -> Result<()> {
+    /// Returns the highest block number pruned
+    pub fn prune_range(&mut self, range: RangeInclusive<u64>) -> Result<u64> {
         let prune_ceil = if self.prune_interval != u64::MAX {
             // prune prune-interval
             range
@@ -441,7 +461,7 @@ impl Sync {
                 .saturating_sub(MIN_PRUNE_INTERVAL.saturating_sub(1))
                 .min(self.sync_base_height)
         } else {
-            return Ok(());
+            return Ok(u64::MIN);
         };
 
         // Prune canonical, and non-canonical blocks.
@@ -450,7 +470,7 @@ impl Sync {
         for number in *range.start()..prune_ceil {
             // check if we have time to prune
             if start_now.elapsed().as_millis() > Self::PRUNE_TIMEOUT_MS {
-                break;
+                return Ok(number);
             }
             // remove canonical block and transactions
             if let Some(block) = self.db.get_canonical_block_by_number(number)? {
@@ -463,7 +483,7 @@ impl Sync {
                 self.db.prune_block(&block, false)?;
             }
         }
-        Ok(())
+        Ok(prune_ceil)
     }
 
     /// Injects the recent proposals
@@ -531,6 +551,12 @@ impl Sync {
             .db
             .get_highest_canonical_block_number()?
             .expect("no highest canonical block");
+        if self.started_at < self.zq2_floor_height {
+            error!(
+                "Starting block {} is below ZQ2 height {}",
+                self.started_at, self.zq2_floor_height
+            );
+        }
         Ok(())
     }
 
@@ -543,10 +569,7 @@ impl Sync {
             .iter()
             .map(|hash| self.db.get_transaction(hash).unwrap().unwrap())
             // handle verification on the client-side
-            .map(|tx| {
-                let hash = tx.calculate_hash();
-                (tx, hash)
-            })
+            .map(|tx| (tx.tx, tx.hash))
             .collect_vec();
         Proposal::from_parts_with_hashes(block, txs)
     }
@@ -575,10 +598,9 @@ impl Sync {
         self.state = SyncState::Phase1(faux_header);
         self.inject_at = None;
 
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-        Ok(())
+        // Ensure started is updated - https://github.com/Zilliqa/zq2/issues/2306
+        self.update_started_at()?;
+        self.do_sync()
     }
 
     /// Handle Passive Sync Request
@@ -625,7 +647,7 @@ impl Sync {
                 .into_iter()
                 .map(|r| {
                     let txn = self.db.get_transaction(&r.tx_hash).unwrap().unwrap();
-                    (txn, r)
+                    (txn.tx, r)
                 })
                 .collect_vec();
             hash = block.parent_hash();
@@ -705,10 +727,7 @@ impl Sync {
         }
         // fall-thru in all cases
         self.state = SyncState::Phase0;
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-        Ok(())
+        self.do_sync()
     }
 
     /// Phase 4: Request Passive Sync
@@ -789,10 +808,7 @@ impl Sync {
         if let SyncState::Phase2((_, range, marker)) = &self.state {
             self.state = SyncState::Retry1((range.clone(), *marker));
         };
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-        Ok(())
+        self.do_sync()
     }
 
     fn do_multiblock_response(&mut self, from: PeerId, response: Vec<Proposal>) -> Result<bool> {
@@ -826,7 +842,6 @@ impl Sync {
         if !self.inject_proposals(proposals)? {
             // phase-2 is stuck, cancel sync and restart
             self.state = SyncState::Phase3;
-            return Ok(true);
         };
 
         // if we're done
@@ -834,10 +849,6 @@ impl Sync {
             self.state = SyncState::Phase3;
         }
 
-        // perform next block transfers, where possible
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
         Ok(true)
     }
 
@@ -859,11 +870,27 @@ impl Sync {
 
         let batch_size: usize = Self::MAX_BATCH_SIZE.min(request.len()); // mitigate DOS by limiting the number of blocks we return
         let mut proposals = Vec::with_capacity(batch_size);
+        let mut cbor_size = 0;
         for hash in request {
+            if cbor_size > Self::RESPONSE_SIZE_THRESHOLD {
+                break; // response size limit reached
+            }
             let Some(block) = self.db.get_block_by_hash(&hash)? else {
                 break; // that's all we have!
             };
-            proposals.push(self.block_to_proposal(block));
+            if block.number() < self.zq2_floor_height {
+                // do not active sync ZQ1 blocks
+                warn!("sync::MultiBlockRequest : skipping ZQ1");
+                break;
+            }
+            let proposal = self.block_to_proposal(block);
+            let encoded_size = self.size_cache.get(&hash).cloned().unwrap_or_else(|| {
+                cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
+                    .unwrap()
+                    .len()
+            });
+            cbor_size = cbor_size.saturating_add(encoded_size);
+            proposals.push(proposal);
         }
 
         let message = ExternalMessage::MultiBlockResponse(proposals);
@@ -1076,11 +1103,13 @@ impl Sync {
                 break;
             }
         }
-        // perform next block transfers, where possible
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
+
+        // Stop potential recursion issues - https://github.com/Zilliqa/zq2/issues/3006
+        // Only progress the state machine when all the pending requests are completed, either way.
+        if !self.in_flight.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        self.do_sync()
     }
 
     fn do_metadata_response(
@@ -1198,6 +1227,11 @@ impl Sync {
             "sync::MetadataRequest : received",
         );
 
+        if self.zq2_floor_height > request.to_height {
+            warn!("sync::MetadataRequest : skipping ZQ1");
+            return Ok(ExternalMessage::SyncBlockHeaders(vec![]));
+        }
+
         // Do not respond to stale requests as the client has probably timed-out
         if request.request_at.elapsed()?.as_secs() > 20 {
             warn!("sync::MetadataRequest : stale");
@@ -1222,11 +1256,14 @@ impl Sync {
                 // pseudo-LRU approximation
                 if self.size_cache.len() > Self::MAX_CACHE_SIZE {
                     let mut rng = rand::thread_rng();
-                    self.size_cache.retain(|_, _| rng.gen_bool(0.9));
+                    self.size_cache.retain(|_, _| rng.gen_bool(0.99));
                 }
                 // A large block can cause a node to get stuck syncing since no node can respond to the request in time.
                 let proposal = self.block_to_proposal(block.clone());
-                let encoded_size = cbor4ii::serde::to_vec(Vec::new(), &proposal).unwrap().len();
+                let encoded_size =
+                    cbor4ii::serde::to_vec(Vec::with_capacity(1024 * 1024), &proposal)
+                        .unwrap()
+                        .len();
                 self.size_cache.insert(hash, encoded_size);
                 encoded_size
             });
@@ -1237,6 +1274,11 @@ impl Sync {
                 size_estimate: encoded_size,
             });
             hash = block.parent_hash();
+
+            if block.number().saturating_sub(1) < self.zq2_floor_height {
+                warn!("sync::MetadataRequest : skipping ZQ1");
+                break;
+            }
         }
 
         let message = ExternalMessage::SyncBlockHeaders(metas);
@@ -1371,7 +1413,7 @@ impl Sync {
             }
 
             // Verify ZQ2 blocks only - ZQ1 blocks have faux block hashes, to maintain history.
-            if block.verify_hash().is_err() && block.number() >= self.zq1_ceil_height {
+            if block.verify_hash().is_err() && block.number() >= self.zq2_floor_height {
                 return Err(anyhow::anyhow!(
                     "sync::StoreProposals : unverified {}",
                     block.number()
@@ -1391,12 +1433,12 @@ impl Sync {
                         // Verify transaction
                         if let Ok(vt) = st.clone().verify() {
                             self.db
-                                .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt.tx)?;
-                        } else if block.number() < self.zq1_ceil_height {
+                                .insert_transaction_with_db_tx(sqlite_tx, &vt.hash, &vt)?;
+                        } else if block.number() < self.zq2_floor_height {
                             // FIXME: ZQ1 bypass
                             error!(number = %block.number(), index = %rt.index, hash = %rt.tx_hash, "sync::StoreProposals : unverifiable");
                             self.db
-                                .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st)?;
+                                .insert_transaction_with_db_tx(sqlite_tx, &rt.tx_hash, &st.verify_bypass()?)?;
                         } else {
                             anyhow::bail!(
                                 "sync::StoreProposal : unverifiable transaction {}/{}/{}",
@@ -1482,10 +1524,7 @@ impl Sync {
         trace!(%number, "sync::MarkReceivedProposal : received");
         self.in_pipeline = self.in_pipeline.saturating_sub(1);
         // perform next block transfers, where possible
-        if Self::DO_SPECULATIVE {
-            self.do_sync()?;
-        }
-        Ok(())
+        self.do_sync()
     }
 
     /// Returns (am_syncing, current_highest_block)

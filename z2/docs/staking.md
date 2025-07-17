@@ -18,7 +18,7 @@ z2 deposit \
 Usage: z2 deposit --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND> --public-key <BLS_PUBLIC_KEY> --peer-id <PEER_ID> --deposit-auth-signature <DEPOSIT_AUTH_SIGNATURE> --amount <AMOUNT_IN_MILLION_OF_ZIL> --reward-address <REWARD_ADDRESS_OF_VALIDATOR> --signing-address <SIGNING_ADDRESS_OF_VALIDATOR> 
 ```
 ## Parameters
-* `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
+* `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-testnet, zq2-mainnet.
 * `--private-key <PRIVATE_KEY_OF_WALLET_WITH_MIN_10_MIL_FUND>`: The private key of the wallet that has a minimum stake amount of 10 million.
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
 * `--peer-id <PEER_ID>`: The peer ID of the validator node.
@@ -63,7 +63,7 @@ $ echo '{"secret_key":"96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e029
 
 #### Sample run
 ```bash
-  z2 deposit --chain zq2-prototestnet \
+  z2 deposit --chain zq2-testnet \
   --peer-id  12D3KooWGu8PBoj6vMPafnhA2P7sLumSV1NhQJZ2W2AGiBgc5ATW \
   --private-key 96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419 \
   --reward-address 0xe29a3e99a6997B1571DA24d6517e7b3acaFB5d9e \
@@ -84,18 +84,18 @@ z2 deposit-top-up \
   --public-key <PUBLIC_KEY>
   --amount <AMOUNT>
 
-Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_MILLION_OF_ZIL>
+Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_ZIL>
 ```
 
 ## Parameters
-* `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
+* `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-testnet, zq2-mainnet.
 * `--private-key <PRIVATE_KEY_OF_WALLET>`: The private key of the wallet.
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
-* `--amount <AMOUNT_IN_MILLION_OF_ZIL>`: The amount in millions of ZILs to top up.
+* `--amount <AMOUNT_IN_ZIL>`: The amount in ZILs to top up.
 
 #### Sample run
 ```bash
-z2 deposit-top-up --chain zq2-prototestnet \
+z2 deposit-top-up --chain zq2-testnet \
   --private-key 96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419 \
   --public-key 825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804 \
   --amount 10
@@ -112,18 +112,18 @@ z2 unstake \
   --public-key <PUBLIC_KEY>
   --amount <AMOUNT>
 
-Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_MILLION_OF_ZIL>
+Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALLET> --public-key <BLS_PUBLIC_KEY> --amount <AMOUNT_IN_ZIL>
 ```
 
 ## Parameters
-* `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
+* `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-testnet, zq2-mainnet.
 * `--private-key <PRIVATE_KEY_OF_WALLET>`: The private key of the wallet.
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
-* `--amount <AMOUNT_IN_MILLION_OF_ZIL>`: The amount in millions of ZILs to unstake.
+* `--amount <AMOUNT_IN_ZIL>`: The amount in ZILs to unstake.
 
 #### Sample run
 ```bash
-z2 unstake --chain zq2-prototestnet \
+z2 unstake --chain zq2-testnet \
   --private-key 96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419 \
   --public-key 825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804 \
   --amount 10
@@ -144,14 +144,14 @@ Usage: z2 deposit-top-up --chain <CHAIN_NAME> --private-key <PRIVATE_KEY_OF_WALL
 ```
 
 ## Parameters
-* `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-prototestnet, zq2-protomainnet, zq2-testnet, zq2-mainnet.
+* `--chain <CHAIN_NAME>`: The name of the chain. Possible values are zq2-devnet, zq2-testnet, zq2-mainnet.
 * `--private-key <PRIVATE_KEY_OF_WALLET>`: The private key of the wallet.
 * `--public-key <BLS_PUBLIC_KEY>`: The BLS public key of the validator node.
 * `--count <COUNT>`: Number of withdrawals to process. This is useful in scenarios when the processing a large number of withdrawals would take the transcation over the block gas limit. Set to `0` to process all withdrawals.
 
 #### Sample run
 ```bash
-z2 withdraw --chain zq2-prototestnet \
+z2 withdraw --chain zq2-testnet \
   --private-key 96252e38af375be21d9eb30a6b88abc3836acecaeb2240731fb42e0299e14419 \
   --public-key 825124961d51c99816848875fa505b75f2e62e69937fe9bfa5fa97711845abd667f05bdc3756f7dba6b7e9e0467a3804 \
   --count 0

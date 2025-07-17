@@ -27,7 +27,7 @@
 The deployer configuration file defines the network topology, node roles, versions, and other deployment parameters. It must be written in **YAML** format.
 
 **Key fields:**
-- `name`: Name of the network (e.g., `zq2-prototestnet`)
+- `name`: Name of the network (e.g., `zq2-testnet`)
 - `eth_chain_id`: Ethereum-compatible chain ID
 - `roles`: List of node roles (e.g., `validator`, `api`, `bootstrap`)
 - `versions`: Mapping of component names to versions/tags
@@ -35,7 +35,7 @@ The deployer configuration file defines the network topology, node roles, versio
 ### 3.2 Example
 
 ```yaml
-name: zq2-prototestnet
+name: zq2-testnet
 eth_chain_id: 33103
 roles:
   - bootstrap
@@ -78,7 +78,7 @@ z2 deployer install [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer install --max-parallel 10 --persistence-url gs://my-bucket/persistence.tar zq2-prototestnet.yaml
+z2 deployer install --max-parallel 10 --persistence-url gs://my-bucket/persistence.tar zq2-testnet.yaml
 ```
 
 ### 4.2 upgrade
@@ -94,7 +94,7 @@ z2 deployer upgrade [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer upgrade zq2-prototestnet.yaml
+z2 deployer upgrade zq2-testnet.yaml
 ```
 
 ### 4.3 get-config-file
@@ -110,7 +110,7 @@ z2 deployer get-config-file [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer get-config-file --role api --out ./z2/resources/chain-specs/zq2-prototestnet-api.toml zq2-prototestnet.yaml
+z2 deployer get-config-file --role api --out ./z2/resources/chain-specs/zq2-testnet-api.toml zq2-testnet.yaml
 ```
 
 ### 4.4 get-deposit-commands
@@ -125,7 +125,7 @@ z2 deployer get-deposit-commands [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer get-deposit-commands zq2-prototestnet.yaml
+z2 deployer get-deposit-commands zq2-testnet.yaml
 ```
 
 ### 4.5 deposit
@@ -140,7 +140,7 @@ z2 deployer deposit [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer deposit zq2-prototestnet.yaml
+z2 deployer deposit zq2-testnet.yaml
 ```
 
 ### 4.6 deposit-top-up
@@ -152,11 +152,11 @@ z2 deployer deposit-top-up --amount <AMOUNT> [OPTIONS] <CONFIG_FILE>
 ```
 **Options:**
 - `--select` — interactively select nodes
-- `--amount <AMOUNT>` — amount in millions (required)
+- `--amount <AMOUNT>` — amount in ZILs (required)
 
 **Example:**
 ```bash
-z2 deployer deposit-top-up --amount 10 zq2-prototestnet.yaml
+z2 deployer deposit-top-up --amount 10 zq2-testnet.yaml
 ```
 
 ### 4.7 unstake
@@ -168,11 +168,11 @@ z2 deployer unstake --amount <AMOUNT> [OPTIONS] <CONFIG_FILE>
 ```
 **Options:**
 - `--select` — interactively select nodes
-- `--amount <AMOUNT>` — amount in millions (required)
+- `--amount <AMOUNT>` — amount in ZILs (required)
 
 **Example:**
 ```bash
-z2 deployer unstake --amount 10 zq2-prototestnet.yaml
+z2 deployer unstake --amount 10 zq2-testnet.yaml
 ```
 
 ### 4.8 withdraw
@@ -187,7 +187,7 @@ z2 deployer withdraw [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer withdraw zq2-prototestnet.yaml
+z2 deployer withdraw zq2-testnet.yaml
 ```
 
 ### 4.9 stakers
@@ -199,7 +199,7 @@ z2 deployer stakers <CONFIG_FILE>
 ```
 **Example:**
 ```bash
-z2 deployer stakers zq2-prototestnet.yaml
+z2 deployer stakers zq2-testnet.yaml
 ```
 
 ### 4.10 rpc
@@ -218,7 +218,7 @@ z2 deployer rpc [OPTIONS] --method <METHOD> <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer rpc -m eth_blockNumber zq2-prototestnet.yaml
+z2 deployer rpc -m eth_blockNumber zq2-testnet.yaml
 ```
 
 ### 4.11 ssh
@@ -233,7 +233,7 @@ z2 deployer ssh [OPTIONS] <CONFIG_FILE> [COMMAND]...
 
 **Example:**
 ```bash
-z2 deployer ssh zq2-prototestnet.yaml -- "sudo systemctl restart zilliqa.service"
+z2 deployer ssh zq2-testnet.yaml -- "sudo systemctl restart zilliqa.service"
 ```
 
 ### 4.12 backup
@@ -249,7 +249,7 @@ z2 deployer backup [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer backup --name backup-20240704 --zip zq2-prototestnet.yaml
+z2 deployer backup --name backup-20240704 --zip zq2-testnet.yaml
 ```
 
 ### 4.13 restore
@@ -267,7 +267,7 @@ z2 deployer restore [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer restore --name backup-20240704 --zip zq2-prototestnet.yaml
+z2 deployer restore --name backup-20240704 --zip zq2-testnet.yaml
 ```
 
 ### 4.14 reset
@@ -282,7 +282,7 @@ z2 deployer reset [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer reset zq2-prototestnet.yaml
+z2 deployer reset zq2-testnet.yaml
 ```
 
 ### 4.15 restart
@@ -297,7 +297,7 @@ z2 deployer restart [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer restart zq2-prototestnet.yaml
+z2 deployer restart zq2-testnet.yaml
 ```
 
 ### 4.16 monitor
@@ -314,7 +314,7 @@ z2 deployer monitor [OPTIONS] <CONFIG_FILE>
 
 **Example:**
 ```bash
-z2 deployer monitor --metric block-number --follow zq2-prototestnet.yaml
+z2 deployer monitor --metric block-number --follow zq2-testnet.yaml
 ```
 
 ---

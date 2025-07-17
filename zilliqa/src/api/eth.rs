@@ -24,6 +24,7 @@ use jsonrpsee::{
     },
 };
 use parking_lot::{RwLock, RwLockReadGuard};
+use revm::primitives::keccak256;
 use serde_json::json;
 use tracing::*;
 
@@ -35,7 +36,7 @@ use super::{
     },
 };
 use crate::{
-    api::zilliqa::ZilAddress,
+    api::{types::eth::GetAccountResult, zilliqa::ZilAddress},
     cfg::EnabledApi,
     crypto::Hash,
     error::ensure_success,
@@ -60,6 +61,7 @@ pub fn rpc_module(
             ("eth_blobBaseFee", blob_base_fee),
             ("eth_blockNumber", block_number),
             ("eth_call", call),
+            ("eth_callMany", call_many),
             ("eth_chainId", chain_id),
             ("eth_estimateGas", estimate_gas),
             ("eth_feeHistory", fee_history),
@@ -196,6 +198,11 @@ fn block_number(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
     expect_end_of_params(&mut params.sequence(), 0, 0)?;
     let node = node.read();
     Ok(node.consensus.get_highest_canonical_block_number().to_hex())
+}
+
+fn call_many(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+    // TODO: disable_eip3607 for this call.
+    Err(anyhow!("API method eth_callMany is not implemented yet"))
 }
 
 fn call(params: Params, node: &Arc<RwLock<Node>>) -> Result<String> {
@@ -1008,8 +1015,32 @@ fn fee_history(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 
 /// eth_getAccount
 /// Retrieve account details by specifying an address and a block number/tag.
-fn get_account(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
-    Err(anyhow!("API method eth_getAccount is not implemented yet"))
+fn get_account(params: Params, node: &Arc<RwLock<Node>>) -> Result<GetAccountResult> {
+    let mut params = params.sequence();
+    let address: ZilAddress = params.next()?;
+    let address: Address = address.into();
+    let block_id: BlockId = params.next()?;
+    expect_end_of_params(&mut params, 2, 2)?;
+
+    let node = node.read();
+    let block = node.get_block(block_id)?;
+    let block = build_errored_response_for_missing_block(block_id, block)?;
+
+    let account = node.get_state(&block)?.get_account(address)?;
+    let return_code = if account.code.is_eoa() {
+        vec![].to_hex_no_prefix()
+    } else {
+        match account.code {
+            Code::Evm(val) => val.to_hex_no_prefix(),
+            Code::Scilla { code, .. } => code.to_hex_no_prefix(),
+        }
+    };
+    Ok(GetAccountResult {
+        balance: account.balance,
+        nonce: account.nonce,
+        storage_root: account.storage_root,
+        code_hash: keccak256(return_code),
+    })
 }
 
 /// eth_getFilterChanges
@@ -1162,6 +1193,7 @@ fn sign_transaction(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
 /// eth_simulateV1
 /// Simulates a series of transactions at a specific block height with optional state overrides. This method allows you to test transactions with custom block and state parameters without actually submitting them to the network.
 fn simulate_v1(_params: Params, _node: &Arc<RwLock<Node>>) -> Result<()> {
+    // TODO: disable_eip3607 for this call.
     Err(anyhow!("API method eth_simulateV1 is not implemented yet"))
 }
 

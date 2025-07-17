@@ -236,8 +236,15 @@ pub fn scilla_test_contract_code() -> String {
 
         library HelloWorld
 
+        let one_msg =
+          fun (msg : Message) =>
+          let nil_msg = Nil {Message} in
+            Cons {Message} msg nil_msg
+
         let one = Uint32 1
         let two = Uint32 2
+
+        let amnt = Uint128 0
 
         contract HelloWorld
         (owner: ByStr20)
@@ -292,6 +299,17 @@ pub fn scilla_test_contract_code() -> String {
         b <- foobar;
         e = {_eventname: "fields"; a_one: a_one; b: b};
         event e
+        end
+
+        transition callFailure(addr: ByStr20)
+          accept;
+          msg = { _tag : "failure"; _recipient : addr; _amount : amnt };
+          msgs = one_msg msg;
+          send msgs
+        end
+
+        transition failure()
+            throw
         end
     "#,
     )
@@ -1018,6 +1036,7 @@ async fn scilla_precompiles(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1233,6 +1252,7 @@ async fn mutate_evm_then_read_from_scilla(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1343,6 +1363,7 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1405,6 +1426,114 @@ async fn interop_send_funds_from_scilla(mut network: Network) {
             .as_u128(),
         1_000_000
     );
+}
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn call_scilla_precompile_with_value(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        library HelloWorld
+        let one = Uint128 1
+
+        let one_msg =
+          fun (msg : Message) =>
+          let nil_msg = Nil {Message} in
+            Cons {Message} msg nil_msg
+
+        contract Test
+        ()
+
+        transition justAccept()
+            accept
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    let evm_contract_value = 10_000_000;
+    let value_to_send = evm_contract_value / 2;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        evm_contract_value,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+    let evm_contract_address = receipt.contract_address.unwrap();
+
+    // Query evm contract balance
+    let evm_contract_zero_balance = wallet
+        .get_balance(evm_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(evm_contract_zero_balance.as_u128(), evm_contract_value);
+
+    // Scilla contract balance is zero
+    let scilla_contract_zero_balance = wallet
+        .get_balance(scilla_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(scilla_contract_zero_balance.as_u128(), 0);
+
+    // Call precompile that sends the value
+    let function = abi.function("callScillaValue").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("justAccept".to_owned()),
+        Token::Uint(value_to_send.into()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(evm_contract_address)
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // Run the transaction.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.status.unwrap().as_u64(), 1);
+
+    // Evm contract balance modified by sent amount
+    let evm_contract_zero_balance = wallet
+        .get_balance(evm_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        evm_contract_zero_balance.as_u128(),
+        evm_contract_value - value_to_send
+    );
+
+    // Scilla contract balance received the value
+    let scilla_contract_zero_balance = wallet
+        .get_balance(scilla_contract_address, None)
+        .await
+        .unwrap();
+    assert_eq!(scilla_contract_zero_balance.as_u128(), value_to_send);
 }
 
 #[zilliqa_macros::test(restrict_concurrency)]
@@ -1477,6 +1606,7 @@ async fn scilla_call_with_bad_gas(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1587,6 +1717,7 @@ async fn interop_call_then_revert(mut network: Network) {
     let (hash, abi) = deploy_contract(
         "tests/it/contracts/ScillaInterop.sol",
         "ScillaInterop",
+        0u128,
         &wallet,
         &mut network,
     )
@@ -1610,6 +1741,254 @@ async fn interop_call_then_revert(mut network: Network) {
     let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
     let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
     assert_eq!(receipt.status.unwrap().as_u64(), 0);
+
+    let call = format!(
+        r#"
+            {{
+            "_tag": "GetFromMap",
+            "params": [
+                {{
+                    "vname": "a",
+                    "type": "ByStr20",
+                    "value": "{scilla_contract_address:#x}"
+                }}
+            ]
+           }}
+        "#
+    );
+
+    let (_, txn) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        2,
+        ToAddr::Address(scilla_contract_address),
+        0,
+        50_000,
+        None,
+        Some(&call),
+    )
+    .await;
+
+    assert!(txn["receipt"]["event_logs"].as_array().unwrap().is_empty());
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn interop_read_after_write(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        library HelloWorld
+
+        let one = Uint128 1
+        let two = Uint128 2
+        let big_number = Uint128 1234
+        let addr = 0x0123456789012345678901234567890123456789
+
+        contract Hello
+        ()
+
+        field num : Uint128 = big_number
+        field str : String = "foobar"
+        field addr_to_int : Map ByStr20 Uint128 =
+          let emp = Emp ByStr20 Uint128 in
+          builtin put emp addr one
+
+        transition InsertIntoMap(a: ByStr20, b: Uint128)
+          addr_to_int[a] := b;
+          e = {_eventname : "Inserted"; a : a; b : b};
+          event e
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    // Bump the genesis wallet's nonce up, so that the next contract we deploy will be exempt from gas charges when
+    // calling the `scilla_call` precompile.
+    let tx_hash = wallet
+        .send_transaction(TransactionRequest::new().to(H160::zero()), None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, tx_hash, 100).await;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    // Construct a transaction which uses the scilla_call precompile.
+    let function = abi.function("readAfterWrite").unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("InsertIntoMap".to_owned()),
+        Token::Address(scilla_contract_address),
+        Token::Uint(5.into()),
+        Token::String("addr_to_int".to_owned()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // Make sure the transaction succeeds.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+    let receipt = network.run_until_receipt(&wallet, tx_hash, 100).await;
+    assert_eq!(receipt.status.unwrap().as_u64(), 1);
+}
+
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn interop_nested_call_to_precompile_then_revert(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, _) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = r#"
+        scilla_version 0
+
+        library HelloWorld
+
+        let one = Uint128 1
+        let two = Uint128 2
+        let big_number = Uint128 1234
+        let addr = 0x0123456789012345678901234567890123456789
+
+        contract Hello
+        ()
+
+        field num : Uint128 = big_number
+        field str : String = "foobar"
+        field addr_to_int : Map ByStr20 Uint128 =
+          let emp = Emp ByStr20 Uint128 in
+          builtin put emp addr one
+
+        transition InsertIntoMap(a: ByStr20, b: Uint128)
+          addr_to_int[a] := b;
+          e = {_eventname : "Inserted"; a : a; b : b};
+          event e
+        end
+
+        transition GetFromMap(a: ByStr20)
+            addr_to_int_o <- addr_to_int[a];
+
+            match addr_to_int_o with
+            | Some value =>
+                e = {
+                    _eventname: "Value";
+                    element: value
+                };
+                event e
+            | None =>
+            end
+        end
+    "#;
+
+    let data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(code),
+        Some(data),
+    )
+    .await;
+    let scilla_contract_address = contract_address.unwrap();
+
+    // Bump the genesis wallet's nonce up, so that the next contract we deploy will be exempt from gas charges when
+    // calling the `scilla_call` precompile.
+    let tx_hash = wallet
+        .send_transaction(TransactionRequest::new().to(H160::zero()), None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, tx_hash, 100).await;
+
+    let (hash, abi) = deploy_contract(
+        "tests/it/contracts/ScillaInterop.sol",
+        "ScillaInterop",
+        0u128,
+        &wallet,
+        &mut network,
+    )
+    .await;
+    let receipt = wallet.get_transaction_receipt(hash).await.unwrap().unwrap();
+
+    // Construct a transaction which uses the scilla_call precompile.
+    let function = abi
+        .function("makeNestedPrecompileCallWhichReverts")
+        .unwrap();
+    let input = &[
+        Token::Address(scilla_contract_address),
+        Token::String("InsertIntoMap".to_owned()),
+        Token::Address(scilla_contract_address),
+        Token::Uint(5.into()),
+        Token::String("addr_to_int".to_owned()),
+    ];
+    let tx = TransactionRequest::new()
+        .to(receipt.contract_address.unwrap())
+        .data(function.encode_input(input).unwrap())
+        .gas(84_000_000);
+
+    // // Make sure the transaction fails.
+    let tx_hash = wallet.send_transaction(tx, None).await.unwrap().tx_hash();
+
+    network
+        .run_until_async(
+            || async {
+                let response: Result<GetTxResponse, _> =
+                    wallet.provider().request("GetTransaction", [tx_hash]).await;
+                response.is_ok()
+            },
+            400,
+        )
+        .await
+        .unwrap();
+
+    let eth_receipt = wallet
+        .get_transaction_receipt(tx_hash)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(eth_receipt.status.unwrap().as_u64(), 0);
 
     let call = format!(
         r#"
@@ -2956,14 +3335,9 @@ async fn combined_total_coin_supply_test(mut network: Network) {
     );
 
     let total_coin_supply_str = response_str.as_str().expect("Expected string conversion");
-    let total_coin_supply_as_int_from_str: u128 = total_coin_supply_str
+    let total_coin_supply_as_f64_from_str: f64 = total_coin_supply_str
         .parse()
         .expect("Expected string to be parsed as an integer");
-
-    assert!(
-        total_coin_supply_as_int_from_str > 0,
-        "Total coin supply should be greater than 0"
-    );
 
     let response_int: Value = wallet
         .provider()
@@ -2984,14 +3358,14 @@ async fn combined_total_coin_supply_test(mut network: Network) {
         .expect("Expected u128 conversion");
 
     assert!(
-        total_coin_supply_as_int > 0,
-        "Total coin supply should be greater than 0"
+        (total_coin_supply_as_f64_from_str - total_coin_supply_as_int as f64).abs() < 1.0,
+        "Total coin supply from string and int APIs should be the same"
     );
 
     assert_eq!(
-        total_coin_supply_as_int_from_str, total_coin_supply_as_int,
-        "Total coin supply from string and int APIs should be the same"
-    );
+        total_coin_supply_as_int, 1000000256,
+        "Total coin supply should be 1000000256"
+    )
 }
 
 #[zilliqa_macros::test]
@@ -3394,6 +3768,99 @@ async fn nested_maps_insert_removal(mut network: Network) {
     }
 }
 
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn failed_scilla_contract_proper_fee(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
+
+    let initial_balance = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+    let gas_limit = 50_000;
+
+    let amount_to_transfer = 10 * 10u128.pow(12);
+
+    let call = format!(
+        r#"{{
+        "_tag": "callFailure",
+        "_amount": "0x{amount_to_transfer:x}",
+        "params": [
+            {{
+                "vname": "addr",
+                "type": "ByStr20",
+                "value": "0x{contract_address:x}"
+            }}
+        ]
+         }}"#
+    );
+
+    let response = issue_create_transaction(
+        &wallet,
+        &secret_key.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key,
+        2,
+        ToAddr::Address(contract_address),
+        amount_to_transfer,
+        gas_limit as u64,
+        None,
+        Some(&call),
+    )
+    .await
+    .unwrap();
+
+    let txn_hash: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+
+    network
+        .run_until_async(
+            || async {
+                let response: Result<GetTxResponse, _> = wallet
+                    .provider()
+                    .request("GetTransaction", [txn_hash])
+                    .await;
+                response.is_ok()
+            },
+            400,
+        )
+        .await
+        .unwrap();
+
+    let eth_receipt = wallet
+        .get_transaction_receipt(txn_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(eth_receipt.status.unwrap().as_u32(), 0);
+
+    // Verify the sender's nonce has increased using the `GetBalance` API.
+    let response: Value = wallet
+        .provider()
+        .request("GetBalance", [address])
+        .await
+        .unwrap();
+    println!("GetBalance() after transfer = {response:?}");
+    assert_eq!(response["nonce"].as_u64().unwrap(), 2);
+
+    let transaction_fee: u128 =
+        (eth_receipt.cumulative_gas_used * eth_receipt.effective_gas_price.unwrap()).as_u128();
+
+    let balance_after_failed_call = wallet.get_balance(address, None).await.unwrap().as_u128();
+
+    assert_eq!(balance_after_failed_call, initial_balance - transaction_fee);
+}
+
 #[zilliqa_macros::test]
 async fn get_state_proof(mut network: Network) {
     let wallet = network.genesis_wallet().await;
@@ -3412,19 +3879,32 @@ async fn get_state_proof(mut network: Network) {
         serde_json::from_value(response).expect("Failed to deserialize response");
 }
 
+// LLM generated, may be buggy
 #[zilliqa_macros::test]
 async fn get_transaction_status(mut network: Network) {
     let wallet = network.genesis_wallet().await;
 
-    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
-
+    // Test 1: Create a transaction and check it while pending/dispatched
+    let (secret_key_1, _address_1) = zilliqa_account(&mut network, &wallet).await;
     let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
         .parse()
         .unwrap();
-    let (_contract_address_1, returned_transaction_1) = send_transaction(
-        &mut network,
+
+    // Get the gas price via the Zilliqa API.
+    let gas_price_str: String = wallet
+        .provider()
+        .request("GetMinimumGasPrice", ())
+        .await
+        .unwrap();
+    let gas_price: u128 = u128::from_str(&gas_price_str).unwrap();
+
+    // Send first transaction (nonce 1) - should be dispatched initially
+    let response = issue_create_transaction(
         &wallet,
-        &secret_key,
+        &secret_key_1.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key_1,
         1,
         ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
@@ -3432,91 +3912,200 @@ async fn get_transaction_status(mut network: Network) {
         None,
         None,
     )
-    .await;
+    .await
+    .unwrap();
+    let txn_hash_1: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
 
-    let returned_transaction_1_id = returned_transaction_1["ID"]
-        .as_str()
-        .expect("Failed to get ID from response");
+    // Check status immediately - should be dispatched (pending)
+    let response_dispatched: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [txn_hash_1])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
 
-    network.run_until_block_finalized(1u64, 100).await.unwrap();
+    let tx_status_dispatched: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_dispatched).expect("Failed to deserialize response");
 
-    let (secret_key, _address) = zilliqa_account(&mut network, &wallet).await;
+    assert!(matches!(
+        tx_status_dispatched.status,
+        zilliqa::api::types::zil::TxnStatusCode::Dispatched
+    ));
+    assert_eq!(tx_status_dispatched.modification_state, 1);
 
-    let to_addr: H160 = "0x00000000000000000000000000000000deadbeef"
-        .parse()
-        .unwrap();
-    let (_contract_address_2, returned_transaction_2) = send_transaction(
-        &mut network,
+    // Test 2: Send transaction with future nonce - should be queued
+    let response = issue_create_transaction(
         &wallet,
-        &secret_key,
-        1,
+        &secret_key_1.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key_1,
+        3, // Skip nonce 2, so this will be queued
         ToAddr::Address(to_addr),
         200u128 * 10u128.pow(12),
         50_000,
         None,
         None,
     )
+    .await
+    .unwrap();
+    let txn_hash_queued: H256 = response["TranID"].as_str().unwrap().parse().unwrap();
+
+    // Check status - should be queued due to high nonce
+    let response_queued: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [txn_hash_queued])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_queued: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_queued).expect("Failed to deserialize response");
+
+    assert!(matches!(
+        tx_status_queued.status,
+        zilliqa::api::types::zil::TxnStatusCode::PresentNonceHigh
+    ));
+    assert_eq!(tx_status_queued.modification_state, 1);
+
+    // Test 3: Wait for first transaction to be mined and finalized
+    network
+        .run_until_async(
+            || async {
+                let response: Result<GetTxResponse, _> = wallet
+                    .provider()
+                    .request("GetTransaction", [txn_hash_1])
+                    .await;
+                response.is_ok()
+            },
+            400,
+        )
+        .await
+        .unwrap();
+
+    // Wait for the block to be finalized
+    network.run_until_block_finalized(2u64, 300).await.unwrap();
+
+    // Check status after finalization - should be confirmed
+    let response_confirmed: Value = wallet
+        .provider()
+        .request("GetTransactionStatus", [txn_hash_1])
+        .await
+        .expect("Failed to call GetTransactionStatus API");
+
+    let tx_status_confirmed: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_confirmed).expect("Failed to deserialize response");
+
+    assert!(matches!(
+        tx_status_confirmed.status,
+        zilliqa::api::types::zil::TxnStatusCode::Confirmed
+    ));
+    assert_eq!(tx_status_confirmed.modification_state, 2);
+    assert!(tx_status_confirmed.success);
+    assert!(!tx_status_confirmed.epoch_inserted.is_empty());
+    assert!(!tx_status_confirmed.epoch_updated.is_empty());
+
+    // Test 4: Create a transaction that will fail/error
+    let (secret_key_error, _) = zilliqa_account(&mut network, &wallet).await;
+
+    // Deploy a contract that will revert
+    let revert_code = r#"
+        scilla_version 0
+
+        contract RevertContract
+        ()
+
+        transition AlwaysRevert()
+            throw
+        end
+    "#;
+
+    let revert_data = r#"[
+        {
+            "vname": "_scilla_version",
+            "type": "Uint32",
+            "value": "0"
+        }
+    ]"#;
+
+    let (revert_contract_address, _) = send_transaction(
+        &mut network,
+        &wallet,
+        &secret_key_error,
+        1,
+        ToAddr::Address(H160::zero()),
+        0,
+        50_000,
+        Some(revert_code),
+        Some(revert_data),
+    )
     .await;
+    let revert_contract_address = revert_contract_address.unwrap();
 
-    let returned_transaction_2_id = returned_transaction_2["ID"]
-        .as_str()
-        .expect("Failed to get ID from response");
+    // Call the reverting function
+    let call = r#"{
+        "_tag": "AlwaysRevert",
+        "params": []
+    }"#;
 
-    //    network.run_until_block_finalized(8u64, 300).await.unwrap();
+    let response_error = issue_create_transaction(
+        &wallet,
+        &secret_key_error.public_key(),
+        gas_price,
+        &mut network,
+        &secret_key_error,
+        2,
+        ToAddr::Address(revert_contract_address),
+        0,
+        50_000,
+        None,
+        Some(call),
+    )
+    .await
+    .unwrap();
+    let txn_hash_error: H256 = response_error["TranID"].as_str().unwrap().parse().unwrap();
 
-    let response_1: Value = wallet
+    // Wait for the error transaction to be mined
+    network
+        .run_until_async(
+            || async {
+                let response: Result<GetTxResponse, _> = wallet
+                    .provider()
+                    .request("GetTransaction", [txn_hash_error])
+                    .await;
+                response.is_ok()
+            },
+            400,
+        )
+        .await
+        .unwrap();
+
+    // Wait for finalization
+    network.run_until_block_finalized(4u64, 300).await.unwrap();
+
+    // Check status of error transaction - should be confirmed but with success=false
+    let response_error_status: Value = wallet
         .provider()
-        .request("GetTransactionStatus", [returned_transaction_1_id])
+        .request("GetTransactionStatus", [txn_hash_error])
         .await
         .expect("Failed to call GetTransactionStatus API");
 
-    let tx_status_1: zilliqa::api::types::zil::TransactionStatusResponse =
-        serde_json::from_value(response_1).expect("Failed to deserialize response");
+    let tx_status_error: zilliqa::api::types::zil::TransactionStatusResponse =
+        serde_json::from_value(response_error_status).expect("Failed to deserialize response");
 
-    assert_eq!(tx_status_1.id.to_string(), returned_transaction_1_id);
-    assert!(
-        tx_status_1.amount.parse::<f64>().is_ok(),
-        "Invalid amount format"
-    );
-    assert!(
-        tx_status_1.gas_limit.parse::<u64>().is_ok(),
-        "Invalid gasLimit format"
-    );
-    assert!(
-        tx_status_1.gas_price.parse::<u64>().is_ok(),
-        "Invalid gasPrice format"
-    );
-    assert!(
-        tx_status_1.nonce.parse::<u64>().is_ok(),
-        "Invalid nonce format"
-    );
+    // Even failed transactions show as "Confirmed" once they're in a finalized block
+    assert!(matches!(
+        tx_status_error.status,
+        zilliqa::api::types::zil::TxnStatusCode::Error
+    ));
+    assert_eq!(tx_status_error.modification_state, 2);
+    assert!(!tx_status_error.success); // This should be false for failed transactions
 
-    let response_2: Value = wallet
-        .provider()
-        .request("GetTransactionStatus", [returned_transaction_2_id])
-        .await
-        .expect("Failed to call GetTransactionStatus API");
-
-    let tx_status_2: zilliqa::api::types::zil::TransactionStatusResponse =
-        serde_json::from_value(response_2).expect("Failed to deserialize response");
-
-    assert_eq!(tx_status_2.id.to_string(), returned_transaction_2_id);
-    assert!(
-        tx_status_2.amount.parse::<f64>().is_ok(),
-        "Invalid amount format"
-    );
-    assert!(
-        tx_status_2.gas_limit.parse::<u64>().is_ok(),
-        "Invalid gasLimit format"
-    );
-    assert!(
-        tx_status_2.gas_price.parse::<u64>().is_ok(),
-        "Invalid gasPrice format"
-    );
-    assert!(
-        tx_status_2.nonce.parse::<u64>().is_ok(),
-        "Invalid nonce format"
-    );
+    // Verify all basic fields are properly formatted
+    assert!(tx_status_confirmed.amount.parse::<u128>().is_ok());
+    assert!(tx_status_confirmed.gas_limit.parse::<u64>().is_ok());
+    assert!(tx_status_confirmed.gas_price.parse::<u64>().is_ok());
+    assert!(tx_status_confirmed.nonce.parse::<u64>().is_ok());
+    assert!(!tx_status_confirmed.to_addr.is_empty());
+    assert!(!tx_status_confirmed.version.is_empty());
 }
 
 #[zilliqa_macros::test]
@@ -3787,4 +4376,43 @@ async fn withdraw_from_contract(mut network: Network) {
         .unwrap()
         .as_u128();
     assert_eq!(0_u128, contract_zero_balance);
+}
+
+/// This test is for hardfork scilla_fix_contract_code_removal_on_evm_tx's behaviour
+#[zilliqa_macros::test(restrict_concurrency)]
+async fn create_scilla_contract_send_evm_tx(mut network: Network) {
+    let wallet = network.genesis_wallet().await;
+    let (secret_key, address) = zilliqa_account(&mut network, &wallet).await;
+    let code = scilla_test_contract_code();
+    let data = scilla_test_contract_data(address);
+    let contract_address =
+        deploy_scilla_contract(&mut network, &wallet, &secret_key, &code, &data, 0_u128).await;
+
+    let account_code_before = network
+        .get_node(0)
+        .consensus
+        .state()
+        .get_account(Address::from(contract_address.to_fixed_bytes()))
+        .unwrap()
+        .code;
+
+    // Send type 0 tx
+    let hash = wallet
+        .send_transaction(TransactionRequest::pay(contract_address, 0), None)
+        .await
+        .unwrap()
+        .tx_hash();
+    network.run_until_receipt(&wallet, hash, 200).await;
+
+    let account_code_after = network
+        .get_node(0)
+        .consensus
+        .state()
+        .get_account(Address::from(contract_address.to_fixed_bytes()))
+        .unwrap()
+        .code;
+    assert_eq!(
+        serde_json::to_string(&account_code_before).unwrap(),
+        serde_json::to_string(&account_code_after).unwrap()
+    );
 }

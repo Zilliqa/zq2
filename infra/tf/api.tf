@@ -104,6 +104,16 @@ resource "google_compute_backend_service" "health" {
   security_policy = module.health_security_policies.policy.self_link
 }
 
+resource "google_compute_url_map" "api_http_redirect" {
+  name = "${var.chain_name}-api-http-redirect"
+  
+  default_url_redirect {
+    https_redirect         = true
+    redirect_response_code = "MOVED_PERMANENTLY_DEFAULT"
+    strip_query            = false
+  }
+}
+
 resource "google_compute_url_map" "api" {
   name            = format("%s-api", var.chain_name)
   default_service = google_compute_backend_service.api.id
@@ -161,7 +171,7 @@ resource "google_compute_managed_ssl_certificate" "api" {
 
 resource "google_compute_target_http_proxy" "api" {
   name    = "${var.chain_name}-target-proxy"
-  url_map = google_compute_url_map.api.id
+  url_map = google_compute_url_map.api_http_redirect.id
 }
 
 resource "google_compute_target_https_proxy" "api" {
@@ -223,29 +233,49 @@ module "api_security_policies" {
   default_rule_action = "deny(403)"
   type                = "CLOUD_ARMOR"
 
-  security_rules = {
-    allow_whitelisted_ip_ranges = {
-      action        = "allow"
-      priority      = 999
-      description   = "Allow whitelisted IP address ranges"
-      src_ip_ranges = ["*"]
-    }
-  }
-
-  custom_rules = {
-    throttle = {
-      action      = "throttle"
-      priority    = 990
-      description = "Limit requests per IP"
-      expression  = "!inIpRange(origin.ip, '${local.monitoring_ip_range}')"
-      rate_limit_options = {
-        enforce_on_key                       = "IP"
-        exceed_action                        = "deny(429)"
-        rate_limit_http_request_count        = var.api.rate_limit
-        rate_limit_http_request_interval_sec = 60
+  security_rules = merge(
+    {
+      whitelisted_default_ip_ranges = {
+        action        = "allow"
+        priority      = 999
+        description   = "Allow whitelisted default IP address ranges"
+        src_ip_ranges = ["*"]
+      }
+    },
+    {
+      for rule_name, rule_config in var.api.allow_ip_ranges : rule_name => {
+        action        = "allow"
+        priority      = rule_config.priority
+        description   = rule_config.description
+        src_ip_ranges = rule_config.src_ip_ranges
       }
     }
-  }
+  )
+
+  custom_rules = merge(
+    {
+      throttle = {
+        action      = "throttle"
+        priority    = 990
+        description = "Limit requests per IP"
+        expression  = "request.method == 'POST' && !inIpRange(origin.ip, '${local.monitoring_ip_range}')"
+        rate_limit_options = {
+          enforce_on_key                       = "IP"
+          exceed_action                        = "deny(429)"
+          rate_limit_http_request_count        = var.api.rate_limit
+          rate_limit_http_request_interval_sec = 60
+        }
+      }
+    },
+    {
+      for rule_name, rule_config in var.api.allow_custom_rules : rule_name => {
+        action      = "allow"
+        priority    = rule_config.priority
+        description = rule_config.description
+        expression  = rule_config.expression
+      }
+    }
+  )
 }
 
 module "health_security_policies" {

@@ -15,7 +15,7 @@ use itertools::Itertools;
 use libp2p::{
     PeerId, StreamProtocol, Swarm, autonat,
     futures::StreamExt,
-    gossipsub::{self, IdentTopic, MessageAuthenticity, TopicHash},
+    gossipsub::{self, IdentTopic, MessageAcceptance, MessageAuthenticity, TopicHash},
     identify,
     kad::{self, store::MemoryStore},
     multiaddr::{Multiaddr, Protocol},
@@ -142,15 +142,16 @@ impl P2pNode {
                     gossipsub: gossipsub::Behaviour::new(
                         MessageAuthenticity::Signed(key_pair.clone()),
                         gossipsub::ConfigBuilder::default()
-                            // 1MB is sufficient to accommodate proposal with 4000 simple transfers (block gas limit)
-                            .max_transmit_size(1024 * 1024)
+                            // 2MB is sufficient to accommodate proposal with 4000 simple transfers (block gas limit)
+                            .max_transmit_size(1024 * 1024 * 2)
                             // Increase the duplicate cache time to reduce the likelihood of delayed messages being
                             // mistakenly re-propagated and flooding the network.
                             .duplicate_cache_time(Duration::from_secs(3600))
                             // Increase the queue duration to reduce the likelihood of dropped messages.
                             // https://github.com/Zilliqa/zq2/issues/2823
-                            .publish_queue_duration(Duration::from_secs(50))
+                            .publish_queue_duration(Duration::from_secs(60))
                             .forward_queue_duration(Duration::from_secs(30)) // might be helpful too
+                            .validate_messages() // manual forwarding is required
                             .build()
                             .map_err(|e| anyhow!(e))?,
                     )
@@ -378,13 +379,18 @@ impl P2pNode {
                             debug!(%source, %to, %external_message, %topic_hash, "broadcast received");
 
                             match external_message {
+                                ExternalMessage::BatchedTransactions(_) | ExternalMessage::NewView(_) => {
+                                    self.swarm.behaviour_mut().gossipsub.report_message_validation_result(&msg_id, &source, MessageAcceptance::Accept); // forward
+                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, external_message, ResponseChannel::Local)))?;
+                                },
                                 // Route broadcasts to speed-up Proposal processing, with faux request-id
-                                ExternalMessage::Proposal(_) =>
-                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), external_message, ResponseChannel::Local)))?,
-                                ExternalMessage::BatchedTransactions(_) | ExternalMessage::NewView(_) =>
-                                    self.send_to(&topic_hash, |c| c.broadcasts.send((source, external_message, ResponseChannel::Local)))?,
+                                ExternalMessage::Proposal(_) => {
+                                    self.swarm.behaviour_mut().gossipsub.report_message_validation_result(&msg_id, &source, MessageAcceptance::Accept); // forward
+                                    self.send_to(&topic_hash, |c| c.requests.send((source, msg_id.to_string(), external_message, ResponseChannel::Local)))?;
+                                },
                                 // Drop invalid libp2p gossips
                                 _ => {
+                                    self.swarm.behaviour_mut().gossipsub.report_message_validation_result(&msg_id, &source, MessageAcceptance::Reject); // drop and punish
                                     error!(%source, %to, %external_message, %topic_hash, "unhandled libp2p broadcast");
                                 }
                             }

@@ -1044,7 +1044,7 @@ impl Network {
                 match destination {
                     Some((destination, _)) => {
                         assert!(
-                            cbor_size < 1024 * 1024,
+                            cbor_size < 1024 * 1024, // 1MB request
                             "request overflow {} {:?}",
                             cbor_size,
                             external_message
@@ -1096,7 +1096,7 @@ impl Network {
                     }
                     None => {
                         assert!(
-                            cbor_size < 1024 * 1024,
+                            cbor_size < 1024 * 1024 * 2, // 2MB gossip
                             "broadcast overflow {} {:?}",
                             cbor_size,
                             external_message
@@ -1153,7 +1153,7 @@ impl Network {
                         .unwrap()
                         .len();
                 assert!(
-                    cbor_size < 1024 * 1024 * 10,
+                    cbor_size < 1024 * 1024 * 10, // 10MB response
                     "response overflow {} {:?}",
                     cbor_size,
                     message
@@ -1472,23 +1472,29 @@ fn compile_contract(path: &str, contract: &str) -> (Contract, Bytes) {
 async fn deploy_contract(
     path: &str,
     contract: &str,
+    value: u128,
     wallet: &Wallet,
     network: &mut Network,
 ) -> (H256, Contract) {
-    deploy_contract_with_args(path, contract, (), wallet, network).await
+    deploy_contract_with_args(path, contract, (), value, wallet, network).await
 }
 
 async fn deploy_contract_with_args<T: Tokenize>(
     path: &str,
     contract: &str,
     constructor_args: T,
+    value: u128,
     wallet: &Wallet,
     network: &mut Network,
 ) -> (H256, Contract) {
     let (abi, bytecode) = compile_contract(path, contract);
 
     let factory = DeploymentTxFactory::new(abi, bytecode, wallet.clone());
-    let deployer = factory.deploy(constructor_args).unwrap();
+    let mut deployer = factory.deploy(constructor_args).unwrap();
+    if value > 0 {
+        deployer.tx.set_value(value);
+    }
+
     let abi = deployer.abi().clone();
     {
         let hash = wallet

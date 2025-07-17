@@ -8,13 +8,20 @@
 
   tasks:
 
+    - name: Install required Python packages
+      ansible.builtin.pip:
+        name:
+          - google-cloud-logging
+          - requests
+        state: present
+
     - name: Create Checkpoints script
       template:
         src: templates/checkpoints.py.j2
         dest: /usr/local/bin/checkpoints.py
-        mode: '0777'
+        mode: '0755'
       notify:
-        - Restart Checkpoints timer
+        - Restart Checkpoints service
 
     - name: Create Checkpoints systemd service
       template:
@@ -22,39 +29,22 @@
         dest: /etc/systemd/system/checkpoints.service
         mode: '0644'
       notify:
-        - Restart Checkpoints timer
-
-    - name: Create Checkpoints systemd timer
-      template:
-        src: templates/checkpoints.timer.j2
-        dest: /etc/systemd/system/checkpoints.timer
-        mode: '0644'
-      notify:
-        - Restart Checkpoints timer
-    
-    - name: Force create symlink for checkpoints timer
-      ansible.builtin.file:
-        src: /etc/systemd/system/checkpoints.timer
-        dest: /etc/systemd/system/timers.target.wants/checkpoints.timer
-        state: link
-        force: true
-      notify:
-        - Restart Checkpoints timer
+        - Restart Checkpoints service
 
     - name: Flush handlers
       ansible.builtin.meta: flush_handlers
 
-    - name: Start and enable checkpoints timer
+    - name: Start and enable checkpoints service
       systemd:
-        name: checkpoints.timer
+        name: checkpoints.service
         state: started
         enabled: yes
         daemon_reload: yes
 
   handlers:
-    - name: Restart Checkpoints timer
+    - name: Restart Checkpoints service
       systemd:
-        name: checkpoints.timer
+        name: checkpoints.service
         state: restarted
         enabled: yes
         daemon_reload: yes
