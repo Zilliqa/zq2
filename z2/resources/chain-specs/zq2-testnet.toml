@@ -82,5 +82,5 @@ consensus.forks = [
     { at_height = 9341630, scilla_failed_txn_correct_balance_deduction = true, scilla_transition_proper_order = true, evm_to_scilla_value_transfer_zero = true, restore_xsgd_contract = true },
     { at_height = 9489500, evm_exec_failure_causes_scilla_precompile_to_fail = true },
     { at_height = 9780700, revert_restore_xsgd_contract = true, scilla_fix_contract_code_removal_on_evm_tx = true },
-    { at_height = 10158024, prevent_zil_transfer_from_evm_to_scilla_contract = true},
+    { at_height = 10109366, prevent_zil_transfer_from_evm_to_scilla_contract = true},
 ]
