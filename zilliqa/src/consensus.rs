@@ -27,7 +27,7 @@ use tracing::*;
 
 use crate::{
     api::types::eth::SyncingStruct,
-    blockhooks,
+    aux, blockhooks,
     cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
@@ -362,6 +362,8 @@ impl Consensus {
             peers.clone(),
         )?;
 
+        let enable_ots_indices = config.enable_ots_indices;
+
         let mut consensus = Consensus {
             secret_key,
             config,
@@ -374,7 +376,7 @@ impl Consensus {
             network_message_cache: None,
             high_qc,
             state,
-            db,
+            db: db.clone(),
             receipts_cache: Default::default(),
             transaction_pool: Default::default(),
             early_proposal: Default::default(),
@@ -400,6 +402,8 @@ impl Consensus {
             // treat genesis as finalized
             consensus.set_finalized_view(latest_block_view)?;
             return Ok(consensus);
+        } else if enable_ots_indices {
+            aux::check_and_build_ots_indices(db, latest_block_view)?;
         }
 
         // If we started from a checkpoint, execute the checkpointed block now
