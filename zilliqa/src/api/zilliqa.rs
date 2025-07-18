@@ -1162,7 +1162,7 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
             epoch_num: block.number().to_string(),
             success: receipt.success,
         };
-        let (version, to_addr, sender_pub_key, signature, _code, _data) = match tx.tx {
+        let (version, to_addr, sender_pub_key, signature, code, data) = match tx.tx {
             SignedTransaction::Zilliqa { tx, sig, key } => (
                 ((tx.chain_id as u32) << 16) | 1,
                 tx.to_addr,
@@ -1221,6 +1221,8 @@ fn extract_transaction_bodies(block: &Block, node: &Node) -> Result<Vec<Transact
             signature,
             to_addr: to_addr.to_string(),
             version: version.to_string(),
+            code,
+            data,
         };
         transactions.push(body);
     }

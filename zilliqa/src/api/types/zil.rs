@@ -666,6 +666,10 @@ pub struct TransactionBody {
     #[serde(rename = "toAddr")]
     pub to_addr: String,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
