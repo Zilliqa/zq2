@@ -432,6 +432,39 @@ impl Db {
             )?;
         }
 
+        if version < 4 {
+            connection.execute_batch(
+                "
+                BEGIN;
+
+                INSERT INTO schema_version VALUES (4);
+
+                CREATE TABLE IF NOT EXISTS aux_table (key TEXT NOT NULL PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID;
+
+                COMMIT;
+            ",
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_value_from_aux_table(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .db
+            .lock()
+            .unwrap()
+            .prepare_cached("SELECT value FROM aux_table WHERE key = ?1")?
+            .query_row([key], |row| row.get(0))
+            .optional()?)
+    }
+
+    pub fn insert_value_to_aux_table(&self, key: &str, value: Vec<u8>) -> Result<()> {
+        self.db
+            .lock()
+            .unwrap()
+            .prepare_cached("INSERT OR REPLACE INTO aux_table (key, value) VALUES (?1, ?2)")?
+            .execute(rusqlite::params![key, value])?;
         Ok(())
     }
 

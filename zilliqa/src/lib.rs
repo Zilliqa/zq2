@@ -1,4 +1,5 @@
 pub mod api;
+mod aux;
 mod blockhooks;
 pub mod cfg;
 pub mod consensus;
