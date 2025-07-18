@@ -28,7 +28,7 @@ use tracing::*;
 use crate::{
     api::types::eth::SyncingStruct,
     aux, blockhooks,
-    cfg::{ConsensusConfig, ForkName, NodeConfig, XSGD_CODE, XSGD_MAINNET_ADDR},
+    cfg::{ConsensusConfig, ForkName, NodeConfig},
     constants::{EXPONENTIAL_BACKOFF_TIMEOUT_MULTIPLIER, TIME_TO_ALLOW_PROPOSAL_BROADCAST},
     crypto::{BlsSignature, Hash, NodePublicKey, SecretKey, verify_messages},
     db::{self, Db},
@@ -45,6 +45,9 @@ use crate::{
         TxPoolStatus,
     },
     state::{Code, State},
+    static_hardfork_data::{
+        XSGD_CODE, XSGD_MAINNET_ADDR, build_ignite_wallet_addr_scilla_code_map,
+    },
     sync::{Sync, SyncPeers},
     time::SystemTime,
     transaction::{EvmGas, SignedTransaction, TransactionReceipt, VerifiedTransaction},
@@ -3336,6 +3339,22 @@ impl Consensus {
                         a.code = Code::Evm(vec![]);
                         Ok(())
                     })?;
+                }
+            }
+        }
+        if fork.restore_ignite_wallet_contracts {
+            if let Some(fork_height) = self
+                .state
+                .forks
+                .find_height_fork_first_activated(ForkName::RestoreIgniteWalletContracts)
+            {
+                if fork_height == block.header.number {
+                    for (addr, code) in build_ignite_wallet_addr_scilla_code_map()?.iter() {
+                        state.mutate_account(*addr, |a| {
+                            a.code = code.clone();
+                            Ok(())
+                        })?;
+                    }
                 }
             }
         }

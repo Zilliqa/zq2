@@ -32,7 +32,7 @@ fn txpool_content(
     let mut node = node.write();
     let content = node.txpool_content();
 
-    let pending = content
+    let pending: HashMap<Address, HashMap<u64, Transaction>> = content
         .pending
         .into_iter()
         .map(|(k, v)| {
@@ -41,12 +41,13 @@ fn txpool_content(
                 v.iter()
                     .filter(|x| x.tx.nonce().is_some())
                     .map(|x| (x.tx.nonce().unwrap(), Transaction::new(x.clone(), None)))
-                    .collect(),
+                    .collect::<HashMap<u64, Transaction>>(),
             )
         })
+        .filter(|(_, v)| !v.is_empty())
         .collect();
 
-    let queued = content
+    let queued: HashMap<Address, HashMap<u64, Transaction>> = content
         .queued
         .into_iter()
         .map(|(k, v)| {
@@ -55,9 +56,10 @@ fn txpool_content(
                 v.iter()
                     .filter(|x| x.tx.nonce().is_some())
                     .map(|x| (x.tx.nonce().unwrap(), Transaction::new(x.clone(), None)))
-                    .collect(),
+                    .collect::<HashMap<u64, Transaction>>(),
             )
         })
+        .filter(|(_, v)| !v.is_empty())
         .collect();
 
     let result = types::txpool::TxPoolContent { pending, queued };
