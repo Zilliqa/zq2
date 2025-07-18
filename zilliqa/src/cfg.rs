@@ -631,6 +631,7 @@ pub struct Fork {
     pub revert_restore_xsgd_contract: bool,
     pub scilla_fix_contract_code_removal_on_evm_tx: bool,
     pub restore_ignite_wallet_contracts: bool,
+    pub prevent_zil_transfer_from_evm_to_scilla_contract: bool,
 }
 
 pub enum ForkName {
@@ -752,6 +753,8 @@ pub struct ForkDelta {
     pub scilla_fix_contract_code_removal_on_evm_tx: Option<bool>,
     /// If true, re-write IgniteWallet's contract to addresses specified
     pub restore_ignite_wallet_contracts: Option<bool>,
+    /// If true, zil transfers from evm to scilla contracts are prohibited
+    pub prevent_zil_transfer_from_evm_to_scilla_contract: Option<bool>,
 }
 
 impl Fork {
@@ -837,6 +840,9 @@ impl Fork {
             restore_ignite_wallet_contracts: delta
                 .restore_ignite_wallet_contracts
                 .unwrap_or(self.restore_ignite_wallet_contracts),
+            prevent_zil_transfer_from_evm_to_scilla_contract: delta
+                .prevent_zil_transfer_from_evm_to_scilla_contract
+                .unwrap_or(self.prevent_zil_transfer_from_evm_to_scilla_contract),
         }
     }
 }
@@ -931,6 +937,7 @@ pub fn genesis_fork_default() -> Fork {
         revert_restore_xsgd_contract: true,
         scilla_fix_contract_code_removal_on_evm_tx: true,
         restore_ignite_wallet_contracts: true,
+        prevent_zil_transfer_from_evm_to_scilla_contract: true,
     }
 }
 
@@ -1077,6 +1084,7 @@ mod tests {
                 revert_restore_xsgd_contract: None,
                 scilla_fix_contract_code_removal_on_evm_tx: None,
                 restore_ignite_wallet_contracts: None,
+                prevent_zil_transfer_from_evm_to_scilla_contract: None,
             }],
             ..Default::default()
         };
@@ -1126,6 +1134,7 @@ mod tests {
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
+                    prevent_zil_transfer_from_evm_to_scilla_contract: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1155,6 +1164,7 @@ mod tests {
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
+                    prevent_zil_transfer_from_evm_to_scilla_contract: None,
                 },
             ],
             ..Default::default()
@@ -1218,6 +1228,7 @@ mod tests {
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
+                    prevent_zil_transfer_from_evm_to_scilla_contract: None,
                 },
                 ForkDelta {
                     at_height: 10,
@@ -1247,6 +1258,7 @@ mod tests {
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
+                    prevent_zil_transfer_from_evm_to_scilla_contract: None,
                 },
             ],
             ..Default::default()
@@ -1301,6 +1313,7 @@ mod tests {
                 revert_restore_xsgd_contract: true,
                 scilla_fix_contract_code_removal_on_evm_tx: true,
                 restore_ignite_wallet_contracts: true,
+                prevent_zil_transfer_from_evm_to_scilla_contract: true,
             },
             forks: vec![],
             ..Default::default()
@@ -1343,6 +1356,7 @@ mod tests {
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
+                    prevent_zil_transfer_from_evm_to_scilla_contract: None,
                 },
                 ForkDelta {
                     at_height: 20,
@@ -1372,6 +1386,7 @@ mod tests {
                     revert_restore_xsgd_contract: None,
                     scilla_fix_contract_code_removal_on_evm_tx: None,
                     restore_ignite_wallet_contracts: None,
+                    prevent_zil_transfer_from_evm_to_scilla_contract: None,
                 },
             ],
             ..Default::default()

@@ -11,7 +11,12 @@ use parking_lot::RwLock;
 use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 use serde::Deserialize;
 
-use crate::{cfg::EnabledApi, crypto::Hash, exec::TransactionApplyResult, node::Node};
+use crate::{
+    cfg::EnabledApi,
+    crypto::Hash,
+    exec::{PendingState, TransactionApplyResult},
+    node::Node,
+};
 
 pub fn rpc_module(
     node: Arc<RwLock<Node>>,
@@ -64,6 +69,8 @@ fn trace_block(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceResu
         .state()
         .at_root(parent.state_root_hash().into());
 
+    let fork = state.forks.get(block.number()).clone();
+
     let mut traces = Vec::new();
 
     // Process each transaction
@@ -75,7 +82,7 @@ fn trace_block(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceResu
         // Create inspector for tracing
         let config = TracingInspectorConfig::from_parity_config(&trace_types);
         let mut inspector = TracingInspector::new(config);
-        let pre_state = state.try_clone()?;
+        let pre_state = PendingState::new(state.try_clone()?, fork.clone());
 
         // Apply the transaction
         let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
@@ -168,6 +175,8 @@ fn trace_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceRes
             .state()
             .at_root(parent.state_root_hash().into());
 
+        let fork = state.forks.get(block.number()).clone();
+
         // Process each transaction in the block
         for txn_hash in &block.transactions {
             let txn = match node.get_transaction_by_hash(*txn_hash)? {
@@ -208,7 +217,7 @@ fn trace_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceRes
             // Create inspector and trace the transaction
             let config = TracingInspectorConfig::from_parity_config(&trace_types);
             let mut inspector = TracingInspector::new(config);
-            let pre_state = state.try_clone()?;
+            let pending_state = PendingState::new(state.try_clone()?, fork.clone());
 
             let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
@@ -216,7 +225,7 @@ fn trace_filter(params: Params, node: &Arc<RwLock<Node>>) -> Result<Vec<TraceRes
             if let TransactionApplyResult::Evm(result, ..) = result {
                 let builder = inspector.into_parity_builder();
                 let trace =
-                    builder.into_trace_results_with_state(&result, &trace_types, &pre_state)?;
+                    builder.into_trace_results_with_state(&result, &trace_types, &pending_state)?;
                 all_traces.push(trace);
             }
         }

@@ -612,6 +612,8 @@ impl Node {
             return Err(anyhow!("State required to execute request does not exist"));
         }
 
+        let fork = state.forks.get(block.number()).clone();
+
         for other_txn_hash in block.transactions {
             if txn_hash != other_txn_hash {
                 let other_txn = self
@@ -621,7 +623,7 @@ impl Node {
             } else {
                 let config = TracingInspectorConfig::from_parity_config(trace_types);
                 let mut inspector = TracingInspector::new(config);
-                let pre_state = state.try_clone()?;
+                let pending_state = PendingState::new(state.try_clone()?, fork.clone());
 
                 let result = state.apply_transaction(txn, block.header, &mut inspector, true)?;
 
@@ -631,7 +633,7 @@ impl Node {
 
                 let builder = inspector.into_parity_builder();
                 let trace =
-                    builder.into_trace_results_with_state(&result, trace_types, &pre_state)?;
+                    builder.into_trace_results_with_state(&result, trace_types, &pending_state)?;
 
                 return Ok(trace);
             }
@@ -760,6 +762,8 @@ impl Node {
             }));
         };
 
+        let fork = state.forks.get(block.number()).clone();
+
         match tracer {
             GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
                 GethDebugBuiltInTracerType::CallTracer => {
@@ -811,7 +815,8 @@ impl Node {
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
                     };
-                    let state_ref = &(*state);
+                    let pending_state = PendingState::new(state.try_clone()?, fork);
+                    let state_ref = &pending_state;
                     let tx_info = TransactionInfo {
                         hash: Some(txn_hash.into()),
                         index: Some(txn_index as u64),
@@ -841,7 +846,8 @@ impl Node {
                     let TransactionApplyResult::Evm(result, ..) = result else {
                         return Ok(None);
                     };
-                    let state_ref = &(*state);
+                    let pending_state = PendingState::new(state.try_clone()?, fork);
+                    let state_ref = &pending_state;
                     let trace = inspector.into_geth_builder().geth_prestate_traces(
                         &result,
                         &prestate_config,
@@ -871,7 +877,8 @@ impl Node {
                 let TransactionApplyResult::Evm(result, env) = result else {
                     return Ok(None);
                 };
-                let state_ref = &(*state);
+                let pending_state = PendingState::new(state.try_clone()?, fork);
+                let state_ref = &pending_state;
                 let result = inspector
                     .json_result(result, &env, &state_ref)
                     .map_err(|e| anyhow!("Unable to create json result: {e}"))?;
