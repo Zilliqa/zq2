@@ -5,9 +5,7 @@ network = "Localnet"
 api_servers = [
     { port = 4201, enabled_apis = [ "admin", "debug", "erigon", "eth", "net", "ots", "trace", "txpool", "web3", "zilliqa" ] }
 ]
-data_dir = "/home/bzawsto/Projects/zq2/data"
-eth_chain_id = 32769
-enable_ots_indices = true
+eth_chain_id = 0x8001
 consensus.scilla_address = "http://localhost:3000"
 consensus.consensus_timeout = { secs = 15, nanos = 0 }
 consensus.genesis_deposits = [
