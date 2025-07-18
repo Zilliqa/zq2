@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- zurl Configuration ---
-export LOCAL_PORT="${LOCAL_PORT:-9999}"
+export ZURL_LOCAL_PORT="4800"
 # --- End Configuration ---
 
 # Function to determine project ID based on instance name prefix
@@ -114,9 +114,41 @@ wait_for_port_available() {
     return 0
 }
 
+# Improved cleanup function
+cleanup_tunnel() {
+    # Kill any gcloud processes related to IAP tunnel
+    local gcloud_pids=$(pgrep -f "gcloud.*start-iap-tunnel" 2>/dev/null)
+    if [[ -n "$gcloud_pids" ]]; then
+        kill -TERM $gcloud_pids 2>/dev/null
+        sleep 2
+        # Force kill if still running
+        kill -KILL $gcloud_pids 2>/dev/null
+    fi
+    
+    if [[ -n "$tunnel_pid" ]]; then
+        # Kill the process group to ensure all child processes are killed
+        kill -TERM "-$tunnel_pid" 2>/dev/null
+        sleep 1
+        
+        # Force kill if still running
+        if kill -0 "$tunnel_pid" 2>/dev/null; then
+            kill -KILL "-$tunnel_pid" 2>/dev/null
+        fi
+        
+        # Wait for the process to actually terminate
+        wait "$tunnel_pid" 2>/dev/null
+    fi
+    
+    # Clean up any remaining processes using the port
+    kill_port_processes "$local_port"
+    
+    # Wait for port to be fully released
+    wait_for_port_available "$local_port"
+}
+
 # zurl function - a curl replacement with automatic IAP tunnel management
 zurl() {
-    local local_port="${LOCAL_PORT}"
+    local local_port="${ZURL_LOCAL_PORT}"
     local tunnel_pid=""
     local target_host=""
     local target_port=""
@@ -125,7 +157,7 @@ zurl() {
     
     # Check if required environment variables are set
     if [[ -z "$local_port" ]]; then
-        echo "Error: zurl configuration not complete. Please set LOCAL_PORT environment variable." >&2
+        echo "Error: zurl configuration not complete. Please set ZURL_LOCAL_PORT environment variable." >&2
         return 1
     fi
     
@@ -166,47 +198,12 @@ zurl() {
     local lookup_result=$?
     
     if [[ $lookup_result -ne 0 ]]; then
-        if [[ -z "$target_zone" ]]; then
-            echo "Error: Instance '${target_host}' not found in project '${project_id}'." >&2
-            echo "Available instances:" >&2
-            gcloud compute instances list --format="table(name,zone)" --project="${project_id}" 2>/dev/null | head -20
-        fi
-        return 1
+        # Instance not found, execute curl directly without tunnel
+        curl "$@"
+        return $?
     fi
     
     echo "Found instance '${target_host}' in zone '${target_zone}' in project '${project_id}'" >&2
-    
-    # Improved cleanup function
-    cleanup_tunnel() {
-        # Kill any gcloud processes related to IAP tunnel
-        local gcloud_pids=$(pgrep -f "gcloud.*start-iap-tunnel" 2>/dev/null)
-        if [[ -n "$gcloud_pids" ]]; then
-            kill -TERM $gcloud_pids 2>/dev/null
-            sleep 2
-            # Force kill if still running
-            kill -KILL $gcloud_pids 2>/dev/null
-        fi
-        
-        if [[ -n "$tunnel_pid" ]]; then
-            # Kill the process group to ensure all child processes are killed
-            kill -TERM "-$tunnel_pid" 2>/dev/null
-            sleep 1
-            
-            # Force kill if still running
-            if kill -0 "$tunnel_pid" 2>/dev/null; then
-                kill -KILL "-$tunnel_pid" 2>/dev/null
-            fi
-            
-            # Wait for the process to actually terminate
-            wait "$tunnel_pid" 2>/dev/null
-        fi
-        
-        # Clean up any remaining processes using the port
-        kill_port_processes "$local_port"
-        
-        # Wait for port to be fully released
-        wait_for_port_available "$local_port"
-    }
     
     # Set up trap for cleanup
     trap cleanup_tunnel EXIT INT TERM
