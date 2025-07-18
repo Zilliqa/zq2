@@ -1376,8 +1376,7 @@ fn get_total_coin_supply_as_zil_amount(
     node: &Arc<RwLock<Node>>,
 ) -> Result<ZilAmount> {
     let node = node.read();
-    let finalized_block = node.get_block(BlockId::finalized())?.unwrap();
-    let finalized_block_number = finalized_block.number();
+    let finalized_block_number = node.get_finalized_block_number()?;
     let null_address_balance = node
         .consensus
         .state_at(finalized_block_number)?
@@ -1386,29 +1385,7 @@ fn get_total_coin_supply_as_zil_amount(
         .unwrap()
         .balance;
     let native_supply = node.config.consensus.total_native_token_supply.0;
-    let state = node.consensus.state_at(finalized_block_number)?.unwrap();
-    let stakers = state.get_stakers(finalized_block.header)?;
-    let validators_stake: u128 = stakers
-        .into_iter()
-        .filter(|staker_pubkey| {
-            let reward_address = state.get_reward_address(*staker_pubkey).unwrap();
-            match reward_address {
-                Some(address) => address == Address::ZERO,
-                None => false,
-            }
-        })
-        .map(|staker_pubkey| {
-            state
-                .get_stake(staker_pubkey, finalized_block.header)
-                .unwrap()
-                .unwrap()
-                .get()
-        })
-        .sum();
-
-    Ok(ZilAmount::from_amount(
-        native_supply - null_address_balance - validators_stake,
-    ))
+    Ok(ZilAmount::from_amount(native_supply - null_address_balance))
 }
 
 // GetTotalCoinSupply
