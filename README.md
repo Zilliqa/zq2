@@ -150,3 +150,49 @@ Of the currently undocumented APIs, the following are partially implemented:
   * `eth_getBlockByHash` (issue #79)
   * `eth_getBlockByNumber` (issue #79)
   * `net_peerCount`
+
+## zurl - IAP Tunnel Curl Wrapper
+
+`zurl` is a curl wrapper that automatically manages Google Cloud IAP tunnels for accessing private instances.
+
+### Usage
+
+Login to GCP and set the environment variables and paths.
+
+```sh
+source scripts/setenv
+```
+
+Use exactly like curl, but with your private instance hostname:
+
+```bash
+zurl [curl-options] http://instance-name:port[/path]
+```
+
+### Project Auto-Detection
+
+Automatically selects the correct GCP project based on instance name:
+- `zq2-devnet-*` → `prj-d-zq2-devnet-c83bkpsd`
+- `zq2-testnet-*` → `prj-d-zq2-testnet-g13pnaa8`
+- `zq2-mainnet-*` → `prj-p-zq2-mainnet-sn5n8wfl`
+- Default: `prj-p-zq2-mainnet-sn5n8wfl`
+
+### Example
+
+```bash
+zurl -d '{
+    "id": "1",
+    "jsonrpc": "2.0", 
+    "method": "eth_blockNumber"
+}' -H "Content-Type: application/json" -X POST "http://zq2-devnet-api-ase1-2:4201"
+```
+
+Output:
+```
+====================================================================================
+Found instance 'zq2-devnet-api-ase1-2' in zone 'asia-southeast1-c' in project 'prj-d-zq2-devnet-c83bkpsd'
+Starting IAP tunnel from localhost:9999 to zq2-devnet-api-ase1-2:4201 (zone: asia-southeast1-c)...
+Tunnel is ready
+====================================================================================
+{"jsonrpc":"2.0","id":"1","result":"0x17a2b"}
+```
