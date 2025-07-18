@@ -220,7 +220,8 @@ def check_checkpoint_status():
             }), 500
         
         # Calculate the next checkpoint block
-        next_checkpoint_block = latest_checkpoint_block["upload"] + 86400
+        processing_blocks_difference = latest_checkpoint_block["upload"] - latest_checkpoint_block["production"]
+        next_checkpoint_block = latest_checkpoint_block["upload"] + 86400 + processing_blocks_difference
         
         # Check if current block is higher than the expected next checkpoint block
         if current_block > next_checkpoint_block:
