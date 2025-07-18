@@ -166,7 +166,13 @@ source scripts/setenv
 Use exactly like curl, but with your private instance hostname:
 
 ```bash
-zurl [curl-options] http://instance-name:port[/path]
+zurl [curl-options] "instance-name:port[/path]"
+```
+
+To see more information, you can use the --debug parameter:
+
+```bash
+zurl --debug [curl-options] "instance-name:port[/path]"
 ```
 
 ### Project Auto-Detection
@@ -184,15 +190,10 @@ zurl -d '{
     "id": "1",
     "jsonrpc": "2.0", 
     "method": "eth_blockNumber"
-}' -H "Content-Type: application/json" -X POST "http://zq2-devnet-api-ase1-2:4201"
+}' -H "Content-Type: application/json" -X POST "zq2-devnet-api-ase1-2:4201"
 ```
 
 Output:
 ```
-====================================================================================
-Found instance 'zq2-devnet-api-ase1-2' in zone 'asia-southeast1-c' in project 'prj-d-zq2-devnet-c83bkpsd'
-Starting IAP tunnel from localhost:9999 to zq2-devnet-api-ase1-2:4201 (zone: asia-southeast1-c)...
-Tunnel is ready
-====================================================================================
 {"jsonrpc":"2.0","id":"1","result":"0x17a2b"}
 ```

@@ -1,8 +1,16 @@
 #!/bin/bash
 
 # --- zurl Configuration ---
-export ZURL_LOCAL_PORT="4800"
+# Port range for random selection (5000-8000)
+export ZURL_PORT_MIN="5000"
+export ZURL_PORT_MAX="8000"
 # --- End Configuration ---
+
+# Global variables for cleanup
+tunnel_pid=""
+local_port=""
+target_host=""
+debug_mode=false
 
 # Function to determine project ID based on instance name prefix
 get_project_id() {
@@ -114,11 +122,55 @@ wait_for_port_available() {
     return 0
 }
 
+# Function to find an available port in the specified range
+find_available_port() {
+    local min_port="${ZURL_PORT_MIN:-5000}"
+    local max_port="${ZURL_PORT_MAX:-8000}"
+    local max_attempts=20
+    local attempts=0
+    
+    while [[ $attempts -lt $max_attempts ]]; do
+        # Generate random port in range
+        local port=$((RANDOM % (max_port - min_port + 1) + min_port))
+        
+        if is_port_available "$port"; then
+            echo "$port"
+            return 0
+        fi
+        
+        ((attempts++))
+    done
+    
+    # If we couldn't find a random port, try sequential search
+    for ((port=min_port; port<=max_port; port++)); do
+        if is_port_available "$port"; then
+            echo "$port"
+            return 0
+        fi
+    done
+    
+    # No available port found
+    return 1
+}
+
 # Improved cleanup function
 cleanup_tunnel() {
+    if [[ "$debug_mode" == true ]]; then
+        echo "Cleanup called: tunnel_pid=$tunnel_pid, local_port=$local_port, target_host=$target_host" >&2
+    fi
+    
+    # Kill by process name pattern (more reliable for gcloud processes)
+    if [[ -n "$target_host" ]]; then
+        pkill -f "gcloud.*start-iap-tunnel.*${target_host}" 2>/dev/null
+        sleep 1
+    fi
+    
     # Kill any gcloud processes related to IAP tunnel
     local gcloud_pids=$(pgrep -f "gcloud.*start-iap-tunnel" 2>/dev/null)
     if [[ -n "$gcloud_pids" ]]; then
+        if [[ "$debug_mode" == true ]]; then
+            echo "Killing gcloud processes: $gcloud_pids" >&2
+        fi
         kill -TERM $gcloud_pids 2>/dev/null
         sleep 2
         # Force kill if still running
@@ -126,6 +178,9 @@ cleanup_tunnel() {
     fi
     
     if [[ -n "$tunnel_pid" ]]; then
+        if [[ "$debug_mode" == true ]]; then
+            echo "Killing tunnel process: $tunnel_pid" >&2
+        fi
         # Kill the process group to ensure all child processes are killed
         kill -TERM "-$tunnel_pid" 2>/dev/null
         sleep 1
@@ -140,49 +195,90 @@ cleanup_tunnel() {
     fi
     
     # Clean up any remaining processes using the port
-    kill_port_processes "$local_port"
+    if [[ -n "$local_port" ]]; then
+        if [[ "$debug_mode" == true ]]; then
+            echo "Cleaning up port $local_port" >&2
+        fi
+        kill_port_processes "$local_port"
+        
+        # Wait for port to be fully released
+        wait_for_port_available "$local_port"
+    fi
     
-    # Wait for port to be fully released
-    wait_for_port_available "$local_port"
+    # Reset global variables
+    tunnel_pid=""
+    local_port=""
+    target_host=""
 }
 
 # zurl function - a curl replacement with automatic IAP tunnel management
 zurl() {
-    local local_port="${ZURL_LOCAL_PORT}"
-    local tunnel_pid=""
-    local target_host=""
+    # Use global variables instead of local ones
     local target_port=""
     local target_zone=""
     local project_id=""
     
-    # Check if required environment variables are set
-    if [[ -z "$local_port" ]]; then
-        echo "Error: zurl configuration not complete. Please set ZURL_LOCAL_PORT environment variable." >&2
+    # Find an available port
+    local_port=$(find_available_port)
+    if [[ $? -ne 0 ]]; then
+        echo "Error: Could not find an available port in range ${ZURL_PORT_MIN:-5000}-${ZURL_PORT_MAX:-8000}." >&2
         return 1
     fi
     
-    # Show separator at the beginning
-    echo "=====================================================================================" >&2
+    tunnel_pid=""
+    target_host=""
     
-    # Parse arguments to find URL and extract target
+    # Parse arguments for debug flag and build curl args
     local curl_args=()
+    local curl_args_direct=()
     local target_found=false
+    debug_mode=false
     
     for arg in "$@"; do
-        if [[ "$arg" =~ ^https?:// ]] && [[ "$target_found" == false ]]; then
+        if [[ "$arg" == "--debug" ]]; then
+            debug_mode=true
+            # Don't add --debug to curl_args since curl doesn't understand it
+        elif [[ "$arg" =~ ^https?:// ]] && [[ "$target_found" == false ]]; then
             # Extract target from first URL found
             local host_port=$(extract_host_port "$arg")
             target_host=$(echo "$host_port" | cut -d: -f1)
             target_port=$(echo "$host_port" | cut -d: -f2)
             target_found=true
             
-            # Replace URL with localhost equivalent
+            # Replace URL with localhost equivalent for tunneled use
             local new_url=$(echo "$arg" | sed -E "s|^https?://[^/]+|http://localhost:${local_port}|")
             curl_args+=("$new_url")
+            # Keep original URL for direct use
+            curl_args_direct+=("$arg")
+        elif [[ "$arg" =~ ^([^/:]+):([0-9]+)(/.*)?$ ]] && [[ "$target_found" == false ]]; then
+            # Handle hostname:port format (without protocol)
+            target_host="${BASH_REMATCH[1]}"
+            target_port="${BASH_REMATCH[2]}"
+            local path="${BASH_REMATCH[3]:-}"
+            target_found=true
+            
+            # Create full URL with localhost for tunneled use
+            local new_url="http://localhost:${local_port}${path}"
+            curl_args+=("$new_url")
+            # Keep original for direct use
+            curl_args_direct+=("$arg")
         else
             curl_args+=("$arg")
+            curl_args_direct+=("$arg")
         fi
     done
+    
+    # Check if required environment variables are set
+    if [[ -z "$local_port" ]]; then
+        echo "Error: zurl configuration failed to find available port." >&2
+        return 1
+    fi
+    
+    # Show separator at the beginning (only in debug mode)
+    if [[ "$debug_mode" == true ]]; then
+        echo "=====================================================================================" >&2
+        echo "Using local port: $local_port" >&2
+    fi
     
     # Check if we found a target
     if [[ "$target_found" == false ]]; then
@@ -199,30 +295,48 @@ zurl() {
     
     if [[ $lookup_result -ne 0 ]]; then
         # Instance not found, execute curl directly without tunnel
-        curl "$@"
+        if [[ "$debug_mode" == true ]]; then
+            echo "Instance '${target_host}' not found in project '${project_id}'" >&2
+            echo "No tunnel needed - executing curl directly" >&2
+            echo "=====================================================================================" >&2
+        fi
+        curl "${curl_args_direct[@]}"
         return $?
     fi
     
-    echo "Found instance '${target_host}' in zone '${target_zone}' in project '${project_id}'" >&2
+    if [[ "$debug_mode" == true ]]; then
+        echo "Found instance '${target_host}' in zone '${target_zone}' in project '${project_id}'" >&2
+    fi
     
     # Set up trap for cleanup
     trap cleanup_tunnel EXIT INT TERM
     
     # Start the IAP tunnel in the background
-    echo "Starting IAP tunnel from localhost:${local_port} to ${target_host}:${target_port} (zone: ${target_zone})..." >&2
+    if [[ "$debug_mode" == true ]]; then
+        echo "Starting IAP tunnel from localhost:${local_port} to ${target_host}:${target_port} (zone: ${target_zone})..." >&2
+    fi
     
     # Create a temporary file to capture gcloud output
     local gcloud_output=$(mktemp)
     
-    # Start the tunnel using the looked up zone - use setsid to create a new process group
-    setsid gcloud compute start-iap-tunnel \
-        "${target_host}" "${target_port}" \
-        --project="${project_id}" \
-        --zone="${target_zone}" \
-        --local-host-port="localhost:${local_port}" > "$gcloud_output" 2>&1 &
+    # Disable job control to suppress "[1]+ Terminated" messages
+    set +m
+    
+    # Start the tunnel - suppress job control messages completely
+    {
+        gcloud compute start-iap-tunnel \
+            "${target_host}" "${target_port}" \
+            --project="${project_id}" \
+            --zone="${target_zone}" \
+            --local-host-port="localhost:${local_port}" > "$gcloud_output" 2>&1 &
+    } 2>/dev/null
     
     # Capture the Process ID (PID) of the backgrounded tunnel command
     tunnel_pid=$!
+    
+    if [[ "$debug_mode" == true ]]; then
+        echo "Tunnel PID: $tunnel_pid" >&2
+    fi
     
     # Give gcloud a moment to start
     sleep 2
@@ -259,10 +373,11 @@ zurl() {
         sleep 0.5
     done
     
-    echo "Tunnel is ready" >&2
-    
-    # Add separator line before output
-    echo "=====================================================================================" >&2
+    if [[ "$debug_mode" == true ]]; then
+        echo "Tunnel is ready" >&2
+        # Add separator line before output
+        echo "=====================================================================================" >&2
+    fi
     
     # Run the curl command with the modified arguments
     curl "${curl_args[@]}"
@@ -270,6 +385,11 @@ zurl() {
     
     # Add newline after curl output
     echo ""
+    
+    # Add separator line after curl output (only in debug mode)
+    if [[ "$debug_mode" == true ]]; then
+        echo "=====================================================================================" >&2
+    fi
     
     # Explicitly cleanup before returning
     cleanup_tunnel
