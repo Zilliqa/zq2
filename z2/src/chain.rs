@@ -128,6 +128,7 @@ impl Chain {
                 "evm_exec_failure_causes_scilla_precompile_to_fail": false,
                 "revert_restore_xsgd_contract": false,
                 "scilla_fix_contract_code_removal_on_evm_tx": false,
+                "restore_ignite_wallet_contracts": false,
             })),
             Chain::Zq2Mainnet => Some(json!({
                 "at_height": 0,
@@ -156,6 +157,7 @@ impl Chain {
                 "evm_exec_failure_causes_scilla_precompile_to_fail": false,
                 "revert_restore_xsgd_contract": false,
                 "scilla_fix_contract_code_removal_on_evm_tx": false,
+                "restore_ignite_wallet_contracts": false,
             })),
             _ => None,
         }
