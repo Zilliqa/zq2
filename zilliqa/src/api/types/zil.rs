@@ -666,6 +666,13 @@ pub struct TransactionBody {
     #[serde(rename = "toAddr")]
     pub to_addr: String,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    pub data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_logs: Option<Vec<crate::transaction::Log>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transitions: Option<Vec<crate::exec::ScillaTransition>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
