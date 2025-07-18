@@ -1348,7 +1348,6 @@ fn load_account<'a>(
     evm_state: &Option<JournaledState>,
     address: Address,
 ) -> Result<&'a mut PendingAccount> {
-    tracing::info!("Querying account for address: {:?}", address);
     match (
         new_state.entry(address),
         evm_state.as_ref().and_then(|s| s.state.get(&address)),
