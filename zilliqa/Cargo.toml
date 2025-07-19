@@ -140,7 +140,7 @@ alloy = { version = "0.12.4", default-features = false, features = [
 ] }
 async-trait = "0.1.88"
 bincode_v1 = { package = "bincode", version = "1.3.3" }
-criterion = "0.5.1"
+criterion = "0.6.0"
 ethers = { version = "2.0.14", default-features = false, features = ["legacy"] }
 fs_extra = "1.3.0"
 indicatif = "0.17.11"
